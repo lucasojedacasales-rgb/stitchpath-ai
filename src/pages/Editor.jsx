@@ -12,6 +12,7 @@ import RegionsPanel from '@/components/editor/RegionsPanel';
 import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import { preprocessImage } from '@/lib/imagePreprocessor';
+import { analyzeImage } from '@/lib/imageAnalyzer';
 
 const DEFAULT_CONFIG = {
   fabric_type: 'Algodón', width_mm: 100, height_mm: 100, color_count: 6,
@@ -118,6 +119,14 @@ export default function Editor() {
         }
       }
 
+      // Analyze image for precise color/edge metadata
+      let imageAnalysis = null;
+      try {
+        imageAnalysis = await analyzeImage(finalImageUrl, config.color_count || 8);
+      } catch (e) {
+        console.warn('Image analysis failed, continuing without metadata:', e);
+      }
+
       const res = await base44.functions.invoke('hybridDigitize', {
         image_url: finalImageUrl,
         mode: config.mode,
@@ -127,6 +136,7 @@ export default function Editor() {
         remove_bg: config.remove_bg,
         use_ia_vision: config.use_ia_vision,
         use_full_bg: config.use_full_bg,
+        image_analysis: imageAnalysis,
       });
 
       if (res.data?.success) {
