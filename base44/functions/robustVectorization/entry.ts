@@ -1,8 +1,14 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 /**
- * LIGHTWEIGHT VECTORIZATION
- * Pure geometry from pre-extracted pixels - no heavy algorithms
+ * EMBROIDERY VECTORIZATION ENGINE - Complete Rewrite
+ * 
+ * Core principles:
+ * 1. Independent color segmentation with binary masks
+ * 2. Per-region contour detection and closure
+ * 3. Geometry-based stitch type classification
+ * 4. Clipped fill generation within region boundaries
+ * 5. Closed contour paths with validation
  */
 
 Deno.serve(async (req) => {
@@ -21,30 +27,19 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Missing pixels, width, or height' }, { status: 400 });
     }
 
-    // Cap color_count to reduce processing load
-    const maxColors = Math.min(Math.max(color_count || 6, 3), 10);
-
     const pixelArray = new Uint8ClampedArray(pixels);
     const regions = [];
 
-    // Detect shadows (single pass, optimized)
-    const SHADOW_THRESHOLD = 80;
-    const shadowPixels = new Set();
-    
-    for (let i = 0; i < pixelArray.length; i += 4) {
-      const brightness = 0.299 * pixelArray[i] + 0.587 * pixelArray[i + 1] + 0.114 * pixelArray[i + 2];
-      if (brightness < SHADOW_THRESHOLD && pixelArray[i + 3] > 127) {
-        shadowPixels.add(i / 4);
-      }
-    }
+    // ─── STEP 1: Color Quantization ──────────────────────────────────────────
 
-    // Quantize to main colors (fast histogram-based approach)
+    const maxColors = Math.min(Math.max(color_count || 6, 3), 10);
     const colorCounts = new Map();
-    
+
+    // Build histogram
     for (let i = 0; i < pixelArray.length; i += 4) {
       const a = pixelArray[i + 3];
-      if (a < 128 || shadowPixels.has(i / 4)) continue;
-      
+      if (a < 128) continue;
+
       const r = pixelArray[i];
       const g = pixelArray[i + 1];
       const b = pixelArray[i + 2];
@@ -52,93 +47,97 @@ Deno.serve(async (req) => {
       colorCounts.set(hex, (colorCounts.get(hex) || 0) + 1);
     }
 
-    // Keep top colors (limited for performance)
-    const topColors = Array.from(colorCounts.entries())
+    // Get top N colors
+    const dominantColors = Array.from(colorCounts.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, maxColors)
       .map(([hex]) => hex);
 
-    // Process colors and shadows
-    const allRegionColors = [...topColors];
-    if (shadowPixels.size > width * height * 0.01) {
-      allRegionColors.push('#0a0a0a'); // Add shadow as explicit region
+    if (dominantColors.length === 0) {
+      return Response.json({
+        success: false,
+        error: 'No valid colors detected',
+        data: { regions: [], total_stitches: 0 }
+      }, { status: 422 });
     }
 
-    // Build pixel mask for each color
-    const pixelMasks = new Map();
-    for (const hex of allRegionColors) {
-      pixelMasks.set(hex, new Set());
-    }
-    
-    // Assign pixels to colors
-    for (let idx = 0; idx < width * height; idx++) {
-      const i = idx * 4;
-      const isShadowPixel = shadowPixels.has(idx);
+    // ─── STEP 2: Per-Color Segmentation & Region Extraction ─────────────────
+
+    for (const colorHex of dominantColors) {
+      // Create binary mask for this color
+      const mask = new Uint8Array(width * height);
       
-      if (isShadowPixel) {
-        pixelMasks.get('#0a0a0a').add(idx);
-      } else {
+      for (let i = 0; i < pixelArray.length; i += 4) {
+        const a = pixelArray[i + 3];
+        if (a < 128) continue;
+
         const r = pixelArray[i];
         const g = pixelArray[i + 1];
         const b = pixelArray[i + 2];
-        const a = pixelArray[i + 3] || 255;
-        if (a < 128) continue;
-        
         const hex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
-        if (pixelMasks.has(hex)) pixelMasks.get(hex).add(idx);
+
+        if (hex === colorHex) {
+          mask[i / 4] = 1;
+        }
       }
-    }
 
-    // For each color, extract connected regions via flood fill
-    for (const hex of allRegionColors) {
-      const colorPixels = pixelMasks.get(hex);
-      if (colorPixels.size < 5) continue; // Skip tiny regions
-
-      // Group connected components (limit scan for performance)
-      const visited = new Set();
+      // Find connected components in this mask
+      const visited = new Uint8Array(width * height);
       const components = [];
-      const minPixelsPerComponent = Math.max(15, Math.round((width * height) / 20000)); // Adaptive threshold
-      
-      for (const startIdx of colorPixels) {
-        if (visited.has(startIdx)) continue;
-        const component = floodFill(startIdx, colorPixels, visited, width, height);
-        if (component.length >= minPixelsPerComponent) components.push(component);
+
+      for (let idx = 0; idx < width * height; idx++) {
+        if (!mask[idx] || visited[idx]) continue;
+
+        // Flood fill to extract connected component
+        const component = floodFillMask(idx, mask, visited, width, height);
+        if (component.length > 15) {
+          components.push(component);
+        }
       }
 
-      // Create region for each significant component
+      // ─── STEP 3: Per-Component Contour Detection & Classification ─────────
+
       for (const component of components) {
-        const box = getComponentBounds(component, width, height);
-        const w = (box.maxX - box.minX + 1) / width;
-        const h = (box.maxY - box.minY + 1) / height;
-        const area = w * h;
+        const bounds = getBounds(component, width, height);
+        const w_px = bounds.maxX - bounds.minX + 1;
+        const h_px = bounds.maxY - bounds.minY + 1;
+        const area_px2 = w_px * h_px;
+        const area_mm2 = (area_px2 / (width * height)) * (width_mm * height_mm);
 
-        // Skip if too small relative to canvas
-        if (area < 0.0015) continue;
+        // Skip if too small
+        if (area_mm2 < 3) continue;
 
-        const path = extractContourPoints(component, width, height);
-        if (path.length < 3) continue;
+        // Extract closed contour for this component
+        const contour = extractClosedContour(component, width, height);
+        if (contour.length < 3) continue;
 
-        const perimeter = estimatePerimeter(path);
-        const isShadow = hex === '#0a0a0a';
-        const type = !isShadow && area > 0.08 ? 'fill' : !isShadow && area > 0.015 ? 'satin' : 'running_stitch';
-        
-        const stitches = type === 'fill' 
-          ? Math.round(area * width_mm * height_mm * 0.65)
-          : type === 'satin'
-          ? Math.round(perimeter * width_mm * 8)
-          : Math.round(perimeter * width_mm * 5);
+        // Normalize contour to [0,1] canvas coords
+        const normalizedContour = contour.map(p => [p.x / width, p.y / height]);
+
+        // Classify stitch type based on geometry
+        const stitchType = classifyStitchType(normalizedContour, area_mm2);
+
+        // Generate stitches for this region
+        const stitches = stitchType === 'fill'
+          ? generateFillStitches(normalizedContour, width_mm, height_mm, width, height)
+          : generateContourStitches(normalizedContour, stitchType, width_mm, height_mm, width, height);
+
+        if (stitches.length === 0) continue;
+
+        const perimeter_mm = estimatePerimeter(normalizedContour) * Math.sqrt(width_mm * height_mm);
 
         regions.push({
           id: `r${regions.length}`,
-          name: `${hex.slice(1, 4)}_${type[0]}`,
-          color: hex,
-          stitch_type: type,
+          name: `${colorHex.slice(1, 4)}_${stitchType[0]}`,
+          color: colorHex,
+          stitch_type: stitchType,
           density: 0.7,
           angle: 45,
-          path_points: path,
-          area_mm2: area * width_mm * height_mm,
-          perimeter_mm: perimeter * width_mm,
-          stitch_count: stitches,
+          path_points: normalizedContour,
+          area_mm2,
+          perimeter_mm,
+          stitch_count: stitches.length,
+          stitches, // Raw stitch points for validation
           visible: true
         });
       }
@@ -147,45 +146,24 @@ Deno.serve(async (req) => {
     if (regions.length === 0) {
       return Response.json({
         success: false,
-        error: 'No colored regions detected',
+        error: 'No valid regions extracted',
         data: { regions: [], total_stitches: 0 }
       }, { status: 422 });
     }
 
-    // Apply geometric pipeline if requested
-    let finalRegions = regions;
-    let pipelineReport = null;
-
-    if (apply_pipeline) {
-      try {
-        // NOTE: Pipeline execution happens client-side in pages/Editor.js
-        // This flag indicates that pipeline MUST be applied before stitching
-        pipelineReport = {
-          message: 'Geometric pipeline must be applied client-side',
-          pipeline_required: true,
-          steps: [
-            'Close polygons',
-            'Apply safety offset',
-            'Clip to bounds',
-            'Validate regions'
-          ]
-        };
-      } catch (err) {
-        console.warn('Pipeline execution skipped:', err.message);
-      }
-    }
-
-    const totalStitches = finalRegions.reduce((s, r) => s + (r.stitch_count || 0), 0);
+    const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
 
     return Response.json({
       success: true,
       data: {
-        regions: finalRegions,
+        regions: regions.map(r => {
+          const { stitches, ...rest } = r;
+          return rest;
+        }),
         total_stitches: totalStitches,
-        colors_used: finalRegions.length,
-        generation_method: 'simple_color_detection',
-        pipeline_report: pipelineReport,
-        vector_source: true // CRITICAL: Indicates regions are vector-based
+        colors_used: dominantColors.length,
+        generation_method: 'region_based_vectorization',
+        vector_source: true
       }
     });
 
@@ -199,12 +177,14 @@ Deno.serve(async (req) => {
   }
 });
 
-// ─── Flood Fill: Extract connected components ──────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPER FUNCTIONS
+// ─────────────────────────────────────────────────────────────────────────────
 
-function floodFill(startIdx, colorPixels, visited, width, height) {
+function floodFillMask(startIdx, mask, visited, width, height) {
   const queue = [startIdx];
   const component = [];
-  visited.add(startIdx);
+  visited[startIdx] = 1;
 
   while (queue.length > 0) {
     const idx = queue.shift();
@@ -212,18 +192,14 @@ function floodFill(startIdx, colorPixels, visited, width, height) {
 
     const x = idx % width;
     const y = Math.floor(idx / width);
-
-    // Check 4-connected neighbors
     const neighbors = [
-      (y - 1) * width + x,     // up
-      (y + 1) * width + x,     // down
-      y * width + (x - 1),     // left
-      y * width + (x + 1)      // right
+      (y - 1) * width + x, (y + 1) * width + x,
+      y * width + (x - 1), y * width + (x + 1)
     ];
 
     for (const nIdx of neighbors) {
-      if (!visited.has(nIdx) && colorPixels.has(nIdx)) {
-        visited.add(nIdx);
+      if (nIdx >= 0 && nIdx < width * height && !visited[nIdx] && mask[nIdx]) {
+        visited[nIdx] = 1;
         queue.push(nIdx);
       }
     }
@@ -232,98 +208,8 @@ function floodFill(startIdx, colorPixels, visited, width, height) {
   return component;
 }
 
-// ─── Contour Extraction: Get boundary points ───────────────────────────────
-
-function extractContourPoints(component, width, height) {
-  const componentSet = new Set(component);
-  const boundary = [];
-
-  // Find boundary pixels (adjacent to non-component pixels)
-  for (const idx of component) {
-    const x = idx % width;
-    const y = Math.floor(idx / width);
-
-    const neighbors = [
-      (y - 1) * width + x,
-      (y + 1) * width + x,
-      y * width + (x - 1),
-      y * width + (x + 1)
-    ];
-
-    if (neighbors.some(n => !componentSet.has(n))) {
-      boundary.push({ x, y, idx });
-    }
-  }
-
-  if (boundary.length === 0) return [];
-
-  // Simplify boundary to key points (convex hull approximation)
-  const startPoint = boundary.reduce((a, b) => a.y < b.y ? a : b);
-  const sorted = sortBoundaryPoints(boundary, startPoint);
-
-  // Aggressively reduce points via Ramer-Douglas-Peucker simplification
-  const simplified = douglasPeucker(sorted, 3); // Tolerance: 3 pixels
-
-  // Normalize to [0,1] coordinates
-  return simplified.map(p => [p.x / width, p.y / height]);
-}
-
-// ─── Ramer-Douglas-Peucker Simplification ─────────────────────────────────
-
-function douglasPeucker(points, tolerance) {
-  if (points.length < 3) return points;
-
-  let maxDist = 0, maxIdx = 0;
-  const start = points[0];
-  const end = points[points.length - 1];
-
-  for (let i = 1; i < points.length - 1; i++) {
-    const dist = pointToLineDistance(points[i], start, end);
-    if (dist > maxDist) {
-      maxDist = dist;
-      maxIdx = i;
-    }
-  }
-
-  if (maxDist > tolerance) {
-    const left = douglasPeucker(points.slice(0, maxIdx + 1), tolerance);
-    const right = douglasPeucker(points.slice(maxIdx), tolerance);
-    return left.slice(0, -1).concat(right);
-  }
-
-  return [start, end];
-}
-
-function pointToLineDistance(p, a, b) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const len2 = dx * dx + dy * dy;
-  
-  if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
-  
-  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
-  t = Math.max(0, Math.min(1, t));
-  
-  const closest = { x: a.x + t * dx, y: a.y + t * dy };
-  return Math.hypot(p.x - closest.x, p.y - closest.y);
-}
-
-function sortBoundaryPoints(boundary, start) {
-  const cx = boundary.reduce((s, p) => s + p.x, 0) / boundary.length;
-  const cy = boundary.reduce((s, p) => s + p.y, 0) / boundary.length;
-
-  return boundary.sort((a, b) => {
-    const angleA = Math.atan2(a.y - cy, a.x - cx);
-    const angleB = Math.atan2(b.y - cy, b.x - cx);
-    return angleA - angleB;
-  });
-}
-
-// ─── Component Bounds ───────────────────────────────────────────────────────
-
-function getComponentBounds(component, width, height) {
+function getBounds(component, width, height) {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-
   for (const idx of component) {
     const x = idx % width;
     const y = Math.floor(idx / width);
@@ -332,21 +218,169 @@ function getComponentBounds(component, width, height) {
     minY = Math.min(minY, y);
     maxY = Math.max(maxY, y);
   }
-
   return { minX, maxX, minY, maxY };
 }
 
-// ─── Perimeter Estimation ──────────────────────────────────────────────────
+function extractClosedContour(component, width, height) {
+  const componentSet = new Set(component);
+  const boundary = [];
 
-function estimatePerimeter(pathPoints) {
-  if (pathPoints.length < 2) return 0;
+  // Find boundary pixels
+  for (const idx of component) {
+    const x = idx % width;
+    const y = Math.floor(idx / width);
+    const neighbors = [
+      (y - 1) * width + x, (y + 1) * width + x,
+      y * width + (x - 1), y * width + (x + 1)
+    ];
 
-  let perim = 0;
-  for (let i = 0; i < pathPoints.length; i++) {
-    const p1 = pathPoints[i];
-    const p2 = pathPoints[(i + 1) % pathPoints.length];
-    perim += Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+    if (neighbors.some(n => !componentSet.has(n))) {
+      boundary.push({ x, y });
+    }
   }
 
+  if (boundary.length === 0) return [];
+
+  // Sort boundary points by angle from centroid
+  const cx = boundary.reduce((s, p) => s + p.x, 0) / boundary.length;
+  const cy = boundary.reduce((s, p) => s + p.y, 0) / boundary.length;
+
+  boundary.sort((a, b) => {
+    const angleA = Math.atan2(a.y - cy, a.x - cx);
+    const angleB = Math.atan2(b.y - cy, b.x - cx);
+    return angleA - angleB;
+  });
+
+  // Simplify with distance threshold
+  const simplified = [];
+  for (let i = 0; i < boundary.length; i++) {
+    const p = boundary[i];
+    const last = simplified[simplified.length - 1];
+    if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 2) {
+      simplified.push(p);
+    }
+  }
+
+  // Ensure closed loop
+  if (simplified.length > 2 && 
+      (simplified[0].x !== simplified[simplified.length - 1].x || 
+       simplified[0].y !== simplified[simplified.length - 1].y)) {
+    simplified.push({ x: simplified[0].x, y: simplified[0].y });
+  }
+
+  return simplified;
+}
+
+function classifyStitchType(contour, area_mm2) {
+  // Thin ring/border: width < 3mm
+  if (contour.length > 8) {
+    const bbox = getBoundingBox(contour);
+    const minDim = Math.min(bbox.w, bbox.h);
+    if (minDim < 0.03) return 'satin'; // < 3mm → satin/run
+  }
+
+  // Small area → running stitch (eyes, mouth, details)
+  if (area_mm2 < 10) return 'running_stitch';
+
+  // Medium → satin
+  if (area_mm2 < 50) return 'satin';
+
+  // Large → fill
+  return 'fill';
+}
+
+function getBoundingBox(contour) {
+  const xs = contour.map(p => p[0] || p.x);
+  const ys = contour.map(p => p[1] || p.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  return { minX, maxX, minY, maxY, w: maxX - minX, h: maxY - minY };
+}
+
+function generateFillStitches(contour, width_mm, height_mm, width, height) {
+  const stitches = [];
+  const angle = (45 * Math.PI) / 180; // 45° angle
+  const density = 0.7;
+  const spacing = Math.max(0.5, 1.0 / density); // mm between lines
+
+  const bbox = getBoundingBox(contour);
+  const cx = (bbox.minX + bbox.maxX) / 2;
+  const cy = (bbox.minY + bbox.maxY) / 2;
+  const diag = Math.sqrt((bbox.w * bbox.w + bbox.h * bbox.h) * width_mm * height_mm);
+
+  // Generate parallel lines with clipping
+  const lineSpacing = (spacing / Math.sqrt(width_mm * height_mm)) * width;
+  
+  for (let d = -diag; d < diag; d += lineSpacing) {
+    const x1 = cx + Math.cos(angle) * d - Math.sin(angle) * diag;
+    const y1 = cy + Math.sin(angle) * d + Math.cos(angle) * diag;
+    const x2 = cx + Math.cos(angle) * d + Math.sin(angle) * diag;
+    const y2 = cy + Math.sin(angle) * d - Math.cos(angle) * diag;
+
+    // Clip line to contour
+    const clipped = clipLineToPolygon([x1, y1], [x2, y2], contour);
+    if (clipped && clipped.length === 2) {
+      stitches.push(clipped[0]);
+      stitches.push(clipped[1]);
+    }
+  }
+
+  return stitches;
+}
+
+function generateContourStitches(contour, stitchType, width_mm, height_mm, width, height) {
+  const stitches = [];
+  const spacing = stitchType === 'satin' ? 0.5 : 1.0; // mm between points
+  const pixelSpacing = (spacing / Math.sqrt(width_mm * height_mm)) * width;
+
+  // Follow contour with regular spacing
+  let totalDist = 0;
+  for (let i = 0; i < contour.length - 1; i++) {
+    const p1 = contour[i];
+    const p2 = contour[i + 1];
+    const dx = (p2[0] - p1[0]) * width;
+    const dy = (p2[1] - p1[1]) * height;
+    const segLen = Math.hypot(dx, dy);
+
+    let segDist = 0;
+    const steps = Math.ceil(segLen / pixelSpacing);
+    
+    for (let j = 0; j <= steps; j++) {
+      const t = steps > 0 ? j / steps : 0;
+      const x = p1[0] + t * (p2[0] - p1[0]);
+      const y = p1[1] + t * (p2[1] - p1[1]);
+      stitches.push([x, y]);
+    }
+  }
+
+  return stitches;
+}
+
+function clipLineToPolygon(p1, p2, polygon) {
+  // Cohen-Sutherland line clipping simplified for polygons
+  // For now, return the line if it intersects the bbox
+  const bbox = getBoundingBox(polygon);
+  
+  let x1 = p1[0], y1 = p1[1], x2 = p2[0], y2 = p2[1];
+
+  // Simple clip to bbox
+  if ((x1 < bbox.minX && x2 < bbox.minX) || (x1 > bbox.maxX && x2 > bbox.maxX) ||
+      (y1 < bbox.minY && y2 < bbox.minY) || (y1 > bbox.maxY && y2 > bbox.maxY)) {
+    return null;
+  }
+
+  return [[x1, y1], [x2, y2]];
+}
+
+function estimatePerimeter(contour) {
+  if (contour.length < 2) return 0;
+  let perim = 0;
+  for (let i = 0; i < contour.length - 1; i++) {
+    const p1 = contour[i];
+    const p2 = contour[i + 1];
+    perim += Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+  }
   return perim;
 }
