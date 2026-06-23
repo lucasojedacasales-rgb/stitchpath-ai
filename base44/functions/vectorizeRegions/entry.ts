@@ -14,28 +14,29 @@ Deno.serve(async (req) => {
     // ── 1. Download image and decode to RGBA ──────────────────────────────────
     const imgResp = await fetch(imageUrl);
     if (!imgResp.ok) return Response.json({ error: 'Could not fetch image' }, { status: 400 });
-    const imgBuf = await imgResp.arrayBuffer();
+    
+    const arrayBuffer = await imgResp.arrayBuffer();
+    const { Jimp } = await import('npm:jimp@1.6.0');
+    const image = await Jimp.fromBuffer(Buffer.from(arrayBuffer));
 
-    const Jimp = (await import('npm:jimp@0.22.12')).Jimp;
-    const image = await Jimp.read(Buffer.from(imgBuf));
-
-    const origW = image.getWidth();
-    const origH = image.getHeight();
+    const origW = image.width;
+    const origH = image.height;
 
     const scale = Math.min(512 / origW, 512 / origH, 1);
     const W = Math.round(origW * scale);
     const H = Math.round(origH * scale);
-    image.resize(W, H);
+    
+    image.resize({ w: W, h: H });
 
     const rgba = new Uint8Array(W * H * 4);
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
-        const hex = image.getPixelColor(x, y);
+        const pixelData = image.getPixelColor(x, y);
         const i = (y * W + x) * 4;
-        rgba[i]     = (hex >>> 24) & 0xff;
-        rgba[i + 1] = (hex >>> 16) & 0xff;
-        rgba[i + 2] = (hex >>> 8)  & 0xff;
-        rgba[i + 3] = hex & 0xff;
+        rgba[i]     = (pixelData >>> 24) & 0xff;
+        rgba[i + 1] = (pixelData >>> 16) & 0xff;
+        rgba[i + 2] = (pixelData >>> 8)  & 0xff;
+        rgba[i + 3] = pixelData & 0xff;
       }
     }
 
@@ -62,16 +63,122 @@ Deno.serve(async (req) => {
     // ── NEW: Harris corner detection ──────────────────────────────────────────
     const corners = harrisCorners(gx, gy, W, H);
 
-    // ── 3. K-means++ with edge constraints ────────────────────────────────────
+    // ── NEW: BACKGROUND DETECTION & FILTERING ────────────────────────────────────
+    
+    // 1. Detect background color from image edges (10px border)
+    const borderWidth = 10;
+    const borderColors = new Map(); // RGB string → count
+    const hasTransparency = detectTransparency(rgba, W, H);
+    
+    // Scan top/bottom/left/right borders
+    for (let x = 0; x < W; x++) {
+      for (let y = 0; y < borderWidth && y < H; y++) {
+        addBorderColor(rgba, x, y, W, borderColors);
+        addBorderColor(rgba, x, H - 1 - y, W, borderColors);
+      }
+    }
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < borderWidth && x < W; x++) {
+        addBorderColor(rgba, x, y, W, borderColors);
+        addBorderColor(rgba, W - 1 - x, y, W, borderColors);
+      }
+    }
+    
+    // Find most frequent border color
+    let backgroundColor = null;
+    let maxCount = 0;
+    for (const [colorStr, count] of borderColors.entries()) {
+      if (count > maxCount) { maxCount = count; backgroundColor = colorStr; }
+    }
+    
+    // Parse background color
+    let bgRgb = [128, 128, 128]; // default gray
+    if (backgroundColor) {
+      const parts = backgroundColor.split(',').map(Number);
+      bgRgb = [parts[0], parts[1], parts[2]];
+    }
+    
+    // 2. Create background mask using flood-fill or alpha channel
+    const bgMask = new Uint8Array(W * H);
+    if (hasTransparency) {
+      // Use alpha channel
+      for (let i = 0; i < W * H; i++) {
+        if (rgba[i*4+3] < 128) bgMask[i] = 1; // transparent = background
+      }
+    } else {
+      // Flood-fill from corners with color tolerance (15% RGB difference)
+      floodFillBackground(bgMask, rgba, W, H, bgRgb, 0.15);
+    }
+    
+    // 3. Filter regions by boundary & background overlap
+    const bgOverlapThreshold = 0.5; // 50% overlap with background
+    const touchesBorder = (x, y) => x === 0 || x === W-1 || y === 0 || y === H-1;
+    
+    // 4. Calculate bounding box of non-background pixels, apply 5% padding
+    let minX = W, maxX = 0, minY = H, maxY = 0;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (bgMask[y * W + x] === 0) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    
+    // Apply 5% padding
+    const padding = Math.round(Math.max(maxX - minX, maxY - minY) * 0.05);
+    minX = Math.max(0, minX - padding);
+    minY = Math.max(0, minY - padding);
+    maxX = Math.min(W - 1, maxX + padding);
+    maxY = Math.min(H - 1, maxY + padding);
+    
+    // Crop image to bounding box
+    const cropW = maxX - minX + 1;
+    const cropH = maxY - minY + 1;
+    const croppedRgba = new Uint8Array(cropW * cropH * 4);
+    const croppedBgMask = new Uint8Array(cropW * cropH);
+    for (let y = 0; y < cropH; y++) {
+      for (let x = 0; x < cropW; x++) {
+        const srcIdx = ((minY + y) * W + (minX + x)) * 4;
+        const dstIdx = (y * cropW + x) * 4;
+        croppedRgba[dstIdx] = rgba[srcIdx];
+        croppedRgba[dstIdx + 1] = rgba[srcIdx + 1];
+        croppedRgba[dstIdx + 2] = rgba[srcIdx + 2];
+        croppedRgba[dstIdx + 3] = rgba[srcIdx + 3];
+        croppedBgMask[y * cropW + x] = bgMask[(minY + y) * W + (minX + x)];
+      }
+    }
+    
+    // Alias cropped data as working variables for the rest of the pipeline
+    const CW = cropW, CH = cropH;
+    const workRgba = croppedRgba;
+    const workBgMask = croppedBgMask;
+    // Recompute edges on cropped image for better alignment
+    const grayC = new Float32Array(CW * CH);
+    for (let i = 0; i < CW * CH; i++) {
+      grayC[i] = 0.299*workRgba[i*4] + 0.587*workRgba[i*4+1] + 0.114*workRgba[i*4+2];
+    }
+    const blurredC = gaussianBlur(grayC, CW, CH);
+    const { gx: gxC, gy: gyC, mag: magC } = sobelGradients(blurredC, CW, CH);
+    const highTC = highT; // reuse same threshold
+    const lowTC  = lowT;
+    const edgesC = cannyNMS(magC, gxC, gyC, CW, CH, lowTC, highTC);
+    const cornersC = harrisCorners(gxC, gyC, CW, CH);
+
+    // ── 3. K-means++ with edge constraints (on cropped image) ─────────────────
     const k = Math.max(2, Math.min(colorClusters, 20));
     const samples = [];
-    for (let i = 0; i < W * H; i++) {
-      if (rgba[i*4+3] < 128) continue;
-      samples.push({ idx: i, rgb: [rgba[i*4], rgba[i*4+1], rgba[i*4+2]], isEdge: edges[i] > 0 });
+    for (let i = 0; i < CW * CH; i++) {
+      if (workRgba[i*4+3] < 128) continue;
+      if (workBgMask[i] > 0) continue; // Skip background pixels
+      samples.push({ idx: i, rgb: [workRgba[i*4], workRgba[i*4+1], workRgba[i*4+2]], isEdge: edgesC[i] > 0 });
     }
 
     const nonEdge = samples.filter(s => !s.isEdge);
     const seed = nonEdge.length > 0 ? nonEdge : samples;
+    if (seed.length === 0) return Response.json({ error: 'No foreground pixels after background removal' }, { status: 400 });
     const centroids = [seed[Math.floor(Math.random() * seed.length)].rgb];
     while (centroids.length < k) {
       const dists = samples.map(s => Math.min(...centroids.map(c => distSq(s.rgb, c))));
@@ -84,7 +191,7 @@ Deno.serve(async (req) => {
       if (centroids.length < k) centroids.push([...seed[seed.length - 1].rgb]);
     }
 
-    const labels = new Int32Array(W * H).fill(-1);
+    const labels = new Int32Array(CW * CH).fill(-1);
     for (let iter = 0; iter < 15; iter++) {
       const sums = centroids.map(() => [0, 0, 0, 0]);
       for (const s of samples) {
@@ -100,54 +207,51 @@ Deno.serve(async (req) => {
       }
     }
 
-    for (let i = 0; i < W * H; i++) {
-      if (edges[i] > 0) labels[i] = -1;
+    for (let i = 0; i < CW * CH; i++) {
+      if (edgesC[i] > 0) labels[i] = -1;
     }
 
     // ── 4. Flood fill regions ─────────────────────────────────────────────────
     const minPx = Math.max(4, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
-    const regions = floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroids);
+    const regions = floodFillRegions(labels, CW, CH, k, minPx, mmPerPx, workRgba, centroids);
 
     // ── 5. Extract contours + refinement pipeline ─────────────────────────────
-    const edgeAlignThreshold = highT * 0.5; // 50% of high threshold for sub-pixel
+    const edgeAlignThreshold = highTC * 0.5;
     const outputRegions = [];
 
     for (const reg of regions) {
-      const contour = traceContour(reg.mask, W, H);
+      const contour = traceContour(reg.mask, CW, CH);
       if (contour.length < 3) continue;
 
-      // Snap contour to sub-pixel positions via gradient interpolation
-      const subPixelContour = subPixelRefine(contour, mag, gx, gy, W, H, edgeAlignThreshold);
+      // Filter: discard regions touching the cropped border
+      const touchesCropBorder = reg.bbox.minX === 0 || reg.bbox.minY === 0 ||
+                                reg.bbox.maxX >= CW-1 || reg.bbox.maxY >= CH-1;
+      if (touchesCropBorder) continue;
 
-      // Inject Harris corners into contour (ensure key corners are vertices)
-      const cornerSnapped = snapToCorners(subPixelContour, corners, W, H);
+      const subPixelContour = subPixelRefine(contour, magC, gxC, gyC, CW, CH, edgeAlignThreshold);
+      const cornerSnapped = snapToCorners(subPixelContour, cornersC, CW, CH);
+      const refined = activeContours(cornerSnapped, magC, gxC, gyC, CW, CH, 50);
 
-      // Active contours refinement (snakes) — iterative, max 50 iters
-      const refined = activeContours(cornerSnapped, mag, gx, gy, W, H, 50);
-
-      // Iterative RDP with edge alignment score check (max 3 rounds)
       let epsilon = 0.5 / mmPerPx;
       let simplified = rdp(refined, epsilon);
-      let score = edgeAlignmentScore(simplified, mag, W, H, edgeAlignThreshold);
+      let score = edgeAlignmentScore(simplified, magC, CW, CH, edgeAlignThreshold);
       for (let attempt = 0; attempt < 3 && score < 0.95; attempt++) {
-        epsilon *= 0.6; // tighter tolerance → more points
+        epsilon *= 0.6;
         simplified = rdp(refined, epsilon);
-        score = edgeAlignmentScore(simplified, mag, W, H, edgeAlignThreshold);
+        score = edgeAlignmentScore(simplified, magC, CW, CH, edgeAlignThreshold);
       }
 
       if (simplified.length < 3) continue;
 
-      // Convert to mm with sub-pixel float precision
       const polygon = simplified.map(([x, y]) => [
-        parseFloat(((x - W/2) * mmPerPx).toFixed(4)),
-        parseFloat(((y - H/2) * mmPerPx).toFixed(4)),
+        parseFloat(((x - CW/2) * mmPerPx).toFixed(4)),
+        parseFloat(((y - CH/2) * mmPerPx).toFixed(4)),
       ]);
 
       const areaMm2 = reg.pixelCount * mmPerPx * mmPerPx;
       const perimeterMm = contourPerimeterMm(simplified, mmPerPx);
       const compactness = perimeterMm > 0 ? (perimeterMm * perimeterMm) / areaMm2 : 0;
-      const dominantAngle = pca2DAngle(reg.pixels, W);
-      const isEdgeRegion = reg.bbox.minX === 0 || reg.bbox.minY === 0 || reg.bbox.maxX >= W-1 || reg.bbox.maxY >= H-1;
+      const dominantAngle = pca2DAngle(reg.pixels, CW);
 
       outputRegions.push({
         id: reg.id,
@@ -159,21 +263,21 @@ Deno.serve(async (req) => {
         dominantAngle,
         edgeAlignmentScore: parseFloat(score.toFixed(3)),
         centroid: [
-          parseFloat(((reg.centroid[0] - W/2) * mmPerPx).toFixed(4)),
-          parseFloat(((reg.centroid[1] - H/2) * mmPerPx).toFixed(4)),
+          parseFloat(((reg.centroid[0] - CW/2) * mmPerPx).toFixed(4)),
+          parseFloat(((reg.centroid[1] - CH/2) * mmPerPx).toFixed(4)),
         ],
         boundingBox: {
-          x: parseFloat(((reg.bbox.minX - W/2) * mmPerPx).toFixed(4)),
-          y: parseFloat(((reg.bbox.minY - H/2) * mmPerPx).toFixed(4)),
+          x: parseFloat(((reg.bbox.minX - CW/2) * mmPerPx).toFixed(4)),
+          y: parseFloat(((reg.bbox.minY - CH/2) * mmPerPx).toFixed(4)),
           w: parseFloat(((reg.bbox.maxX - reg.bbox.minX) * mmPerPx).toFixed(4)),
           h: parseFloat(((reg.bbox.maxY - reg.bbox.minY) * mmPerPx).toFixed(4)),
         },
         neighbors: [],
-        isEdgeRegion,
+        isEdgeRegion: false, // already filtered above
       });
     }
 
-    computeNeighbors(outputRegions, regions, labels, W, H);
+    computeNeighbors(outputRegions, regions, labels, CW, CH);
 
     return Response.json({
       regions: outputRegions,
@@ -183,6 +287,12 @@ Deno.serve(async (req) => {
           parseFloat((origW * mmPerPx / scale).toFixed(1)),
           parseFloat((origH * mmPerPx / scale).toFixed(1)),
         ],
+        croppedSizeMm: [
+          parseFloat((CW * mmPerPx).toFixed(1)),
+          parseFloat((CH * mmPerPx).toFixed(1)),
+        ],
+        backgroundColor: backgroundColor,
+        hasTransparency,
         processingTimeMs: Date.now() - startMs,
         averageEdgeScore: outputRegions.length > 0
           ? parseFloat((outputRegions.reduce((s, r) => s + r.edgeAlignmentScore, 0) / outputRegions.length).toFixed(3))
@@ -219,7 +329,8 @@ function harrisCorners(gx, gy, W, H, k = 0.04, threshold = 0.01) {
   }
 
   // Non-maximum suppression, collect corners above threshold
-  const maxResp = Math.max(...response);
+  let maxResp = 0;
+  for (let i = 0; i < response.length; i++) { if (response[i] > maxResp) maxResp = response[i]; }
   const corners = [];
   for (let y = R; y < H - R; y++) {
     for (let x = R; x < W - R; x++) {
@@ -496,18 +607,27 @@ function traceContour(mask, W, H) {
   return contour;
 }
 
+// Iterative RDP (no recursion → no stack overflow on long contours)
 function rdp(pts, eps) {
   if (pts.length <= 2) return pts;
-  let maxD = 0, maxI = 0;
-  const s = pts[0], e = pts[pts.length - 1];
-  for (let i = 1; i < pts.length - 1; i++) {
-    const d = ptSegDist(pts[i], s, e);
-    if (d > maxD) { maxD = d; maxI = i; }
+  const result = new Uint8Array(pts.length);
+  result[0] = 1;
+  result[pts.length - 1] = 1;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length > 0) {
+    const [start, end] = stack.pop();
+    let maxD = 0, maxI = start;
+    for (let i = start + 1; i < end; i++) {
+      const d = ptSegDist(pts[i], pts[start], pts[end]);
+      if (d > maxD) { maxD = d; maxI = i; }
+    }
+    if (maxD > eps) {
+      result[maxI] = 1;
+      stack.push([start, maxI]);
+      stack.push([maxI, end]);
+    }
   }
-  if (maxD > eps) {
-    return rdp(pts.slice(0, maxI + 1), eps).slice(0, -1).concat(rdp(pts.slice(maxI), eps));
-  }
-  return [s, e];
+  return pts.filter((_, i) => result[i]);
 }
 
 function ptSegDist([px,py],[ax,ay],[bx,by]) {
@@ -574,4 +694,71 @@ function nearestIdx(rgb, palette) {
 }
 function rgbToHex([r,g,b]) {
   return '#'+[r,g,b].map(v=>Math.round(v).toString(16).padStart(2,'0')).join('');
+}
+
+// ── BACKGROUND DETECTION & FILTERING ──────────────────────────────────────────
+
+function detectTransparency(rgba, W, H) {
+  // Check if image has semi-transparent or fully transparent pixels
+  for (let i = 3; i < rgba.length; i += 4) {
+    if (rgba[i] < 255) return true;
+  }
+  return false;
+}
+
+function addBorderColor(rgba, x, y, W, borderColors) {
+  const i = (y * W + x) * 4;
+  const a = rgba[i + 3];
+  if (a < 128) return; // Skip transparent pixels
+  
+  const r = rgba[i];
+  const g = rgba[i + 1];
+  const b = rgba[i + 2];
+  const key = `${r},${g},${b}`;
+  
+  borderColors.set(key, (borderColors.get(key) || 0) + 1);
+}
+
+function floodFillBackground(bgMask, rgba, W, H, bgRgb, tolerance) {
+  // Tolerance as fraction (e.g., 0.15 = 15%)
+  const colorDist = (r1, g1, b1, r2, g2, b2) => {
+    const dr = (r1 - r2) / 255;
+    const dg = (g1 - g2) / 255;
+    const db = (b1 - b2) / 255;
+    return Math.sqrt(dr*dr + dg*dg + db*db);
+  };
+  
+  const visited = new Uint8Array(W * H);
+  const corners = [[0, 0], [W-1, 0], [0, H-1], [W-1, H-1]];
+  
+  for (const [cx, cy] of corners) {
+    if (visited[cy * W + cx]) continue;
+    
+    const stack = [cy * W + cx];
+    visited[cy * W + cx] = 1;
+    
+    while (stack.length > 0) {
+      const idx = stack.pop();
+      const x = idx % W;
+      const y = Math.floor(idx / W);
+      const i = idx * 4;
+      
+      // Check if this pixel is similar to background color
+      const r = rgba[i];
+      const g = rgba[i + 1];
+      const b = rgba[i + 2];
+      const a = rgba[i + 3];
+      
+      if (a < 128) {
+        bgMask[idx] = 1;
+      } else if (colorDist(r, g, b, bgRgb[0], bgRgb[1], bgRgb[2]) <= tolerance) {
+        bgMask[idx] = 1;
+        // Flood-fill to 4-neighbors
+        if (x > 0 && !visited[idx - 1]) { stack.push(idx - 1); visited[idx - 1] = 1; }
+        if (x < W-1 && !visited[idx + 1]) { stack.push(idx + 1); visited[idx + 1] = 1; }
+        if (y > 0 && !visited[idx - W]) { stack.push(idx - W); visited[idx - W] = 1; }
+        if (y < H-1 && !visited[idx + W]) { stack.push(idx + W); visited[idx + W] = 1; }
+      }
+    }
+  }
 }
