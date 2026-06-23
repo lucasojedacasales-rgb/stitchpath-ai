@@ -85,12 +85,6 @@ ESTRUCTURA JSON:
       }
     });
 
-    console.log('=== CLAUDE RESPONSE ===');
-    console.log('Regions length:', result.regions?.length);
-    console.log('Keys:', Object.keys(result));
-    console.log('Total stitches:', result.total_stitches);
-    console.log('Raw:', JSON.stringify(result));
-
     // Procesar respuesta de Claude (puede venir anidada)
     let regions = [];
     try {
@@ -151,17 +145,17 @@ ESTRUCTURA JSON:
       });
     }
 
-    const total_stitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
+    const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
     
     return Response.json({ 
       success: true, 
       data: {
         regions,
-        total_stitches,
-        estimated_time_min: claudeData.estimated_time_min || Math.round(total_stitches / 800),
+        total_stitches: totalStitches,
+        estimated_time_min: Math.round(totalStitches / 800),
         colors_used: new Set(regions.map(r => r.color)).size,
-        width_mm: claudeData.width_mm || w,
-        height_mm: claudeData.height_mm || h,
+        width_mm: w,
+        height_mm: h
       }
     });
   } catch (error) {
