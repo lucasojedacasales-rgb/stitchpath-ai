@@ -164,18 +164,12 @@ export default function Editor() {
         const rawData = res.data.data?.response || res.data.data;
         const { regions: rawRegions, total_stitches } = rawData;
 
-        // ── Filtrado estricto de regiones válidas ─────────────────────────────
+        // ── Filtrado permisivo: confía en path_points, no en área/perímetro ──────
         const filtered = (rawRegions || []).filter(r => {
-          if ((r.area_mm2 || 0) <= 2.0) return false;
-          // Only filter by perimeter if the field exists
-          if (r.perimeter_mm !== undefined && r.perimeter_mm <= 3.0) return false;
-          if (r.boundingBox) {
-            const { w, h } = r.boundingBox;
-            if (w < 0.1 || h < 0.1) return false;
-          }
-          if (r.isEdgeRegion === true) return false;
-          // Must have path_points to be renderable
+          // Solo filtrar si NO tiene path_points válidos (es lo único realmente necesario)
           if (!r.path_points || r.path_points.length < 3) return false;
+          // Opcional: filtrar regiones EXTREMADAMENTE pequeñas solo si area está disponible
+          if (r.area_mm2 !== undefined && r.area_mm2 < 0.5) return false;
           return true;
         });
 
