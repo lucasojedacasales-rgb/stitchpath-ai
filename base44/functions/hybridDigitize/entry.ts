@@ -48,63 +48,37 @@ Deno.serve(async (req) => {
       colorDataBlock = `\nPALETA DE COLORES DETECTADA:\n${image_analysis.dominantColors.slice(0, 12).map((c, i) => `${i+1}. ${c.hex} - ${(c.coverage * 100).toFixed(1)}% cobertura - REUSAR EXACTAMENTE ESTE COLOR`).join('\n')}\n`;
     }
 
-    const prompt = `MOTOR DE DETECCIÓN: Paso 1 - Áreas sólidas. Paso 2 - Detalles internos. Paso 3 - Contornos.
+    const prompt = `Eres un sistema de vectorización para diseños de bordado. Analiza esta imagen Y DEVUELVE SOLO JSON VÁLIDO.
 
 ${colorDataBlock}
 
-ALGORITMO DE BLOQUES DE COLOR SÓLIDO:
-1. Escanea la imagen y localiza cada BLOQUE homogéneo de color
-2. CADA BLOQUE SÓLIDO = 1 REGIÓN (sin agrupar colores cercanos)
-3. Detalles internos (ojos, mejillas, boca) son bloques SEPARADOS del cuerpo
+TAREA: Segmenta la imagen en bloques de color sólido. CADA bloque de color homogéneo = 1 región.
 
-SEGMENTACIÓN CORRECTA:
-- bloque_cuerpo_principal (color base)
-- bloque_ojo_izq_blanco (área blanca del ojo)
-- bloque_ojo_izq_pupila (pupila oscura)
-- bloque_ojo_izq_brillo (reflejo)
-- bloque_mejilla_rosa (mejilla)
-- bloque_mejilla_sombra (sombra = color diferente)
-- bloque_boca_roja (labios)
-- bloque_diente_blanco (dientes)
+REGLAS:
+1. Escanea cada área de color uniforme en la imagen
+2. Cada región debe tener path_points (contorno cerrado)
+3. Usa los colores exactos de la paleta detectada
+4. Calcula área en mm² basado en tamaño estimado
+5. Para cada región: stitch_count = area_mm2 × 0.7 × 2.5
 
-REGLAS CRÍTICAS:
-1. **Bloques independientes**: NO agrupar adyacentes (ojo blanco ≠ pupila)
-2. **Cada color diferente**: 2 colores = 2 regiones, incluso si pequeñas
-3. **Áreas homogéneas**: Solo color uniforme dentro del bloque
-4. **INCLUIR TODOS**: Desde cuerpo (~500mm²) hasta reflejos (~5mm²)
-
-PARÁMETROS:
-- name: bloque_ubicacion_color (ej: bloque_ojo_pupila)
-- stitch_type: casi siempre "fill" (es bloque sólido)
-- color: hex exacto
-- area_mm2: estimado real
-- density: 0.7 (estándar)
-- layer_order: cuerpo=1, detalles grandes=2-3, pequeños=4+
-- path_points: ${pointsPerShape} puntos cerrando el contorno
-
-Responde SOLO JSON válido:
+DEVUELVE ESTO (SOLO JSON, SIN MARKDOWN):
 {
   "regions": [
     {
       "id": "r1",
-      "name": "nombre_descriptivo",
-      "color": "#rrggbb",
+      "name": "region_1",
+      "color": "#9d5c9d",
       "stitch_type": "fill",
       "density": 0.7,
       "angle": 45,
-      "layer_order": 1,
-      "pull_compensation": 0.15,
-      "underlay": true,
-      "area_mm2": 800,
-      "stitch_count": 2200,
-      "is_auto_contour": false,
-      "visible": true,
-      "path_points": [[0.1,0.1],[0.9,0.1],[0.9,0.9],[0.1,0.9],[0.1,0.1]]
+      "area_mm2": 1000,
+      "stitch_count": 1750,
+      "path_points": [[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]
     }
   ],
-  "total_stitches": 18000,
-  "estimated_time_min": 12,
-  "colors_used": 6,
+  "total_stitches": 5000,
+  "estimated_time_min": 6,
+  "colors_used": 3,
   "width_mm": ${w},
   "height_mm": ${h}
 }`;
@@ -125,6 +99,12 @@ Responde SOLO JSON válido:
         }
       }
     });
+
+    console.log('=== CLAUDE RESPONSE ===');
+    console.log('Regions length:', result.regions?.length);
+    console.log('Keys:', Object.keys(result));
+    console.log('Total stitches:', result.total_stitches);
+    console.log('Raw:', JSON.stringify(result));
 
     // ─── POST-PROCESAMIENTO: Validar bloques como regiones independientes ─────
     const regions = (result.regions || []).filter(r => {
