@@ -48,28 +48,36 @@ Deno.serve(async (req) => {
       colorDataBlock = `\nPALETA DE COLORES DETECTADA:\n${image_analysis.dominantColors.slice(0, 12).map((c, i) => `${i+1}. ${c.hex} - ${(c.coverage * 100).toFixed(1)}% cobertura - REUSAR EXACTAMENTE ESTE COLOR`).join('\n')}\n`;
     }
 
-    const prompt = `Analiza la imagen y CREA REGIONES PARA CADA ÁREA DE COLOR DIFERENTE.
+    const prompt = `DIGITALIZADOR PROFESIONAL: Detecta CADA área de color como región independiente.
 
 ${colorDataBlock}
-TAREA:
-Identifica y genera una región por cada color/detalle que ves:
-- Cuerpo principal, ojos (blanco + pupila + brillo), mejillas, boca, nariz, contornos, etc.
-- Cada color distinto = 1 región
-- Máximo 60 regiones
 
-PARÁMETROS por región:
-- name: Descriptivo (ej: "ojo_izquierdo_pupila", "mejilla_rosa", "diente_blanco")
-- stitch_type: "fill" (sólido), "satin" (detalle med), "running_stitch" (línea)
-- color: Usa EXACTAMENTE hex de la paleta o #rrggbb observado
-- density: 0.5-0.9 
-- angle: 0-180
-- layer_order: fills primero (1,2,3), detalles después
-- underlay: true para fills, false para detalles
-- pull_compensation: 0.15
-- area_mm2: Estimado
-- path_points: ${pointsPerShape} puntos normalizados [0.0-1.0], polígono cerrado
+ANÁLISIS REQUERIDO - SIN SIMPLIFICACIONES:
+Ejemplo correcto:
+- ojo_izquierdo_blanco (región 1)
+- ojo_izquierdo_pupila (región 2)
+- ojo_izquierdo_brillo (región 3)
+- mejilla_izquierda_rosa (región 4)
+- mejilla_izquierda_sombra (región 5)
+- boca_roja (región 6)
+- diente_blanco (región 7)
+- cuerpo_principal (región 8)
+- contorno_oscuro (región 9)
 
-NO SIMPLIFICAR. Incluye TODOS los detalles (ojos, mejillas, boca).
+REGLAS CRÍTICAS:
+1. **Segmentación por COLOR**: Si ves 2 colores diferentes = 2 regiones (NO agrupar)
+2. **Detalles internos OBLIGATORIOS**: Ojos, pupilas, brillos, mejillas, boca, sombras
+3. **Area_mm2**: Estima realista (ojo pequeño ~20mm², cuerpo ~500mm²)
+4. **Stitch_type**:
+   - "fill": área >= 50mm² AND forma compacta
+   - "satin": 10-50mm² OR forma alargada (línea)
+   - "running_stitch": contornos visibles, líneas, bordes oscuros
+5. **Path_points**: Polígono cerrado (último = primer punto), mínimo 4 puntos
+
+ORDENA POR IMPORTANCIA:
+- layer_order 1: fills principales (cuerpo)
+- layer_order 2-5: fills detalles (mejillas, boca)
+- layer_order 6+: contornos y detalles finos
 
 Responde SOLO JSON válido:
 {
@@ -115,7 +123,48 @@ Responde SOLO JSON válido:
       }
     });
 
-    return Response.json({ success: true, data: result });
+    // ─── POST-PROCESAMIENTO: Validar y mejorar regiones ─────────────────────
+    const regions = (result.regions || []).filter(r => {
+      // Validar path_points válido
+      if (!r.path_points || r.path_points.length < 4) return false;
+      // Validar polígono cerrado
+      const first = r.path_points[0];
+      const last = r.path_points[r.path_points.length - 1];
+      if (Math.hypot(first[0] - last[0], first[1] - last[1]) > 0.01) {
+        r.path_points.push(first); // Cerrar polígono si no lo está
+      }
+      return true;
+    }).map(r => {
+      // Mejorar clasificación de stitch_type si no viene completa
+      const area = r.area_mm2 || 0;
+      if (!r.stitch_type || r.stitch_type === 'unknown') {
+        if (area >= 100) r.stitch_type = 'fill';
+        else if (area >= 20) r.stitch_type = 'satin';
+        else r.stitch_type = 'running_stitch';
+      }
+      
+      // Calcular stitch_count más precisamente
+      if (!r.stitch_count) {
+        const baseCount = area * (r.density || 0.7) * 2.5; // factor optimizado
+        r.stitch_count = Math.round(baseCount);
+      }
+      
+      return r;
+    });
+
+    const total_stitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
+    
+    return Response.json({ 
+      success: true, 
+      data: {
+        regions,
+        total_stitches,
+        estimated_time_min: result.estimated_time_min || Math.round(total_stitches / 800),
+        colors_used: new Set(regions.map(r => r.color)).size,
+        width_mm: w,
+        height_mm: h,
+      }
+    });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
