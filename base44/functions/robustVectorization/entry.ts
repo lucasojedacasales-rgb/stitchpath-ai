@@ -26,16 +26,27 @@ Deno.serve(async (req) => {
 
     // ─── FASE 1: PREPROCESAMIENTO ────────────────────────────────────────────
     console.log('[VECTORIZATION] Phase 1: Preprocessing...');
+    console.log(`[VECTORIZATION] Input: ${width}x${height}px, target ${width_mm}x${height_mm}mm, colors=${color_count}`);
+    console.log(`[VECTORIZATION] Pixel array length: ${pixelArray.length}`);
     
     // K-means cuantización a colorCount colores
     const dominantColors = kmeansQuantize(pixelArray, width, height, color_count);
     console.log(`[VECTORIZATION] Dominant colors: ${dominantColors.length}`, dominantColors);
 
     if (dominantColors.length === 0) {
+      console.error('[VECTORIZATION] ERROR: No valid colors detected in image');
       return Response.json({
         success: false,
-        error: 'No valid colors detected',
-        data: { regions: [], total_stitches: 0, diagnostics: { errors: ['No colors'] } }
+        error: 'No valid colors detected. Image may be transparent or empty.',
+        data: { 
+          regions: [], 
+          total_stitches: 0, 
+          diagnostics: { 
+            errors: ['No colors detected'],
+            pixelCount: pixelArray.length,
+            opaquePixels: 0
+          } 
+        }
       }, { status: 422 });
     }
 
@@ -106,18 +117,33 @@ Deno.serve(async (req) => {
             path_points: closed.map(p => [p[0] / width_mm, p[1] / height_mm]), // Normalizar
             area_mm2,
             stitch_count: validStitches.length,
-            stitches: validStitches,
             visible: true
           });
+        } else {
+          console.warn(`[VECTORIZATION] Region filtered: ${validStitches.length} valid stitches (had ${stitches.length} total)`);
         }
       }
     }
 
     if (regions.length === 0) {
+      console.error('[VECTORIZATION] ERROR: No valid regions generated after contour processing');
+      console.error('[VECTORIZATION] Details:', {
+        maskCount: masks.length,
+        totalContours: masks.reduce((sum, mask) => sum + detectContours(mask, width, height).length, 0),
+        minAreaThreshold: 0.5
+      });
       return Response.json({
         success: false,
-        error: 'No valid regions generated',
-        data: { regions: [], total_stitches: 0, diagnostics: { errors: ['No regions'] } }
+        error: 'No valid regions generated. Contours may be too small or fragmented.',
+        data: { 
+          regions: [], 
+          total_stitches: 0, 
+          diagnostics: { 
+            errors: ['No valid regions after contour detection'],
+            colorsDetected: dominantColors.length,
+            minAreaThreshold: 0.5
+          } 
+        }
       }, { status: 422 });
     }
 
@@ -175,10 +201,12 @@ function kmeansQuantize(pixelArray, width, height, colorCount) {
 
   // Extraer píxeles únicos
   const pixelSet = new Set();
+  let opaqueCount = 0;
   for (let i = 0; i < pixelArray.length; i += 4) {
     const a = pixelArray[i + 3];
     if (a < 128) continue;
     
+    opaqueCount++;
     const r = pixelArray[i];
     const g = pixelArray[i + 1];
     const b = pixelArray[i + 2];
@@ -186,7 +214,13 @@ function kmeansQuantize(pixelArray, width, height, colorCount) {
     pixelSet.add(`${r},${g},${b}`);
   }
 
-  if (pixels.length === 0) return [];
+  console.log(`[K-MEANS] Opaque pixels: ${opaqueCount}/${pixelArray.length / 4}`);
+  console.log(`[K-MEANS] Unique colors: ${pixelSet.size}`);
+
+  if (pixels.length === 0) {
+    console.error('[K-MEANS] ERROR: No opaque pixels found');
+    return [];
+  }
 
   // Inicializar centroides aleatoriamente
   let centroids = [];
@@ -237,10 +271,13 @@ function kmeansQuantize(pixelArray, width, height, colorCount) {
     colorCounts.set(centroidHex, (colorCounts.get(centroidHex) || 0) + 1);
   }
 
-  return Array.from(colorCounts.entries())
+  const result = Array.from(colorCounts.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, colorCount)
     .map(([hex]) => hex);
+
+  console.log(`[K-MEANS] Final colors: ${result.length}/${colorCount}`, result);
+  return result;
 }
 
 /**
@@ -283,7 +320,7 @@ function createBinaryMasks(pixelArray, width, height, colors) {
  */
 function detectContours(mask, width, height) {
   const contours = [];
-  const visited = Set();
+  const visited = new Set();
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -294,6 +331,10 @@ function detectContours(mask, width, height) {
         }
       }
     }
+  }
+
+  if (contours.length > 0) {
+    console.log(`[CONTOURS] Detected ${contours.length} contours in mask, sizes: ${contours.map(c => c.length).join(',')}`);
   }
 
   return contours;
