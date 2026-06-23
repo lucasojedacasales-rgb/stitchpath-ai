@@ -175,27 +175,106 @@ export default function Editor() {
           return true;
         });
 
-        // ── Clasificación correcta de tipo de puntada ─────────────────────────
-        const classifyStitchType = (region) => {
-          const hex = (region.color || '').toLowerCase();
-          const isDark = hex === '#000000' || hex === '#1a1a1a';
-          const isContourName = (region.name || '').toLowerCase().includes('contour_');
-          
-          if (isDark || isContourName || region.isContour) return 'running_stitch';
-          
-          const area = region.area_mm2 || 0;
-          const perim = region.perimeter_mm || 1;
-          const avgWidth = area / perim;
-          const compactness = (perim * perim) / Math.max(area, 1);
-          
-          if (area > 200 && avgWidth > 5.0) {
-            return 'fill';
-          } else if (area < 50 || avgWidth < 3.0 || compactness > 15) {
-            return 'satin';
-          } else {
-            return 'fill';
-          }
-        };
+        // ── Clasificación inteligente de tipo de puntada (geométrica) ────────
+         const classifyStitchType = (region) => {
+           const hex = (region.color || '').toLowerCase();
+           const isDark = hex === '#000000' || hex === '#1a1a1a';
+           const isContourName = (region.name || '').toLowerCase().includes('contour_');
+
+           if (isDark || isContourName || region.isContour) return 'running_stitch';
+
+           const area = region.area_mm2 || 0;
+           const perim = region.perimeter_mm || 1;
+           const avgWidth = perim > 0 ? area / perim : 0;
+           const compactness = perim > 0 ? (perim * perim) / Math.max(area, 1) : 999;
+           const circularity = perim > 0 ? (4 * Math.PI * area) / (perim * perim) : 0;
+
+           // Clasificación basada en geometría
+           if (area < 30) return 'running_stitch';  // muy pequeño → contorno
+           if (area > 500 && circularity > 0.6) return 'fill';  // grande + circular → tatami
+           if (avgWidth > 8 && area > 300) return 'fill';  // ancho + grande → fill
+           if (avgWidth < 2.5 || compactness > 20) return 'satin';  // estrecho/elongado → satin
+           if (area < 100 || compactness > 12) return 'satin';  // pequeño/irregular → satin
+           return 'fill';  // default
+         };
+
+         // ── Optimización de secuencia (reduce saltos y cambios de color) ────
+         const optimizeStitchSequence = (blocks) => {
+           if (blocks.length <= 1) return blocks;
+
+           // Agrupar por color
+           const colorGroups = {};
+           blocks.forEach((b, i) => {
+             const c = b.color || b.color_index || 0;
+             if (!colorGroups[c]) colorGroups[c] = [];
+             colorGroups[c].push({ ...b, idx: i });
+           });
+
+           // Optimizar cada grupo por proximidad (greedy TSP)
+           const optimized = [];
+           Object.keys(colorGroups).sort().forEach(color => {
+             const group = colorGroups[color];
+             if (group.length <= 1) {
+               optimized.push(...group);
+               return;
+             }
+
+             const visited = new Set();
+             const ordered = [group[0]];
+             visited.add(0);
+
+             for (let i = 1; i < group.length; i++) {
+               const lastBlock = ordered[ordered.length - 1];
+               const lastX = lastBlock.centroid?.[0] ?? 0.5;
+               const lastY = lastBlock.centroid?.[1] ?? 0.5;
+
+               let minDist = Infinity, nextIdx = -1;
+               for (let j = 0; j < group.length; j++) {
+                 if (visited.has(j)) continue;
+                 const b = group[j];
+                 const bx = b.centroid?.[0] ?? 0.5;
+                 const by = b.centroid?.[1] ?? 0.5;
+                 const dist = Math.hypot(bx - lastX, by - lastY);
+                 if (dist < minDist) { minDist = dist; nextIdx = j; }
+               }
+
+               ordered.push(group[nextIdx]);
+               visited.add(nextIdx);
+             }
+
+             optimized.push(...ordered);
+           });
+
+           return optimized;
+         };
+
+         // ── Inserción automática de trims (saltos > 7mm) ──────────────────
+         const insertTrims = (blocks) => {
+           const MAX_JUMP_MM = 7.0;
+           const result = [];
+
+           for (let i = 0; i < blocks.length; i++) {
+             const block = blocks[i];
+
+             if (i > 0) {
+               const prevBlock = result[result.length - 1];
+               const prevCentroid = prevBlock.centroid || [0.5, 0.5];
+               const currCentroid = block.centroid || [0.5, 0.5];
+               const dist = Math.hypot(
+                 (currCentroid[0] - prevCentroid[0]) * (config.width_mm || 100),
+                 (currCentroid[1] - prevCentroid[1]) * (config.height_mm || 100)
+               );
+
+               if (dist > MAX_JUMP_MM) {
+                 block.has_jump_before = true;
+               }
+             }
+
+             result.push(block);
+           }
+
+           return result;
+         };
 
         const calculateStitchCount = (region) => {
           const type = region.stitch_type;
@@ -252,23 +331,28 @@ export default function Editor() {
           return type === 'fill' ? 'fill' : type === 'satin' ? 'sat' : 'run';
         };
 
-        const newRegions = filtered.map((r, idx) => {
-          const type = classifyStitchType(r);
-          const colorName = getColorName(r.color);
-          const position = getPosition(r, filtered);
-          const typeAbbr = getStitchAbbr(type);
-          const name = `${position}_${colorName}_${typeAbbr}`;
+        // Clasificar tipos de puntada
+         let processedRegions = filtered.map((r, idx) => {
+           const type = classifyStitchType(r);
+           const colorName = getColorName(r.color);
+           const position = getPosition(r, filtered);
+           const typeAbbr = getStitchAbbr(type);
+           const name = `${position}_${colorName}_${typeAbbr}`;
 
-          return {
-            ...r,
-            name: r.name || name,
-            stitch_type: type,
-            stitch_count: calculateStitchCount({ ...r, stitch_type: type })
-          };
-        });
+           return {
+             ...r,
+             name: r.name || name,
+             stitch_type: type,
+             stitch_count: calculateStitchCount({ ...r, stitch_type: type })
+           };
+         });
 
-        // Recalculate total stitches
-        const totalCalculatedStitches = newRegions.reduce((sum, r) => sum + (r.stitch_count || 0), 0);
+         // Optimizar secuencia (reduce saltos) + insertar trims automáticamente
+         processedRegions = optimizeStitchSequence(processedRegions);
+         const newRegions = insertTrims(processedRegions);
+
+         // Recalculate total stitches
+         const totalCalculatedStitches = newRegions.reduce((sum, r) => sum + (r.stitch_count || 0), 0);
 
         setRegions(newRegions);
         setStep(3);
