@@ -42,8 +42,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Quantize to main colors (excluding shadows)
+    // Quantize to main colors with clustering of similar colors
     const colorCounts = new Map();
+    const colorSamples = []; // For clustering
+    
     for (let i = 0; i < pixelArray.length; i += 4) {
       const r = pixelArray[i];
       const g = pixelArray[i + 1];
@@ -52,18 +54,30 @@ Deno.serve(async (req) => {
       
       if (a < 128) continue;
       
-      // Skip dark shadow pixels in color quantization
       const pixelIdx = i / 4;
       if (shadowPixels.has(pixelIdx)) continue;
       
-      const hex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
-      colorCounts.set(hex, (colorCounts.get(hex) || 0) + 1);
+      // Cluster similar colors (tolerance: 20 units in RGB)
+      let found = false;
+      for (const [hex, rgb] of colorCounts) {
+        const dist = Math.hypot(rgb[0] - r, rgb[1] - g, rgb[2] - b);
+        if (dist < 20) {
+          colorCounts.set(hex, colorCounts.get(hex) + 1);
+          found = true;
+          break;
+        }
+      }
+      
+      if (!found) {
+        const hex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+        colorCounts.set(hex, 1);
+      }
     }
 
-    // Keep top colors (increased detection)
+    // Keep top colors (limit to 12 for cleaner output)
     const topColors = Array.from(colorCounts.entries())
       .sort((a, b) => b[1] - a[1])
-      .slice(0, Math.min(color_count, 16)) // Allow up to 16 colors for granular detection
+      .slice(0, Math.min(color_count, 12)) // Reduced from 16 to avoid over-fragmentation
       .map(([hex]) => hex);
 
     // Process colors and shadows
@@ -111,23 +125,24 @@ Deno.serve(async (req) => {
         
         // Flood fill to find connected component
         const component = floodFill(startIdx, colorPixels, visited, width, height);
-        if (component.length > 0) {
+        if (component.length > 20) { // Min 20 pixels to avoid noise
           components.push(component);
         }
       }
 
       // Create region for each significant component
       for (const component of components) {
-        const path = extractContourPoints(component, width, height);
-        if (path.length < 3) continue;
-
         const pixelCount = component.length;
         const box = getComponentBounds(component, width, height);
         const w = (box.maxX - box.minX + 1) / width;
         const h = (box.maxY - box.minY + 1) / height;
         const area = w * h;
 
-        if (area < 0.0005) continue;
+        // Better filtering: ignore tiny regions
+        if (area < 0.002) continue;
+
+        const path = extractContourPoints(component, width, height);
+        if (path.length < 4) continue;
 
         const perimeter = estimatePerimeter(path);
         const isShadow = hex === '#0a0a0a';
@@ -276,19 +291,51 @@ function extractContourPoints(component, width, height) {
   const startPoint = boundary.reduce((a, b) => a.y < b.y ? a : b);
   const sorted = sortBoundaryPoints(boundary, startPoint);
 
-  // Reduce points via distance threshold
-  const simplified = [];
-  for (let i = 0; i < sorted.length; i++) {
-    const p = sorted[i];
-    const last = simplified[simplified.length - 1];
-    
-    if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 2) {
-      simplified.push(p);
-    }
-  }
+  // Aggressively reduce points via Ramer-Douglas-Peucker simplification
+  const simplified = douglasPeucker(sorted, 3); // Tolerance: 3 pixels
 
   // Normalize to [0,1] coordinates
   return simplified.map(p => [p.x / width, p.y / height]);
+}
+
+// ─── Ramer-Douglas-Peucker Simplification ─────────────────────────────────
+
+function douglasPeucker(points, tolerance) {
+  if (points.length < 3) return points;
+
+  let maxDist = 0, maxIdx = 0;
+  const start = points[0];
+  const end = points[points.length - 1];
+
+  for (let i = 1; i < points.length - 1; i++) {
+    const dist = pointToLineDistance(points[i], start, end);
+    if (dist > maxDist) {
+      maxDist = dist;
+      maxIdx = i;
+    }
+  }
+
+  if (maxDist > tolerance) {
+    const left = douglasPeucker(points.slice(0, maxIdx + 1), tolerance);
+    const right = douglasPeucker(points.slice(maxIdx), tolerance);
+    return left.slice(0, -1).concat(right);
+  }
+
+  return [start, end];
+}
+
+function pointToLineDistance(p, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  
+  if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  
+  const closest = { x: a.x + t * dx, y: a.y + t * dy };
+  return Math.hypot(p.x - closest.x, p.y - closest.y);
 }
 
 function sortBoundaryPoints(boundary, start) {
