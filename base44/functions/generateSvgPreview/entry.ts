@@ -43,36 +43,38 @@ Deno.serve(async (req) => {
 });
 
 function generateSvgFromRegions(regions, widthMm, heightMm) {
-  // Convertir mm a pixels (96 DPI)
   const dpi = 96;
   const mmToPx = dpi / 25.4;
   const viewW = widthMm * mmToPx;
   const viewH = heightMm * mmToPx;
 
   let svgContent = `<svg viewBox="0 0 ${viewW} ${viewH}" width="${viewW}" height="${viewH}" xmlns="http://www.w3.org/2000/svg">`;
-
-  // Fondo
+  svgContent += `<defs><style>.stitch-fill{opacity:0.7}.stitch-satin{opacity:0.6}.stitch-run{opacity:0.5}</style></defs>`;
   svgContent += `<rect width="${viewW}" height="${viewH}" fill="#ffffff"/>`;
 
-  // Renderizar regiones
   for (const region of regions) {
     if (!region.path_points || region.path_points.length < 3) continue;
 
     const color = region.color || '#000000';
     const points = region.path_points;
+    const type = region.stitch_type || 'fill';
 
-    // Construir path SVG
+    // Path del contorno
     let pathData = `M ${points[0][0] * viewW} ${points[0][1] * viewH}`;
     for (let i = 1; i < points.length; i++) {
       pathData += ` L ${points[i][0] * viewW} ${points[i][1] * viewH}`;
     }
     pathData += ' Z';
 
-    // Estilos según tipo de puntada
-    const strokeWidth = region.stitch_type === 'running_stitch' ? 0.5 : 0.2;
-    const opacity = region.stitch_type === 'fill' ? 0.7 : 0.5;
+    // Estilos por tipo de puntada
+    const styleMap = {
+      'fill': { class: 'stitch-fill', strokeWidth: 0.2 },
+      'satin': { class: 'stitch-satin', strokeWidth: 0.4, strokeDash: '2,1' },
+      'running_stitch': { class: 'stitch-run', strokeWidth: 0.6, strokeDash: '1.5,1' }
+    };
+    const style = styleMap[type] || styleMap['fill'];
 
-    svgContent += `<path d="${pathData}" fill="${color}" opacity="${opacity}" stroke="#333" stroke-width="${strokeWidth}"/>`;
+    svgContent += `<path d="${pathData}" fill="${color}" class="${style.class}" stroke="#333" stroke-width="${style.strokeWidth}"${style.strokeDash ? ` stroke-dasharray="${style.strokeDash}"` : ''}/>`;
   }
 
   svgContent += '</svg>';

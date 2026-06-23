@@ -38,8 +38,16 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Vectorización falló' }, { status: 500 });
     }
 
-    // Generar archivo de bordado
-    const regions = vectorizationRes.data.data?.regions || [];
+    // Validar y filtrar regiones
+    let regions = (vectorizationRes.data.data?.regions || []).filter(r => {
+      if (!r.path_points || r.path_points.length < 3) return false;
+      if (r.area_mm2 !== undefined && r.area_mm2 < 0.5) return false;
+      return true;
+    });
+
+    if (regions.length === 0) {
+      return Response.json({ error: 'No se generaron regiones válidas' }, { status: 400 });
+    }
     const designRes = await base44.functions.invoke('generateEmbroideryFile', {
       regions,
       format: format.toLowerCase(),
