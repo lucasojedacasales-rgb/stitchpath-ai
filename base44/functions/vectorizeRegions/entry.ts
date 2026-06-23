@@ -6,7 +6,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { imageUrl, colorClusters = 8, edgeThreshold = 0.3, minRegionArea = 5 } = await req.json();
+    const { imageUrl, colorClusters = 8, edgeThreshold = 0.3, minRegionArea = 2 } = await req.json();
     if (!imageUrl) return Response.json({ error: 'imageUrl required' }, { status: 400 });
 
     const startMs = Date.now();
@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
 
     const mmPerPx = 100 / origW / scale;
 
-    // ── 2. Canny edge detection (adaptive threshold) ──────────────────────────
+    // ── 2. Edge detection with adaptive thresholds ─────────────────────────────
     const gray = new Float32Array(W * H);
     for (let i = 0; i < W * H; i++) {
       const r = rgba[i*4], g = rgba[i*4+1], b = rgba[i*4+2];
@@ -60,8 +60,8 @@ Deno.serve(async (req) => {
     const lowT  = highT * 0.4;
     const edges = cannyNMS(mag, gx, gy, W, H, lowT, highT);
 
-    // ── 3. K-means++ with edge constraints ────────────────────────────────────
-    const k = Math.max(2, Math.min(colorClusters, 20));
+    // ── 3. K-means++ clustering ─────────────────────────────────────────────────
+    const k = Math.max(3, Math.min(colorClusters, 20));
     const samples = [];
     for (let i = 0; i < W * H; i++) {
       if (rgba[i*4+3] < 128) continue;
@@ -85,7 +85,7 @@ Deno.serve(async (req) => {
     }
 
     const labels = new Int32Array(W * H).fill(-1);
-    for (let iter = 0; iter < 15; iter++) {
+    for (let iter = 0; iter < 20; iter++) {
       const sums = centroids.map(() => [0, 0, 0, 0]);
       for (const s of samples) {
         const ci = nearestIdx(s.rgb, centroids);
@@ -104,36 +104,36 @@ Deno.serve(async (req) => {
       if (edges[i] > 0) labels[i] = -1;
     }
 
-    // ── 4. Flood fill regions ─────────────────────────────────────────────────
-    const minPx = Math.max(4, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
+    // ── 4. Flood fill regions ───────────────────────────────────────────────────
+    const minPx = Math.max(2, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
     const regions = floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroids);
 
-    // ── 5. Extract contours with simplified refinement ──────────────────────────
+    // ── 5. Extract contours with conservative RDP simplification ─────────────────
     const outputRegions = [];
 
     for (const reg of regions) {
       const contour = traceContour(reg.mask, W, H);
       if (contour.length < 3) continue;
 
-      // Skip regions touching image borders (prone to artifacts)
-      const touchesBorder = reg.bbox.minX === 0 || reg.bbox.minY === 0 ||
-                            reg.bbox.maxX >= W-1 || reg.bbox.maxY >= H-1;
-      if (touchesBorder) continue;
+      // Filter only regions with significant interior (not just borders)
+      const bbox = reg.bbox;
+      const bboxW = bbox.maxX - bbox.minX;
+      const bboxH = bbox.maxY - bbox.minY;
+      const regionAspect = bboxW / Math.max(1, bboxH);
+      const isValidShape = regionAspect >= 0.2 && regionAspect <= 5.0; // reject very thin/elongated
+      if (!isValidShape) continue;
 
-      // Simple RDP simplification only
-      let epsilon = 1.0 / mmPerPx;
+      // Conservative RDP: keep more points for better interior representation
+      let epsilon = 0.3 / mmPerPx;
       let simplified = rdp(contour, epsilon);
       
-      // Iterative refinement if too many points
-      if (simplified.length > 50) {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          epsilon *= 1.2;
-          simplified = rdp(contour, epsilon);
-          if (simplified.length <= 50) break;
-        }
+      // Avoid over-simplification
+      if (simplified.length < 10 && contour.length > 20) {
+        epsilon = 0.1 / mmPerPx;
+        simplified = rdp(contour, epsilon);
       }
 
-      if (simplified.length < 3) continue;
+      if (simplified.length < 4) continue;
 
       const polygon = simplified.map(([x, y]) => [
         parseFloat(((x - W/2) * mmPerPx).toFixed(4)),
@@ -153,6 +153,7 @@ Deno.serve(async (req) => {
           parseFloat(((reg.centroid[0] - W/2) * mmPerPx).toFixed(4)),
           parseFloat(((reg.centroid[1] - H/2) * mmPerPx).toFixed(4)),
         ],
+        coverage: areaMm2 / (100 * 100),
       });
     }
 
