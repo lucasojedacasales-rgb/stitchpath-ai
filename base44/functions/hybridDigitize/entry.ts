@@ -117,33 +117,15 @@ ESTRUCTURA JSON:
       console.warn('Error parsing Claude response:', e);
     }
 
-    // FALLBACK: Si Claude falló, generar con colores detectados
-    if (regions.length === 0) {
-      console.warn('Generando fallback desde colores detectados');
-      const colors = image_analysis?.dominantColors?.slice(0, Math.min(8, color_count || 6)) || [
-        { hex: '#9d5c9d' }, { hex: '#1a1a3e' }, { hex: '#ffffff' },
-        { hex: '#e8949e' }, { hex: '#6b4c8a' }, { hex: '#2d1b47' }
-      ];
-      
-      regions = colors.map((color, i) => {
-        const area = 250 + Math.random() * 600;
-        const s = Math.sqrt(area) / 200;
-        const ox = 0.15 + (i % 3) * 0.27;
-        const oy = 0.15 + Math.floor(i / 3) * 0.27;
-        return {
-          id: `r${i}`,
-          name: `region_${i}`,
-          color: color.hex,
-          stitch_type: 'fill',
-          density: 0.7,
-          angle: 45 + i * 15,
-          area_mm2: Math.round(area),
-          stitch_count: Math.round(area * 0.7 * 2.5),
-          visible: true,
-          path_points: [[ox, oy], [ox + s, oy], [ox + s, oy + s], [ox, oy + s], [ox, oy]]
-        };
-      });
-    }
+    // FALLBACK: Si Claude falló, retornar error en lugar de generar fake regions
+      if (regions.length === 0) {
+        console.warn('Vector generation failed - no valid regions from Claude');
+        return Response.json({
+          success: false,
+          error: 'No se pudieron generar regiones vectoriales válidas de la imagen',
+          data: { regions: [], total_stitches: 0 }
+        }, { status: 422 });
+      }
 
     const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
     
