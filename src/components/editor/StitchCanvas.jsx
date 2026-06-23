@@ -120,7 +120,14 @@ export default function StitchCanvas({
     ctx.translate(offset.x + W / 2, offset.y + H / 2);
     ctx.scale(zoom, zoom);
 
-    for (const region of regions) {
+    // Filter out "phantom" regions that cover >90% of canvas
+    const canvasArea = drawW * drawH;
+    const validRegions = regions.filter(r => {
+      if ((r.area_mm2 || 0) > canvasArea * 0.9) return false;
+      return true;
+    });
+
+    for (const region of validRegions) {
       if (!region.visible) continue;
 
       const pts = region.path_points;

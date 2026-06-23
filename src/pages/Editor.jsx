@@ -314,7 +314,17 @@ export default function Editor() {
 
           {/* Metrics */}
           <div className="flex items-center gap-4 text-[11px]">
-            <span className="text-slate-600">Puntadas <span className="text-violet-400 font-bold">{totalStitches.toLocaleString()}</span></span>
+            <div className="group relative">
+              <span className="text-slate-600 cursor-help">Puntadas <span className="text-violet-400 font-bold">{totalStitches.toLocaleString()}</span></span>
+              <div className="absolute right-0 bottom-full mb-2 hidden group-hover:block bg-[#0d0f14] border border-[#2a2d3a] rounded-lg p-2 w-48 text-xs text-slate-300 z-10 shadow-xl max-h-48 overflow-y-auto">
+                {regions.map((r, i) => (
+                  <div key={i} className="flex justify-between gap-2 py-1 border-b border-[#1a1d27] last:border-0">
+                    <span className="text-slate-400 truncate">{r.name || `Region ${i+1}`}</span>
+                    <span className="text-violet-400 font-bold flex-shrink-0">{(r.stitch_count || 0).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
             <span className="text-slate-600">Colores <span className="text-cyan-400 font-bold">{colorsUsed}</span></span>
             <span className="text-slate-600">Tamaño <span className="text-emerald-400 font-bold">{config.width_mm}×{config.height_mm}mm</span></span>
           </div>
