@@ -52,35 +52,35 @@ Deno.serve(async (req) => {
 
 ${colorDataBlock}
 
-PASO 1 - DETECTAR ÁREAS DE COLOR SÓLIDO (Primero):
-Identifica todas las áreas homogéneas de color:
-- Cuerpo principal (color sólido)
-- Superficies planas (ropa, piel base)
-- Regiones extensas del mismo color
+ALGORITMO DE BLOQUES DE COLOR SÓLIDO:
+1. Escanea la imagen y localiza cada BLOQUE homogéneo de color
+2. CADA BLOQUE SÓLIDO = 1 REGIÓN (sin agrupar colores cercanos)
+3. Detalles internos (ojos, mejillas, boca) son bloques SEPARADOS del cuerpo
 
-PASO 2 - DETECTAR DETALLES INTERNOS (Segundo - CRÍTICO):
-Dentro de cada región, busca detalles finos como regiones INDEPENDIENTES:
-- Ojos: blanco separado + pupila separada + brillo separado = 3 regiones
-- Mejillas: forma base + sombra/detalle = 2+ regiones
-- Boca: labios + dientes = 2+ regiones
-- Nariz: base + sombra = 2 regiones
-- Cejas, pestañas = regiones separadas si visibles
-- REGLA: Cualquier color/sombra diferente = región nueva independiente
+SEGMENTACIÓN CORRECTA:
+- bloque_cuerpo_principal (color base)
+- bloque_ojo_izq_blanco (área blanca del ojo)
+- bloque_ojo_izq_pupila (pupila oscura)
+- bloque_ojo_izq_brillo (reflejo)
+- bloque_mejilla_rosa (mejilla)
+- bloque_mejilla_sombra (sombra = color diferente)
+- bloque_boca_roja (labios)
+- bloque_diente_blanco (dientes)
 
-PASO 3 - CONTORNOS Y BORDES (Último):
-- Solo si hay líneas oscuras visibles como elementos independientes
-- NO AGRUPAR con rellenos
+REGLAS CRÍTICAS:
+1. **Bloques independientes**: NO agrupar adyacentes (ojo blanco ≠ pupila)
+2. **Cada color diferente**: 2 colores = 2 regiones, incluso si pequeñas
+3. **Áreas homogéneas**: Solo color uniforme dentro del bloque
+4. **INCLUIR TODOS**: Desde cuerpo (~500mm²) hasta reflejos (~5mm²)
 
-ESPECIFICACIONES:
-- name: Jerárquico (ej: "cuerpo", "ojo_izq_blanco", "ojo_izq_pupila", "mejilla_rosa")
-- stitch_type: "fill" (sólido), "satin" (detalle), "running_stitch" (línea)
-- color: Paleta exacta o #rrggbb más cercano
-- area_mm2: Realista (cuerpo ~500mm², ojo ~15mm², mejilla ~50mm²)
-- density: 0.6-0.9
-- layer_order: cuerpo=1, detalles grandes=2-3, finos=4-6, contornos=7+
-- path_points: ${pointsPerShape} puntos, polígono cerrado
-
-CRÍTICO: NO OMITAS PEQUEÑOS DETALLES. Incluye todos.
+PARÁMETROS:
+- name: bloque_ubicacion_color (ej: bloque_ojo_pupila)
+- stitch_type: casi siempre "fill" (es bloque sólido)
+- color: hex exacto
+- area_mm2: estimado real
+- density: 0.7 (estándar)
+- layer_order: cuerpo=1, detalles grandes=2-3, pequeños=4+
+- path_points: ${pointsPerShape} puntos cerrando el contorno
 
 Responde SOLO JSON válido:
 {
@@ -126,10 +126,11 @@ Responde SOLO JSON válido:
       }
     });
 
-    // ─── POST-PROCESAMIENTO: Validar y mejorar regiones ─────────────────────
+    // ─── POST-PROCESAMIENTO: Validar bloques como regiones independientes ─────
     const regions = (result.regions || []).filter(r => {
       // Validar path_points válido
       if (!r.path_points || r.path_points.length < 4) return false;
+      // NO filtrar por área pequeña (mantener detalles)
       // Validar polígono cerrado
       const first = r.path_points[0];
       const last = r.path_points[r.path_points.length - 1];
@@ -138,17 +139,15 @@ Responde SOLO JSON válido:
       }
       return true;
     }).map(r => {
-      // Mejorar clasificación de stitch_type si no viene completa
-      const area = r.area_mm2 || 0;
-      if (!r.stitch_type || r.stitch_type === 'unknown') {
-        if (area >= 100) r.stitch_type = 'fill';
-        else if (area >= 20) r.stitch_type = 'satin';
-        else r.stitch_type = 'running_stitch';
-      }
+      // Para bloques de color sólido: siempre "fill"
+      r.stitch_type = r.stitch_type || 'fill';
       
-      // Calcular stitch_count más precisamente
+      // Calcular stitch_count basado en área y densidad
       if (!r.stitch_count) {
-        const baseCount = area * (r.density || 0.7) * 2.5; // factor optimizado
+        const area = r.area_mm2 || 0;
+        // Bloques pequeños (~5mm²) = ~15-20 stitches, bloques grandes = más
+        const density = r.density || 0.7;
+        const baseCount = Math.max(8, area * density * 2.5);
         r.stitch_count = Math.round(baseCount);
       }
       
