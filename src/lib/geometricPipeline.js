@@ -51,9 +51,9 @@ export async function executeGeometricPipeline(regions, canvasWidth, canvasHeigh
       pts = repairGaps(pts, 0.003);
 
       // Validate
-      const validation = validatePolygon(pts, region.name || `Region ${idx}`);
-      if (!validation.isValid) {
-        pipeline.warnings.push(`Region ${idx}: ${validation.errors.join('; ')}`);
+      const validation = validatePolygon(pts);
+      if (!validation.valid) {
+        pipeline.warnings.push(`Region ${idx}: Polygon validation failed`);
       }
 
       return {
