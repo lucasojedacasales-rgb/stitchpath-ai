@@ -11,7 +11,11 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { pixels, width, height, width_mm = 100, height_mm = 100, color_count = 6 } = await req.json();
+    const { 
+      pixels, width, height, 
+      width_mm = 100, height_mm = 100, color_count = 6,
+      apply_pipeline = true 
+    } = await req.json();
 
     if (!pixels || !width || !height) {
       return Response.json({ error: 'Missing pixels, width, or height' }, { status: 400 });
@@ -113,15 +117,40 @@ Deno.serve(async (req) => {
       }, { status: 422 });
     }
 
-    const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
+    // Apply geometric pipeline if requested
+    let finalRegions = regions;
+    let pipelineReport = null;
+
+    if (apply_pipeline) {
+      try {
+        // NOTE: Pipeline execution happens client-side in pages/Editor.js
+        // This flag indicates that pipeline MUST be applied before stitching
+        pipelineReport = {
+          message: 'Geometric pipeline must be applied client-side',
+          pipeline_required: true,
+          steps: [
+            'Close polygons',
+            'Apply safety offset',
+            'Clip to bounds',
+            'Validate regions'
+          ]
+        };
+      } catch (err) {
+        console.warn('Pipeline execution skipped:', err.message);
+      }
+    }
+
+    const totalStitches = finalRegions.reduce((s, r) => s + (r.stitch_count || 0), 0);
 
     return Response.json({
       success: true,
       data: {
-        regions,
+        regions: finalRegions,
         total_stitches: totalStitches,
-        colors_used: regions.length,
-        generation_method: 'simple_color_detection'
+        colors_used: finalRegions.length,
+        generation_method: 'simple_color_detection',
+        pipeline_report: pipelineReport,
+        vector_source: true // CRITICAL: Indicates regions are vector-based
       }
     });
 

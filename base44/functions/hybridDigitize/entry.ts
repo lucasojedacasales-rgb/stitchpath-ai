@@ -15,13 +15,17 @@ Deno.serve(async (req) => {
     const maxColors = Math.min(color_count || 8, 20);
 
     // ─── CRITICAL: Use real vectorization, not Claude coordinates ────────────
+    // NOTE: Geometric pipeline (Close → Offset → Clip) is executed client-side in pages/Editor.js
     console.log('Using real vectorization (robustVectorization)...');
     
     const vectorRes = await base44.functions.invoke('robustVectorization', {
-      image_url,
+      pixels,
+      width: imageWidth,
+      height: imageHeight,
       width_mm: w,
       height_mm: h,
-      color_count: maxColors
+      color_count: maxColors,
+      apply_pipeline: false // Pipeline runs client-side
     });
 
     if (!vectorRes?.data?.success) {

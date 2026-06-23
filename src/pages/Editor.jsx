@@ -18,6 +18,7 @@ import { preprocessImage } from '@/lib/imagePreprocessor';
 import { analyzeImage } from '@/lib/imageAnalyzer';
 import { traceImageContours } from '@/lib/contourTracer';
 import { extractImagePixels } from '@/lib/imagePixelExtractor';
+import { executeGeometricPipeline, exportPipelineReport } from '@/lib/geometricPipeline';
 
 const DEFAULT_CONFIG = {
   fabric_type: 'Algodón', width_mm: 100, height_mm: 100, color_count: 6,
@@ -347,25 +348,44 @@ export default function Editor() {
           return type === 'fill' ? 'fill' : type === 'satin' ? 'sat' : 'run';
         };
 
+        // ── GEOMETRIC PIPELINE: Close → Offset → Clip ────────────────────────
+        console.log('Executing geometric pipeline on', filtered.length, 'regions...');
+        const pipelineResult = await executeGeometricPipeline(
+          filtered,
+          100, // Canvas width (normalized)
+          100, // Canvas height (normalized)
+          {
+            safetyMargin: 0.5,
+            pullCompensation: config.tension_comp || 0
+          }
+        );
+
+        if (!pipelineResult.success) {
+          throw new Error('Pipeline failed: ' + pipelineResult.error);
+        }
+
+        console.log('Pipeline executed:', exportPipelineReport(pipelineResult));
+        let pipelinedRegions = pipelineResult.regions;
+
         // Clasificar tipos de puntada
-         let processedRegions = filtered.map((r, idx) => {
-           const type = classifyStitchType(r);
-           const colorName = getColorName(r.color);
-           const position = getPosition(r, filtered);
-           const typeAbbr = getStitchAbbr(type);
-           const name = `${position}_${colorName}_${typeAbbr}`;
+        let processedRegions = pipelinedRegions.map((r, idx) => {
+          const type = classifyStitchType(r);
+          const colorName = getColorName(r.color);
+          const position = getPosition(r, pipelinedRegions);
+          const typeAbbr = getStitchAbbr(type);
+          const name = `${position}_${colorName}_${typeAbbr}`;
 
-           return {
-             ...r,
-             name: r.name || name,
-             stitch_type: type,
-             stitch_count: calculateStitchCount({ ...r, stitch_type: type })
-           };
-         });
+          return {
+            ...r,
+            name: r.name || name,
+            stitch_type: type,
+            stitch_count: calculateStitchCount({ ...r, stitch_type: type })
+          };
+        });
 
-         // Optimizar secuencia (reduce saltos) + insertar trims automáticamente
-         processedRegions = optimizeStitchSequence(processedRegions);
-         const newRegions = insertTrims(processedRegions);
+        // Optimizar secuencia (reduce saltos) + insertar trims automáticamente
+        processedRegions = optimizeStitchSequence(processedRegions);
+        const newRegions = insertTrims(processedRegions);
 
          // Recalculate total stitches
          const totalCalculatedStitches = newRegions.reduce((sum, r) => sum + (r.stitch_count || 0), 0);
