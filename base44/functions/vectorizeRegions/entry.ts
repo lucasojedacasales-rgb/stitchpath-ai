@@ -16,22 +16,17 @@ Deno.serve(async (req) => {
     if (!imgResp.ok) return Response.json({ error: 'Could not fetch image' }, { status: 400 });
     const imgBuf = await imgResp.arrayBuffer();
 
-    // Decode PNG/JPEG using canvas via OffscreenCanvas (Deno doesn't have DOM canvas)
-    // We'll use a pure-JS approach: decode via the base44 LLM to get pixel data is impractical,
-    // so we use the sharp-compatible approach via npm:jimp
     const Jimp = (await import('npm:jimp@0.22.12')).Jimp;
     const image = await Jimp.read(Buffer.from(imgBuf));
 
     const origW = image.getWidth();
     const origH = image.getHeight();
 
-    // Work at max 512px for performance
     const scale = Math.min(512 / origW, 512 / origH, 1);
     const W = Math.round(origW * scale);
     const H = Math.round(origH * scale);
     image.resize(W, H);
 
-    // Build flat RGBA array
     const rgba = new Uint8Array(W * H * 4);
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
@@ -44,42 +39,37 @@ Deno.serve(async (req) => {
       }
     }
 
-    // px → mm conversion
-    const pxToMm = (px) => px / scale * (100 / origW); // assume 100mm width by default
-    const mmPerPx = 100 / origW / scale; // 1px in mm
+    const mmPerPx = 100 / origW / scale;
 
-    // ── 2. Canny edge detection (adaptive threshold) ───────────────────────────
+    // ── 2. Canny edge detection (adaptive threshold) ──────────────────────────
     const gray = new Float32Array(W * H);
     for (let i = 0; i < W * H; i++) {
-      const r = rgba[i * 4], g = rgba[i * 4 + 1], b = rgba[i * 4 + 2];
-      gray[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+      const r = rgba[i*4], g = rgba[i*4+1], b = rgba[i*4+2];
+      gray[i] = 0.299*r + 0.587*g + 0.114*b;
     }
 
-    // Gaussian blur 5x5
     const blurred = gaussianBlur(gray, W, H);
-
-    // Sobel gradients
     const { gx, gy, mag } = sobelGradients(blurred, W, H);
 
-    // Adaptive threshold: edgeThreshold * (mean + k*stddev)
     let sum = 0, sum2 = 0;
-    for (let i = 0; i < mag.length; i++) { sum += mag[i]; sum2 += mag[i] * mag[i]; }
+    for (let i = 0; i < mag.length; i++) { sum += mag[i]; sum2 += mag[i]*mag[i]; }
     const mean = sum / mag.length;
     const stddev = Math.sqrt(sum2 / mag.length - mean * mean);
     const highT = edgeThreshold * (mean + 2 * stddev);
     const lowT  = highT * 0.4;
-
     const edges = cannyNMS(mag, gx, gy, W, H, lowT, highT);
+
+    // ── NEW: Harris corner detection ──────────────────────────────────────────
+    const corners = harrisCorners(gx, gy, W, H);
 
     // ── 3. K-means++ with edge constraints ────────────────────────────────────
     const k = Math.max(2, Math.min(colorClusters, 20));
     const samples = [];
     for (let i = 0; i < W * H; i++) {
-      if (rgba[i * 4 + 3] < 128) continue;
+      if (rgba[i*4+3] < 128) continue;
       samples.push({ idx: i, rgb: [rgba[i*4], rgba[i*4+1], rgba[i*4+2]], isEdge: edges[i] > 0 });
     }
 
-    // Init k-means++ from non-edge pixels preferentially
     const nonEdge = samples.filter(s => !s.isEdge);
     const seed = nonEdge.length > 0 ? nonEdge : samples;
     const centroids = [seed[Math.floor(Math.random() * seed.length)].rgb];
@@ -94,7 +84,6 @@ Deno.serve(async (req) => {
       if (centroids.length < k) centroids.push([...seed[seed.length - 1].rgb]);
     }
 
-    // K-means iterations — edge pixels get assigned BUT their label gets special treatment
     const labels = new Int32Array(W * H).fill(-1);
     for (let iter = 0; iter < 15; iter++) {
       const sums = centroids.map(() => [0, 0, 0, 0]);
@@ -111,37 +100,53 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Force edge pixels to boundary (-1) so flood fill treats them as separators
     for (let i = 0; i < W * H; i++) {
       if (edges[i] > 0) labels[i] = -1;
     }
 
-    // ── 4. Flood fill from random seeds per cluster ───────────────────────────
+    // ── 4. Flood fill regions ─────────────────────────────────────────────────
     const minPx = Math.max(4, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
     const regions = floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroids);
 
-    // ── 5 & 6. Extract polygons + metrics ─────────────────────────────────────
-    const epsilonPx = 0.5 / mmPerPx; // 0.5mm in pixels
+    // ── 5. Extract contours + refinement pipeline ─────────────────────────────
+    const edgeAlignThreshold = highT * 0.5; // 50% of high threshold for sub-pixel
     const outputRegions = [];
 
     for (const reg of regions) {
       const contour = traceContour(reg.mask, W, H);
       if (contour.length < 3) continue;
-      const simplified = rdp(contour, epsilonPx);
+
+      // Snap contour to sub-pixel positions via gradient interpolation
+      const subPixelContour = subPixelRefine(contour, mag, gx, gy, W, H, edgeAlignThreshold);
+
+      // Inject Harris corners into contour (ensure key corners are vertices)
+      const cornerSnapped = snapToCorners(subPixelContour, corners, W, H);
+
+      // Active contours refinement (snakes) — iterative, max 50 iters
+      const refined = activeContours(cornerSnapped, mag, gx, gy, W, H, 50);
+
+      // Iterative RDP with edge alignment score check (max 3 rounds)
+      let epsilon = 0.5 / mmPerPx;
+      let simplified = rdp(refined, epsilon);
+      let score = edgeAlignmentScore(simplified, mag, W, H, edgeAlignThreshold);
+      for (let attempt = 0; attempt < 3 && score < 0.95; attempt++) {
+        epsilon *= 0.6; // tighter tolerance → more points
+        simplified = rdp(refined, epsilon);
+        score = edgeAlignmentScore(simplified, mag, W, H, edgeAlignThreshold);
+      }
+
       if (simplified.length < 3) continue;
 
-      // Convert polygon to mm, origin = center of image
+      // Convert to mm with sub-pixel float precision
       const polygon = simplified.map(([x, y]) => [
-        parseFloat(((x - W/2) * mmPerPx).toFixed(3)),
-        parseFloat(((y - H/2) * mmPerPx).toFixed(3))
+        parseFloat(((x - W/2) * mmPerPx).toFixed(4)),
+        parseFloat(((y - H/2) * mmPerPx).toFixed(4)),
       ]);
 
-      // Metrics
       const areaMm2 = reg.pixelCount * mmPerPx * mmPerPx;
       const perimeterMm = contourPerimeterMm(simplified, mmPerPx);
       const compactness = perimeterMm > 0 ? (perimeterMm * perimeterMm) / areaMm2 : 0;
-      const centroid = reg.centroid;
-      const dominantAngle = pca2DAngle(reg.pixels);
+      const dominantAngle = pca2DAngle(reg.pixels, W);
       const isEdgeRegion = reg.bbox.minX === 0 || reg.bbox.minY === 0 || reg.bbox.maxX >= W-1 || reg.bbox.maxY >= H-1;
 
       outputRegions.push({
@@ -152,30 +157,36 @@ Deno.serve(async (req) => {
         perimeter: parseFloat(perimeterMm.toFixed(2)),
         compactness: parseFloat(compactness.toFixed(2)),
         dominantAngle,
+        edgeAlignmentScore: parseFloat(score.toFixed(3)),
         centroid: [
-          parseFloat(((centroid[0] - W/2) * mmPerPx).toFixed(3)),
-          parseFloat(((centroid[1] - H/2) * mmPerPx).toFixed(3))
+          parseFloat(((reg.centroid[0] - W/2) * mmPerPx).toFixed(4)),
+          parseFloat(((reg.centroid[1] - H/2) * mmPerPx).toFixed(4)),
         ],
         boundingBox: {
-          x: parseFloat(((reg.bbox.minX - W/2) * mmPerPx).toFixed(3)),
-          y: parseFloat(((reg.bbox.minY - H/2) * mmPerPx).toFixed(3)),
-          w: parseFloat(((reg.bbox.maxX - reg.bbox.minX) * mmPerPx).toFixed(3)),
-          h: parseFloat(((reg.bbox.maxY - reg.bbox.minY) * mmPerPx).toFixed(3)),
+          x: parseFloat(((reg.bbox.minX - W/2) * mmPerPx).toFixed(4)),
+          y: parseFloat(((reg.bbox.minY - H/2) * mmPerPx).toFixed(4)),
+          w: parseFloat(((reg.bbox.maxX - reg.bbox.minX) * mmPerPx).toFixed(4)),
+          h: parseFloat(((reg.bbox.maxY - reg.bbox.minY) * mmPerPx).toFixed(4)),
         },
         neighbors: [],
         isEdgeRegion,
       });
     }
 
-    // Compute neighbors (regions sharing an edge pixel boundary)
     computeNeighbors(outputRegions, regions, labels, W, H);
 
     return Response.json({
       regions: outputRegions,
       metadata: {
         totalRegions: outputRegions.length,
-        imageSizeMm: [parseFloat((origW * mmPerPx / scale).toFixed(1)), parseFloat((origH * mmPerPx / scale).toFixed(1))],
+        imageSizeMm: [
+          parseFloat((origW * mmPerPx / scale).toFixed(1)),
+          parseFloat((origH * mmPerPx / scale).toFixed(1)),
+        ],
         processingTimeMs: Date.now() - startMs,
+        averageEdgeScore: outputRegions.length > 0
+          ? parseFloat((outputRegions.reduce((s, r) => s + r.edgeAlignmentScore, 0) / outputRegions.length).toFixed(3))
+          : 0,
       }
     });
 
@@ -184,7 +195,187 @@ Deno.serve(async (req) => {
   }
 });
 
-// ── Image Processing Helpers ──────────────────────────────────────────────────
+// ── HARRIS CORNER DETECTION ───────────────────────────────────────────────────
+
+function harrisCorners(gx, gy, W, H, k = 0.04, threshold = 0.01) {
+  const response = new Float32Array(W * H);
+  const R = 2; // window radius
+
+  for (let y = R; y < H - R; y++) {
+    for (let x = R; x < W - R; x++) {
+      let Ixx = 0, Ixy = 0, Iyy = 0;
+      for (let dy = -R; dy <= R; dy++) {
+        for (let dx = -R; dx <= R; dx++) {
+          const i = (y + dy) * W + (x + dx);
+          Ixx += gx[i] * gx[i];
+          Ixy += gx[i] * gy[i];
+          Iyy += gy[i] * gy[i];
+        }
+      }
+      const det = Ixx * Iyy - Ixy * Ixy;
+      const trace = Ixx + Iyy;
+      response[y * W + x] = det - k * trace * trace;
+    }
+  }
+
+  // Non-maximum suppression, collect corners above threshold
+  const maxResp = Math.max(...response);
+  const corners = [];
+  for (let y = R; y < H - R; y++) {
+    for (let x = R; x < W - R; x++) {
+      const v = response[y * W + x];
+      if (v < threshold * maxResp) continue;
+      // Check local max in 3x3
+      let isMax = true;
+      for (let dy = -1; dy <= 1 && isMax; dy++) {
+        for (let dx = -1; dx <= 1 && isMax; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          if (response[(y+dy)*W+(x+dx)] >= v) isMax = false;
+        }
+      }
+      if (isMax) corners.push([x, y]);
+    }
+  }
+  return corners;
+}
+
+// ── SUB-PIXEL CONTOUR REFINEMENT ──────────────────────────────────────────────
+
+function subPixelRefine(contour, mag, gx, gy, W, H, threshold) {
+  return contour.map(([x, y]) => {
+    const i = Math.round(y) * W + Math.round(x);
+    if (i < 0 || i >= mag.length || mag[i] < threshold * 0.5) return [x, y];
+
+    // Move point toward gradient maximum using bilinear interpolation
+    const gmag = mag[i];
+    if (gmag < 1e-6) return [x, y];
+
+    // Sub-pixel offset: perpendicular to gradient direction
+    const nx = gx[i] / gmag, ny = gy[i] / gmag;
+    // Sample gradient along normal at ±0.5px, find peak
+    const fp = bilinearSample(mag, x + nx * 0.5, y + ny * 0.5, W, H);
+    const fn = bilinearSample(mag, x - nx * 0.5, y - ny * 0.5, W, H);
+    // Quadratic peak fit: offset = (fp - fn) / (2 * (fp + fn - 2*gmag))
+    const denom = fp + fn - 2 * gmag;
+    const offset = Math.abs(denom) > 1e-6 ? (fp - fn) / (2 * denom) : 0;
+    return [x + nx * offset * 0.5, y + ny * offset * 0.5];
+  });
+}
+
+function bilinearSample(arr, x, y, W, H) {
+  const x0 = Math.max(0, Math.min(W-2, Math.floor(x)));
+  const y0 = Math.max(0, Math.min(H-2, Math.floor(y)));
+  const fx = x - x0, fy = y - y0;
+  return arr[y0*W+x0]*(1-fx)*(1-fy) + arr[y0*W+x0+1]*fx*(1-fy) +
+         arr[(y0+1)*W+x0]*(1-fx)*fy + arr[(y0+1)*W+x0+1]*fx*fy;
+}
+
+// ── SNAP CONTOUR TO HARRIS CORNERS ───────────────────────────────────────────
+
+function snapToCorners(contour, corners, W, H) {
+  if (!corners.length) return contour;
+  const snapRadius = 3; // pixels
+  // Mark which contour indices are near corners
+  const snapRadSq = snapRadius * snapRadius;
+  const result = [];
+
+  for (let i = 0; i < contour.length; i++) {
+    const [cx, cy] = contour[i];
+    let bestCorner = null, bestDist = snapRadSq;
+    for (const [cornX, cornY] of corners) {
+      const d = (cx - cornX) ** 2 + (cy - cornY) ** 2;
+      if (d < bestDist) { bestDist = d; bestCorner = [cornX, cornY]; }
+    }
+    // Insert corner as exact vertex, preserving the sharp angle
+    if (bestCorner) {
+      result.push(bestCorner);
+    } else {
+      result.push(contour[i]);
+    }
+  }
+  return result;
+}
+
+// ── ACTIVE CONTOURS (SNAKES) ──────────────────────────────────────────────────
+
+function activeContours(contour, mag, gx, gy, W, H, maxIter = 50) {
+  if (contour.length < 3) return contour;
+
+  // Convert to mutable float array
+  let pts = contour.map(([x, y]) => [x, y]);
+  const alpha = 0.3;  // smoothness weight
+  const beta  = 0.1;  // rigidity weight
+  const gamma = 0.5;  // gradient attraction weight
+  const step  = 0.4;  // gradient step size
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    let maxDelta = 0;
+    const next = pts.map((p, i) => [...p]);
+
+    for (let i = 0; i < pts.length; i++) {
+      const prev = pts[(i - 1 + pts.length) % pts.length];
+      const curr = pts[i];
+      const nxt  = pts[(i + 1) % pts.length];
+
+      // Internal energy: elastic term (alpha) + curvature term (beta)
+      const elasticX = alpha * (prev[0] + nxt[0] - 2 * curr[0]);
+      const elasticY = alpha * (prev[1] + nxt[1] - 2 * curr[1]);
+
+      const pprev = pts[(i - 2 + pts.length) % pts.length];
+      const nnxt  = pts[(i + 2) % pts.length];
+      const rigidX = -beta * (pprev[0] - 4*prev[0] + 6*curr[0] - 4*nxt[0] + nnxt[0]);
+      const rigidY = -beta * (pprev[1] - 4*prev[1] + 6*curr[1] - 4*nxt[1] + nnxt[1]);
+
+      // External energy: gradient force
+      const x = curr[0], y = curr[1];
+      const ix = Math.max(0, Math.min(W-1, Math.round(x)));
+      const iy = Math.max(0, Math.min(H-1, Math.round(y)));
+      const idx = iy * W + ix;
+      const gradX = gamma * gx[idx];
+      const gradY = gamma * gy[idx];
+
+      const dx = (elasticX + rigidX + gradX) * step;
+      const dy = (elasticY + rigidY + gradY) * step;
+
+      next[i][0] = Math.max(0, Math.min(W - 1, curr[0] + dx));
+      next[i][1] = Math.max(0, Math.min(H - 1, curr[1] + dy));
+
+      const delta = Math.hypot(dx, dy);
+      if (delta > maxDelta) maxDelta = delta;
+    }
+
+    pts = next;
+    if (maxDelta < 0.01) break; // convergence
+  }
+
+  return pts;
+}
+
+// ── EDGE ALIGNMENT SCORE ──────────────────────────────────────────────────────
+
+function edgeAlignmentScore(polygon, mag, W, H, threshold) {
+  if (polygon.length < 2) return 0;
+  let totalSamples = 0, onEdge = 0;
+
+  for (let i = 0; i < polygon.length; i++) {
+    const a = polygon[i], b = polygon[(i + 1) % polygon.length];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const steps = Math.max(2, Math.ceil(len));
+
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const x = a[0] + t * (b[0] - a[0]);
+      const y = a[1] + t * (b[1] - a[1]);
+      const ix = Math.max(0, Math.min(W-1, Math.round(x)));
+      const iy = Math.max(0, Math.min(H-1, Math.round(y)));
+      totalSamples++;
+      if (mag[iy * W + ix] >= threshold) onEdge++;
+    }
+  }
+  return totalSamples > 0 ? onEdge / totalSamples : 0;
+}
+
+// ── ORIGINAL HELPERS (unchanged) ─────────────────────────────────────────────
 
 function gaussianBlur(gray, W, H) {
   const kernel = [1,4,6,4,1, 4,16,24,16,4, 6,24,36,24,6, 4,16,24,16,4, 1,4,6,4,1];
@@ -231,38 +422,31 @@ function cannyNMS(mag, gx, gy, W, H, lowT, highT) {
       const angle = Math.atan2(gy[i], gx[i]) * 180 / Math.PI;
       const a = ((angle + 180) % 180);
       let n1, n2;
-      if (a < 22.5 || a >= 157.5)      { n1 = mag[i-1];   n2 = mag[i+1]; }
-      else if (a < 67.5)               { n1 = mag[(y-1)*W+x+1]; n2 = mag[(y+1)*W+x-1]; }
-      else if (a < 112.5)              { n1 = mag[(y-1)*W+x]; n2 = mag[(y+1)*W+x]; }
-      else                             { n1 = mag[(y-1)*W+x-1]; n2 = mag[(y+1)*W+x+1]; }
+      if (a < 22.5 || a >= 157.5)  { n1 = mag[i-1]; n2 = mag[i+1]; }
+      else if (a < 67.5)           { n1 = mag[(y-1)*W+x+1]; n2 = mag[(y+1)*W+x-1]; }
+      else if (a < 112.5)          { n1 = mag[(y-1)*W+x]; n2 = mag[(y+1)*W+x]; }
+      else                         { n1 = mag[(y-1)*W+x-1]; n2 = mag[(y+1)*W+x+1]; }
       if (mag[i] >= n1 && mag[i] >= n2 && mag[i] >= highT) nms[i] = mag[i];
     }
   }
   return nms;
 }
 
-// ── Flood Fill Regions ────────────────────────────────────────────────────────
-
 function floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroids) {
-  const regionMap = new Int32Array(W * H).fill(-1);
   const regions = [];
   let nextId = 0;
-
   for (let ci = 0; ci < k; ci++) {
     const visited = new Uint8Array(W * H);
     for (let start = 0; start < W * H; start++) {
       if (labels[start] !== ci || visited[start]) continue;
       const stack = [start];
       const pixelList = [];
-      let minX = W, maxX = 0, minY = H, maxY = 0;
-      let sx = 0, sy = 0;
-
+      let minX = W, maxX = 0, minY = H, maxY = 0, sx = 0, sy = 0;
       while (stack.length > 0) {
         const idx = stack.pop();
         if (visited[idx] || labels[idx] !== ci) continue;
         visited[idx] = 1;
         pixelList.push(idx);
-        regionMap[idx] = nextId;
         const x = idx % W, y = Math.floor(idx / W);
         sx += x; sy += y;
         if (x < minX) minX = x; if (x > maxX) maxX = x;
@@ -272,24 +456,13 @@ function floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroids) {
         if (y > 0) stack.push(idx - W);
         if (y < H-1) stack.push(idx + W);
       }
-
-      if (pixelList.length < minPx) {
-        // Reassign to nearest non-edge neighbor color
-        for (const px of pixelList) regionMap[px] = -2; // mark for reassignment
-        continue;
-      }
-
+      if (pixelList.length < minPx) continue;
       const mask = new Uint8Array(W * H);
       for (const px of pixelList) mask[px] = 1;
-
-      const hex = rgbToHex(centroids[ci]);
       regions.push({
         id: `region_${String(nextId + 1).padStart(3, '0')}`,
-        colorIdx: ci,
-        hex,
-        mask,
-        pixels: pixelList,
-        pixelCount: pixelList.length,
+        colorIdx: ci, hex: rgbToHex(centroids[ci]),
+        mask, pixels: pixelList, pixelCount: pixelList.length,
         centroid: [sx / pixelList.length, sy / pixelList.length],
         bbox: { minX, maxX, minY, maxY },
       });
@@ -298,8 +471,6 @@ function floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroids) {
   }
   return regions;
 }
-
-// ── Contour Tracing ───────────────────────────────────────────────────────────
 
 function traceContour(mask, W, H) {
   let start = -1;
@@ -325,8 +496,6 @@ function traceContour(mask, W, H) {
   return contour;
 }
 
-// ── RDP Simplification ────────────────────────────────────────────────────────
-
 function rdp(pts, eps) {
   if (pts.length <= 2) return pts;
   let maxD = 0, maxI = 0;
@@ -348,8 +517,6 @@ function ptSegDist([px,py],[ax,ay],[bx,by]) {
   return Math.hypot(px-(ax+t*dx), py-(ay+t*dy));
 }
 
-// ── Metrics ───────────────────────────────────────────────────────────────────
-
 function contourPerimeterMm(pts, mmPerPx) {
   let p = 0;
   for (let i = 0; i < pts.length; i++) {
@@ -359,22 +526,20 @@ function contourPerimeterMm(pts, mmPerPx) {
   return p * mmPerPx;
 }
 
-function pca2DAngle(pixelIndices) {
+function pca2DAngle(pixelIndices, W = 512) {
   if (!pixelIndices || pixelIndices.length < 2) return 0;
-  // Use up to 500 random samples for speed
   const sample = pixelIndices.length > 500
     ? pixelIndices.filter((_, i) => i % Math.ceil(pixelIndices.length / 500) === 0)
     : pixelIndices;
   let mx = 0, my = 0;
-  for (const idx of sample) { mx += idx % 512; my += Math.floor(idx / 512); } // approx W=512
+  for (const idx of sample) { mx += idx % W; my += Math.floor(idx / W); }
   mx /= sample.length; my /= sample.length;
   let cxx = 0, cxy = 0, cyy = 0;
   for (const idx of sample) {
-    const dx = idx % 512 - mx, dy = Math.floor(idx / 512) - my;
+    const dx = idx % W - mx, dy = Math.floor(idx / W) - my;
     cxx += dx*dx; cxy += dx*dy; cyy += dy*dy;
   }
-  const angle = 0.5 * Math.atan2(2*cxy, cxx - cyy) * 180 / Math.PI;
-  return parseFloat(angle.toFixed(1));
+  return parseFloat((0.5 * Math.atan2(2*cxy, cxx - cyy) * 180 / Math.PI).toFixed(1));
 }
 
 function computeNeighbors(outputRegions, rawRegions, labels, W, H) {
@@ -385,7 +550,6 @@ function computeNeighbors(outputRegions, rawRegions, labels, W, H) {
   }
   const neighborSets = {};
   for (const or of outputRegions) neighborSets[or.id] = new Set();
-
   for (let i = 0; i < W * H; i++) {
     const id = idByMaskIdx.get(i);
     if (!id) continue;
@@ -401,8 +565,6 @@ function computeNeighbors(outputRegions, rawRegions, labels, W, H) {
     or.neighbors = Array.from(neighborSets[or.id] || []);
   }
 }
-
-// ── Tiny Helpers ──────────────────────────────────────────────────────────────
 
 function distSq(a, b) { return (a[0]-b[0])**2+(a[1]-b[1])**2+(a[2]-b[2])**2; }
 function nearestIdx(rgb, palette) {
