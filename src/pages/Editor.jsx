@@ -154,12 +154,7 @@ export default function Editor() {
         mode: config.mode,
         width_mm: config.width_mm,
         height_mm: config.height_mm,
-        color_count: config.color_count,
-        remove_bg: config.remove_bg,
-        use_ia_vision: config.use_ia_vision,
-        use_full_bg: config.use_full_bg,
-        image_analysis: imageAnalysis,
-        traced_contours: tracedContours,
+        color_count: config.color_count
       });
 
       if (res.data?.success) {

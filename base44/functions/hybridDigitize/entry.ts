@@ -1,146 +1,193 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
-// Fetch image and re-upload via Base44 UploadFile so Claude Vision can access it
-async function reuploadForClaude(imageUrl, base44) {
-  try {
-    const res = await fetch(imageUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-    if (!res.ok) return imageUrl; // fallback to original URL if fetch fails
-    const contentType = res.headers.get('content-type') || 'image/png';
-    const buffer = await res.arrayBuffer();
-    const ext = contentType.includes('png') ? 'png' : contentType.includes('gif') ? 'gif' : contentType.includes('webp') ? 'webp' : 'jpg';
-    const file = new File([buffer], `image.${ext}`, { type: contentType });
-    const uploaded = await base44.asServiceRole.integrations.Core.UploadFile({ file });
-    return uploaded.file_url;
-  } catch (e) {
-    return imageUrl; // fallback: use original URL if re-upload fails
-  }
-}
-
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { image_url, mode, width_mm, height_mm, color_count, use_ia_vision, image_analysis, traced_contours } = await req.json();
+    const { image_url, mode, width_mm, height_mm, color_count } = await req.json();
 
     if (!image_url) return Response.json({ error: 'image_url required' }, { status: 400 });
 
-    const maxColors = Math.min(color_count || 8, 20);
     const w = width_mm || 100;
     const h = height_mm || 100;
+    const maxColors = Math.min(color_count || 8, 20);
 
-    // Re-upload image so Claude Vision always gets a valid Base44-hosted URL
-    const imageDataUrl = await reuploadForClaude(image_url, base44);
+    // ─── CRITICAL: Use real vectorization, not Claude coordinates ────────────
+    console.log('Using real vectorization (robustVectorization)...');
     
-    // Pre-analyze colors for better accuracy
-    let colorData = '';
-    if (image_analysis?.dominantColors?.length > 0) {
-      colorData = `COLORES DETECTADOS EN LA IMAGEN:\n${image_analysis.dominantColors.slice(0, 8).map((c, i) => `${i+1}. ${c.hex} - ${Math.round(c.coverage * 100)}% de cobertura`).join('\n')}\n\n`;
-    }
-
-    // ─── PATH B: Pure AI generation (mejor detección de detalles) ──────────────
-    const regionTarget = mode === 'ultra' ? '80-120' : mode === 'precision' ? '50-80' : mode === 'standard' ? '15-30' : '30-60';
-    const pointsPerShape = mode === 'ultra' ? '40-80' : mode === 'precision' ? '30-60' : '15-40';
-
-    let colorDataBlock = '';
-    if (image_analysis?.dominantColors?.length > 0) {
-      colorDataBlock = `\nPALETA DE COLORES DETECTADA:\n${image_analysis.dominantColors.slice(0, 12).map((c, i) => `${i+1}. ${c.hex} - ${(c.coverage * 100).toFixed(1)}% cobertura - REUSAR EXACTAMENTE ESTE COLOR`).join('\n')}\n`;
-    }
-
-    const prompt = `Analiza esta imagen de bordado y devuelve regiones de color como JSON.
-
-IMPORTANTE: Devuelve SOLO JSON válido, sin markdown ni explicaciones.
-
-REGLAS:
-- Cada región = área de color uniforme
-- path_points: coordenadas normalizadas 0-1, lista cerrada [[x,y],...]
-- Mínimo 3 puntos por región
-- color: hex color (ej: #ff0000)
-- stitch_type: "fill" para áreas grandes, "satin" para líneas, "running_stitch" para contornos
-
-ESTRUCTURA JSON:
-{
-  "regions": [
-    {"id":"r0","name":"area_1","color":"#9d5c9d","stitch_type":"fill","density":0.7,"angle":45,"path_points":[[0,0],[1,0],[1,1],[0,1],[0,0]],"area_mm2":500,"stitch_count":875}
-  ],
-  "total_stitches":875,
-  "colors_used":1
-}`;
-
-    const result = await base44.asServiceRole.integrations.Core.InvokeLLM({
-      prompt,
-      file_urls: [imageDataUrl],
-      model: 'claude_sonnet_4_6',
-      response_json_schema: {
-        type: 'object',
-        properties: {
-          regions: { type: 'array', items: { type: 'object' } },
-          total_stitches: { type: 'number' },
-          estimated_time_min: { type: 'number' },
-          colors_used: { type: 'number' },
-          width_mm: { type: 'number' },
-          height_mm: { type: 'number' }
-        }
-      }
+    const vectorRes = await base44.functions.invoke('robustVectorization', {
+      image_url,
+      width_mm: w,
+      height_mm: h,
+      color_count: maxColors
     });
 
-    // Procesar respuesta de Claude (puede venir anidada)
-    let regions = [];
-    try {
-      const data = result.response?.regions ? result.response : result;
-      regions = (data.regions || [])
-        .filter(r => r?.path_points && Array.isArray(r.path_points) && r.path_points.length >= 3)
-        .map(r => {
-          // Asegurar polígono cerrado
-          const pts = r.path_points;
-          const first = pts[0];
-          const last = pts[pts.length - 1];
-          if (Math.hypot(first[0] - last[0], first[1] - last[1]) > 0.01) {
-            pts.push([...first]);
-          }
-          
-          return {
-            id: r.id || `r${Math.random()}`,
-            name: r.name || `region_${Math.random()}`,
-            color: r.color || '#9d5c9d',
-            stitch_type: r.stitch_type || 'fill',
-            density: r.density ?? 0.7,
-            angle: r.angle ?? 45,
-            path_points: pts,
-            area_mm2: r.area_mm2 || (Math.random() * 500 + 100),
-            stitch_count: r.stitch_count || Math.round((r.area_mm2 || 300) * (r.density ?? 0.7) * 2.5),
-            visible: true
-          };
-        });
-    } catch (e) {
-      console.warn('Error parsing Claude response:', e);
+    if (!vectorRes?.data?.success) {
+      return Response.json({
+        success: false,
+        error: vectorRes?.data?.error || 'Vectorization failed',
+        data: { regions: [], total_stitches: 0 }
+      }, { status: 422 });
     }
 
-    // FALLBACK: Si Claude falló, retornar error en lugar de generar fake regions
-      if (regions.length === 0) {
-        console.warn('Vector generation failed - no valid regions from Claude');
-        return Response.json({
-          success: false,
-          error: 'No se pudieron generar regiones vectoriales válidas de la imagen',
-          data: { regions: [], total_stitches: 0 }
-        }, { status: 422 });
+    let regions = vectorRes.data.data?.regions || [];
+
+    if (regions.length === 0) {
+      return Response.json({
+        success: false,
+        error: 'No valid regions extracted from image',
+        data: { regions: [], total_stitches: 0 }
+      }, { status: 422 });
+    }
+
+    // ─── Classification & Optimization ────────────────────────────────────
+    
+    // Clasificación inteligente de tipo de puntada (geométrica)
+    const classifyStitchType = (region) => {
+      const hex = (region.color || '').toLowerCase();
+      const isDark = hex === '#000000' || hex === '#1a1a1a';
+
+      if (isDark) return 'running_stitch';
+
+      const area = region.area_mm2 || 0;
+      const perim = region.perimeter_mm || 1;
+      const avgWidth = perim > 0 ? area / perim : 0;
+      const compactness = perim > 0 ? (perim * perim) / Math.max(area, 1) : 999;
+
+      if (area < 30) return 'running_stitch';
+      if (area > 500 && avgWidth > 8) return 'fill';
+      if (avgWidth < 2.5 || compactness > 20) return 'satin';
+      if (area < 100 || compactness > 12) return 'satin';
+      return 'fill';
+    };
+
+    // Optimización de secuencia (reduce saltos)
+    const optimizeStitchSequence = (blocks) => {
+      if (blocks.length <= 1) return blocks;
+
+      const colorGroups = {};
+      blocks.forEach((b, i) => {
+        const c = b.color || b.color_index || 0;
+        if (!colorGroups[c]) colorGroups[c] = [];
+        colorGroups[c].push({ ...b, idx: i });
+      });
+
+      const optimized = [];
+      Object.keys(colorGroups).sort().forEach(color => {
+        const group = colorGroups[color];
+        if (group.length <= 1) {
+          optimized.push(...group);
+          return;
+        }
+
+        const visited = new Set();
+        const ordered = [group[0]];
+        visited.add(0);
+
+        for (let i = 1; i < group.length; i++) {
+          const lastBlock = ordered[ordered.length - 1];
+          const lastX = lastBlock.centroid?.[0] ?? 0.5;
+          const lastY = lastBlock.centroid?.[1] ?? 0.5;
+
+          let minDist = Infinity, nextIdx = -1;
+          for (let j = 0; j < group.length; j++) {
+            if (visited.has(j)) continue;
+            const b = group[j];
+            const bx = b.centroid?.[0] ?? 0.5;
+            const by = b.centroid?.[1] ?? 0.5;
+            const dist = Math.hypot(bx - lastX, by - lastY);
+            if (dist < minDist) { minDist = dist; nextIdx = j; }
+          }
+
+          ordered.push(group[nextIdx]);
+          visited.add(nextIdx);
+        }
+
+        optimized.push(...ordered);
+      });
+
+      return optimized;
+    };
+
+    // Inserción automática de trims
+    const insertTrims = (blocks) => {
+      const MAX_JUMP_MM = 7.0;
+      const result = [];
+
+      for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i];
+
+        if (i > 0) {
+          const prevBlock = result[result.length - 1];
+          const prevCentroid = prevBlock.centroid || [0.5, 0.5];
+          const currCentroid = block.centroid || [0.5, 0.5];
+          const dist = Math.hypot(
+            (currCentroid[0] - prevCentroid[0]) * w,
+            (currCentroid[1] - prevCentroid[1]) * h
+          );
+
+          if (dist > MAX_JUMP_MM) {
+            block.has_jump_before = true;
+          }
+        }
+
+        result.push(block);
       }
 
-    const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
-    
-    return Response.json({ 
-      success: true, 
+      return result;
+    };
+
+    const calculateStitchCount = (region) => {
+      const type = region.stitch_type;
+      const area = region.area_mm2 || 0;
+      const perim = region.perimeter_mm || 1;
+      const density = region.density || 0.7;
+
+      if (type === 'fill') {
+        return Math.round(area * density * 2.5);
+      } else if (type === 'satin') {
+        const width = Math.max(1, area / perim);
+        const stitchLength = 2.5;
+        return Math.round((perim / stitchLength) * (width / Math.max(0.4, density)));
+      } else {
+        const stitchLength = 1.5;
+        return Math.round(perim / stitchLength);
+      }
+    };
+
+    // Procesar regiones
+    let processedRegions = regions.map((r, idx) => {
+      const type = classifyStitchType(r);
+      return {
+        ...r,
+        stitch_type: type,
+        stitch_count: calculateStitchCount({ ...r, stitch_type: type })
+      };
+    });
+
+    // Optimizar secuencia + insertar trims
+    processedRegions = optimizeStitchSequence(processedRegions);
+    processedRegions = insertTrims(processedRegions);
+
+    const totalStitches = processedRegions.reduce((sum, r) => sum + (r.stitch_count || 0), 0);
+
+    return Response.json({
+      success: true,
       data: {
-        regions,
+        regions: processedRegions,
         total_stitches: totalStitches,
         estimated_time_min: Math.round(totalStitches / 800),
-        colors_used: new Set(regions.map(r => r.color)).size,
+        colors_used: new Set(processedRegions.map(r => r.color)).size,
         width_mm: w,
-        height_mm: h
+        height_mm: h,
+        generation_method: 'real_vectorization'
       }
     });
+
   } catch (error) {
+    console.error('hybridDigitize error:', error);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
