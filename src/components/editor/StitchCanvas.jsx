@@ -33,27 +33,32 @@ export default function StitchCanvas({ imageUrl, regions, selectedRegionId, onRe
     ctx.fillStyle = '#1a1a2e';
     ctx.fillRect(0, 0, W, H);
 
-    // Grid
     drawGrid(ctx, W, H, zoom, offset);
 
     ctx.save();
     ctx.translate(offset.x + W / 2, offset.y + H / 2);
     ctx.scale(zoom, zoom);
 
+    // Compute image draw size once — regions use the SAME drawW/drawH
+    let drawW = W * 0.75, drawH = H * 0.75;
+    if (imageRef.current) {
+      const iw = imageRef.current.width, ih = imageRef.current.height;
+      const imgScale = Math.min(W * 0.75 / iw, H * 0.75 / ih);
+      drawW = iw * imgScale;
+      drawH = ih * imgScale;
+    }
+
     // Draw image
     if (imageRef.current && imageOpacity > 0) {
       ctx.globalAlpha = imageOpacity / 100;
       ctx.imageSmoothingEnabled = zoom < 4;
-      const iw = imageRef.current.width, ih = imageRef.current.height;
-      const scale = Math.min(W * 0.7 / iw, H * 0.7 / ih);
-      ctx.drawImage(imageRef.current, -iw * scale / 2, -ih * scale / 2, iw * scale, ih * scale);
+      ctx.drawImage(imageRef.current, -drawW / 2, -drawH / 2, drawW, drawH);
       ctx.globalAlpha = 1;
     }
 
-    // Draw stitch regions
+    // Draw stitch regions — same coordinate space as the image
     if (regions && stitchOpacity > 0) {
       ctx.globalAlpha = stitchOpacity / 100;
-      const drawW = W * 0.7, drawH = H * 0.7;
 
       for (const region of regions) {
         if (!region.visible) continue;
@@ -67,36 +72,35 @@ export default function StitchCanvas({ imageUrl, regions, selectedRegionId, onRe
         const isHovered = region.id === hoveredRegion;
         const color = region.color || '#ffffff';
 
+        // pts are normalized 0-1, map to image draw space
+        const px = p => (p[0] - 0.5) * drawW;
+        const py = p => (p[1] - 0.5) * drawH;
+
         ctx.strokeStyle = color;
-        ctx.fillStyle = color + '33';
+        ctx.fillStyle = color + '44';
         ctx.lineWidth = (isSelected ? 2.5 : 1.5) / zoom;
 
-        // Draw region outline
         ctx.beginPath();
-        ctx.moveTo((pts[0][0] - 0.5) * drawW, (pts[0][1] - 0.5) * drawH);
-        for (let i = 1; i < pts.length; i++) {
-          ctx.lineTo((pts[i][0] - 0.5) * drawW, (pts[i][1] - 0.5) * drawH);
-        }
+        ctx.moveTo(px(pts[0]), py(pts[0]));
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(px(pts[i]), py(pts[i]));
         ctx.closePath();
         if (region.stitch_type === 'fill') ctx.fill();
         ctx.stroke();
 
-        // Draw stitch lines inside
         if (region.stitch_type === 'fill' || region.stitch_type === 'satin') {
           drawStitchLines(ctx, pts, region, drawW, drawH, zoom);
         }
 
-        // Selection highlight
         if (isSelected || isHovered) {
           ctx.strokeStyle = isSelected ? '#7c3aed' : '#06b6d4';
           ctx.lineWidth = (isSelected ? 3 : 2) / zoom;
+          ctx.setLineDash([4 / zoom, 3 / zoom]);
           ctx.beginPath();
-          ctx.moveTo((pts[0][0] - 0.5) * drawW, (pts[0][1] - 0.5) * drawH);
-          for (let i = 1; i < pts.length; i++) {
-            ctx.lineTo((pts[i][0] - 0.5) * drawW, (pts[i][1] - 0.5) * drawH);
-          }
+          ctx.moveTo(px(pts[0]), py(pts[0]));
+          for (let i = 1; i < pts.length; i++) ctx.lineTo(px(pts[i]), py(pts[i]));
           ctx.closePath();
           ctx.stroke();
+          ctx.setLineDash([]);
         }
       }
       ctx.globalAlpha = 1;
@@ -145,22 +149,29 @@ export default function StitchCanvas({ imageUrl, regions, selectedRegionId, onRe
   function drawStitchLines(ctx, pts, region, drawW, drawH, zoom) {
     const angle = ((region.angle || 45) * Math.PI) / 180;
     const density = region.density || 0.8;
-    const spacing = Math.max(2, 8 / density) / zoom;
-    
+    const spacing = Math.max(1.5, 6 / density) / zoom;
+
+    // Build the clipping path first so stitch lines stay inside the region
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo((pts[0][0] - 0.5) * drawW, (pts[0][1] - 0.5) * drawH);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo((pts[i][0] - 0.5) * drawW, (pts[i][1] - 0.5) * drawH);
+    ctx.closePath();
+    ctx.clip();
+
     const minX = Math.min(...pts.map(p => (p[0] - 0.5) * drawW));
     const maxX = Math.max(...pts.map(p => (p[0] - 0.5) * drawW));
     const minY = Math.min(...pts.map(p => (p[1] - 0.5) * drawH));
     const maxY = Math.max(...pts.map(p => (p[1] - 0.5) * drawH));
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
 
-    ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(angle);
     ctx.strokeStyle = region.color || '#ffffff';
-    ctx.lineWidth = 0.8 / zoom;
-    ctx.globalAlpha *= 0.6;
+    ctx.lineWidth = 0.7 / zoom;
+    ctx.globalAlpha *= 0.5;
 
-    const diagLen = Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2);
+    const diagLen = Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2) + spacing * 2;
     for (let y = -diagLen; y < diagLen; y += spacing) {
       ctx.beginPath();
       ctx.moveTo(-diagLen, y);
@@ -217,8 +228,16 @@ export default function StitchCanvas({ imageUrl, regions, selectedRegionId, onRe
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
     const W = canvas.width, H = canvas.height;
-    const nx = ((mx - offset.x - W / 2) / zoom) / (W * 0.7) + 0.5;
-    const ny = ((my - offset.y - H / 2) / zoom) / (H * 0.7) + 0.5;
+    // Use same drawW/drawH logic as drawCanvas
+    let drawW = W * 0.75, drawH = H * 0.75;
+    if (imageRef.current) {
+      const iw = imageRef.current.width, ih = imageRef.current.height;
+      const imgScale = Math.min(W * 0.75 / iw, H * 0.75 / ih);
+      drawW = iw * imgScale;
+      drawH = ih * imgScale;
+    }
+    const nx = ((mx - offset.x - W / 2) / zoom) / drawW + 0.5;
+    const ny = ((my - offset.y - H / 2) / zoom) / drawH + 0.5;
 
     let found = null;
     for (const region of regions) {

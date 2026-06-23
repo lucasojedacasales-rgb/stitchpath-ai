@@ -14,38 +14,43 @@ Deno.serve(async (req) => {
     const w = width_mm || 100;
     const h = height_mm || 100;
 
-    const prompt = `Eres un experto digitalizador de bordados con visión computacional. Analiza VISUALMENTE esta imagen con máxima precisión.
+    const prompt = `Eres un experto digitalizador de bordados con visión computacional avanzada. Tu tarea principal es trazar con MÁXIMA PRECISIÓN los contornos de cada elemento visible en la imagen.
 
-TAREA: Genera regiones de bordado que reproduzcan fielmente las formas reales visibles en la imagen.
-TAMAÑO: ${w}mm × ${h}mm
-COLORES MÁXIMOS: ${maxColors}
-MODO: ${mode || 'hybrid'}
+CONFIGURACIÓN:
+- Tamaño objetivo: ${w}mm × ${h}mm
+- Colores máximos: ${maxColors}
+- Modo: ${mode || 'hybrid'}
 
-INSTRUCCIONES CRÍTICAS:
-1. MIRA la imagen con atención. Identifica cada zona de color/forma diferenciada (cuerpo principal, ojos, boca, mejillas, extremidades, contornos, etc.)
-2. Para cada zona, traza un path_points que siga el CONTORNO REAL de esa forma en la imagen.
-   - Los puntos son coordenadas normalizadas (0.0 a 1.0) donde (0,0) es arriba-izquierda y (1,1) es abajo-derecha.
-   - Usa entre 8 y 30 puntos por región para capturar bien la forma.
-   - El primer y último punto deben ser iguales (polígono cerrado).
-   - Para formas curvas (círculos, elipses), genera suficientes puntos para aproximar bien la curva.
-3. Los colores deben ser los colores HEX reales extraídos de la imagen, no inventados.
-4. Ordena las regiones de mayor a menor área (fondo primero, detalles al final).
-5. Clasifica el stitch_type:
-   - fill: áreas grandes con color sólido
-   - satin: tiras estrechas, contornos gruesos, bordes
-   - running_stitch: contornos finos, detalles muy pequeños
+PASO 1 — ANÁLISIS VISUAL:
+Examina la imagen en detalle. Identifica TODOS los elementos visuales diferenciados: silueta principal, sub-formas internas, ojos, boca, mejillas, extremidades, sombras, contornos oscuros, detalles pequeños, etc.
 
-IMPORTANTE: No generes formas genéricas (rectángulos, círculos perfectos). Los path_points deben reflejar la silueta real de cada elemento de la imagen.
+PASO 2 — TRAZADO DE CONTORNOS (CRÍTICO):
+Para cada elemento, genera path_points que sigan el contorno REAL píxel a píxel:
+- Coordenadas normalizadas 0.0–1.0 donde (0,0)=esquina superior-izquierda, (1,1)=esquina inferior-derecha
+- Para formas CURVAS o REDONDEADAS (cuerpos, cabezas, mejillas): usa 24-40 puntos distribuidos uniformemente alrededor del perímetro real
+- Para formas ORGÁNICAS COMPLEJAS (siluetas irregulares): usa hasta 50 puntos
+- Para formas PEQUEÑAS (ojos, botones): usa 12-20 puntos
+- Para CONTORNOS LINEALES finos: usa puntos que sigan exactamente la línea
+- El polígono debe ser cerrado: el último punto igual al primero
+- NO uses rectángulos genéricos ni círculos perfectos — traza la forma REAL
 
-Responde SOLO en JSON con esta estructura:
+PASO 3 — CLASIFICACIÓN DE PUNTADAS:
+- fill: rellenos amplios (cuerpo, fondos, zonas grandes de color sólido)
+- satin: contornos gruesos, bordes definidos, franjas de 2-8mm de ancho
+- running_stitch: contornos muy finos, detalles lineales, separaciones entre zonas
+
+PASO 4 — ORDENACIÓN DE CAPAS:
+layer_order 1 = más al fondo (rellenos grandes), layer_order creciente = encima. Los contornos siempre encima de los rellenos.
+
+Responde SOLO en JSON con esta estructura exacta:
 {
   "regions": [
     {
       "id": "region_1",
-      "name": "descripción breve de la zona (ej: cuerpo_principal, ojo_izquierdo, contorno)",
-      "color": "#hexcolor_real",
+      "name": "nombre_descriptivo_del_elemento",
+      "color": "#hexcolor_extraido_de_imagen",
       "stitch_type": "fill|satin|running_stitch",
-      "density": 0.4,
+      "density": 0.5,
       "angle": 45,
       "layer_order": 1,
       "pull_compensation": 0.2,
