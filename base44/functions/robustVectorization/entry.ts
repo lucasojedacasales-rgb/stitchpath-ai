@@ -21,63 +21,41 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Missing pixels, width, or height' }, { status: 400 });
     }
 
+    // Cap color_count to reduce processing load
+    const maxColors = Math.min(Math.max(color_count || 6, 3), 10);
+
     const pixelArray = new Uint8ClampedArray(pixels);
     const regions = [];
 
-    // Detect shadows and dark areas
-    const SHADOW_THRESHOLD = 85;
+    // Detect shadows (single pass, optimized)
+    const SHADOW_THRESHOLD = 80;
     const shadowPixels = new Set();
     
     for (let i = 0; i < pixelArray.length; i += 4) {
-      const r = pixelArray[i];
-      const g = pixelArray[i + 1];
-      const b = pixelArray[i + 2];
-      const a = pixelArray[i + 3] || 255;
-      
-      if (a < 128) continue;
-      
-      const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
-      if (brightness < SHADOW_THRESHOLD) {
+      const brightness = 0.299 * pixelArray[i] + 0.587 * pixelArray[i + 1] + 0.114 * pixelArray[i + 2];
+      if (brightness < SHADOW_THRESHOLD && pixelArray[i + 3] > 127) {
         shadowPixels.add(i / 4);
       }
     }
 
-    // Quantize to main colors with clustering of similar colors
+    // Quantize to main colors (fast histogram-based approach)
     const colorCounts = new Map();
-    const colorSamples = []; // For clustering
     
     for (let i = 0; i < pixelArray.length; i += 4) {
+      const a = pixelArray[i + 3];
+      if (a < 128 || shadowPixels.has(i / 4)) continue;
+      
       const r = pixelArray[i];
       const g = pixelArray[i + 1];
       const b = pixelArray[i + 2];
-      const a = pixelArray[i + 3] || 255;
-      
-      if (a < 128) continue;
-      
-      const pixelIdx = i / 4;
-      if (shadowPixels.has(pixelIdx)) continue;
-      
-      // Cluster similar colors (tolerance: 20 units in RGB)
-      let found = false;
-      for (const [hex, rgb] of colorCounts) {
-        const dist = Math.hypot(rgb[0] - r, rgb[1] - g, rgb[2] - b);
-        if (dist < 20) {
-          colorCounts.set(hex, colorCounts.get(hex) + 1);
-          found = true;
-          break;
-        }
-      }
-      
-      if (!found) {
-        const hex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
-        colorCounts.set(hex, 1);
-      }
+      const hex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+      colorCounts.set(hex, (colorCounts.get(hex) || 0) + 1);
     }
 
-    // Keep top colors (limit to 12 for cleaner output)
+    // Keep top colors (limited for performance)
     const topColors = Array.from(colorCounts.entries())
       .sort((a, b) => b[1] - a[1])
-      .slice(0, Math.min(color_count, 12)) // Reduced from 16 to avoid over-fragmentation
+      .slice(0, maxColors)
       .map(([hex]) => hex);
 
     // Process colors and shadows
@@ -116,60 +94,52 @@ Deno.serve(async (req) => {
       const colorPixels = pixelMasks.get(hex);
       if (colorPixels.size < 5) continue; // Skip tiny regions
 
-      // Group connected components
+      // Group connected components (limit scan for performance)
       const visited = new Set();
       const components = [];
+      const minPixelsPerComponent = Math.max(15, Math.round((width * height) / 20000)); // Adaptive threshold
       
       for (const startIdx of colorPixels) {
         if (visited.has(startIdx)) continue;
-        
-        // Flood fill to find connected component
         const component = floodFill(startIdx, colorPixels, visited, width, height);
-        if (component.length > 20) { // Min 20 pixels to avoid noise
-          components.push(component);
-        }
+        if (component.length >= minPixelsPerComponent) components.push(component);
       }
 
       // Create region for each significant component
       for (const component of components) {
-        const pixelCount = component.length;
         const box = getComponentBounds(component, width, height);
         const w = (box.maxX - box.minX + 1) / width;
         const h = (box.maxY - box.minY + 1) / height;
         const area = w * h;
 
-        // Better filtering: ignore tiny regions
-        if (area < 0.002) continue;
+        // Skip if too small relative to canvas
+        if (area < 0.0015) continue;
 
         const path = extractContourPoints(component, width, height);
-        if (path.length < 4) continue;
+        if (path.length < 3) continue;
 
         const perimeter = estimatePerimeter(path);
         const isShadow = hex === '#0a0a0a';
-        
-        // Shadow regions should be running stitch (contours/details)
-        let type = area > 0.1 ? 'fill' : area > 0.02 ? 'satin' : 'running_stitch';
-        if (isShadow) type = 'running_stitch';
+        const type = !isShadow && area > 0.08 ? 'fill' : !isShadow && area > 0.015 ? 'satin' : 'running_stitch';
         
         const stitches = type === 'fill' 
-          ? Math.round(area * width_mm * height_mm * 0.7 * 2.5)
+          ? Math.round(area * width_mm * height_mm * 0.65)
           : type === 'satin'
-          ? Math.round(perimeter * Math.sqrt(width_mm * height_mm) * 20)
-          : Math.round(perimeter * Math.sqrt(width_mm * height_mm) * 15);
+          ? Math.round(perimeter * width_mm * 8)
+          : Math.round(perimeter * width_mm * 5);
 
         regions.push({
           id: `r${regions.length}`,
-          name: isShadow ? `sombra_${type}` : `${hex}_${type}`,
+          name: `${hex.slice(1, 4)}_${type[0]}`,
           color: hex,
           stitch_type: type,
-          density: isShadow ? 0.5 : 0.7,
-          angle: isShadow ? 60 : 45,
+          density: 0.7,
+          angle: 45,
           path_points: path,
           area_mm2: area * width_mm * height_mm,
-          perimeter_mm: perimeter * Math.sqrt(width_mm * height_mm),
+          perimeter_mm: perimeter * width_mm,
           stitch_count: stitches,
-          visible: true,
-          isShadow: isShadow
+          visible: true
         });
       }
     }
