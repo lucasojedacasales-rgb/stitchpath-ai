@@ -260,7 +260,18 @@ export function validatePipelineOutput(pipelineResult) {
     }
 
     if (!check.valid) {
-      validation.issues.push(`Region ${i}: ${check.issues.join('; ')}`);
+      const issuesStr = (Array.isArray(check.issues) ? check.issues : []).join('; ');
+      if (issuesStr) {
+        validation.issues.push(`Region ${i}: ${issuesStr}`);
+      } else {
+        console.error('validatePipelineOutput: check.issues is not an array', {
+          issues: check.issues,
+          type: typeof check.issues,
+          regionIndex: i,
+          regionName: region.name
+        });
+        validation.issues.push(`Region ${i}: Validation failed (unable to join issues)`);
+      }
     }
 
     validation.regionChecks.push(check);

@@ -194,7 +194,8 @@ function extractDominantColors(pixelArray, width, height, maxColors) {
     const r = pixelArray[i];
     const g = pixelArray[i + 1];
     const b = pixelArray[i + 2];
-    const hex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+    const hexArray = [r, g, b].map(x => x.toString(16).padStart(2, '0'));
+    const hex = '#' + (Array.isArray(hexArray) ? hexArray.join('') : '000000');
     colorCounts.set(hex, (colorCounts.get(hex) || 0) + 1);
   }
 
@@ -210,7 +211,12 @@ function getPixelColor(pixelArray, x, y, width) {
   const r = pixelArray[idx];
   const g = pixelArray[idx + 1];
   const b = pixelArray[idx + 2];
-  return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+  const hexArray = [r, g, b].map(x => x.toString(16).padStart(2, '0'));
+  if (!Array.isArray(hexArray)) {
+    console.error('getPixelColor: hexArray is not an array', { type: typeof hexArray, value: hexArray });
+    return '#000000';
+  }
+  return '#' + hexArray.join('');
 }
 
 function floodFill(pixelArray, startX, startY, targetColor, width, height, visited) {

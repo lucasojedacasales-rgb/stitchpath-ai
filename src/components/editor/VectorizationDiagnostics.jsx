@@ -31,6 +31,24 @@ export default function VectorizationDiagnostics({ diagnostics, onClose }) {
     warnings = []
   } = diagnostics;
 
+  // Validar que errors y warnings son arrays
+  const safeErrors = Array.isArray(errors) ? errors : [];
+  const safeWarnings = Array.isArray(warnings) ? warnings : [];
+
+  if (!Array.isArray(errors)) {
+    console.error('VectorizationDiagnostics: errors is not an array', {
+      errors,
+      type: typeof errors
+    });
+  }
+
+  if (!Array.isArray(warnings)) {
+    console.error('VectorizationDiagnostics: warnings is not an array', {
+      warnings,
+      type: typeof warnings
+    });
+  }
+
   const toggleSection = (key) => {
     setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
   };
@@ -135,7 +153,7 @@ export default function VectorizationDiagnostics({ diagnostics, onClose }) {
           </Section>
 
           {/* ERRORES */}
-          {errors.length > 0 && (
+          {safeErrors.length > 0 && (
             <Section
               title="Errores"
               expanded={expanded.errors}
@@ -144,9 +162,9 @@ export default function VectorizationDiagnostics({ diagnostics, onClose }) {
               color="text-red-400"
             >
               <div className="space-y-2">
-                {errors.map((err, i) => (
+                {safeErrors.map((err, i) => (
                   <div key={i} className="p-2 bg-red-900/20 border border-red-500/30 rounded text-xs text-red-300">
-                    {err}
+                    {String(err || 'Error desconocido')}
                   </div>
                 ))}
               </div>
@@ -154,7 +172,7 @@ export default function VectorizationDiagnostics({ diagnostics, onClose }) {
           )}
 
           {/* ADVERTENCIAS */}
-          {warnings.length > 0 && (
+          {safeWarnings.length > 0 && (
             <Section
               title="Advertencias"
               expanded={expanded.warnings}
@@ -163,9 +181,9 @@ export default function VectorizationDiagnostics({ diagnostics, onClose }) {
               color="text-amber-400"
             >
               <div className="space-y-2">
-                {warnings.map((warn, i) => (
+                {safeWarnings.map((warn, i) => (
                   <div key={i} className="p-2 bg-amber-900/20 border border-amber-500/30 rounded text-xs text-amber-300">
-                    {warn}
+                    {String(warn || 'Advertencia desconocida')}
                   </div>
                 ))}
               </div>
