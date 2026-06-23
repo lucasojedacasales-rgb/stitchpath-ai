@@ -24,7 +24,25 @@ Deno.serve(async (req) => {
     const pixelArray = new Uint8ClampedArray(pixels);
     const regions = [];
 
-    // Quantize to main colors
+    // Detect shadows and dark areas
+    const SHADOW_THRESHOLD = 85;
+    const shadowPixels = new Set();
+    
+    for (let i = 0; i < pixelArray.length; i += 4) {
+      const r = pixelArray[i];
+      const g = pixelArray[i + 1];
+      const b = pixelArray[i + 2];
+      const a = pixelArray[i + 3] || 255;
+      
+      if (a < 128) continue;
+      
+      const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+      if (brightness < SHADOW_THRESHOLD) {
+        shadowPixels.add(i / 4);
+      }
+    }
+
+    // Quantize to main colors (excluding shadows)
     const colorCounts = new Map();
     for (let i = 0; i < pixelArray.length; i += 4) {
       const r = pixelArray[i];
@@ -33,6 +51,10 @@ Deno.serve(async (req) => {
       const a = pixelArray[i + 3] || 255;
       
       if (a < 128) continue;
+      
+      // Skip dark shadow pixels in color quantization
+      const pixelIdx = i / 4;
+      if (shadowPixels.has(pixelIdx)) continue;
       
       const hex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
       colorCounts.set(hex, (colorCounts.get(hex) || 0) + 1);
@@ -44,22 +66,38 @@ Deno.serve(async (req) => {
       .slice(0, Math.min(color_count, 8))
       .map(([hex]) => hex);
 
-    // For each color, create a simple region
-    for (const hex of topColors) {
+    // Process colors and shadows
+    const allRegionColors = [...topColors];
+    if (shadowPixels.size > width * height * 0.01) {
+      allRegionColors.push('#0a0a0a'); // Add shadow as explicit region
+    }
+
+    // For each color/shadow, create a simple region
+    for (const hex of allRegionColors) {
       // Create bounding box mask
       let minX = width, maxX = 0, minY = height, maxY = 0;
       let pixelCount = 0;
+      const isShadow = hex === '#0a0a0a';
 
       for (let idx = 0; idx < width * height; idx++) {
         const i = idx * 4;
-        const r = pixelArray[i];
-        const g = pixelArray[i + 1];
-        const b = pixelArray[i + 2];
-        const a = pixelArray[i + 3] || 255;
+        const isShadowPixel = shadowPixels.has(idx);
         
-        const currentHex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
-        
-        if (currentHex !== hex || a < 128) continue;
+        if (isShadow) {
+          // Process shadow pixels
+          if (!isShadowPixel) continue;
+        } else {
+          // Process color pixels
+          const r = pixelArray[i];
+          const g = pixelArray[i + 1];
+          const b = pixelArray[i + 2];
+          const a = pixelArray[i + 3] || 255;
+          
+          if (a < 128 || isShadowPixel) continue;
+          
+          const currentHex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+          if (currentHex !== hex) continue;
+        }
         
         const x = idx % width;
         const y = Math.floor(idx / width);
@@ -89,23 +127,30 @@ Deno.serve(async (req) => {
       ];
 
       const perimeter = 2 * (w + h);
-      const type = area > 0.1 ? 'fill' : 'satin';
+      
+      // Shadow regions should be running stitch (contours/details)
+      let type = area > 0.1 ? 'fill' : 'satin';
+      if (isShadow) type = 'running_stitch';
+      
       const stitches = type === 'fill' 
         ? Math.round(area * width_mm * height_mm * 0.7 * 2.5)
-        : Math.round(perimeter * Math.sqrt(width_mm * height_mm) * 20);
+        : type === 'satin'
+        ? Math.round(perimeter * Math.sqrt(width_mm * height_mm) * 20)
+        : Math.round(perimeter * Math.sqrt(width_mm * height_mm) * 15); // shadows: lighter stitch count
 
       regions.push({
         id: `r${regions.length}`,
-        name: `${hex}_${type}`,
+        name: isShadow ? `sombra_${type}` : `${hex}_${type}`,
         color: hex,
         stitch_type: type,
-        density: 0.7,
-        angle: 45,
+        density: isShadow ? 0.5 : 0.7,
+        angle: isShadow ? 60 : 45,
         path_points: path,
         area_mm2: area * width_mm * height_mm,
         perimeter_mm: perimeter * Math.sqrt(width_mm * height_mm),
         stitch_count: stitches,
-        visible: true
+        visible: true,
+        isShadow: isShadow
       });
     }
 
