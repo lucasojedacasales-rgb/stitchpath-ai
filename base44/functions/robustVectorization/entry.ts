@@ -20,7 +20,31 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Missing image data' }, { status: 400 });
     }
 
-    const pixelArray = new Uint8ClampedArray(pixels);
+    // Convertir pixels a Uint8ClampedArray (puede venir como Array o Buffer)
+    let pixelArray;
+    if (pixels instanceof Uint8ClampedArray) {
+      pixelArray = pixels;
+    } else if (Array.isArray(pixels)) {
+      pixelArray = new Uint8ClampedArray(pixels);
+    } else if (pixels.data) {
+      pixelArray = new Uint8ClampedArray(pixels.data);
+    } else {
+      pixelArray = new Uint8ClampedArray(pixels);
+    }
+
+    // Validar que tenemos datos consistentes
+    const expectedLength = width * height * 4;
+    if (pixelArray.length !== expectedLength) {
+      console.error(`[VECTORIZATION] Pixel array mismatch: got ${pixelArray.length}, expected ${expectedLength} (${width}×${height}×4)`);
+      return Response.json({
+        success: false,
+        error: `Pixel data size mismatch: ${pixelArray.length} != ${expectedLength}`,
+        data: { regions: [], total_stitches: 0, diagnostics: { 
+          errors: [`Pixel array length ${pixelArray.length} != expected ${expectedLength}`],
+          width, height, expectedLength
+        }}
+      }, { status: 400 });
+    }
     const px_to_mm_x = width_mm / width;
     const px_to_mm_y = height_mm / height;
 
@@ -127,24 +151,76 @@ Deno.serve(async (req) => {
 
     if (regions.length === 0) {
       console.error('[VECTORIZATION] ERROR: No valid regions generated after contour processing');
+      
+      // Diagnóstico detallado
+      const diagnosticContours = [];
+      for (let i = 0; i < masks.length; i++) {
+        const contours = detectContours(masks[i], width, height);
+        diagnosticContours.push({ color: dominantColors[i], contourCount: contours.length });
+      }
+      
       console.error('[VECTORIZATION] Details:', {
         maskCount: masks.length,
-        totalContours: masks.reduce((sum, mask) => sum + detectContours(mask, width, height).length, 0),
-        minAreaThreshold: 0.5
+        contoursByColor: diagnosticContours,
+        minAreaThreshold: 0.5,
+        px_to_mm_factors: { x: px_to_mm_x, y: px_to_mm_y }
       });
-      return Response.json({
-        success: false,
-        error: 'No valid regions generated. Contours may be too small or fragmented.',
-        data: { 
-          regions: [], 
-          total_stitches: 0, 
-          diagnostics: { 
-            errors: ['No valid regions after contour detection'],
-            colorsDetected: dominantColors.length,
-            minAreaThreshold: 0.5
-          } 
+      
+      // FALLBACK: Crear región simplificada como última opción
+      if (dominantColors.length > 0) {
+        console.log('[VECTORIZATION] FALLBACK: Creating minimal region from largest contour...');
+        
+        let largestContour = null;
+        let largestArea = 0;
+        
+        for (let i = 0; i < masks.length; i++) {
+          const contours = detectContours(masks[i], width, height);
+          for (const contour of contours) {
+            const area = polygonArea(contour.map(p => [p[0] * px_to_mm_x, p[1] * px_to_mm_y]));
+            if (area > largestArea) {
+              largestArea = area;
+              largestContour = { contour, color: dominantColors[i] };
+            }
+          }
         }
-      }, { status: 422 });
+        
+        if (largestContour && largestArea > 0.1) {
+          const closed = closeContour(largestContour.contour.map(p => [p[0] * px_to_mm_x, p[1] * px_to_mm_y]));
+          const stitches = generateRunStitches(closed, stitch_density);
+          
+          regions.push({
+            id: 'r0',
+            name: `${largestContour.color.slice(1, 4)}_fallback`,
+            color: largestContour.color,
+            stitch_type: 'running_stitch',
+            density: stitch_density,
+            angle: 45,
+            path_points: closed.map(p => [p[0] / width_mm, p[1] / height_mm]),
+            area_mm2: largestArea,
+            stitch_count: stitches.length,
+            visible: true
+          });
+          
+          console.log('[VECTORIZATION] FALLBACK SUCCESS: Created region with', stitches.length, 'stitches');
+        }
+      }
+      
+      if (regions.length === 0) {
+        return Response.json({
+          success: false,
+          error: 'No valid regions generated. Image may be too simple or have no detectable contours.',
+          data: { 
+            regions: [], 
+            total_stitches: 0, 
+            diagnostics: { 
+              errors: ['No valid regions after contour detection and fallback'],
+              colorsDetected: dominantColors.length,
+              contoursByColor: diagnosticContours,
+              minAreaThreshold: 0.5
+            } 
+          }
+        }, { status: 422 });
+      }
     }
 
     const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
