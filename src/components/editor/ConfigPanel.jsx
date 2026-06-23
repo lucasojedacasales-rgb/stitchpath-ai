@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, Zap, Cpu, Settings, BookMarked } from 'lucide-react';
 import WorkflowPresetPanel from './WorkflowPresetPanel';
+import ValidationPanel from './ValidationPanel';
 
 const FABRIC_TYPES = ['Algodón', 'Poliéster', 'Mezcla', 'Denim', 'Lino', 'Seda', 'Lycra', 'Otro'];
 
@@ -163,6 +164,9 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
           onRegionsUpdate={onRegionsUpdate}
         />
       </Section>
+
+      {/* VALIDATION */}
+      <ValidationPanel regions={regions || []} onRegionsUpdate={onRegionsUpdate} />
     </div>
   );
 }

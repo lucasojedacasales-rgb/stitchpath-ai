@@ -215,7 +215,20 @@ export function drawTatamiRegion(ctx, pts, region, drawW, drawH, zoom, isSelecte
   // Map normalized pts to canvas px
   const cpx = pts.map(p => [(p[0] - 0.5) * drawW, (p[1] - 0.5) * drawH]);
 
+  // Ensure polygon is closed for clipping
+  const closedPoly = cpx[cpx.length - 1] !== cpx[0] ? [...cpx, cpx[0]] : cpx;
+
   const { fillLines, underlayLines } = generateTatamiLines(cpx, region, drawW, drawH);
+
+  // ── Set clip region (MANDATORY) ───────────────────────────────────────────
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(closedPoly[0][0], closedPoly[0][1]);
+  for (let i = 1; i < closedPoly.length; i++) {
+    ctx.lineTo(closedPoly[i][0], closedPoly[i][1]);
+  }
+  ctx.closePath();
+  ctx.clip();
 
   // ── Draw underlay (40% opacity, darker color) ─────────────────────────────
   if (underlayLines.length > 0) {
@@ -249,6 +262,8 @@ export function drawTatamiRegion(ctx, pts, region, drawW, drawH, zoom, isSelecte
     ctx.lineTo(p1[0] + fuzz, p1[1] + fuzz);
     ctx.stroke();
   }
+
+  ctx.restore(); // END CLIP
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
