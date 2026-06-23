@@ -10,61 +10,85 @@ Deno.serve(async (req) => {
 
     if (!image_url) return Response.json({ error: 'image_url required' }, { status: 400 });
 
-    const maxColors = Math.min(color_count || 6, 14);
+    const maxColors = Math.min(color_count || 8, 20);
     const w = width_mm || 100;
     const h = height_mm || 100;
 
-    const prompt = `Eres un experto digitalizador de bordados con visión computacional avanzada. Tu tarea principal es trazar con MÁXIMA PRECISIÓN los contornos de cada elemento visible en la imagen.
+    // Determine aggressiveness based on mode
+    const regionTarget = mode === 'ultra' ? '80-150' : mode === 'precision' ? '60-120' : mode === 'standard' ? '20-40' : '40-80';
+    const pointsPerShape = mode === 'ultra' ? '40-80' : mode === 'precision' ? '30-60' : '20-50';
 
-CONFIGURACIÓN:
-- Tamaño objetivo: ${w}mm × ${h}mm
-- Colores máximos: ${maxColors}
-- Modo: ${mode || 'hybrid'}
+    const prompt = `Eres el mejor digitalizador de bordados del mundo. Analiza esta imagen y genera un resultado de digitalizacion PROFESIONAL con el nivel de detalle de software industriales como Wilcom, Hatch o Embird.
 
-PASO 1 — ANÁLISIS VISUAL:
-Examina la imagen en detalle. Identifica TODOS los elementos visuales diferenciados: silueta principal, sub-formas internas, ojos, boca, mejillas, extremidades, sombras, contornos oscuros, detalles pequeños, etc.
+OBJETIVO: Generar ${regionTarget} regiones que reproduzcan FIELMENTE cada elemento visual de la imagen para bordado a máquina.
+TAMAÑO: ${w}mm × ${h}mm | COLORES MAX: ${maxColors} | MODO: ${mode || 'hybrid'}
 
-PASO 2 — TRAZADO DE CONTORNOS (CRÍTICO):
-Para cada elemento, genera path_points que sigan el contorno REAL píxel a píxel:
-- Coordenadas normalizadas 0.0–1.0 donde (0,0)=esquina superior-izquierda, (1,1)=esquina inferior-derecha
-- Para formas CURVAS o REDONDEADAS (cuerpos, cabezas, mejillas): usa 24-40 puntos distribuidos uniformemente alrededor del perímetro real
-- Para formas ORGÁNICAS COMPLEJAS (siluetas irregulares): usa hasta 50 puntos
-- Para formas PEQUEÑAS (ojos, botones): usa 12-20 puntos
-- Para CONTORNOS LINEALES finos: usa puntos que sigan exactamente la línea
-- El polígono debe ser cerrado: el último punto igual al primero
-- NO uses rectángulos genéricos ni círculos perfectos — traza la forma REAL
+═══════════════════════════════════════════
+REGLAS ABSOLUTAS DE CALIDAD (NO NEGOCIABLES)
+═══════════════════════════════════════════
 
-PASO 3 — CLASIFICACIÓN DE PUNTADAS:
-- fill: rellenos amplios (cuerpo, fondos, zonas grandes de color sólido)
-- satin: contornos gruesos, bordes definidos, franjas de 2-8mm de ancho
-- running_stitch: contornos muy finos, detalles lineales, separaciones entre zonas
+1. CADA ELEMENTO VISUAL = UNA O MÁS REGIONES SEPARADAS
+   Descompón la imagen en: silueta exterior, rellenos de color, sub-formas internas, ojos, boca, nariz, mejillas, orejas, extremidades, accesorios, sombras, highlights, contornos de separación entre zonas.
 
-PASO 4 — ORDENACIÓN DE CAPAS:
-layer_order 1 = más al fondo (rellenos grandes), layer_order creciente = encima. Los contornos siempre encima de los rellenos.
+2. REGLAS DE CAPAS (OBLIGATORIO):
+   - Capa 1-5: Rellenos grandes de fondo (fill) — zona más grande de cada color principal
+   - Capa 6-15: Rellenos medianos internos (fill) — sub-zonas dentro del personaje
+   - Capa 16-30: Contornos satin de separación entre colores (satin, 2-4mm ancho)
+   - Capa 31+: Contornos finos de detalle y borde exterior (running_stitch o satin)
+   SIEMPRE: contornos encima de rellenos. Nunca al revés.
 
-Responde SOLO en JSON con esta estructura exacta:
+3. CONTORNOS PRECISOS (MUY IMPORTANTE):
+   - path_points: ${pointsPerShape} puntos por región siguiendo el contorno REAL píxel a píxel
+   - Para siluetas con curvas orgánicas: distribuye puntos en TODAS las inflexiones de la curva
+   - Para zonas redondeadas: usa puntos cada 5-15 grados del arco real
+   - NUNCA uses cajas rectangulares ni elipses perfectas — sigue la forma REAL de la imagen
+   - Coordenadas normalizadas 0.0–1.0: (0,0)=arriba-izquierda, (1,1)=abajo-derecha
+   - Polígono SIEMPRE cerrado: último punto = primer punto
+
+4. COLORES EXACTOS:
+   - Extrae los colores HEX REALES de la imagen (no aproximaciones genéricas)
+   - Cada región tiene el color exacto de esa zona visual
+   - El contorno exterior suele ser negro o muy oscuro (#1a1a1a, #2d2d2d, etc.)
+
+5. SEPARACIÓN POR ZONAS DE COLOR:
+   Para personajes: CADA zona de color diferente debe tener:
+   a) Un fill (relleno) con ese color
+   b) Un satin o running_stitch de contorno alrededor de esa zona con el color del borde
+   Ejemplo para Yoshi: cuerpo verde (fill) + contorno verde oscuro (satin) + barriga blanca (fill) + contorno barriga (satin) + ojo blanco (fill) + pupila negra (fill) + contorno ojo (running_stitch) etc.
+
+6. STITCH_TYPE según función:
+   - fill: zonas rellenas de área > 3mm² (ángulo de relleno variado por zona para no acumular tension)
+   - satin: bandas de 1-8mm ancho, contornos principales, bordes entre colores
+   - running_stitch: contornos muy finos < 1mm, detalles lineales, texturas
+
+7. DENSIDADES:
+   - fill denso: density 0.6-0.8 (zonas sólidas)
+   - satin: density 0.7-0.9 (contornos nítidos)
+   - running_stitch: density 0.3-0.5 (trazos finos)
+
+Responde SOLO en JSON válido con esta estructura:
 {
   "regions": [
     {
-      "id": "region_1",
-      "name": "nombre_descriptivo_del_elemento",
-      "color": "#hexcolor_extraido_de_imagen",
-      "stitch_type": "fill|satin|running_stitch",
-      "density": 0.5,
+      "id": "r1",
+      "name": "nombre_descriptivo",
+      "color": "#hexcolor",
+      "stitch_type": "fill",
+      "density": 0.7,
       "angle": 45,
       "layer_order": 1,
-      "pull_compensation": 0.2,
+      "pull_compensation": 0.15,
       "underlay": true,
-      "area_mm2": 1200,
-      "stitch_count": 3500,
+      "area_mm2": 800,
+      "stitch_count": 2200,
       "is_auto_contour": false,
       "visible": true,
-      "path_points": [[x1,y1],[x2,y2],...,[x1,y1]]
+      "path_points": [[0.2,0.1],[0.3,0.08],[0.5,0.07],[0.7,0.09],[0.8,0.2],[0.75,0.4],[0.5,0.5],[0.25,0.4],[0.2,0.1]]
     }
   ],
-  "total_stitches": 12000,
-  "estimated_time_min": 8,
-  "colors_used": 5,
+  "total_stitches": 18000,
+  "estimated_time_min": 12,
+  "colors_used": 8,
   "width_mm": ${w},
   "height_mm": ${h}
 }`;
