@@ -32,6 +32,12 @@ Deno.serve(async (req) => {
 
     // Re-upload image so Claude Vision always gets a valid Base44-hosted URL
     const imageDataUrl = await reuploadForClaude(image_url, base44);
+    
+    // Pre-analyze colors for better accuracy
+    let colorData = '';
+    if (image_analysis?.dominantColors?.length > 0) {
+      colorData = `COLORES DETECTADOS EN LA IMAGEN:\n${image_analysis.dominantColors.slice(0, 8).map((c, i) => `${i+1}. ${c.hex} - ${Math.round(c.coverage * 100)}% de cobertura`).join('\n')}\n\n`;
+    }
 
     // ─── PATH A: Use real traced contours from client ────────────────────────
     if (traced_contours && traced_contours.regions && traced_contours.regions.length > 0) {
@@ -45,21 +51,27 @@ Deno.serve(async (req) => {
         return `Región ${i}: color=${r.hex} centro=(${cx},${cy}) cobertura=${areaPct}%`;
       }).join('\n');
 
-      const labelPrompt = `Eres un experto digitalizador de bordados. Analiza la imagen.
+      const labelPrompt = `Eres un experto digitalizador de bordados. Analiza la imagen y las regiones detectadas.
 
-Tengo ${Math.min(clientRegions.length, 40)} regiones detectadas píxel a píxel:
+${colorData}
+Tengo ${Math.min(clientRegions.length, 40)} regiones detectadas píxel a píxel (ordenadas por importancia/tamaño):
 ${regionDescriptions}
 
-Para CADA región asigna (en orden 0, 1, 2...):
-- name: nombre descriptivo (ej: "cuerpo_principal", "ojo_izquierdo")
-- stitch_type: "fill" zonas grandes, "satin" bordes medianos, "running_stitch" detalles finos
-- density: 0.4-0.9
-- angle: 0-180 (ángulo puntadas)
-- layer_order: 1=primero (fills grandes antes que contornos)
-- underlay: true para fill/satin grandes, false para detalles
-- pull_compensation: 0.1-0.2
+TAREA CRÍTICA: Para CADA región (en orden 0, 1, 2...):
+1. **name**: nombre descriptivo detallado (ej: "ojo_izquierdo", "boca_roja", "contorno_negro")
+2. **stitch_type**: 
+   - "fill" = zonas grandes homogéneas (> 100mm²)
+   - "satin" = áreas medianas con detalle (30-100mm²) 
+   - "running_stitch" = líneas finas, contornos, detalles (< 30mm²)
+3. **density**: 0.4-0.9 (más alta para detalles finos, más baja para áreas grandes)
+4. **angle**: 0-180 (ángulo de puntadas, variado para cada región)
+5. **layer_order**: orden de bordado (1=primero, fills grandes antes que detalles)
+6. **underlay**: true para fill/satin grandes, false para contornos/detalles
+7. **pull_compensation**: 0.1-0.2
 
-Responde SOLO JSON:
+IMPORTANTE: Respeta exactamente los colores detectados para cada región.
+
+Responde SOLO JSON válido:
 {"labels":[{"index":0,"name":"...","stitch_type":"fill","density":0.7,"angle":45,"layer_order":1,"underlay":true,"pull_compensation":0.15}],"estimated_time_min":12}`;
 
       const labelResult = await base44.asServiceRole.integrations.Core.InvokeLLM({
@@ -152,22 +164,38 @@ Responde SOLO JSON:
 
     let colorDataBlock = '';
     if (image_analysis?.dominantColors?.length > 0) {
-      colorDataBlock = `\nCOLORES DETECTADOS:\n${image_analysis.dominantColors.map(c => `  ${c.hex} (${(c.coverage * 100).toFixed(1)}%)`).join('\n')}\n`;
+      colorDataBlock = `\nPALETA DE COLORES DETECTADA:\n${image_analysis.dominantColors.slice(0, 12).map((c, i) => `${i+1}. ${c.hex} - ${(c.coverage * 100).toFixed(1)}% cobertura - REUSAR EXACTAMENTE ESTE COLOR`).join('\n')}\n`;
     }
 
-    const prompt = `Eres el mejor digitalizador de bordados. Analiza la imagen adjunta y genera ${regionTarget} regiones de bordado con contornos SUAVIZADOS.
-TAMAÑO DISEÑO: ${w}mm × ${h}mm | COLORES MÁX: ${maxColors} | MODO: ${mode || 'hybrid'}
+    const prompt = `Eres el mejor digitalizador de bordados con 20 años de experiencia. Tu objetivo: detectar TODOS los colores y detalles de la imagen.
+
+ANÁLISIS REQUERIDO:
 ${colorDataBlock}
-INSTRUCCIONES CRÍTICAS:
-- path_points: ${pointsPerShape} puntos SUAVEMENTE distribuidos (NO puntos en zig-zag)
-  * FILL: 25-50 puntos describiendo curvas suaves
-  * SATIN/CONTORNO: 15-35 puntos siguiendo el edge real
-- Curvas fluidas: interpolar puntos a lo largo de bordes suaves, NO trazar saltos abruptos
-- Coordenadas normalizadas 0.0–1.0 (0,0 = arriba-izquierda, 1,1 = abajo-derecha)
-- Polígono cerrado: el último punto debe ser igual al primero
-- Orden de capas: fills grandes primero (layer_order=1), luego medianos, luego contornos satin, luego detalles running_stitch
-- Usa los colores REALES que ves en la imagen para los hex codes
-- stitch_count: estima según área y tipo (fill ~0.6pts/mm², satin ~8pts/mm, contour ~5pts/mm)
+Genera ${regionTarget} regiones de bordado independientes, UNA POR CADA COLOR O DETALLE VISIBLE.
+
+REGLAS DE EJECUCIÓN:
+1. **Detección de colores**: 
+   - Usa EXACTAMENTE los colores hex de la paleta detectada
+   - Si ves un color similar pero no en la lista, aproxima al más cercano
+   - NO simplificar colores: cada variante es una región diferente
+
+2. **Detalles finos** (ojos, boca, líneas):
+   - Detecta TODOS los detalles, incluso pequeños (> 2mm²)
+   - Usa stitch_type "running_stitch" para líneas finas
+   - Usa stitch_type "satin" para detalles medianos
+   - Alta density (0.8-0.9) para detalles nítidos
+
+3. **path_points - Crítico**:
+   - ${pointsPerShape} puntos SUAVEMENTE distribuidos
+   - FILL: 30-60 puntos describiendo curvas reales
+   - SATIN: 20-40 puntos siguiendo edges
+   - CONTORNO: 15-30 puntos en líneas finas
+   - Interpolar puntos en bordes curvos, NO crear zig-zag
+
+4. **Coordenadas**: Normalizadas 0.0–1.0 (0,0=top-left, 1,1=bottom-right)
+5. **Polígono**: Último punto = primer punto (cerrado)
+6. **Orden**: layer_order 1=primero (fills grandes), incrementar para detalles
+7. **stitch_count**: fill ~0.6pts/mm², satin ~8pts/mm, contour ~5pts/mm
 
 Responde SOLO con JSON válido (sin texto extra):
 {
