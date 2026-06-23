@@ -184,7 +184,7 @@ Deno.serve(async (req) => {
           }
         }
         
-        if (largestContour && largestArea > 0.1) {
+        if (largestContour && largestArea > 0.01) {
           const closed = closeContour(largestContour.contour.map(p => [p[0] * px_to_mm_x, p[1] * px_to_mm_y]));
           const stitches = generateRunStitches(closed, stitch_density);
           
@@ -263,21 +263,16 @@ Deno.serve(async (req) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * K-MEANS QUANTIZATION: Reducir imagen a N colores dominantes
+ * SIMPLE COLOR DETECTION: Extraer colores presentes en la imagen
  * 
- * Basado en Potrace (potrace.sourceforge.net) + K-means clustering.
- * Produce colores dominantes que serán procesados por contour detection
- * para crear máscaras binarias independientes.
- * 
- * Referencia: https://en.wikipedia.org/wiki/K-means_clustering
+ * Sin k-means complicado: simplemente detectar los N colores más frecuentes
+ * que existan en la imagen y usarlos directamente.
  */
 function kmeansQuantize(pixelArray, width, height, colorCount) {
-  const maxIterations = 10;
-  const pixels = [];
-
-  // Extraer píxeles únicos
-  const pixelSet = new Set();
+  const colorMap = new Map();
   let opaqueCount = 0;
+
+  // Contar frecuencia de cada color opaco
   for (let i = 0; i < pixelArray.length; i += 4) {
     const a = pixelArray[i + 3];
     if (a < 128) continue;
@@ -286,73 +281,25 @@ function kmeansQuantize(pixelArray, width, height, colorCount) {
     const r = pixelArray[i];
     const g = pixelArray[i + 1];
     const b = pixelArray[i + 2];
-    pixels.push([r, g, b]);
-    pixelSet.add(`${r},${g},${b}`);
+    const hex = rgbToHex(r, g, b);
+    colorMap.set(hex, (colorMap.get(hex) || 0) + 1);
   }
 
-  console.log(`[K-MEANS] Opaque pixels: ${opaqueCount}/${pixelArray.length / 4}`);
-  console.log(`[K-MEANS] Unique colors: ${pixelSet.size}`);
+  console.log(`[COLORS] Opaque pixels: ${opaqueCount}/${pixelArray.length / 4}`);
+  console.log(`[COLORS] Unique colors found: ${colorMap.size}`);
 
-  if (pixels.length === 0) {
-    console.error('[K-MEANS] ERROR: No opaque pixels found');
+  if (colorMap.size === 0) {
+    console.error('[COLORS] ERROR: No opaque pixels found');
     return [];
   }
 
-  // Inicializar centroides aleatoriamente
-  let centroids = [];
-  for (let i = 0; i < Math.min(colorCount, pixels.length); i++) {
-    centroids.push(pixels[Math.floor(Math.random() * pixels.length)]);
-  }
-
-  // K-means iterativo
-  for (let iter = 0; iter < maxIterations; iter++) {
-    const clusters = Array(centroids.length).fill(null).map(() => []);
-
-    // Asignar píxeles a clusters
-    for (const px of pixels) {
-      let minDist = Infinity, bestCluster = 0;
-      for (let k = 0; k < centroids.length; k++) {
-        const dist = colorDistance(px, centroids[k]);
-        if (dist < minDist) {
-          minDist = dist;
-          bestCluster = k;
-        }
-      }
-      clusters[bestCluster].push(px);
-    }
-
-    // Recalcular centroides
-    const newCentroids = [];
-    for (let k = 0; k < centroids.length; k++) {
-      if (clusters[k].length > 0) {
-        const avg = [
-          Math.round(clusters[k].reduce((s, p) => s + p[0], 0) / clusters[k].length),
-          Math.round(clusters[k].reduce((s, p) => s + p[1], 0) / clusters[k].length),
-          Math.round(clusters[k].reduce((s, p) => s + p[2], 0) / clusters[k].length)
-        ];
-        newCentroids.push(avg);
-      }
-    }
-
-    if (newCentroids.length === 0) break;
-    centroids = newCentroids;
-  }
-
-  // Convertir a hex y ordenar por frecuencia
-  const colorCounts = new Map();
-  for (const px of pixels) {
-    const hex = rgbToHex(px[0], px[1], px[2]);
-    const centroid = findNearestCentroid(px, centroids);
-    const centroidHex = rgbToHex(centroid[0], centroid[1], centroid[2]);
-    colorCounts.set(centroidHex, (colorCounts.get(centroidHex) || 0) + 1);
-  }
-
-  const result = Array.from(colorCounts.entries())
+  // Ordenar por frecuencia y tomar los top N
+  const result = Array.from(colorMap.entries())
     .sort((a, b) => b[1] - a[1])
-    .slice(0, colorCount)
+    .slice(0, Math.min(colorCount, colorMap.size))
     .map(([hex]) => hex);
 
-  console.log(`[K-MEANS] Final colors: ${result.length}/${colorCount}`, result);
+  console.log(`[COLORS] Using ${result.length} colors:`, result);
   return result;
 }
 
@@ -362,9 +309,9 @@ function kmeansQuantize(pixelArray, width, height, colorCount) {
 function createBinaryMasks(pixelArray, width, height, colors) {
   return colors.map(colorHex => {
     const mask = Array(height).fill(null).map(() => Array(width).fill(0));
+    let pixelsInColor = 0;
     
     for (let i = 0; i < pixelArray.length; i += 4) {
-      const idx = i / 4;
       const a = pixelArray[i + 3];
       if (a < 128) continue;
 
@@ -374,14 +321,17 @@ function createBinaryMasks(pixelArray, width, height, colors) {
       const px = rgbToHex(r, g, b);
 
       if (px === colorHex) {
+        const idx = i / 4;
         const y = Math.floor(idx / width);
         const x = idx % width;
         if (x >= 0 && x < width && y >= 0 && y < height) {
           mask[y][x] = 1;
+          pixelsInColor++;
         }
       }
     }
     
+    console.log(`[MASKS] Color ${colorHex}: ${pixelsInColor} pixels`);
     return mask;
   });
 }
@@ -397,6 +347,16 @@ function createBinaryMasks(pixelArray, width, height, colors) {
 function detectContours(mask, width, height) {
   const contours = [];
   const visited = new Set();
+  let pixelCount = 0;
+
+  // Count total pixels in mask first
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (mask[y]?.[x] === 1) pixelCount++;
+    }
+  }
+
+  console.log(`[CONTOURS] Mask has ${pixelCount} pixels, starting trace...`);
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -404,14 +364,13 @@ function detectContours(mask, width, height) {
         const contour = traceContour(mask, x, y, width, height, visited);
         if (contour.length >= 3) {
           contours.push(contour);
+          console.log(`[CONTOURS] Traced contour with ${contour.length} points`);
         }
       }
     }
   }
 
-  if (contours.length > 0) {
-    console.log(`[CONTOURS] Detected ${contours.length} contours in mask, sizes: ${contours.map(c => c.length).join(',')}`);
-  }
+  console.log(`[CONTOURS] Detected ${contours.length} contours in mask, sizes: ${contours.map(c => c.length).join(',')}`);
 
   return contours;
 }
