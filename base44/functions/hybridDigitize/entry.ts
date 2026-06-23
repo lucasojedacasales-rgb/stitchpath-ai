@@ -51,37 +51,33 @@ Deno.serve(async (req) => {
         return `Región ${i}: color=${r.hex} centro=(${cx},${cy}) cobertura=${areaPct}%`;
       }).join('\n');
 
-      const labelPrompt = `Eres un experto digitalizador de bordados. Tengo regiones detectadas píxel a píxel pero DEBO ENRIQUECER CON DETALLES INTERNOS.
+      const labelPrompt = `Analiza la imagen y CADA ÁREA DE COLOR por separado. NO agrupes regiones.
 
 ${colorData}
-Tengo ${Math.min(clientRegions.length, 40)} regiones detectadas:
+Detecté ${Math.min(clientRegions.length, 40)} áreas de color base:
 ${regionDescriptions}
 
-TAREA CRÍTICA - ANÁLISIS PROFUNDO:
-1. Para CADA región detectada, analiza la imagen y encuentra:
-   - Colores interiores / rellenos (NO solo bordes)
-   - Detalles finos: ojos, pupilas, mejillas, boca, detalles faciales
-   - Variaciones de color dentro del mismo elemento (ej: sombras, gradientes)
+TAREA SIMPLE:
+Para CADA color diferente que ves en la imagen (incluyendo detalles internos):
+1. **Identifica**: ojos, pupilas, mejillas, boca, cuerpo, contornos, etc.
+2. **Crea una región por cada ÁREA DE COLOR**:
+   - ojo_blanco, ojo_pupila, ojo_brillo (3 regiones diferentes)
+   - mejilla_rosa, mejilla_sombra (2 regiones)
+   - boca_roja, diente_blanco (2 regiones)
+   - Cada color = 1 región
 
-2. Genera SUB-REGIONES para cada detalle encontrado:
-   - Si ves ojos: crea 3-4 regiones (ojo_blanco, pupila_azul, brillo)
-   - Si ves mejillas: crea región independiente (mejilla_rosada)
-   - Si ves relleno diferente: crea región (cuerpo_rosa, etc)
-   - Cada color = región diferente
+3. Para cada región:
+   - name: nombre descriptivo (ej: "ojo_izquierdo_pupila", "mejilla_rosa")
+   - stitch_type: "fill" si es área sólida, "satin" si es detalle medio, "running_stitch" si es línea
+   - density: 0.7-0.9 para detalles, 0.5-0.7 para grandes
+   - angle: 0-180
+   - layer_order: fills primero (1,2,3...), detalles después
+   - underlay: true para fills, false para detalles
+   - pull_compensation: 0.15
 
-3. Para CADA región/sub-región:
-   - name: DESCRIPTIVO (ej: ojo_izquierdo_pupila, mejilla_rosa, cuerpo_principal)
-   - stitch_type: "fill" (rellenos/sólidos), "satin" (detalles medianos), "running_stitch" (líneas finas)
-   - density: 0.6-0.9
-   - angle: 0-180 (variado)
-   - layer_order: 1+ (fills primero, detalles al final)
-   - underlay: true para fills grandes, false para detalles
-   - pull_compensation: 0.12-0.18
+RESULTADO: Máximo 60 regiones, 1 por cada color detectado.
 
-RESULTADO: Espero 20-60 regiones (rellenos + detalles), NO solo contornos.
-
-Responde SOLO JSON válido:
-{"labels":[{"index":0,"name":"...","stitch_type":"fill","density":0.7,"angle":45,"layer_order":1,"underlay":true,"pull_compensation":0.15}],"estimated_time_min":25}`;
+{"labels":[{"index":0,"name":"...","stitch_type":"fill","density":0.7,"angle":45,"layer_order":1,"underlay":true,"pull_compensation":0.15}],"estimated_time_min":20}`;
 
       const labelResult = await base44.asServiceRole.integrations.Core.InvokeLLM({
         prompt: labelPrompt,
