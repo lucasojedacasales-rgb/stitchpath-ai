@@ -95,17 +95,21 @@ Responde SOLO JSON:
         const areaMm2 = Math.round(r.coverage * w * h);
         const avgWidth = perimeterMm > 0 ? areaMm2 / perimeterMm : 0;
         
-        // Smart stitch type classification
-        let stitch_type = label.stitch_type;
-        if (!stitch_type) {
-          if (areaMm2 > 200 && avgWidth > 4.0) {
-            stitch_type = 'fill';
-          } else if (areaMm2 < 50 || avgWidth < 2.5) {
-            stitch_type = 'running_stitch';
-          } else {
-            stitch_type = 'satin';
-          }
-        }
+        // Smart stitch type classification + contour following
+         let stitch_type = label.stitch_type;
+         if (!stitch_type) {
+           const pathLen = (r.path_points || []).length;
+           const curvatureRatio = perimeterMm > 0 ? pathLen / perimeterMm : 0;
+
+           // Mejor detección: área + ancho + curvatura
+           if (areaMm2 > 150 && avgWidth > 4.0 && curvatureRatio < 1.2) {
+             stitch_type = 'fill';
+           } else if (areaMm2 < 40 || avgWidth < 2.0 || curvatureRatio > 1.5) {
+             stitch_type = 'satin';
+           } else {
+             stitch_type = 'fill';
+           }
+         }
         
         const stitch_count = Math.round(areaMm2 * (label.density || 0.7) * 0.4);
         
@@ -151,16 +155,19 @@ Responde SOLO JSON:
       colorDataBlock = `\nCOLORES DETECTADOS:\n${image_analysis.dominantColors.map(c => `  ${c.hex} (${(c.coverage * 100).toFixed(1)}%)`).join('\n')}\n`;
     }
 
-    const prompt = `Eres el mejor digitalizador de bordados. Analiza la imagen adjunta y genera ${regionTarget} regiones de bordado con contornos precisos.
+    const prompt = `Eres el mejor digitalizador de bordados. Analiza la imagen adjunta y genera ${regionTarget} regiones de bordado con contornos SUAVIZADOS.
 TAMAÑO DISEÑO: ${w}mm × ${h}mm | COLORES MÁX: ${maxColors} | MODO: ${mode || 'hybrid'}
 ${colorDataBlock}
-INSTRUCCIONES:
-- path_points: ${pointsPerShape} puntos siguiendo el contorno REAL de cada zona de color
+INSTRUCCIONES CRÍTICAS:
+- path_points: ${pointsPerShape} puntos SUAVEMENTE distribuidos (NO puntos en zig-zag)
+  * FILL: 25-50 puntos describiendo curvas suaves
+  * SATIN/CONTORNO: 15-35 puntos siguiendo el edge real
+- Curvas fluidas: interpolar puntos a lo largo de bordes suaves, NO trazar saltos abruptos
 - Coordenadas normalizadas 0.0–1.0 (0,0 = arriba-izquierda, 1,1 = abajo-derecha)
 - Polígono cerrado: el último punto debe ser igual al primero
 - Orden de capas: fills grandes primero (layer_order=1), luego medianos, luego contornos satin, luego detalles running_stitch
 - Usa los colores REALES que ves en la imagen para los hex codes
-- stitch_count: estima realista según area (fill ~15pts/mm², satin ~20pts/mm, running ~5pts/mm)
+- stitch_count: estima según área y tipo (fill ~0.6pts/mm², satin ~8pts/mm, contour ~5pts/mm)
 
 Responde SOLO con JSON válido (sin texto extra):
 {
