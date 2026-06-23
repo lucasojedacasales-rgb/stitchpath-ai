@@ -105,7 +105,7 @@ export default function StitchCanvas({
     ctx.restore();
   }, [zoom, offset, imageOpacity]);
 
-  // ── LAYER 2: Stitches only — no polygon outlines ────────────────────────────
+  // ── LAYER 2: Stitches only — clipped per region ────────────────────────────
   const drawStitchLayer = useCallback(() => {
     const canvas = stitchCanvasRef.current;
     const imgCanvas = imgCanvasRef.current;
@@ -137,18 +137,30 @@ export default function StitchCanvas({
       const color = region.color || '#ffffff';
       const alpha = stitchOpacity / 100;
 
+      // Clip all stitches to region polygon
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo((pts[0][0] - 0.5) * drawW, (pts[0][1] - 0.5) * drawH);
+      for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo((pts[i][0] - 0.5) * drawW, (pts[i][1] - 0.5) * drawH);
+      }
+      ctx.closePath();
+      ctx.clip();
+
       if (effectiveType === 'fill') {
-        // Tatami fill — manages its own alpha internally
+        // Tatami fill — now fully clipped
         drawTatamiRegion(ctx, pts, region, drawW, drawH, zoom, false, false, stitchOpacity);
 
       } else if (effectiveType === 'satin') {
-        // Satin: parallel lines clipped to polygon, NO polygon outline
+        // Satin: parallel lines (already clipped above)
         drawSatinLines(ctx, pts, region, drawW, drawH, zoom, color, alpha);
 
       } else {
-        // Running stitch: dashed path along polygon boundary, NO filled polygon
+        // Running stitch: dashed path along polygon boundary
         drawRunningStitch(ctx, pts, region, drawW, drawH, zoom, color, alpha);
       }
+
+      ctx.restore();
     }
 
     ctx.restore();
@@ -210,15 +222,7 @@ export default function StitchCanvas({
     const density = region.density || 0.8;
     const spacing = Math.max(1.5, 6 / density) / zoom;
 
-    ctx.save();
     ctx.globalAlpha = alpha * 0.85;
-
-    // Clip to region shape
-    ctx.beginPath();
-    ctx.moveTo((pts[0][0] - 0.5) * drawW, (pts[0][1] - 0.5) * drawH);
-    for (let i = 1; i < pts.length; i++) ctx.lineTo((pts[i][0] - 0.5) * drawW, (pts[i][1] - 0.5) * drawH);
-    ctx.closePath();
-    ctx.clip();
 
     const xs = pts.map(p => (p[0] - 0.5) * drawW);
     const ys = pts.map(p => (p[1] - 0.5) * drawH);
@@ -226,6 +230,7 @@ export default function StitchCanvas({
     const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
     const diagLen = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) + spacing * 2;
 
+    ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(angle);
     ctx.strokeStyle = color;

@@ -219,7 +219,6 @@ export function drawTatamiRegion(ctx, pts, region, drawW, drawH, zoom, isSelecte
 
   // ── Draw underlay (40% opacity, darker color) ─────────────────────────────
   if (underlayLines.length > 0) {
-    ctx.save();
     ctx.globalAlpha = baseAlpha * 0.4;
     ctx.strokeStyle = darkenColor(color, 0.5);
     ctx.lineWidth = 1.0 / zoom;
@@ -230,11 +229,9 @@ export function drawTatamiRegion(ctx, pts, region, drawW, drawH, zoom, isSelecte
       ctx.lineTo(p1[0], p1[1]);
       ctx.stroke();
     }
-    ctx.restore();
   }
 
   // ── Draw fill (85% opacity, with fuzz at high zoom) ───────────────────────
-  ctx.save();
   ctx.globalAlpha = baseAlpha * 0.85;
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.5 / zoom;
@@ -251,35 +248,6 @@ export function drawTatamiRegion(ctx, pts, region, drawW, drawH, zoom, isSelecte
     ctx.moveTo(p0[0] + fuzz, p0[1] + fuzz);
     ctx.lineTo(p1[0] + fuzz, p1[1] + fuzz);
     ctx.stroke();
-  }
-  ctx.restore();
-
-  // ── Outline polygon ───────────────────────────────────────────────────────
-  ctx.save();
-  ctx.globalAlpha = baseAlpha * 0.6;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = (isSelected ? 2.5 : 1.2) / zoom;
-  ctx.beginPath();
-  ctx.moveTo(cpx[0][0], cpx[0][1]);
-  for (let i = 1; i < cpx.length; i++) ctx.lineTo(cpx[i][0], cpx[i][1]);
-  ctx.closePath();
-  ctx.stroke();
-  ctx.restore();
-
-  // ── Selection / hover highlight ───────────────────────────────────────────
-  if (isSelected || isHovered) {
-    ctx.save();
-    ctx.globalAlpha = baseAlpha;
-    ctx.strokeStyle = isSelected ? '#7c3aed' : '#06b6d4';
-    ctx.lineWidth = (isSelected ? 3 : 2) / zoom;
-    ctx.setLineDash([4 / zoom, 3 / zoom]);
-    ctx.beginPath();
-    ctx.moveTo(cpx[0][0], cpx[0][1]);
-    for (let i = 1; i < cpx.length; i++) ctx.lineTo(cpx[i][0], cpx[i][1]);
-    ctx.closePath();
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.restore();
   }
 }
 
