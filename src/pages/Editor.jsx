@@ -149,8 +149,38 @@ export default function Editor() {
 
       if (res.data?.success) {
         const rawData = res.data.data?.response || res.data.data;
-        const { regions: newRegions, total_stitches } = rawData;
-        setRegions(newRegions || []);
+        const { regions: rawRegions, total_stitches } = rawData;
+
+        // ── Filtrado estricto de regiones válidas ─────────────────────────────
+        const filtered = (rawRegions || []).filter(r => {
+          if ((r.area_mm2 || 0) <= 2.0) return false;
+          if ((r.perimeter_mm || 0) <= 3.0) return false;
+          // Rechazar líneas degeneradas (bbox muy estrecha en cualquier eje)
+          if (r.boundingBox) {
+            const { w, h } = r.boundingBox;
+            if (w < 0.1 || h < 0.1) return false;
+          }
+          // Rechazar artefactos de recorte (región toca borde por < 2px)
+          if (r.isEdgeRegion === true) return false;
+          return true;
+        });
+
+        // ── Clasificación correcta de tipo de puntada ─────────────────────────
+        const newRegions = filtered.map(r => {
+          let stitch_type = r.stitch_type;
+          const hex = (r.color || '').toLowerCase();
+          const isContourColor = hex === '#000000' || hex === '#1a1a1a' || r.isContour;
+          if (isContourColor) {
+            stitch_type = 'running_stitch';
+          } else if ((r.area_mm2 || 0) < 80 || (r.avgWidth_mm || 0) < 3.0) {
+            stitch_type = 'satin';
+          } else {
+            stitch_type = 'fill';
+          }
+          return { ...r, stitch_type };
+        });
+
+        setRegions(newRegions);
         setStep(3);
         await base44.entities.Project.update(id, {
           regions: newRegions, step: 3, status: 'ready',
