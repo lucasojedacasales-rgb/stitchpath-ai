@@ -171,31 +171,31 @@ Responde SOLO JSON válido:
 
 ANÁLISIS REQUERIDO:
 ${colorDataBlock}
-Genera ${regionTarget} regiones de bordado independientes, UNA POR CADA COLOR O DETALLE VISIBLE.
+Genera ${regionTarget} regiones de bordado independientes. CRÍTICO: Cada color diferente debe ser una región independiente con su relleno (fill) COMPLETO, no solo bordes o contornos.
 
-REGLAS DE EJECUCIÓN:
-1. **Detección de colores**: 
-   - Usa EXACTAMENTE los colores hex de la paleta detectada
-   - Si ves un color similar pero no en la lista, aproxima al más cercano
-   - NO simplificar colores: cada variante es una región diferente
+REGLAS CRÍTICAS:
+1. **Detecta TODO**:
+   - Rellenos sólidos grandes (cuerpo, áreas principales de color)
+   - Detalles internos: ojos, mejillas, boca, pupilas (incluso si son pequeños)
+   - Contornos solo si son líneas visibles como elementos independientes
+   - Cada variación de color = región diferente
+   - NO OMITAS REGIONES PEQUEÑAS (ojos, mejillas, detalles siempre se incluyen)
 
-2. **Detalles finos** (ojos, boca, líneas):
-   - Detecta TODOS los detalles, incluso pequeños (> 2mm²)
-   - Usa stitch_type "running_stitch" para líneas finas
-   - Usa stitch_type "satin" para detalles medianos
-   - Alta density (0.8-0.9) para detalles nítidos
+2. **Para CADA región**:
+   - name: descriptivo (ej: "cuerpo_rosa", "ojo_blanco", "pupila_azul", "mejilla_rosada")
+   - stitch_type: "fill" (rellenos grandes/sólidos homogéneos), "satin" (detalles medianos), "running_stitch" (líneas finas)
+   - Usa EXACTAMENTE los colores hex de la paleta
+   - density: 0.7-0.9 para detalles pequeños, 0.5-0.7 para rellenos grandes
 
 3. **path_points - Crítico**:
-   - ${pointsPerShape} puntos SUAVEMENTE distribuidos
-   - FILL: 30-60 puntos describiendo curvas reales
-   - SATIN: 20-40 puntos siguiendo edges
-   - CONTORNO: 15-30 puntos en líneas finas
+   - ${pointsPerShape} puntos suavemente distribuidos cubriendo TODA la región
+   - FILL: 30-60 puntos describiendo el relleno completo
    - Interpolar puntos en bordes curvos, NO crear zig-zag
+   - Asegura que la región sea "rellenable" completamente
 
 4. **Coordenadas**: Normalizadas 0.0–1.0 (0,0=top-left, 1,1=bottom-right)
-5. **Polígono**: Último punto = primer punto (cerrado)
-6. **Orden**: layer_order 1=primero (fills grandes), incrementar para detalles
-7. **stitch_count**: fill ~0.6pts/mm², satin ~8pts/mm, contour ~5pts/mm
+5. **Polígono cerrado**: Último punto = primer punto
+6. **Orden**: layer_order 1=fills grandes primero, incrementar para detalles
 
 Responde SOLO con JSON válido (sin texto extra):
 {
