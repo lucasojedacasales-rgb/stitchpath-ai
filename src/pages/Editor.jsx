@@ -10,6 +10,8 @@ import StitchCanvas from '@/components/editor/StitchCanvas';
 import ConfigPanel from '@/components/editor/ConfigPanel';
 import RegionsPanel from '@/components/editor/RegionsPanel';
 import ExportModal from '@/components/editor/ExportModal';
+import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
+import { preprocessImage } from '@/lib/imagePreprocessor';
 
 const DEFAULT_CONFIG = {
   fabric_type: 'Algodón', width_mm: 100, height_mm: 100, color_count: 6,
@@ -39,6 +41,8 @@ export default function Editor() {
   const [showExport, setShowExport] = useState(false);
   const [activeTab, setActiveTab] = useState('editor');
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [preprocessSettings, setPreprocessSettings] = useState(DEFAULT_PREPROCESS);
+  const [preprocessedUrl, setPreprocessedUrl] = useState(null);
   const timerRef = useRef(null);
 
   useEffect(() => {
@@ -101,8 +105,21 @@ export default function Editor() {
     timerRef.current = setInterval(() => setProcessingElapsed(s => s + 1), 1000);
     setStep(2);
     try {
+      // Pre-process image if enabled
+      let finalImageUrl = imageUrl;
+      if (preprocessSettings.enabled) {
+        try {
+          const processed = await preprocessImage(imageUrl, preprocessSettings);
+          const { file_url } = await base44.integrations.Core.UploadFile({ file: processed.blob });
+          finalImageUrl = file_url;
+          setPreprocessedUrl(file_url);
+        } catch (prepErr) {
+          console.warn('Preprocessing failed, using original:', prepErr);
+        }
+      }
+
       const res = await base44.functions.invoke('hybridDigitize', {
-        image_url: imageUrl,
+        image_url: finalImageUrl,
         mode: config.mode,
         width_mm: config.width_mm,
         height_mm: config.height_mm,
@@ -223,8 +240,9 @@ export default function Editor() {
       {/* MAIN EDITOR LAYOUT */}
       <div className="flex-1 flex overflow-hidden">
         {/* LEFT PANEL */}
-        <div className="w-64 flex-shrink-0 border-r border-[#1e2130] overflow-hidden">
+        <div className="w-64 flex-shrink-0 border-r border-[#1e2130] overflow-y-auto">
           <ConfigPanel config={config} onChange={setConfig} />
+          <PreprocessingPanel settings={preprocessSettings} onChange={setPreprocessSettings} />
         </div>
 
         {/* CENTER CANVAS */}
