@@ -52,18 +52,16 @@ Deno.serve(async (req) => {
     const threadData = THREAD_PRICING[brand] || THREAD_PRICING.default;
 
     // ── Thread cost ───────────────────────────────────────────────────────────
-    // Total thread consumed across all colors
-    const totalMeters = stitch_count / threadData.stitches_per_meter;
-    // Each color uses roughly equal share; spools are bought per color
-    const colorsToAccount = Math.max(color_count, 1);
-    const metersPerColor = totalMeters / colorsToAccount;
-    const spoolsPerColor = Math.ceil(metersPerColor / threadData.meters_per_spool);
-    const spoolsNeeded = spoolsPerColor * colorsToAccount;
-    const threadCostUSD = spoolsNeeded * threadData.price_per_spool * OVERHEAD_FACTOR;
+    const actualColorChanges = color_changes || Math.max(0, color_count - 1);
+    const stitchingMeters = (stitch_count * 2.5) / 1000;
+    const wasteMeters = actualColorChanges * 2.0;
+    const totalMeters = stitchingMeters + wasteMeters;
+    const pricePerMeter = threadData.price_per_spool / threadData.meters_per_spool;
+    const threadCostUSD = Math.round(totalMeters * pricePerMeter * OVERHEAD_FACTOR * 100) / 100;
 
     // ── Machine time ──────────────────────────────────────────────────────────
     const stitchSeconds = stitch_count / (COMMERCIAL_SPM * EFFICIENCY);
-    const colorChangeSeconds = (color_changes || Math.max(0, color_count - 1)) * COLOR_CHANGE_SECONDS;
+    const colorChangeSeconds = actualColorChanges * COLOR_CHANGE_SECONDS;
     const totalMachineSeconds = stitchSeconds + colorChangeSeconds;
     const totalMachineMinutes = totalMachineSeconds / 60;
     const totalJobMinutes = totalMachineMinutes + SETUP_MINUTES;
@@ -83,8 +81,9 @@ Deno.serve(async (req) => {
     const breakdown = {
       thread: {
         brand: brand === 'default' ? 'generic' : brand,
-        spools_needed: parseFloat(spoolsNeeded.toFixed(3)),
-        meters_used: parseFloat(totalMeters.toFixed(1)),
+        meters_stitching: parseFloat(stitchingMeters.toFixed(2)),
+        meters_waste: parseFloat(wasteMeters.toFixed(2)),
+        meters_total: parseFloat(totalMeters.toFixed(2)),
         cost_usd: parseFloat(threadCostUSD.toFixed(2)),
       },
       labor: {
