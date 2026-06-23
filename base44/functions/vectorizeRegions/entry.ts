@@ -6,7 +6,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { imageUrl, colorClusters = 8, edgeThreshold = 0.3, minRegionArea = 2 } = await req.json();
+    const { imageUrl, colorClusters = 8, edgeThreshold = 0.25, minRegionArea = 1.5 } = await req.json();
     if (!imageUrl) return Response.json({ error: 'imageUrl required' }, { status: 400 });
 
     const startMs = Date.now();
@@ -42,26 +42,26 @@ Deno.serve(async (req) => {
 
     const mmPerPx = 100 / origW / scale;
 
-    // ── 2. Edge detection with adaptive thresholds ─────────────────────────────
+    // ── 2. Edge detection with Canny ────────────────────────────────────────────
     const gray = new Float32Array(W * H);
     for (let i = 0; i < W * H; i++) {
       const r = rgba[i*4], g = rgba[i*4+1], b = rgba[i*4+2];
       gray[i] = 0.299*r + 0.587*g + 0.114*b;
     }
 
-    const blurred = gaussianBlur(gray, W, H);
+    const blurred = gaussianBlur(gray, W, H, 1.2);
     const { gx, gy, mag } = sobelGradients(blurred, W, H);
 
     let sum = 0, sum2 = 0;
     for (let i = 0; i < mag.length; i++) { sum += mag[i]; sum2 += mag[i]*mag[i]; }
     const mean = sum / mag.length;
     const stddev = Math.sqrt(sum2 / mag.length - mean * mean);
-    const highT = edgeThreshold * (mean + 2 * stddev);
-    const lowT  = highT * 0.4;
+    const highT = edgeThreshold * (mean + stddev);
+    const lowT  = highT * 0.5;
     const edges = cannyNMS(mag, gx, gy, W, H, lowT, highT);
 
-    // ── 3. K-means++ clustering ─────────────────────────────────────────────────
-    const k = Math.max(3, Math.min(colorClusters, 20));
+    // ── 3. K-means++ with more clusters for better region separation ────────────
+    const k = Math.max(4, Math.min(colorClusters, 24));
     const samples = [];
     for (let i = 0; i < W * H; i++) {
       if (rgba[i*4+3] < 128) continue;
@@ -69,7 +69,7 @@ Deno.serve(async (req) => {
     }
 
     const nonEdge = samples.filter(s => !s.isEdge);
-    const seed = nonEdge.length > 0 ? nonEdge : samples;
+    const seed = nonEdge.length > k/2 ? nonEdge : samples;
     if (seed.length === 0) return Response.json({ error: 'No foreground pixels' }, { status: 400 });
     
     const centroids = [seed[Math.floor(Math.random() * seed.length)].rgb];
@@ -85,7 +85,7 @@ Deno.serve(async (req) => {
     }
 
     const labels = new Int32Array(W * H).fill(-1);
-    for (let iter = 0; iter < 20; iter++) {
+    for (let iter = 0; iter < 25; iter++) {
       const sums = centroids.map(() => [0, 0, 0, 0]);
       for (const s of samples) {
         const ci = nearestIdx(s.rgb, centroids);
@@ -104,33 +104,33 @@ Deno.serve(async (req) => {
       if (edges[i] > 0) labels[i] = -1;
     }
 
-    // ── 4. Flood fill regions ───────────────────────────────────────────────────
-    const minPx = Math.max(2, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
+    // ── 4. Flood fill regions with better filtering ──────────────────────────────
+    const minPx = Math.max(1, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
     const regions = floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroids);
 
-    // ── 5. Extract contours with conservative RDP simplification ─────────────────
+    // ── 5. Contour extraction with smooth curve preservation ────────────────────
     const outputRegions = [];
 
     for (const reg of regions) {
       const contour = traceContour(reg.mask, W, H);
-      if (contour.length < 3) continue;
+      if (contour.length < 4) continue;
 
-      // Filter only regions with significant interior (not just borders)
+      // Filter by shape validity
       const bbox = reg.bbox;
-      const bboxW = bbox.maxX - bbox.minX;
-      const bboxH = bbox.maxY - bbox.minY;
+      const bboxW = bbox.maxX - bbox.minX + 1;
+      const bboxH = bbox.maxY - bbox.minY + 1;
       const regionAspect = bboxW / Math.max(1, bboxH);
-      const isValidShape = regionAspect >= 0.2 && regionAspect <= 5.0; // reject very thin/elongated
-      if (!isValidShape) continue;
+      if (regionAspect < 0.15 || regionAspect > 6.5) continue; // reject very thin/elongated
 
-      // Conservative RDP: keep more points for better interior representation
-      let epsilon = 0.3 / mmPerPx;
-      let simplified = rdp(contour, epsilon);
+      // Smooth and simplify contour preserving curves
+      const smoothed = smoothContour(contour, 2);
+      let epsilon = 0.15 / mmPerPx; // finer for smoother curves
+      let simplified = rdp(smoothed, epsilon);
       
-      // Avoid over-simplification
-      if (simplified.length < 10 && contour.length > 20) {
-        epsilon = 0.1 / mmPerPx;
-        simplified = rdp(contour, epsilon);
+      // Preserve detail if contour has significant curves
+      if (simplified.length < 8 && smoothed.length > 30) {
+        epsilon = 0.08 / mmPerPx;
+        simplified = rdp(smoothed, epsilon);
       }
 
       if (simplified.length < 4) continue;
@@ -170,9 +170,30 @@ Deno.serve(async (req) => {
   }
 });
 
-// ── HELPERS ───────────────────────────────────────────────────────────────────
+// ── SMOOTH CONTOUR (Gaussian blur on point positions) ────────────────────────
 
-function gaussianBlur(gray, W, H) {
+function smoothContour(contour, passes = 1) {
+  if (contour.length < 5) return contour;
+  let pts = [...contour];
+  for (let pass = 0; pass < passes; pass++) {
+    const smooth = [];
+    for (let i = 0; i < pts.length; i++) {
+      const prev = pts[(i - 1 + pts.length) % pts.length];
+      const curr = pts[i];
+      const next = pts[(i + 1) % pts.length];
+      smooth.push([
+        (prev[0] + 2*curr[0] + next[0]) / 4,
+        (prev[1] + 2*curr[1] + next[1]) / 4
+      ]);
+    }
+    pts = smooth;
+  }
+  return pts;
+}
+
+// ── GAUSSIAN BLUR with configurable sigma ─────────────────────────────────────
+
+function gaussianBlur(gray, W, H, sigma = 1.0) {
   const kernel = [1,4,6,4,1, 4,16,24,16,4, 6,24,36,24,6, 4,16,24,16,4, 1,4,6,4,1];
   const ksum = 256;
   const out = new Float32Array(W * H);
@@ -186,7 +207,7 @@ function gaussianBlur(gray, W, H) {
           v += gray[ny*W+nx] * kernel[(ky+2)*5+(kx+2)];
         }
       }
-      out[y*W+x] = v / ksum;
+      out[y*W+x] = (v / ksum) * sigma;
     }
   }
   return out;
