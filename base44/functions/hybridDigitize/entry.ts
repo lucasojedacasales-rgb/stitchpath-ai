@@ -6,7 +6,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { image_url, mode, width_mm, height_mm, color_count, remove_bg, use_ia_vision, use_full_bg, image_analysis } = await req.json();
+    const { image_url, mode, width_mm, height_mm, color_count, remove_bg, use_ia_vision, use_full_bg, image_analysis, traced_contours } = await req.json();
 
     if (!image_url) return Response.json({ error: 'image_url required' }, { status: 400 });
 
@@ -14,129 +14,127 @@ Deno.serve(async (req) => {
     const w = width_mm || 100;
     const h = height_mm || 100;
 
+    // ─── PATH A: Use real traced contours from client ────────────────────────
+    if (traced_contours && traced_contours.regions && traced_contours.regions.length > 0) {
+      const clientRegions = traced_contours.regions;
+
+      // Build a description of each traced region for Claude to label
+      const regionDescriptions = clientRegions.slice(0, 40).map((r, i) => {
+        const bbox = r.bbox;
+        const cx = ((bbox.minX + bbox.maxX) / 2 / traced_contours.analysisW).toFixed(3);
+        const cy = ((bbox.minY + bbox.maxY) / 2 / traced_contours.analysisH).toFixed(3);
+        const areaPct = (r.coverage * 100).toFixed(1);
+        return `Región ${i}: color=${r.hex} centro=(${cx},${cy}) cobertura=${areaPct}%`;
+      }).join('\n');
+
+      const labelPrompt = `Eres un experto digitalizador de bordados. Analiza esta imagen de bordado.
+
+Tengo ${clientRegions.slice(0, 40).length} regiones ya detectadas con sus contornos reales extraídos píxel a píxel:
+${regionDescriptions}
+
+Para CADA región (en el mismo orden 0, 1, 2...) asigna:
+- name: nombre descriptivo de la parte del diseño (ej: "cuerpo_principal", "ojo_izquierdo")
+- stitch_type: "fill" para zonas grandes rellenas, "satin" para bordes/contornos medianos, "running_stitch" para detalles muy finos
+- density: 0.4-0.9 según grosor necesario
+- angle: 0-360 ángulo de las puntadas de relleno (varía por zona)
+- layer_order: orden de bordado (1=primero, rellenos grandes antes que contornos)
+- underlay: true para fill y satin en zonas grandes, false para detalles
+- pull_compensation: 0.1-0.2
+
+Responde SOLO JSON válido:
+{
+  "labels": [
+    {"index": 0, "name": "...", "stitch_type": "fill", "density": 0.7, "angle": 45, "layer_order": 1, "underlay": true, "pull_compensation": 0.15}
+  ],
+  "estimated_time_min": 12
+}`;
+
+      const labelResult = await base44.asServiceRole.integrations.Core.InvokeLLM({
+        prompt: labelPrompt,
+        file_urls: [image_url],
+        model: 'claude_sonnet_4_6',
+        response_json_schema: {
+          type: 'object',
+          properties: {
+            labels: { type: 'array', items: { type: 'object' } },
+            estimated_time_min: { type: 'number' }
+          }
+        }
+      });
+
+      const labels = labelResult.labels || [];
+      const labelMap = {};
+      for (const l of labels) labelMap[l.index] = l;
+
+      // Merge real contours with Claude labels
+      const finalRegions = clientRegions.slice(0, 40).map((r, i) => {
+        const label = labelMap[i] || {};
+        const stitch_type = label.stitch_type || (r.coverage > 0.05 ? 'fill' : r.coverage > 0.01 ? 'satin' : 'running_stitch');
+        const stitch_count = Math.round(r.area_px * (label.density || 0.7) * 0.4);
+
+        return {
+          id: `r${i + 1}`,
+          name: label.name || `region_${r.hex.replace('#', '')}_${i}`,
+          color: r.hex,
+          stitch_type,
+          density: label.density || 0.7,
+          angle: label.angle || (i * 17 % 180),
+          layer_order: label.layer_order || (i + 1),
+          pull_compensation: label.pull_compensation || 0.15,
+          underlay: label.underlay !== undefined ? label.underlay : stitch_type !== 'running_stitch',
+          area_mm2: Math.round(r.coverage * w * h),
+          stitch_count,
+          is_auto_contour: false,
+          visible: true,
+          path_points: r.path_points,
+        };
+      });
+
+      const total_stitches = finalRegions.reduce((s, r) => s + r.stitch_count, 0);
+
+      return Response.json({
+        success: true,
+        data: {
+          regions: finalRegions,
+          total_stitches,
+          estimated_time_min: labelResult.estimated_time_min || Math.round(total_stitches / 800),
+          colors_used: new Set(finalRegions.map(r => r.color)).size,
+          width_mm: w,
+          height_mm: h,
+        }
+      });
+    }
+
+    // ─── PATH B: Fallback — pure AI generation (no client contours) ──────────
     const regionTarget = mode === 'ultra' ? '80-150' : mode === 'precision' ? '60-120' : mode === 'standard' ? '20-40' : '40-80';
     const pointsPerShape = mode === 'ultra' ? '60-120' : mode === 'precision' ? '50-100' : '30-60';
 
-    // Build color data block from client analysis
     let colorDataBlock = '';
     if (image_analysis && image_analysis.dominantColors && image_analysis.dominantColors.length > 0) {
-      const colorLines = image_analysis.dominantColors.map((c, i) =>
-        `  Color ${i + 1}: ${c.hex} (cubre ${(c.coverage * 100).toFixed(1)}% de la imagen)`
-      ).join('\n');
       colorDataBlock = `
-═══════════════════════════════════════════
-COLORES REALES EXTRAÍDOS DE LA IMAGEN (usa ESTOS exactos)
-═══════════════════════════════════════════
-${colorLines}
+COLORES REALES EXTRAÍDOS:
+${image_analysis.dominantColors.map((c, i) => `  ${c.hex} (${(c.coverage * 100).toFixed(1)}%)`).join('\n')}
 
-ZONAS DE COLOR con bounding boxes normalizados (0.0–1.0):
-${image_analysis.colorRegions.map((r, i) =>
-  `  ${r.hex}: x=[${r.minX.toFixed(3)}, ${r.maxX.toFixed(3)}] y=[${r.minY.toFixed(3)}, ${r.maxY.toFixed(3)}] (${(r.coverage * 100).toFixed(1)}% cobertura)`
+ZONAS DE COLOR (bounding boxes 0-1):
+${image_analysis.colorRegions.map(r =>
+  `  ${r.hex}: x=[${r.minX.toFixed(3)},${r.maxX.toFixed(3)}] y=[${r.minY.toFixed(3)},${r.maxY.toFixed(3)}]`
 ).join('\n')}
 `;
     }
 
-    // Build edge density hint
-    let edgeBlock = '';
-    if (image_analysis && image_analysis.edgeDensityMap) {
-      const grid = image_analysis.edgeDensityMap;
-      const gridSize = grid.length;
-      const highEdgeCells = [];
-      for (let gy = 0; gy < gridSize; gy++) {
-        for (let gx = 0; gx < gridSize; gx++) {
-          if (grid[gy][gx] > 0.4) {
-            const x0 = (gx / gridSize).toFixed(2), x1 = ((gx + 1) / gridSize).toFixed(2);
-            const y0 = (gy / gridSize).toFixed(2), y1 = ((gy + 1) / gridSize).toFixed(2);
-            highEdgeCells.push(`    zona x=[${x0},${x1}] y=[${y0},${y1}] densidad=${grid[gy][gx].toFixed(2)}`);
-          }
-        }
-      }
-      if (highEdgeCells.length > 0) {
-        edgeBlock = `
-═══════════════════════════════════════════
-MAPA DE BORDES (Sobel) — zonas con alta densidad de contornos detectados:
-${highEdgeCells.join('\n')}
-Estos son los lugares donde DEBES generar contornos running_stitch o satin precisos.
-`;
-      }
-    }
-
-    // Aspect ratio hint
-    const arHint = image_analysis
-      ? `Proporción real de la imagen: ${image_analysis.aspectRatio.toFixed(3)} (ancho/alto = ${image_analysis.imageWidth}×${image_analysis.imageHeight}px original)`
-      : '';
-
-    const prompt = `Eres el mejor digitalizador de bordados del mundo. Analiza esta imagen y genera un resultado de digitalizacion PROFESIONAL con el nivel de detalle de software industriales como Wilcom, Hatch o Embird.
-
-OBJETIVO: Generar ${regionTarget} regiones que reproduzcan FIELMENTE cada elemento visual de la imagen para bordado a máquina.
+    const prompt = `Eres el mejor digitalizador de bordados. Analiza la imagen y genera ${regionTarget} regiones con contornos PRECISOS.
 TAMAÑO: ${w}mm × ${h}mm | COLORES MAX: ${maxColors} | MODO: ${mode || 'hybrid'}
-${arHint}
 ${colorDataBlock}
-${edgeBlock}
 
-═══════════════════════════════════════════
-REGLAS ABSOLUTAS DE CALIDAD (NO NEGOCIABLES)
-═══════════════════════════════════════════
+REGLAS:
+- path_points: ${pointsPerShape} puntos siguiendo el contorno REAL de cada zona
+- Coordenadas 0.0–1.0 desde arriba-izquierda
+- Polígono cerrado (último = primer punto)
+- Capas: fills grandes → fills medianos → contornos satin → detalles running_stitch
 
-1. CADA ELEMENTO VISUAL = UNA O MÁS REGIONES SEPARADAS
-   Descompón la imagen en: silueta exterior, rellenos de color, sub-formas internas, ojos, boca, nariz, mejillas, orejas, extremidades, accesorios, sombras, highlights, contornos de separación entre zonas.
-
-2. REGLAS DE CAPAS (OBLIGATORIO):
-   - Capa 1-5: Rellenos grandes de fondo (fill) — zona más grande de cada color principal
-   - Capa 6-15: Rellenos medianos internos (fill) — sub-zonas dentro del personaje
-   - Capa 16-30: Contornos satin de separación entre colores (satin, 2-4mm ancho)
-   - Capa 31+: Contornos finos de detalle y borde exterior (running_stitch o satin)
-   SIEMPRE: contornos encima de rellenos. Nunca al revés.
-
-3. CONTORNOS ULTRA-PRECISOS (CRÍTICO — usa los bounding boxes de arriba como guía):
-   - path_points: ${pointsPerShape} puntos por región siguiendo el contorno REAL píxel a píxel
-   - Respeta EXACTAMENTE los bounding boxes de cada color indicados arriba
-   - Para siluetas con curvas orgánicas: distribuye puntos en TODAS las inflexiones de la curva
-   - Para zonas redondeadas: usa puntos cada 3-10 grados del arco real
-   - NUNCA uses cajas rectangulares ni elipses perfectas — sigue la forma REAL de la imagen
-   - Coordenadas normalizadas 0.0–1.0: (0,0)=arriba-izquierda, (1,1)=abajo-derecha
-   - Los path_points deben ajustarse a los RINCONES y BORDES REALES de cada zona de color
-   - Polígono SIEMPRE cerrado: último punto = primer punto
-
-4. COLORES EXACTOS (usa los hexadecimales extraídos arriba, no inventes colores):
-   - Cada región tiene el color HEX REAL indicado en la tabla de colores
-   - El contorno exterior suele ser negro o muy oscuro
-
-5. SEPARACIÓN POR ZONAS DE COLOR:
-   Para cada zona de color diferente genera:
-   a) Un fill (relleno) cubriendo exactamente el bounding box de esa zona
-   b) Un satin o running_stitch de contorno siguiendo el borde exacto de esa zona
-
-6. STITCH_TYPE según función:
-   - fill: zonas rellenas de área > 3mm² (ángulo de relleno variado por zona)
-   - satin: bandas de 1-8mm ancho, contornos principales, bordes entre colores
-   - running_stitch: contornos muy finos < 1mm, detalles lineales, texturas
-
-7. DENSIDADES:
-   - fill denso: density 0.6-0.8
-   - satin: density 0.7-0.9
-   - running_stitch: density 0.3-0.5
-
-Responde SOLO en JSON válido con esta estructura:
+Responde SOLO JSON:
 {
-  "regions": [
-    {
-      "id": "r1",
-      "name": "nombre_descriptivo",
-      "color": "#hexcolor",
-      "stitch_type": "fill",
-      "density": 0.7,
-      "angle": 45,
-      "layer_order": 1,
-      "pull_compensation": 0.15,
-      "underlay": true,
-      "area_mm2": 800,
-      "stitch_count": 2200,
-      "is_auto_contour": false,
-      "visible": true,
-      "path_points": [[0.2,0.1],[0.3,0.08],[0.5,0.07],[0.7,0.09],[0.8,0.2],[0.75,0.4],[0.5,0.5],[0.25,0.4],[0.2,0.1]]
-    }
-  ],
+  "regions": [{"id":"r1","name":"...","color":"#hex","stitch_type":"fill","density":0.7,"angle":45,"layer_order":1,"pull_compensation":0.15,"underlay":true,"area_mm2":800,"stitch_count":2200,"is_auto_contour":false,"visible":true,"path_points":[[0.2,0.1],...]}],
   "total_stitches": 18000,
   "estimated_time_min": 12,
   "colors_used": 8,

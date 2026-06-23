@@ -13,6 +13,7 @@ import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import { preprocessImage } from '@/lib/imagePreprocessor';
 import { analyzeImage } from '@/lib/imageAnalyzer';
+import { traceImageContours } from '@/lib/contourTracer';
 
 const DEFAULT_CONFIG = {
   fabric_type: 'Algodón', width_mm: 100, height_mm: 100, color_count: 6,
@@ -119,12 +120,18 @@ export default function Editor() {
         }
       }
 
-      // Analyze image for precise color/edge metadata
+      // Trace real contours client-side + analyze colors
       let imageAnalysis = null;
+      let tracedContours = null;
       try {
-        imageAnalysis = await analyzeImage(finalImageUrl, config.color_count || 8);
+        const [analysis, contours] = await Promise.all([
+          analyzeImage(finalImageUrl, config.color_count || 8),
+          traceImageContours(finalImageUrl, config.color_count || 8, 0.003),
+        ]);
+        imageAnalysis = analysis;
+        tracedContours = contours;
       } catch (e) {
-        console.warn('Image analysis failed, continuing without metadata:', e);
+        console.warn('Client analysis failed, continuing without:', e);
       }
 
       const res = await base44.functions.invoke('hybridDigitize', {
@@ -137,6 +144,7 @@ export default function Editor() {
         use_ia_vision: config.use_ia_vision,
         use_full_bg: config.use_full_bg,
         image_analysis: imageAnalysis,
+        traced_contours: tracedContours,
       });
 
       if (res.data?.success) {
