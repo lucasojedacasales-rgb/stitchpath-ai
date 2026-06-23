@@ -294,7 +294,13 @@ export default function Editor() {
       <div className="flex-1 flex overflow-hidden">
         {/* LEFT PANEL */}
         <div className="w-64 flex-shrink-0 border-r border-[#1e2130] overflow-y-auto">
-          <ConfigPanel config={config} onChange={setConfig} />
+          <ConfigPanel
+            config={config}
+            onChange={setConfig}
+            regions={regions}
+            selectedRegionIds={selectedRegionId ? [selectedRegionId] : []}
+            onRegionsUpdate={handleRegionsUpdate}
+          />
           <PreprocessingPanel settings={preprocessSettings} onChange={setPreprocessSettings} />
         </div>
 

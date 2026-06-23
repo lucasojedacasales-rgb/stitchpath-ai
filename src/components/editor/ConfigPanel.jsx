@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, Zap, Cpu, Settings, BookMarked } from 'lucide-react';
-import StitchPresetManager from './StitchPresetManager';
+import WorkflowPresetPanel from './WorkflowPresetPanel';
 
 const FABRIC_TYPES = ['Algodón', 'Poliéster', 'Mezcla', 'Denim', 'Lino', 'Seda', 'Lycra', 'Otro'];
 
@@ -45,7 +45,7 @@ function Toggle({ label, value, onChange }) {
   );
 }
 
-export default function ConfigPanel({ config, onChange, onRegionApplyPreset }) {
+export default function ConfigPanel({ config, onChange, regions, selectedRegionIds, onRegionsUpdate }) {
   const cfg = config || {};
   const set = (key, val) => onChange({ ...cfg, [key]: val });
 
@@ -156,8 +156,12 @@ export default function ConfigPanel({ config, onChange, onRegionApplyPreset }) {
       </Section>
 
       {/* PRESETS */}
-      <Section title="Presets" icon={BookMarked} defaultOpen={false}>
-        <StitchPresetManager onApply={onRegionApplyPreset} compact />
+      <Section title="Presets de workflow" icon={BookMarked} defaultOpen={false}>
+        <WorkflowPresetPanel
+          regions={regions || []}
+          selectedRegionIds={selectedRegionIds || []}
+          onRegionsUpdate={onRegionsUpdate}
+        />
       </Section>
     </div>
   );
