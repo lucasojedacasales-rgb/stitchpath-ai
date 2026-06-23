@@ -154,14 +154,15 @@ export default function Editor() {
         // ── Filtrado estricto de regiones válidas ─────────────────────────────
         const filtered = (rawRegions || []).filter(r => {
           if ((r.area_mm2 || 0) <= 2.0) return false;
-          if ((r.perimeter_mm || 0) <= 3.0) return false;
-          // Rechazar líneas degeneradas (bbox muy estrecha en cualquier eje)
+          // Only filter by perimeter if the field exists
+          if (r.perimeter_mm !== undefined && r.perimeter_mm <= 3.0) return false;
           if (r.boundingBox) {
             const { w, h } = r.boundingBox;
             if (w < 0.1 || h < 0.1) return false;
           }
-          // Rechazar artefactos de recorte (región toca borde por < 2px)
           if (r.isEdgeRegion === true) return false;
+          // Must have path_points to be renderable
+          if (!r.path_points || r.path_points.length < 3) return false;
           return true;
         });
 
