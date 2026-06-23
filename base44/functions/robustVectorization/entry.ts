@@ -301,29 +301,33 @@ function getBoundingBox(contour) {
 
 function generateFillStitches(contour, width_mm, height_mm, width, height) {
   const stitches = [];
-  const angle = (45 * Math.PI) / 180; // 45° angle
+  const angle = (45 * Math.PI) / 180;
   const density = 0.7;
   const spacing = Math.max(0.5, 1.0 / density); // mm between lines
+  const lineSpacing = (spacing / Math.sqrt(width_mm * height_mm)); // normalized spacing
 
   const bbox = getBoundingBox(contour);
   const cx = (bbox.minX + bbox.maxX) / 2;
   const cy = (bbox.minY + bbox.maxY) / 2;
-  const diag = Math.sqrt((bbox.w * bbox.w + bbox.h * bbox.h) * width_mm * height_mm);
+  const diag = Math.sqrt(bbox.w * bbox.w + bbox.h * bbox.h) + 0.1;
 
-  // Generate parallel lines with clipping
-  const lineSpacing = (spacing / Math.sqrt(width_mm * height_mm)) * width;
-  
+  // Generate parallel lines with polygon clipping
   for (let d = -diag; d < diag; d += lineSpacing) {
+    // Line endpoints in normalized coords
     const x1 = cx + Math.cos(angle) * d - Math.sin(angle) * diag;
     const y1 = cy + Math.sin(angle) * d + Math.cos(angle) * diag;
     const x2 = cx + Math.cos(angle) * d + Math.sin(angle) * diag;
     const y2 = cy + Math.sin(angle) * d - Math.cos(angle) * diag;
 
-    // Clip line to contour
-    const clipped = clipLineToPolygon([x1, y1], [x2, y2], contour);
-    if (clipped && clipped.length === 2) {
-      stitches.push(clipped[0]);
-      stitches.push(clipped[1]);
+    // Find all intersections with polygon edges
+    const segments = getLinePolygonIntersections([x1, y1], [x2, y2], contour);
+    
+    // Add stitch pairs from intersections
+    for (let i = 0; i < segments.length; i += 2) {
+      if (i + 1 < segments.length) {
+        stitches.push(segments[i]);
+        stitches.push(segments[i + 1]);
+      }
     }
   }
 
@@ -332,46 +336,89 @@ function generateFillStitches(contour, width_mm, height_mm, width, height) {
 
 function generateContourStitches(contour, stitchType, width_mm, height_mm, width, height) {
   const stitches = [];
-  const spacing = stitchType === 'satin' ? 0.5 : 1.0; // mm between points
-  const pixelSpacing = (spacing / Math.sqrt(width_mm * height_mm)) * width;
+  const spacing = stitchType === 'satin' ? 0.5 : 1.0; // mm
+  const normSpacing = spacing / Math.sqrt(width_mm * height_mm);
 
-  // Follow contour with regular spacing
-  let totalDist = 0;
+  // Walk contour and add points at regular spacing
+  let distAcc = 0;
   for (let i = 0; i < contour.length - 1; i++) {
     const p1 = contour[i];
     const p2 = contour[i + 1];
-    const dx = (p2[0] - p1[0]) * width;
-    const dy = (p2[1] - p1[1]) * height;
+    const dx = p2[0] - p1[0];
+    const dy = p2[1] - p1[1];
     const segLen = Math.hypot(dx, dy);
 
-    let segDist = 0;
-    const steps = Math.ceil(segLen / pixelSpacing);
-    
-    for (let j = 0; j <= steps; j++) {
-      const t = steps > 0 ? j / steps : 0;
-      const x = p1[0] + t * (p2[0] - p1[0]);
-      const y = p1[1] + t * (p2[1] - p1[1]);
+    if (segLen === 0) continue;
+
+    let t = 0;
+    while (t <= 1) {
+      const x = p1[0] + t * dx;
+      const y = p1[1] + t * dy;
       stitches.push([x, y]);
+      
+      const nextDist = distAcc + normSpacing;
+      t += (nextDist - distAcc) / segLen;
+      distAcc = nextDist;
     }
   }
 
   return stitches;
 }
 
-function clipLineToPolygon(p1, p2, polygon) {
-  // Cohen-Sutherland line clipping simplified for polygons
-  // For now, return the line if it intersects the bbox
-  const bbox = getBoundingBox(polygon);
-  
-  let x1 = p1[0], y1 = p1[1], x2 = p2[0], y2 = p2[1];
+/**
+ * Find all intersections of a line with polygon edges
+ * Returns sorted list of intersection points
+ */
+function getLinePolygonIntersections(p1, p2, polygon) {
+  const intersections = [];
 
-  // Simple clip to bbox
-  if ((x1 < bbox.minX && x2 < bbox.minX) || (x1 > bbox.maxX && x2 > bbox.maxX) ||
-      (y1 < bbox.minY && y2 < bbox.minY) || (y1 > bbox.maxY && y2 > bbox.maxY)) {
-    return null;
+  for (let i = 0; i < polygon.length - 1; i++) {
+    const a = polygon[i];
+    const b = polygon[i + 1];
+    const intersection = lineLineIntersection(p1, p2, a, b);
+    
+    if (intersection) {
+      intersections.push(intersection);
+    }
   }
 
-  return [[x1, y1], [x2, y2]];
+  // Sort intersections along the line direction
+  if (intersections.length > 0) {
+    const dx = p2[0] - p1[0];
+    const dy = p2[1] - p1[1];
+    intersections.sort((a, b) => {
+      const distA = (a[0] - p1[0]) * dx + (a[1] - p1[1]) * dy;
+      const distB = (b[0] - p1[0]) * dx + (b[1] - p1[1]) * dy;
+      return distA - distB;
+    });
+  }
+
+  return intersections;
+}
+
+/**
+ * Find intersection of two line segments
+ * Returns [x, y] or null
+ */
+function lineLineIntersection(p1, p2, p3, p4) {
+  const x1 = p1[0], y1 = p1[1];
+  const x2 = p2[0], y2 = p2[1];
+  const x3 = p3[0], y3 = p3[1];
+  const x4 = p4[0], y4 = p4[1];
+
+  const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+  
+  if (Math.abs(denom) < 1e-10) return null; // Parallel
+
+  const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+  const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
+
+  // Check if intersection is on both segments
+  if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+    return [x1 + t * (x2 - x1), y1 + t * (y2 - y1)];
+  }
+
+  return null;
 }
 
 function estimatePerimeter(contour) {
