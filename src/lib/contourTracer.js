@@ -1,14 +1,15 @@
 /**
  * Client-side contour tracer.
- * Uses canvas pixel data to:
- * 1. Quantize image to N colors (k-means)
- * 2. For each color zone, extract a simplified polygon contour
- * 3. Return regions with real path_points normalized 0-1
+ * 1. K-means color quantization
+ * 2. Connected-component blob detection per color
+ * 3. Moore-neighbor contour tracing
+ * 4. RDP simplification
+ * Returns regions with real path_points normalized 0–1
  */
 
 const ANALYSIS_SIZE = 512;
 
-export async function traceImageContours(imageUrl, maxColors = 8, simplifyTolerance = 0.004) {
+export async function traceImageContours(imageUrl, maxColors = 8) {
   const img = await loadImage(imageUrl);
 
   const scale = Math.min(ANALYSIS_SIZE / img.width, ANALYSIS_SIZE / img.height);
@@ -21,77 +22,79 @@ export async function traceImageContours(imageUrl, maxColors = 8, simplifyTolera
   ctx.drawImage(img, 0, 0, W, H);
 
   const imageData = ctx.getImageData(0, 0, W, H);
-  const pixels = imageData.data;
+  const pixels = imageData.data; // RGBA flat array, length = W*H*4
 
-  // 1. K-means color quantization
-  const palette = kMeans(pixels, W, H, maxColors, 15);
-
-  // 2. Build label map (each pixel → palette index)
-  const labels = new Int32Array(W * H);
+  // 1. Build opaque pixel list for k-means sampling
+  const samples = [];
   for (let i = 0; i < W * H; i++) {
-    const idx = i * 4;
-    if (pixels[idx + 3] < 128) { labels[i] = -1; continue; }
-    labels[i] = nearestColor([pixels[idx], pixels[idx + 1], pixels[idx + 2]], palette);
+    if (pixels[i * 4 + 3] < 128) continue;
+    samples.push([pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]]);
   }
 
-  // 3. For each color, find connected blobs and trace their contours
-  const regions = [];
-  for (let ci = 0; ci < palette.length; ci++) {
-    const blobs = findBlobs(labels, W, H, ci, Math.floor(W * H * 0.002)); // min 0.2% pixels
-    for (const blob of blobs) {
-      const contour = traceContour(blob.mask, W, H);
-      if (contour.length < 6) continue;
-      const simplified = rdpSimplify(contour, simplifyTolerance);
-      if (simplified.length < 4) continue;
+  const k = Math.min(maxColors, samples.length);
+  const palette = kMeans(samples, k, 20);
 
-      // Normalize to 0-1
+  // 2. Build label map (each pixel → palette index, -1 = transparent)
+  const labels = new Int32Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    if (pixels[i * 4 + 3] < 128) { labels[i] = -1; continue; }
+    labels[i] = nearestColor([pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]], palette);
+  }
+
+  // 3. For each color, find connected blobs
+  // minPixels = 0.05% of image (catches eyes, small details)
+  const minPixels = Math.max(20, Math.floor(W * H * 0.0005));
+  const regions = [];
+
+  for (let ci = 0; ci < palette.length; ci++) {
+    const blobs = findBlobs(labels, W, H, ci, minPixels);
+    for (const blob of blobs) {
+      // RDP tolerance in pixel space (scale with image size, ~1px)
+      const rdpEps = Math.max(1.0, Math.min(W, H) * 0.005);
+      const contour = traceContour(blob.mask, W, H);
+      if (contour.length < 4) continue;
+      const simplified = rdpSimplify(contour, rdpEps);
+      if (simplified.length < 3) continue;
+
+      // Normalize to 0–1
       const pts = simplified.map(([x, y]) => [
         parseFloat((x / W).toFixed(4)),
         parseFloat((y / H).toFixed(4))
       ]);
-      // Close polygon
+      // Ensure closed polygon
       if (pts[0][0] !== pts[pts.length - 1][0] || pts[0][1] !== pts[pts.length - 1][1]) {
         pts.push([...pts[0]]);
       }
 
-      const hex = rgbToHex(palette[ci]);
-      const coverage = blob.pixelCount / (W * H);
-
       regions.push({
-        hex,
+        hex: rgbToHex(palette[ci]),
         rgb: palette[ci],
-        coverage,
+        coverage: blob.pixelCount / (W * H),
         pixelCount: blob.pixelCount,
+        area_px: blob.pixelCount,
         path_points: pts,
         bbox: blob.bbox,
-        area_px: blob.pixelCount,
       });
     }
   }
 
-  // Sort by area descending (large fills first)
+  // Sort largest first (fills before contours/details)
   regions.sort((a, b) => b.pixelCount - a.pixelCount);
 
   return { regions, imageWidth: img.width, imageHeight: img.height, analysisW: W, analysisH: H };
 }
 
-// ─── K-Means ────────────────────────────────────────────────────────────────
+// ─── K-Means ──────────────────────────────────────────────────────────────────
 
-function kMeans(pixels, W, H, k, iterations) {
-  const samples = [];
-  for (let i = 0; i < W * H; i += 4) {
-    if (pixels[i * 4 + 3] < 128) continue;
-    samples.push([pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]]);
-  }
+function kMeans(samples, k, iterations) {
   if (samples.length === 0) return [];
-  k = Math.min(k, samples.length);
 
-  // k-means++ init
+  // k-means++ initialization
   const centroids = [samples[Math.floor(Math.random() * samples.length)]];
   while (centroids.length < k) {
     const dists = samples.map(s => Math.min(...centroids.map(c => distSq(s, c))));
-    const sum = dists.reduce((a, b) => a + b, 0);
-    let r = Math.random() * sum;
+    const total = dists.reduce((a, b) => a + b, 0);
+    let r = Math.random() * total;
     for (let i = 0; i < dists.length; i++) {
       r -= dists[i];
       if (r <= 0) { centroids.push([...samples[i]]); break; }
@@ -100,7 +103,7 @@ function kMeans(pixels, W, H, k, iterations) {
   }
 
   for (let iter = 0; iter < iterations; iter++) {
-    const sums = centroids.map(() => [0, 0, 0, 0]);
+    const sums = centroids.map(() => [0, 0, 0, 0]); // r,g,b,count
     for (const s of samples) {
       const ci = nearestColor(s, centroids);
       sums[ci][0] += s[0]; sums[ci][1] += s[1]; sums[ci][2] += s[2]; sums[ci][3]++;
@@ -122,7 +125,7 @@ function nearestColor(rgb, palette) {
   return best;
 }
 
-// ─── Blob Detection (connected components) ──────────────────────────────────
+// ─── Blob Detection ───────────────────────────────────────────────────────────
 
 function findBlobs(labels, W, H, colorIdx, minPixels) {
   const visited = new Uint8Array(W * H);
@@ -131,7 +134,6 @@ function findBlobs(labels, W, H, colorIdx, minPixels) {
   for (let start = 0; start < W * H; start++) {
     if (labels[start] !== colorIdx || visited[start]) continue;
 
-    // BFS flood fill
     const stack = [start];
     const mask = new Uint8Array(W * H);
     let count = 0;
@@ -161,65 +163,66 @@ function findBlobs(labels, W, H, colorIdx, minPixels) {
   return blobs;
 }
 
-// ─── Contour Tracing (Moore neighborhood) ────────────────────────────────────
+// ─── Contour Tracing (Moore neighborhood) ─────────────────────────────────────
 
 function traceContour(mask, W, H) {
-  // Find first set pixel
   let start = -1;
   for (let i = 0; i < mask.length; i++) {
     if (mask[i]) { start = i; break; }
   }
   if (start === -1) return [];
 
+  const dirs = [
+    [1, 0], [1, 1], [0, 1], [-1, 1],
+    [-1, 0], [-1, -1], [0, -1], [1, -1]
+  ];
   const contour = [];
-  const dirs = [[-1,0],[-1,-1],[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1]]; // 8-neighbors
   let cx = start % W, cy = Math.floor(start / W);
+  const sx = cx, sy = cy;
   let dir = 0;
+  const maxSteps = W * H;
 
-  for (let step = 0; step < W * H * 2; step++) {
+  for (let step = 0; step < maxSteps; step++) {
     contour.push([cx, cy]);
-    // Find next boundary pixel
-    let found = false;
+    // Search clockwise from back-left of current direction
+    let moved = false;
     for (let d = 0; d < 8; d++) {
-      const nd = (dir + 6 + d) % 8; // start from left-back
+      const nd = (dir + 6 + d) % 8;
       const nx = cx + dirs[nd][0], ny = cy + dirs[nd][1];
       if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
       if (mask[ny * W + nx]) {
         dir = nd;
         cx = nx; cy = ny;
-        found = true;
+        moved = true;
         break;
       }
     }
-    if (!found) break;
-    if (step > 4 && cx === start % W && cy === Math.floor(start / W)) break;
+    if (!moved) break;
+    if (step > 3 && cx === sx && cy === sy) break;
   }
 
   return contour;
 }
 
-// ─── Ramer-Douglas-Peucker Simplification ────────────────────────────────────
+// ─── Ramer-Douglas-Peucker ────────────────────────────────────────────────────
 
 function rdpSimplify(points, epsilon) {
   if (points.length <= 2) return points;
-
   let maxDist = 0, maxIdx = 0;
-  const start = points[0], end = points[points.length - 1];
-
+  const s = points[0], e = points[points.length - 1];
   for (let i = 1; i < points.length - 1; i++) {
-    const d = pointToLineDist(points[i], start, end);
+    const d = pointToSegDist(points[i], s, e);
     if (d > maxDist) { maxDist = d; maxIdx = i; }
   }
-
   if (maxDist > epsilon) {
-    const left = rdpSimplify(points.slice(0, maxIdx + 1), epsilon);
-    const right = rdpSimplify(points.slice(maxIdx), epsilon);
-    return left.slice(0, -1).concat(right);
+    const l = rdpSimplify(points.slice(0, maxIdx + 1), epsilon);
+    const r = rdpSimplify(points.slice(maxIdx), epsilon);
+    return l.slice(0, -1).concat(r);
   }
-  return [start, end];
+  return [s, e];
 }
 
-function pointToLineDist([px, py], [ax, ay], [bx, by]) {
+function pointToSegDist([px, py], [ax, ay], [bx, by]) {
   const dx = bx - ax, dy = by - ay;
   const len2 = dx * dx + dy * dy;
   if (len2 === 0) return Math.hypot(px - ax, py - ay);
@@ -227,7 +230,7 @@ function pointToLineDist([px, py], [ax, ay], [bx, by]) {
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function distSq(a, b) { return (a[0]-b[0])**2 + (a[1]-b[1])**2 + (a[2]-b[2])**2; }
 
