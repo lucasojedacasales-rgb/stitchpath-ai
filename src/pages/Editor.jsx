@@ -11,6 +11,8 @@ import ConfigPanel from '@/components/editor/ConfigPanel';
 import RegionsPanel from '@/components/editor/RegionsPanel';
 import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
+import MaskToolbar from '@/components/editor/MaskToolbar';
+import MaskCanvas from '@/components/editor/MaskCanvas';
 import { preprocessImage } from '@/lib/imagePreprocessor';
 import { analyzeImage } from '@/lib/imageAnalyzer';
 import { traceImageContours } from '@/lib/contourTracer';
@@ -46,6 +48,17 @@ export default function Editor() {
   const [preprocessSettings, setPreprocessSettings] = useState(DEFAULT_PREPROCESS);
   const [preprocessedUrl, setPreprocessedUrl] = useState(null);
   const timerRef = useRef(null);
+
+  // Mask tool state
+  const maskCanvasRef = useRef(null);
+  const [maskTool, setMaskTool] = useState('brush');
+  const [brushSize, setBrushSize] = useState(20);
+  const [brushMode, setBrushMode] = useState('erase');
+  const [wandTolerance, setWandTolerance] = useState(15);
+  const [showMaskOverlay, setShowMaskOverlay] = useState(true);
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [maskedPixelCount, setMaskedPixelCount] = useState(0);
+  const [applyingMask, setApplyingMask] = useState(false);
 
   useEffect(() => {
     if (id) loadProject();
@@ -285,6 +298,24 @@ export default function Editor() {
     }
   };
 
+  const handleApplyMask = async () => {
+    if (!maskCanvasRef.current) return;
+    setApplyingMask(true);
+    try {
+      const blob = await maskCanvasRef.current.getMaskedImageBlob();
+      if (!blob) return;
+      const file = new File([blob], 'masked.png', { type: 'image/png' });
+      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      setImageUrl(file_url);
+      await base44.entities.Project.update(id, { image_url: file_url });
+      maskCanvasRef.current.clearMask();
+      setMaskedPixelCount(0);
+      setActiveTab('editor');
+    } finally {
+      setApplyingMask(false);
+    }
+  };
+
   const handleRegionClick = (regionId, dblClick) => {
     setSelectedRegionId(regionId);
   };
@@ -346,7 +377,7 @@ export default function Editor() {
         {/* Tabs + Metrics */}
         <div className="flex items-center justify-between px-4 py-1.5 border-t border-[#1a1d27]">
           <div className="flex items-center gap-1">
-            {[['editor', 'Editor'], ['preview', 'Vista Previa'], ['panel', 'Panel']].map(([id, label]) => (
+            {[['editor', 'Editor'], ['mask', '✂ Máscara'], ['preview', 'Vista Previa'], ['panel', 'Panel']].map(([id, label]) => (
               <button
                 key={id}
                 onClick={() => setActiveTab(id)}
@@ -392,15 +423,15 @@ export default function Editor() {
 
         {/* CENTER CANVAS */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Opacity sliders */}
-          <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
+          {/* Opacity sliders — hidden in mask mode */}
+          {activeTab !== 'mask' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
             <SliderControl label="Imagen" value={imageOpacity} onChange={setImageOpacity} color="text-amber-400" />
             <SliderControl label="Puntadas" value={stitchOpacity} onChange={setStitchOpacity} color="text-violet-400" />
             <div className="flex items-center gap-2 ml-auto">
               <FilterToggle label="Rellenos" active={showFill} onChange={setShowFill} color="violet" />
               <FilterToggle label="Contornos" active={showContour} onChange={setShowContour} color="cyan" />
             </div>
-          </div>
+          </div>}
 
           {/* Upload zone or Canvas */}
           {!imageUrl ? (
@@ -409,6 +440,48 @@ export default function Editor() {
               fileInputRef={fileInputRef}
               uploading={uploadingImage}
             />
+          ) : activeTab === 'mask' ? (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <MaskToolbar
+                activeTool={maskTool}
+                onToolChange={setMaskTool}
+                brushSize={brushSize}
+                onBrushSizeChange={setBrushSize}
+                brushMode={brushMode}
+                onBrushModeChange={setBrushMode}
+                wandTolerance={wandTolerance}
+                onWandToleranceChange={setWandTolerance}
+                showMaskOverlay={showMaskOverlay}
+                onToggleMaskOverlay={() => setShowMaskOverlay(v => !v)}
+                showOriginal={showOriginal}
+                onToggleOriginal={() => setShowOriginal(v => !v)}
+                onInvertMask={() => maskCanvasRef.current?.invertMask()}
+                onClearMask={() => { maskCanvasRef.current?.clearMask(); setMaskedPixelCount(0); }}
+                onApplyMask={handleApplyMask}
+                maskedPixelCount={maskedPixelCount}
+              />
+              <div className="flex-1 overflow-hidden relative">
+                {applyingMask && (
+                  <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-xs text-slate-300">Aplicando máscara...</span>
+                    </div>
+                  </div>
+                )}
+                <MaskCanvas
+                  ref={maskCanvasRef}
+                  imageUrl={imageUrl}
+                  activeTool={maskTool}
+                  brushSize={brushSize}
+                  brushMode={brushMode}
+                  wandTolerance={wandTolerance}
+                  showMaskOverlay={showMaskOverlay}
+                  showOriginal={showOriginal}
+                  onMaskChange={setMaskedPixelCount}
+                />
+              </div>
+            </div>
           ) : (
             <div className="flex-1 overflow-hidden">
               <StitchCanvas
