@@ -17,6 +17,7 @@ import DiagnosticPanel from '@/components/editor/DiagnosticPanel';
 import { preprocessImage } from '@/lib/imagePreprocessor';
 import { analyzeImage } from '@/lib/imageAnalyzer';
 import { traceImageContours } from '@/lib/contourTracer';
+import { extractImagePixels } from '@/lib/imagePixelExtractor';
 
 const DEFAULT_CONFIG = {
   fabric_type: 'Algodón', width_mm: 100, height_mm: 100, color_count: 6,
@@ -149,9 +150,13 @@ export default function Editor() {
         console.warn('Client analysis failed, continuing without:', e);
       }
 
-      const res = await base44.functions.invoke('hybridDigitize', {
-        image_url: finalImageUrl,
-        mode: config.mode,
+      // Extract pixels from image first
+      const pixelData = await extractImagePixels(finalImageUrl);
+      
+      const res = await base44.functions.invoke('robustVectorization', {
+        pixels: pixelData.pixels,
+        width: pixelData.width,
+        height: pixelData.height,
         width_mm: config.width_mm,
         height_mm: config.height_mm,
         color_count: config.color_count
