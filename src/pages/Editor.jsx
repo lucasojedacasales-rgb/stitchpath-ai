@@ -167,10 +167,15 @@ export default function Editor() {
 
         // ── Clasificación correcta de tipo de puntada ─────────────────────────
         const newRegions = filtered.map(r => {
-          let stitch_type = r.stitch_type;
           const hex = (r.color || '').toLowerCase();
-          const isContourColor = hex === '#000000' || hex === '#1a1a1a' || r.isContour;
-          if (isContourColor) {
+          const isContourColor = hex === '#000000' || hex === '#1a1a1a';
+          const isContourName  = (r.name || '').toLowerCase().includes('contour_');
+          const isRingShape    = r.area_mm2 && r.perimeter_mm && (r.area_mm2 / (r.perimeter_mm * r.perimeter_mm)) < 0.05;
+          const isAdjacentMany = Array.isArray(r.neighbors) && r.neighbors.length >= 3;
+          const isContour = isContourColor || isContourName || isRingShape || isAdjacentMany || r.isContour;
+
+          let stitch_type;
+          if (isContour) {
             stitch_type = 'running_stitch';
           } else if ((r.area_mm2 || 0) < 80 || (r.avgWidth_mm || 0) < 3.0) {
             stitch_type = 'satin';
