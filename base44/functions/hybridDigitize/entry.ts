@@ -51,28 +51,37 @@ Deno.serve(async (req) => {
         return `Región ${i}: color=${r.hex} centro=(${cx},${cy}) cobertura=${areaPct}%`;
       }).join('\n');
 
-      const labelPrompt = `Eres un experto digitalizador de bordados. Analiza la imagen y las regiones detectadas.
+      const labelPrompt = `Eres un experto digitalizador de bordados. Tengo regiones detectadas píxel a píxel pero DEBO ENRIQUECER CON DETALLES INTERNOS.
 
 ${colorData}
-Tengo ${Math.min(clientRegions.length, 40)} regiones detectadas píxel a píxel (ordenadas por importancia/tamaño):
+Tengo ${Math.min(clientRegions.length, 40)} regiones detectadas:
 ${regionDescriptions}
 
-TAREA CRÍTICA: Para CADA región (en orden 0, 1, 2...):
-1. **name**: nombre descriptivo detallado (ej: "ojo_izquierdo", "boca_roja", "contorno_negro")
-2. **stitch_type**: 
-   - "fill" = zonas grandes homogéneas (> 100mm²)
-   - "satin" = áreas medianas con detalle (30-100mm²) 
-   - "running_stitch" = líneas finas, contornos, detalles (< 30mm²)
-3. **density**: 0.4-0.9 (más alta para detalles finos, más baja para áreas grandes)
-4. **angle**: 0-180 (ángulo de puntadas, variado para cada región)
-5. **layer_order**: orden de bordado (1=primero, fills grandes antes que detalles)
-6. **underlay**: true para fill/satin grandes, false para contornos/detalles
-7. **pull_compensation**: 0.1-0.2
+TAREA CRÍTICA - ANÁLISIS PROFUNDO:
+1. Para CADA región detectada, analiza la imagen y encuentra:
+   - Colores interiores / rellenos (NO solo bordes)
+   - Detalles finos: ojos, pupilas, mejillas, boca, detalles faciales
+   - Variaciones de color dentro del mismo elemento (ej: sombras, gradientes)
 
-IMPORTANTE: Respeta exactamente los colores detectados para cada región.
+2. Genera SUB-REGIONES para cada detalle encontrado:
+   - Si ves ojos: crea 3-4 regiones (ojo_blanco, pupila_azul, brillo)
+   - Si ves mejillas: crea región independiente (mejilla_rosada)
+   - Si ves relleno diferente: crea región (cuerpo_rosa, etc)
+   - Cada color = región diferente
+
+3. Para CADA región/sub-región:
+   - name: DESCRIPTIVO (ej: ojo_izquierdo_pupila, mejilla_rosa, cuerpo_principal)
+   - stitch_type: "fill" (rellenos/sólidos), "satin" (detalles medianos), "running_stitch" (líneas finas)
+   - density: 0.6-0.9
+   - angle: 0-180 (variado)
+   - layer_order: 1+ (fills primero, detalles al final)
+   - underlay: true para fills grandes, false para detalles
+   - pull_compensation: 0.12-0.18
+
+RESULTADO: Espero 20-60 regiones (rellenos + detalles), NO solo contornos.
 
 Responde SOLO JSON válido:
-{"labels":[{"index":0,"name":"...","stitch_type":"fill","density":0.7,"angle":45,"layer_order":1,"underlay":true,"pull_compensation":0.15}],"estimated_time_min":12}`;
+{"labels":[{"index":0,"name":"...","stitch_type":"fill","density":0.7,"angle":45,"layer_order":1,"underlay":true,"pull_compensation":0.15}],"estimated_time_min":25}`;
 
       const labelResult = await base44.asServiceRole.integrations.Core.InvokeLLM({
         prompt: labelPrompt,
@@ -91,8 +100,35 @@ Responde SOLO JSON válido:
       const labelMap = {};
       for (const l of labels) labelMap[l.index] = l;
 
-      const finalRegions = clientRegions.slice(0, 40).map((r, i) => {
-        const label = labelMap[i] || {};
+      // NUEVO: Si Claude creó sub-regiones (labels.length > clientRegions.length), usarlas directamente
+      // Si no, mantener los originals etiquetados
+      let regionsToReturn = [];
+      if (labels.length > clientRegions.length * 1.5) {
+        // Claude detectó muchos detalles internos—usar sus labels como guía para crear nuevas regiones
+        regionsToReturn = labels.slice(0, 60).map((label, idx) => {
+          const baseRegion = clientRegions[label.index] || {};
+          return {
+            id: `r${idx + 1}`,
+            name: label.name,
+            color: label.color || baseRegion.hex || '#999999',
+            stitch_type: label.stitch_type || 'fill',
+            density: label.density || 0.7,
+            angle: label.angle || (idx * 17 % 180),
+            layer_order: label.layer_order || (idx + 1),
+            pull_compensation: label.pull_compensation || 0.15,
+            underlay: label.underlay !== undefined ? label.underlay : true,
+            area_mm2: label.area_mm2 || (baseRegion.coverage * w * h),
+            perimeter_mm: label.perimeter_mm || 0,
+            stitch_count: 0,
+            is_auto_contour: false,
+            visible: true,
+            path_points: baseRegion.path_points || [],
+          };
+        });
+      } else {
+        // Usar cliente regions con labels como antes
+        regionsToReturn = clientRegions.slice(0, 40).map((r, i) => {
+          const label = labelMap[i] || {};
         
         // Calculate perimeter from path_points
         let perimeterMm = 0;
@@ -143,20 +179,21 @@ Responde SOLO JSON válido:
           path_points: r.path_points,
         };
       });
+      }
 
-      const total_stitches = finalRegions.reduce((s, r) => s + r.stitch_count, 0);
+      const total_stitches = regionsToReturn.reduce((s, r) => s + (r.stitch_count || 0), 0);
       return Response.json({
-        success: true,
-        data: {
-          regions: finalRegions,
-          total_stitches,
-          estimated_time_min: labelResult.estimated_time_min || Math.round(total_stitches / 800),
-          colors_used: new Set(finalRegions.map(r => r.color)).size,
-          width_mm: w,
-          height_mm: h,
-        }
+       success: true,
+       data: {
+         regions: regionsToReturn,
+         total_stitches,
+         estimated_time_min: labelResult.estimated_time_min || Math.round(total_stitches / 800),
+         colors_used: new Set(regionsToReturn.map(r => r.color)).size,
+         width_mm: w,
+         height_mm: h,
+       }
       });
-    }
+      }
 
     // ─── PATH B: Pure AI generation ───────────────────────────────────────────
     const regionTarget = mode === 'ultra' ? '80-120' : mode === 'precision' ? '50-80' : mode === 'standard' ? '15-30' : '30-60';
