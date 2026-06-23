@@ -118,11 +118,30 @@ export default function Editor() {
   };
 
   const startProcessing = async () => {
-    if (!imageUrl) return;
+    if (!imageUrl || processing) return;
     setProcessing(true);
     setProcessingElapsed(0);
     timerRef.current = setInterval(() => setProcessingElapsed(s => s + 1), 1000);
     setStep(2);
+    
+    // Retry logic with exponential backoff
+    const retryWithBackoff = async (fn, maxAttempts = 3) => {
+      let lastError;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          return await fn();
+        } catch (err) {
+          lastError = err;
+          if (attempt < maxAttempts) {
+            const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+            console.warn(`Attempt ${attempt} failed, retrying in ${delay}ms...`, err);
+            await new Promise(r => setTimeout(r, delay));
+          }
+        }
+      }
+      throw lastError;
+    };
+
     try {
       // Pre-process image if enabled
       let finalImageUrl = imageUrl;
@@ -162,17 +181,22 @@ export default function Editor() {
 
       let res;
       try {
-       res = await base44.functions.invoke('robustVectorization', {
-         pixels: pixelData.pixels,
-         width: pixelData.width,
-         height: pixelData.height,
-         width_mm: config.width_mm,
-         height_mm: config.height_mm,
-         color_count: config.color_count
+       res = await retryWithBackoff(async () => {
+         return await base44.functions.invoke('robustVectorization', {
+           pixels: pixelData.pixels,
+           width: pixelData.width,
+           height: pixelData.height,
+           width_mm: config.width_mm,
+           height_mm: config.height_mm,
+           color_count: config.color_count
+         });
        });
       } catch (err) {
        console.error('Vectorization backend failed:', err);
-       throw new Error('Error en vectorización: ' + err.message);
+       const errorMsg = err.response?.status === 429 
+         ? 'Demasiadas solicitudes. Espera un momento e intenta de nuevo.'
+         : 'Error en vectorización: ' + (err.message || String(err));
+       throw new Error(errorMsg);
       }
 
       if (!res?.data) {
