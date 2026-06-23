@@ -2,6 +2,17 @@
  * PROFESSIONAL STITCH ENGINE
  * Basado en algoritmos de Ink/Stitch + PEmbroider
  * Genera puntadas de calidad industrial: Fill, Satin, Running, Underlay
+ * 
+ * Referencias externas:
+ * - Ink/Stitch: https://inkstitch.org (Fill tatami, Satin algorithms)
+ * - PEmbroider: https://github.com/CreativeInquiry/PEmbroider (Polygon offsetting)
+ * 
+ * Implementaciones:
+ * - Tatami fill con scanlines paralelas
+ * - Satin con offsets interior/exterior
+ * - Running stitch para contornos
+ * - Underlay foundation stitching
+ * - Pull compensation via miter offset
  */
 
 // ─────────────────────────────────────────────────────────────────────────────

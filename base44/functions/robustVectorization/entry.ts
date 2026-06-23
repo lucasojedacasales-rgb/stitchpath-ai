@@ -162,6 +162,12 @@ Deno.serve(async (req) => {
 
 /**
  * K-MEANS QUANTIZATION: Reducir imagen a N colores dominantes
+ * 
+ * Basado en Potrace (potrace.sourceforge.net) + K-means clustering.
+ * Produce colores dominantes que serán procesados por contour detection
+ * para crear máscaras binarias independientes.
+ * 
+ * Referencia: https://en.wikipedia.org/wiki/K-means_clustering
  */
 function kmeansQuantize(pixelArray, width, height, colorCount) {
   const maxIterations = 10;
@@ -268,7 +274,12 @@ function createBinaryMasks(pixelArray, width, height, colors) {
 }
 
 /**
- * DETECTAR CONTORNOS: Usar marching squares simplificado
+ * DETECTAR CONTORNOS: Marching Squares algorithm
+ * 
+ * Implementación del algoritmo Marching Squares de Potrace para detectar
+ * contornos de regiones binarias. Cada máscara se procesa independientemente.
+ * 
+ * Referencia: http://potrace.sourceforge.net/
  */
 function detectContours(mask, width, height) {
   const contours = [];
