@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ChevronDown, AlertCircle, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
-import { validatePolygon, closePolygon, repairGaps } from '@/lib/polygonValidator';
+import { validatePolygon, closePolygon, repairGaps } from '@/lib/polygonValidator.js';
 
 export default function ValidationPanel({ regions, onRegionsUpdate }) {
   const [expanded, setExpanded] = useState(false);
