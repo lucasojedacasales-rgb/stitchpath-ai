@@ -14,6 +14,7 @@ import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/Prep
 import MaskToolbar from '@/components/editor/MaskToolbar';
 import MaskCanvas from '@/components/editor/MaskCanvas';
 import DiagnosticPanel from '@/components/editor/DiagnosticPanel';
+import VectorizationDiagnostics from '@/components/editor/VectorizationDiagnostics';
 import { preprocessImage } from '@/lib/imagePreprocessor';
 import { analyzeImage } from '@/lib/imageAnalyzer';
 import { traceImageContours } from '@/lib/contourTracer';
@@ -47,6 +48,7 @@ export default function Editor() {
   const [showContour, setShowContour] = useState(true);
   const [showExport, setShowExport] = useState(false);
   const [showDiagnostic, setShowDiagnostic] = useState(false);
+  const [vectorDiagnostics, setVectorDiagnostics] = useState(null);
   const [activeTab, setActiveTab] = useState('editor');
   const [uploadingImage, setUploadingImage] = useState(false);
   const [preprocessSettings, setPreprocessSettings] = useState(DEFAULT_PREPROCESS);
@@ -415,6 +417,7 @@ export default function Editor() {
          const totalCalculatedStitches = newRegions.reduce((sum, r) => sum + (r.stitch_count || 0), 0);
 
         setRegions(newRegions);
+        setVectorDiagnostics(res.data.diagnostics || {});
         setStep(3);
         await base44.entities.Project.update(id, {
           regions: newRegions, step: 3, status: 'ready',
@@ -684,6 +687,14 @@ export default function Editor() {
         <DiagnosticPanel
           imageUrl={imageUrl}
           onClose={() => setShowDiagnostic(false)}
+        />
+      )}
+
+      {/* Vectorization Diagnostics */}
+      {vectorDiagnostics && (
+        <VectorizationDiagnostics
+          diagnostics={vectorDiagnostics}
+          onClose={() => setVectorDiagnostics(null)}
         />
       )}
     </div>
