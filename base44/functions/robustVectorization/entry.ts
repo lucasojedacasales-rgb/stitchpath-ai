@@ -348,11 +348,16 @@ function generateFillStitches(contour, regionPixels, bounds, options) {
   // Scanlines
   for (let ry = minRy; ry <= maxRy; ry += spacing_px) {
     const intersections = findScanlineIntersections(contour, ry, rad);
+    if (intersections.length < 2) continue;
+    
     intersections.sort((a, b) => a - b);
 
+    // Procesar pares de intersecciones (entrada-salida del polígono)
     for (let i = 0; i < intersections.length - 1; i += 2) {
       const x1 = intersections[i];
       const x2 = intersections[i + 1];
+
+      if (x1 >= x2) continue; // Skip invalid segments
 
       const lineStitches = interpolateLine(x1, ry, x2, ry, spacing_px, rad);
 
@@ -360,8 +365,8 @@ function generateFillStitches(contour, regionPixels, bounds, options) {
         const px = Math.round(pt.x);
         const py = Math.round(pt.y);
 
-        // CLIPPING: validar que el punto está en la máscara de región
-        if (pixelSet.has(`${px},${py}`)) {
+        // DOBLE VALIDACIÓN: mask + point-in-polygon
+        if (pixelSet.has(`${px},${py}`) && isPointInPolygon(pt, contour)) {
           stitches.push([pt.x, pt.y]);
         }
       }
@@ -369,6 +374,26 @@ function generateFillStitches(contour, regionPixels, bounds, options) {
   }
 
   return stitches;
+}
+
+/**
+ * Point-in-polygon usando ray casting
+ */
+function isPointInPolygon(point, polygon) {
+  let inside = false;
+  const x = point.x, y = point.y;
+
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x, yi = polygon[i].y;
+    const xj = polygon[j].x, yj = polygon[j].y;
+
+    const intersect = ((yi > y) !== (yj > y)) &&
+      (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+    
+    if (intersect) inside = !inside;
+  }
+
+  return inside;
 }
 
 function findScanlineIntersections(contour, scanY, angle) {
