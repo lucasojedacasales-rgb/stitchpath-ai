@@ -154,7 +154,7 @@ export default function StitchCanvas({
 
       if (effectiveType === 'fill') {
         // Tatami fill — now fully clipped
-        drawTatamiRegion(ctx, pts, region, drawW, drawH, zoom, false, false, stitchOpacity);
+        drawTatamiRegion(ctx, pts, region, drawW, drawH, zoom, selectedRegionId === region.id, hoveredRegion === region.id, stitchOpacity);
 
       } else if (effectiveType === 'satin') {
         // Satin: parallel lines (already clipped above)
