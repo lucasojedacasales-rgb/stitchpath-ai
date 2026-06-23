@@ -13,6 +13,7 @@ import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
 import MaskCanvas from '@/components/editor/MaskCanvas';
+import DiagnosticPanel from '@/components/editor/DiagnosticPanel';
 import { preprocessImage } from '@/lib/imagePreprocessor';
 import { analyzeImage } from '@/lib/imageAnalyzer';
 import { traceImageContours } from '@/lib/contourTracer';
@@ -43,6 +44,7 @@ export default function Editor() {
   const [showFill, setShowFill] = useState(true);
   const [showContour, setShowContour] = useState(true);
   const [showExport, setShowExport] = useState(false);
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [activeTab, setActiveTab] = useState('editor');
   const [uploadingImage, setUploadingImage] = useState(false);
   const [preprocessSettings, setPreprocessSettings] = useState(DEFAULT_PREPROCESS);
@@ -365,6 +367,13 @@ export default function Editor() {
             <NavButton onClick={() => setShowExport(true)} icon={Download} label="Exportar" accent />
             <NavButton onClick={startProcessing} icon={Zap} label="Procesar" disabled={!imageUrl || processing} />
             <NavButton onClick={() => saveProject()} icon={Save} label={saving ? '...' : 'Guardar'} />
+            <button
+              onClick={() => setShowDiagnostic(true)}
+              className="text-[10px] px-2 py-1.5 rounded bg-[#161a23] border border-[#2a2d3a] text-slate-500 hover:text-slate-300 transition-colors"
+              title="Diagnóstico del pipeline"
+            >
+              🔧
+            </button>
           </div>
         </div>
 
@@ -522,6 +531,14 @@ export default function Editor() {
           project={project}
           regions={regions}
           onClose={() => setShowExport(false)}
+        />
+      )}
+
+      {/* Diagnostic modal */}
+      {showDiagnostic && (
+        <DiagnosticPanel
+          imageUrl={imageUrl}
+          onClose={() => setShowDiagnostic(false)}
         />
       )}
     </div>
