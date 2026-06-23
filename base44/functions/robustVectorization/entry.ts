@@ -1,5 +1,19 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
+/**
+ * HTTP Connector a API Python externa para vectorización
+ * 
+ * Esta función NO realiza vectorización localmente.
+ * Solo actúa como conector HTTP que:
+ * 1. Recibe imagen en formato pixel array
+ * 2. Envía a API Python externa
+ * 3. Recibe puntadas generadas
+ * 4. Transforma formato para el frontend
+ */
+
+// CONFIGURAR: Reemplaza con URL de tu API Python desplegada
+const API_URL = Deno.env.get('VECTORIZER_API_URL') || 'https://stitchpath-api.up.railway.app/vectorize';
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -20,661 +34,158 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Missing image data' }, { status: 400 });
     }
 
-    // Convertir pixels a Uint8ClampedArray (puede venir como Array o Buffer)
-    let pixelArray;
-    if (pixels instanceof Uint8ClampedArray) {
-      pixelArray = pixels;
-    } else if (Array.isArray(pixels)) {
-      pixelArray = new Uint8ClampedArray(pixels);
-    } else if (pixels.data) {
-      pixelArray = new Uint8ClampedArray(pixels.data);
-    } else {
-      pixelArray = new Uint8ClampedArray(pixels);
-    }
+    console.log(`[CONNECTOR] Enviando imagen a ${API_URL}...`);
+    console.log(`[CONNECTOR] Dims: ${width}x${height}px → ${width_mm}x${height_mm}mm, colors=${color_count}`);
 
-    // Validar que tenemos datos consistentes
-    const expectedLength = width * height * 4;
-    if (pixelArray.length !== expectedLength) {
-      console.error(`[VECTORIZATION] Pixel array mismatch: got ${pixelArray.length}, expected ${expectedLength} (${width}×${height}×4)`);
-      return Response.json({
-        success: false,
-        error: `Pixel data size mismatch: ${pixelArray.length} != ${expectedLength}`,
-        data: { regions: [], total_stitches: 0, diagnostics: { 
-          errors: [`Pixel array length ${pixelArray.length} != expected ${expectedLength}`],
-          width, height, expectedLength
-        }}
-      }, { status: 400 });
-    }
-    const px_to_mm_x = width_mm / width;
-    const px_to_mm_y = height_mm / height;
-
-    // ─── FASE 1: PREPROCESAMIENTO ────────────────────────────────────────────
-    console.log('[VECTORIZATION] Phase 1: Preprocessing...');
-    console.log(`[VECTORIZATION] Input: ${width}x${height}px, target ${width_mm}x${height_mm}mm, colors=${color_count}`);
-    console.log(`[VECTORIZATION] Pixel array length: ${pixelArray.length}`);
+    // Crear FormData con los pixels
+    const formData = new FormData();
     
-    // K-means cuantización a colorCount colores
-    const dominantColors = kmeansQuantize(pixelArray, width, height, color_count);
-    console.log(`[VECTORIZATION] Dominant colors: ${dominantColors.length}`, dominantColors);
+    // Convertir pixel array a Blob PNG
+    const pixelBlob = pixelsToImageBlob(pixels, width, height);
+    formData.append('image', pixelBlob, 'image.png');
+    formData.append('color_count', color_count.toString());
+    formData.append('width_mm', width_mm.toString());
+    formData.append('height_mm', height_mm.toString());
+    formData.append('stitch_density', stitch_density.toString());
 
-    if (dominantColors.length === 0) {
-      console.error('[VECTORIZATION] ERROR: No valid colors detected in image');
+    // Llamar API Python externa
+    let response;
+    try {
+      response = await fetch(API_URL, {
+        method: 'POST',
+        body: formData,
+        signal: AbortSignal.timeout(120_000) // 2 minutos timeout
+      });
+    } catch (fetchErr) {
+      console.error(`[CONNECTOR] Fetch error: ${fetchErr.message}`);
       return Response.json({
         success: false,
-        error: 'No valid colors detected. Image may be transparent or empty.',
-        data: { 
-          regions: [], 
-          total_stitches: 0, 
-          diagnostics: { 
-            errors: ['No colors detected'],
-            pixelCount: pixelArray.length,
-            opaquePixels: 0
-          } 
-        }
+        error: `Cannot connect to API: ${API_URL}. Make sure it's deployed and URL is correct.`,
+        data: { regions: [], total_stitches: 0, diagnostics: { errors: [fetchErr.message] } }
+      }, { status: 503 });
+    }
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[CONNECTOR] API error ${response.status}: ${errorText}`);
+      return Response.json({
+        success: false,
+        error: `API returned ${response.status}: ${errorText}`,
+        data: { regions: [], total_stitches: 0, diagnostics: { errors: [errorText] } }
+      }, { status: response.status });
+    }
+
+    const apiResult = await response.json();
+    console.log(`[CONNECTOR] API response:`, apiResult);
+
+    if (!apiResult.success) {
+      return Response.json({
+        success: false,
+        error: apiResult.error || 'Vectorization failed',
+        data: { regions: [], total_stitches: 0, diagnostics: { errors: [apiResult.error] } }
       }, { status: 422 });
     }
 
-    // ─── FASE 2: CREAR MÁSCARAS BINARIAS ─────────────────────────────────────
-    console.log('[VECTORIZATION] Phase 2: Creating binary masks...');
-    const masks = createBinaryMasks(pixelArray, width, height, dominantColors);
-
-    // ─── FASE 3-4: DETECCIÓN Y CLASIFICACIÓN ────────────────────────────────
-    console.log('[VECTORIZATION] Phase 3-4: Contour detection & classification...');
-    const regions = [];
-    
-    for (let colorIdx = 0; colorIdx < dominantColors.length; colorIdx++) {
-      const color = dominantColors[colorIdx];
-      const mask = masks[colorIdx];
-
-      // Detectar contornos
-      const contours = detectContours(mask, width, height);
-      console.log(`[VECTORIZATION] Color ${color}: ${contours.length} contours`);
-
-      for (const contour of contours) {
-        if (contour.length < 3) continue;
-
-        // Convertir píxeles a milímetros
-        const contourMM = contour.map(p => [p[0] * px_to_mm_x, p[1] * px_to_mm_y]);
-        
-        // Simplificar contorno (Ramer-Douglas-Peucker)
-        const simplified = simplifyContour(contourMM, 0.5);
-        if (simplified.length < 3) continue;
-
-        // Cerrar contorno
-        const closed = closeContour(simplified);
-
-        // Calcular área
-        const area_mm2 = polygonArea(closed);
-        if (area_mm2 < 0.5) continue; // Ignorar regiones muy pequeñas
-
-        // Clasificar tipo de puntada
-        const type = classifyRegionType(closed, area_mm2);
-        
-        console.log(`[VECTORIZATION] Region: color=${color}, area=${area_mm2.toFixed(2)}mm², type=${type}`);
-
-        // ─── FASE 5-7: GENERACIÓN DE PUNTADAS ──────────────────────────────
-
-        let stitches = [];
-
-        if (type === 'fill') {
-          stitches = generateFillStitches(closed, stitch_density);
-        } else if (type === 'satin') {
-          stitches = generateSatinStitches(closed, stitch_density);
-        } else {
-          stitches = generateRunStitches(closed, stitch_density);
-        }
-
-        console.log(`[VECTORIZATION] Generated ${stitches.length} stitches for region`);
-
-        // Verificar que TODOS los stitches están dentro del contorno
-        const validStitches = stitches.filter(st => isPointInPolygon([st.x, st.y], closed));
-        console.log(`[VECTORIZATION] Valid stitches: ${validStitches.length}/${stitches.length}`);
-
-        if (validStitches.length > 0) {
-          regions.push({
-            id: `r${regions.length}`,
-            name: `${color.slice(1, 4)}_${type[0]}`,
-            color,
-            stitch_type: type,
-            density: stitch_density,
-            angle: 45,
-            path_points: closed.map(p => [p[0] / width_mm, p[1] / height_mm]), // Normalizar
-            area_mm2,
-            stitch_count: validStitches.length,
-            visible: true
-          });
-        } else {
-          console.warn(`[VECTORIZATION] Region filtered: ${validStitches.length} valid stitches (had ${stitches.length} total)`);
-        }
-      }
-    }
-
-    if (regions.length === 0) {
-      console.error('[VECTORIZATION] ERROR: No valid regions generated after contour processing');
-      
-      // Diagnóstico detallado
-      const diagnosticContours = [];
-      for (let i = 0; i < masks.length; i++) {
-        const contours = detectContours(masks[i], width, height);
-        diagnosticContours.push({ color: dominantColors[i], contourCount: contours.length });
-      }
-      
-      console.error('[VECTORIZATION] Details:', {
-        maskCount: masks.length,
-        contoursByColor: diagnosticContours,
-        minAreaThreshold: 0.5,
-        px_to_mm_factors: { x: px_to_mm_x, y: px_to_mm_y }
-      });
-      
-      // FALLBACK: Crear región simplificada como última opción
-      if (dominantColors.length > 0) {
-        console.log('[VECTORIZATION] FALLBACK: Creating minimal region from largest contour...');
-        
-        let largestContour = null;
-        let largestArea = 0;
-        
-        for (let i = 0; i < masks.length; i++) {
-          const contours = detectContours(masks[i], width, height);
-          for (const contour of contours) {
-            const area = polygonArea(contour.map(p => [p[0] * px_to_mm_x, p[1] * px_to_mm_y]));
-            if (area > largestArea) {
-              largestArea = area;
-              largestContour = { contour, color: dominantColors[i] };
-            }
-          }
-        }
-        
-        if (largestContour && largestArea > 0.01) {
-          const closed = closeContour(largestContour.contour.map(p => [p[0] * px_to_mm_x, p[1] * px_to_mm_y]));
-          const stitches = generateRunStitches(closed, stitch_density);
-          
-          regions.push({
-            id: 'r0',
-            name: `${largestContour.color.slice(1, 4)}_fallback`,
-            color: largestContour.color,
-            stitch_type: 'running_stitch',
-            density: stitch_density,
-            angle: 45,
-            path_points: closed.map(p => [p[0] / width_mm, p[1] / height_mm]),
-            area_mm2: largestArea,
-            stitch_count: stitches.length,
-            visible: true
-          });
-          
-          console.log('[VECTORIZATION] FALLBACK SUCCESS: Created region with', stitches.length, 'stitches');
-        }
-      }
-      
-      if (regions.length === 0) {
-        return Response.json({
-          success: false,
-          error: 'No valid regions generated. Image may be too simple or have no detectable contours.',
-          data: { 
-            regions: [], 
-            total_stitches: 0, 
-            diagnostics: { 
-              errors: ['No valid regions after contour detection and fallback'],
-              colorsDetected: dominantColors.length,
-              contoursByColor: diagnosticContours,
-              minAreaThreshold: 0.5
-            } 
-          }
-        }, { status: 422 });
-      }
-    }
+    // Transformar respuesta al formato interno
+    const regions = (apiResult.regions || []).map((r, idx) => ({
+      id: r.id || `r${idx}`,
+      name: generateRegionName(r),
+      color: r.color || '#ffffff',
+      stitch_type: r.type || 'fill',
+      density: stitch_density,
+      angle: r.angle || 45,
+      path_points: (r.stitches || []).map(s => [s.x / width_mm, s.y / height_mm]), // Normalizar
+      stitch_count: r.pointCount || 0,
+      area_mm2: (r.pointCount || 0) * 0.1, // Estimación
+      visible: true
+    }));
 
     const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
 
-    console.log(`[VECTORIZATION] SUCCESS: ${regions.length} regions, ${totalStitches} stitches`);
+    console.log(`[CONNECTOR] SUCCESS: ${regions.length} regions, ${totalStitches} stitches`);
 
     return Response.json({
       success: true,
       data: {
-        regions: regions.map(r => {
-          const { stitches, ...rest } = r;
-          return rest;
-        }),
+        regions,
         total_stitches: totalStitches,
-        colors_used: dominantColors.length,
-        generation_method: 'professional_vectorization',
+        colors_used: apiResult.colorCount || regions.length,
+        generation_method: 'external_api',
         vector_source: true,
+        api_url: API_URL,
         diagnostics: {
           regionsDetected: regions.length,
           totalStitches,
-          colorsUsed: dominantColors.length,
+          colorsUsed: apiResult.colorCount || 0,
           errors: []
         }
       }
     });
 
   } catch (error) {
-    console.error('[VECTORIZATION] ERROR:', error.message);
+    console.error('[CONNECTOR] ERROR:', error.message);
     return Response.json({
       success: false,
       error: error.message,
-      stack: error.stack,
       data: { regions: [], total_stitches: 0, diagnostics: { errors: [error.message] } }
-    }, { status: 422 });
+    }, { status: 500 });
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HELPER FUNCTIONS
-// ─────────────────────────────────────────────────────────────────────────────
-
 /**
- * SIMPLE COLOR DETECTION: Extraer colores presentes en la imagen
- * 
- * Sin k-means complicado: simplemente detectar los N colores más frecuentes
- * que existan en la imagen y usarlos directamente.
+ * Convertir array de pixels a PNG Blob
+ * Usa canvas nativo para encoding
  */
-function kmeansQuantize(pixelArray, width, height, colorCount) {
-  const colorMap = new Map();
-  let opaqueCount = 0;
-
-  // Contar frecuencia de cada color opaco
-  for (let i = 0; i < pixelArray.length; i += 4) {
-    const a = pixelArray[i + 3];
-    if (a < 128) continue;
-    
-    opaqueCount++;
-    const r = pixelArray[i];
-    const g = pixelArray[i + 1];
-    const b = pixelArray[i + 2];
-    const hex = rgbToHex(r, g, b);
-    colorMap.set(hex, (colorMap.get(hex) || 0) + 1);
-  }
-
-  console.log(`[COLORS] Opaque pixels: ${opaqueCount}/${pixelArray.length / 4}`);
-  console.log(`[COLORS] Unique colors found: ${colorMap.size}`);
-
-  if (colorMap.size === 0) {
-    console.error('[COLORS] ERROR: No opaque pixels found');
-    return [];
-  }
-
-  // Ordenar por frecuencia y tomar los top N
-  const result = Array.from(colorMap.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, Math.min(colorCount, colorMap.size))
-    .map(([hex]) => hex);
-
-  console.log(`[COLORS] Using ${result.length} colors:`, result);
-  return result;
-}
-
-/**
- * CREAR MÁSCARAS BINARIAS: Una para cada color
- */
-function createBinaryMasks(pixelArray, width, height, colors) {
-  return colors.map(colorHex => {
-    const mask = Array(height).fill(null).map(() => Array(width).fill(0));
-    let pixelsInColor = 0;
-    
-    for (let i = 0; i < pixelArray.length; i += 4) {
-      const a = pixelArray[i + 3];
-      if (a < 128) continue;
-
-      const r = pixelArray[i];
-      const g = pixelArray[i + 1];
-      const b = pixelArray[i + 2];
-      const px = rgbToHex(r, g, b);
-
-      if (px === colorHex) {
-        const idx = i / 4;
-        const y = Math.floor(idx / width);
-        const x = idx % width;
-        if (x >= 0 && x < width && y >= 0 && y < height) {
-          mask[y][x] = 1;
-          pixelsInColor++;
-        }
-      }
-    }
-    
-    console.log(`[MASKS] Color ${colorHex}: ${pixelsInColor} pixels`);
-    return mask;
-  });
-}
-
-/**
- * DETECTAR CONTORNOS: Marching Squares algorithm
- * 
- * Implementación del algoritmo Marching Squares de Potrace para detectar
- * contornos de regiones binarias. Cada máscara se procesa independientemente.
- * 
- * Referencia: http://potrace.sourceforge.net/
- */
-function detectContours(mask, width, height) {
-  const contours = [];
-  const visited = new Set();
-  let pixelCount = 0;
-
-  // Count total pixels in mask first
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (mask[y]?.[x] === 1) pixelCount++;
-    }
-  }
-
-  console.log(`[CONTOURS] Mask has ${pixelCount} pixels, starting trace...`);
-
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (mask[y]?.[x] === 1 && !visited.has(`${x},${y}`)) {
-        const contour = traceContour(mask, x, y, width, height, visited);
-        if (contour.length >= 3) {
-          contours.push(contour);
-          console.log(`[CONTOURS] Traced contour with ${contour.length} points`);
-        }
-      }
-    }
-  }
-
-  console.log(`[CONTOURS] Detected ${contours.length} contours in mask, sizes: ${contours.map(c => c.length).join(',')}`);
-
-  return contours;
-}
-
-function traceContour(mask, startX, startY, width, height, visited) {
-  const contour = [];
-  let x = startX, y = startY;
-  const directions = [[0, -1], [1, 0], [0, 1], [-1, 0]]; // N, E, S, W
-  let dirIdx = 0;
-
-  const getKey = (px, py) => `${px},${py}`;
-
-  do {
-    contour.push([x, y]);
-    visited.add(getKey(x, y));
-
-    let found = false;
-    for (let i = 0; i < 4; i++) {
-      const [dx, dy] = directions[(dirIdx + i) % 4];
-      const nx = x + dx, ny = y + dy;
-
-      if (nx >= 0 && nx < width && ny >= 0 && ny < height && mask[ny]?.[nx] === 1 && !visited.has(getKey(nx, ny))) {
-        x = nx;
-        y = ny;
-        dirIdx = (dirIdx + i) % 4;
-        found = true;
-        break;
-      }
-    }
-
-    if (!found) break;
-  } while ((x !== startX || y !== startY) && contour.length < width * height);
-
-  return contour;
-}
-
-/**
- * SIMPLIFICAR CONTORNO: Ramer-Douglas-Peucker
- */
-function simplifyContour(contour, tolerance) {
-  if (contour.length <= 2) return contour;
-
-  const dmax = [];
-  let maxDist = 0, index = 0;
-
-  for (let i = 1; i < contour.length - 1; i++) {
-    const dist = pointToLineDistance(contour[i], contour[0], contour[contour.length - 1]);
-    if (dist > maxDist) {
-      maxDist = dist;
-      index = i;
-    }
-  }
-
-  if (maxDist > tolerance) {
-    const rec1 = simplifyContour(contour.slice(0, index + 1), tolerance);
-    const rec2 = simplifyContour(contour.slice(index), tolerance);
-    return rec1.slice(0, -1).concat(rec2);
-  } else {
-    return [contour[0], contour[contour.length - 1]];
-  }
-}
-
-function pointToLineDistance(point, a, b) {
-  const dx = b[0] - a[0];
-  const dy = b[1] - a[1];
-  const len2 = dx * dx + dy * dy;
-  if (len2 === 0) return Math.hypot(point[0] - a[0], point[1] - a[1]);
-  const t = Math.max(0, Math.min(1, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / len2));
-  const projX = a[0] + t * dx;
-  const projY = a[1] + t * dy;
-  return Math.hypot(point[0] - projX, point[1] - projY);
-}
-
-/**
- * CERRAR CONTORNO: Asegurar que primer punto == último punto
- */
-function closeContour(contour) {
-  if (contour.length > 0) {
-    const last = contour[contour.length - 1];
-    const first = contour[0];
-    if (last[0] !== first[0] || last[1] !== first[1]) {
-      return [...contour, [first[0], first[1]]];
-    }
-  }
-  return contour;
-}
-
-/**
- * CALCULAR ÁREA DEL POLÍGONO: Shoelace formula
- */
-function polygonArea(polygon) {
-  let area = 0;
-  for (let i = 0; i < polygon.length - 1; i++) {
-    const p1 = polygon[i];
-    const p2 = polygon[i + 1];
-    area += (p2[0] - p1[0]) * (p2[1] + p1[1]) / 2;
-  }
-  return Math.abs(area);
-}
-
-/**
- * CLASIFICAR TIPO DE REGIÓN
- */
-function classifyRegionType(contour, area_mm2) {
-  if (area_mm2 < 10) return 'running_stitch';
+function pixelsToImageBlob(pixels, width, height) {
+  // Los pixels vienen como array plano RGBA
+  const imageData = new ImageData(
+    new Uint8ClampedArray(pixels),
+    width,
+    height
+  );
   
-  const minX = Math.min(...contour.map(p => p[0]));
-  const maxX = Math.max(...contour.map(p => p[0]));
-  const minY = Math.min(...contour.map(p => p[1]));
-  const maxY = Math.max(...contour.map(p => p[1]));
-  const width = maxX - minX;
-  const height = maxY - minY;
-  const aspectRatio = Math.max(width, height) / Math.min(width, height);
-
-  if (area_mm2 < 50 && aspectRatio < 3) return 'satin';
-  return 'fill';
+  // Crear canvas y dibujar
+  const canvas = new OffscreenCanvas(width, height);
+  const ctx = canvas.getContext('2d');
+  ctx.putImageData(imageData, 0, 0);
+  
+  // Convertir a PNG
+  const blob = canvas.convertToBlob({ type: 'image/png' });
+  return blob;
 }
 
 /**
- * GENERAR FILL STITCHES: Scanlines con clipping
+ * Generar nombre legible para región
  */
-function generateFillStitches(contour, density) {
-  const stitches = [];
-  const spacing = Math.max(0.3, 1.5 / density);
-  const angle = 45 * Math.PI / 180;
-
-  const minX = Math.min(...contour.map(p => p[0]));
-  const maxX = Math.max(...contour.map(p => p[0]));
-  const minY = Math.min(...contour.map(p => p[1]));
-  const maxY = Math.max(...contour.map(p => p[1]));
-
-  const cos = Math.cos(angle), sin = Math.sin(angle);
-
-  let lineIdx = 0;
-  for (let y = minY; y <= maxY; y += spacing) {
-    const intersections = [];
-
-    for (let i = 0; i < contour.length - 1; i++) {
-      const p1 = contour[i];
-      const p2 = contour[i + 1];
-
-      if ((p1[1] <= y && p2[1] > y) || (p2[1] <= y && p1[1] > y)) {
-        const t = (y - p1[1]) / (p2[1] - p1[1]);
-        const x = p1[0] + t * (p2[0] - p1[0]);
-        intersections.push(x);
-      }
-    }
-
-    intersections.sort((a, b) => a - b);
-
-    for (let i = 0; i < intersections.length - 1; i += 2) {
-      const x0 = intersections[i];
-      const x1 = intersections[i + 1];
-      const dist = x1 - x0;
-      const steps = Math.max(1, Math.ceil(dist / 0.7));
-
-      for (let step = 0; step <= steps; step++) {
-        const x = x0 + (x1 - x0) * (step / steps);
-        stitches.push({ x, y });
-      }
-
-      if (i + 2 < intersections.length) {
-        stitches.push({ x: x1, y, cmd: 'trim' });
-      }
-    }
-
-    lineIdx++;
-  }
-
-  return stitches;
-}
-
-/**
- * GENERAR SATIN STITCHES: Zigzag entre offsets
- */
-function generateSatinStitches(contour, density) {
-  const stitches = [];
-  const innerOffset = offsetPolygon(contour, -0.35);
-  const outerOffset = offsetPolygon(contour, 0.35);
-
-  if (innerOffset.length < 3 || outerOffset.length < 3) {
-    return generateRunStitches(contour, density);
-  }
-
-  // Zigzag entre inner y outer
-  const minLen = Math.min(innerOffset.length, outerOffset.length);
-  for (let i = 0; i < minLen; i++) {
-    const inner = innerOffset[i];
-    const outer = outerOffset[i];
-    const dist = Math.hypot(outer[0] - inner[0], outer[1] - inner[1]);
-    const steps = Math.max(1, Math.ceil(dist / 0.7));
-
-    for (let step = 0; step <= steps; step++) {
-      const t = steps > 0 ? step / steps : 0;
-      const x = inner[0] + (outer[0] - inner[0]) * t;
-      const y = inner[1] + (outer[1] - inner[1]) * t;
-      stitches.push({ x, y });
+function generateRegionName(region) {
+  const colorNames = {
+    'ff0000': 'rojo',
+    'ffffff': 'blanco',
+    '000000': 'negro',
+    '0000ff': 'azul',
+    '00ff00': 'verde',
+    'ffff00': 'amarillo',
+    'ff00ff': 'magenta',
+    'ffa500': 'naranja',
+    '800080': 'morado',
+    'ffc0cb': 'rosa'
+  };
+  
+  let colorName = 'color';
+  
+  // Intentar extraer nombre del color
+  if (region.color) {
+    if (typeof region.color === 'string') {
+      const hex = region.color.replace('#', '').toLowerCase();
+      colorName = colorNames[hex] || `col${hex.slice(0, 3)}`;
+    } else if (region.color.r !== undefined) {
+      const hex = `${region.color.r.toString(16).padStart(2, '0')}${region.color.g.toString(16).padStart(2, '0')}${region.color.b.toString(16).padStart(2, '0')}`;
+      colorName = colorNames[hex] || `col${hex.slice(0, 3)}`;
     }
   }
-
-  return stitches;
-}
-
-/**
- * GENERAR RUN STITCHES: Seguir contorno
- */
-function generateRunStitches(contour, density) {
-  const stitches = [];
-  const spacing = Math.max(0.3, 0.7 / density);
-
-  for (let i = 0; i < contour.length - 1; i++) {
-    const p1 = contour[i];
-    const p2 = contour[i + 1];
-    const dist = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
-    const steps = Math.max(1, Math.ceil(dist / spacing));
-
-    for (let step = 0; step <= steps; step++) {
-      const t = steps > 0 ? step / steps : 0;
-      const x = p1[0] + (p2[0] - p1[0]) * t;
-      const y = p1[1] + (p2[1] - p1[1]) * t;
-      stitches.push({ x, y });
-    }
-  }
-
-  return stitches;
-}
-
-/**
- * OFFSET POLYGON: Inset/outset
- */
-function offsetPolygon(polygon, amount) {
-  if (polygon.length < 3 || amount === 0) return polygon;
-
-  const offset = [];
-  const n = polygon.length - 1; // Exclude last (duplicate of first)
-
-  for (let i = 0; i < n; i++) {
-    const prev = polygon[i];
-    const curr = polygon[(i + 1) % n];
-    const next = polygon[(i + 2) % n];
-
-    const e1 = [curr[0] - prev[0], curr[1] - prev[1]];
-    const e2 = [next[0] - curr[0], next[1] - curr[1]];
-
-    const len1 = Math.hypot(e1[0], e1[1]) || 1;
-    const len2 = Math.hypot(e2[0], e2[1]) || 1;
-
-    const n1 = [-e1[1] / len1, e1[0] / len1];
-    const n2 = [-e2[1] / len2, e2[0] / len2];
-
-    const bis = [n1[0] + n2[0], n1[1] + n2[1]];
-    const bisLen = Math.hypot(bis[0], bis[1]) || 1;
-    const cosHalf = (n1[0] * (bis[0] / bisLen) + n1[1] * (bis[1] / bisLen));
-    const miter = cosHalf > 0.1 ? amount / cosHalf : amount;
-
-    offset.push([
-      curr[0] + (bis[0] / bisLen) * Math.min(miter, Math.abs(amount) * 2),
-      curr[1] + (bis[1] / bisLen) * Math.min(miter, Math.abs(amount) * 2)
-    ]);
-  }
-
-  return closeContour(offset);
-}
-
-/**
- * POINT IN POLYGON: Ray casting algorithm
- */
-function isPointInPolygon(point, polygon) {
-  let inside = false;
-  const [x, y] = point;
-
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const [xi, yi] = polygon[i];
-    const [xj, yj] = polygon[j];
-
-    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi) / (yj - yi) + xi)) {
-      inside = !inside;
-    }
-  }
-
-  return inside;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// COLOR HELPERS
-// ─────────────────────────────────────────────────────────────────────────────
-
-function colorDistance(a, b) {
-  const dr = a[0] - b[0], dg = a[1] - b[1], db = a[2] - b[2];
-  return Math.sqrt(dr * dr + dg * dg + db * db);
-}
-
-function findNearestCentroid(pixel, centroids) {
-  let minDist = Infinity, nearest = centroids[0];
-  for (const c of centroids) {
-    const dist = colorDistance(pixel, c);
-    if (dist < minDist) {
-      minDist = dist;
-      nearest = c;
-    }
-  }
-  return nearest;
-}
-
-function rgbToHex(r, g, b) {
-  return '#' + [r, g, b].map(x => Math.round(x).toString(16).padStart(2, '0')).join('');
+  
+  const typeSuffix = region.type === 'fill' ? 'fill' :
+                    region.type === 'satin' ? 'sat' : 'run';
+  
+  return `${colorName}_${typeSuffix}`;
 }
