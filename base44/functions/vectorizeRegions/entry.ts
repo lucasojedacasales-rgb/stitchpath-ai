@@ -42,14 +42,14 @@ Deno.serve(async (req) => {
 
     const mmPerPx = 100 / origW / scale;
 
-    // ── 2. Edge detection with Canny ────────────────────────────────────────────
+    // ── 2. Edge detection ─────────────────────────────────────────────────────
     const gray = new Float32Array(W * H);
     for (let i = 0; i < W * H; i++) {
       const r = rgba[i*4], g = rgba[i*4+1], b = rgba[i*4+2];
       gray[i] = 0.299*r + 0.587*g + 0.114*b;
     }
 
-    const blurred = gaussianBlur(gray, W, H, 1.2);
+    const blurred = gaussianBlur(gray, W, H);
     const { gx, gy, mag } = sobelGradients(blurred, W, H);
 
     let sum = 0, sum2 = 0;
@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
     const lowT  = highT * 0.5;
     const edges = cannyNMS(mag, gx, gy, W, H, lowT, highT);
 
-    // ── 3. K-means++ with more clusters for better region separation ────────────
+    // ── 3. K-means++ clustering ─────────────────────────────────────────────────
     const k = Math.max(4, Math.min(colorClusters, 24));
     const samples = [];
     for (let i = 0; i < W * H; i++) {
@@ -104,44 +104,44 @@ Deno.serve(async (req) => {
       if (edges[i] > 0) labels[i] = -1;
     }
 
-    // ── 4. Flood fill regions with better filtering ──────────────────────────────
+    // ── 4. Flood fill regions ───────────────────────────────────────────────────
     const minPx = Math.max(1, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
     const regions = floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroids);
 
-    // ── 5. Contour extraction with smooth curve preservation ────────────────────
+    // ── 5. Contour extraction with Bézier smoothing ──────────────────────────────
     const outputRegions = [];
 
     for (const reg of regions) {
       const contour = traceContour(reg.mask, W, H);
       if (contour.length < 4) continue;
 
-      // Filter by shape validity
+      // Validate shape
       const bbox = reg.bbox;
       const bboxW = bbox.maxX - bbox.minX + 1;
       const bboxH = bbox.maxY - bbox.minY + 1;
       const regionAspect = bboxW / Math.max(1, bboxH);
-      if (regionAspect < 0.15 || regionAspect > 6.5) continue; // reject very thin/elongated
+      if (regionAspect < 0.15 || regionAspect > 6.5) continue;
 
-      // Smooth and simplify contour preserving curves
-      const smoothed = smoothContour(contour, 2);
-      let epsilon = 0.15 / mmPerPx; // finer for smoother curves
-      let simplified = rdp(smoothed, epsilon);
+      // Conservative RDP simplification
+      let epsilon = 0.2 / mmPerPx;
+      let simplified = rdp(contour, epsilon);
       
-      // Preserve detail if contour has significant curves
-      if (simplified.length < 8 && smoothed.length > 30) {
-        epsilon = 0.08 / mmPerPx;
-        simplified = rdp(smoothed, epsilon);
-      }
+      // Apply Bézier smoothing for continuous curves
+      const bezierSmoothed = bezierSmooth(simplified, 3);
+      
+      // Re-sample to control point density
+      const resampled = resampleCurve(bezierSmoothed, Math.max(8, Math.round(bezierSmoothed.length * 0.6)));
 
-      if (simplified.length < 4) continue;
+      if (resampled.length < 4) continue;
 
-      const polygon = simplified.map(([x, y]) => [
+      const polygon = resampled.map(([x, y]) => [
         parseFloat(((x - W/2) * mmPerPx).toFixed(4)),
         parseFloat(((y - H/2) * mmPerPx).toFixed(4)),
       ]);
 
       const areaMm2 = reg.pixelCount * mmPerPx * mmPerPx;
-      const perimeterMm = contourPerimeterMm(simplified, mmPerPx);
+      const perimeterMm = contourPerimeterMm(resampled, mmPerPx);
+      const compactness = perimeterMm > 0 ? (perimeterMm * perimeterMm) / areaMm2 : 0;
 
       outputRegions.push({
         id: reg.id,
@@ -149,6 +149,7 @@ Deno.serve(async (req) => {
         path_points: polygon,
         area_mm2: parseFloat(areaMm2.toFixed(2)),
         perimeter_mm: parseFloat(perimeterMm.toFixed(2)),
+        compactness: parseFloat(compactness.toFixed(2)),
         centroid: [
           parseFloat(((reg.centroid[0] - W/2) * mmPerPx).toFixed(4)),
           parseFloat(((reg.centroid[1] - H/2) * mmPerPx).toFixed(4)),
@@ -170,30 +171,83 @@ Deno.serve(async (req) => {
   }
 });
 
-// ── SMOOTH CONTOUR (Gaussian blur on point positions) ────────────────────────
+// ── BÉZIER SMOOTHING ──────────────────────────────────────────────────────────
 
-function smoothContour(contour, passes = 1) {
-  if (contour.length < 5) return contour;
-  let pts = [...contour];
+function bezierSmooth(pts, passes = 2) {
+  if (pts.length < 3) return pts;
+  
+  let smoothed = [...pts];
   for (let pass = 0; pass < passes; pass++) {
-    const smooth = [];
-    for (let i = 0; i < pts.length; i++) {
-      const prev = pts[(i - 1 + pts.length) % pts.length];
-      const curr = pts[i];
-      const next = pts[(i + 1) % pts.length];
-      smooth.push([
-        (prev[0] + 2*curr[0] + next[0]) / 4,
-        (prev[1] + 2*curr[1] + next[1]) / 4
-      ]);
+    const result = [];
+    const n = smoothed.length;
+    
+    for (let i = 0; i < n; i++) {
+      const p0 = smoothed[i];
+      const p1 = smoothed[(i + 1) % n];
+      const p2 = smoothed[(i + 2) % n];
+      
+      // Quadratic Bézier: B(t) = (1-t)²P0 + 2(1-t)tP1 + t²P2
+      const steps = 3;
+      for (let t = 0; t < 1; t += 1/steps) {
+        const mt = 1 - t;
+        const x = mt*mt*p0[0] + 2*mt*t*p1[0] + t*t*p2[0];
+        const y = mt*mt*p0[1] + 2*mt*t*p1[1] + t*t*p2[1];
+        result.push([x, y]);
+      }
     }
-    pts = smooth;
+    smoothed = result;
   }
-  return pts;
+  
+  return smoothed;
 }
 
-// ── GAUSSIAN BLUR with configurable sigma ─────────────────────────────────────
+// ── CURVE RESAMPLING (uniform point distribution) ───────────────────────────
 
-function gaussianBlur(gray, W, H, sigma = 1.0) {
+function resampleCurve(pts, targetCount) {
+  if (pts.length <= 2) return pts;
+  
+  // Calculate total arc length
+  let totalLen = 0;
+  const lengths = [0];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const d = Math.hypot(pts[i+1][0] - pts[i][0], pts[i+1][1] - pts[i][1]);
+    totalLen += d;
+    lengths.push(totalLen);
+  }
+  
+  if (totalLen === 0) return pts;
+  
+  // Interpolate evenly spaced points
+  const result = [pts[0]];
+  const step = totalLen / (targetCount - 1);
+  
+  for (let i = 1; i < targetCount - 1; i++) {
+    const targetLen = step * i;
+    let segIdx = lengths.findIndex(l => l >= targetLen);
+    if (segIdx === -1) segIdx = pts.length - 1;
+    if (segIdx === 0) segIdx = 1;
+    
+    const p0 = pts[segIdx - 1];
+    const p1 = pts[segIdx];
+    const len0 = lengths[segIdx - 1];
+    const len1 = lengths[segIdx];
+    
+    if (len1 - len0 > 0.001) {
+      const t = (targetLen - len0) / (len1 - len0);
+      result.push([
+        p0[0] + t * (p1[0] - p0[0]),
+        p0[1] + t * (p1[1] - p0[1])
+      ]);
+    }
+  }
+  
+  result.push(pts[pts.length - 1]);
+  return result;
+}
+
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+
+function gaussianBlur(gray, W, H) {
   const kernel = [1,4,6,4,1, 4,16,24,16,4, 6,24,36,24,6, 4,16,24,16,4, 1,4,6,4,1];
   const ksum = 256;
   const out = new Float32Array(W * H);
@@ -207,7 +261,7 @@ function gaussianBlur(gray, W, H, sigma = 1.0) {
           v += gray[ny*W+nx] * kernel[(ky+2)*5+(kx+2)];
         }
       }
-      out[y*W+x] = (v / ksum) * sigma;
+      out[y*W+x] = v / ksum;
     }
   }
   return out;
