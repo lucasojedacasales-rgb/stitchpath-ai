@@ -48,36 +48,39 @@ Deno.serve(async (req) => {
       colorDataBlock = `\nPALETA DE COLORES DETECTADA:\n${image_analysis.dominantColors.slice(0, 12).map((c, i) => `${i+1}. ${c.hex} - ${(c.coverage * 100).toFixed(1)}% cobertura - REUSAR EXACTAMENTE ESTE COLOR`).join('\n')}\n`;
     }
 
-    const prompt = `DIGITALIZADOR PROFESIONAL: Detecta CADA área de color como región independiente.
+    const prompt = `MOTOR DE DETECCIÓN: Paso 1 - Áreas sólidas. Paso 2 - Detalles internos. Paso 3 - Contornos.
 
 ${colorDataBlock}
 
-ANÁLISIS REQUERIDO - SIN SIMPLIFICACIONES:
-Ejemplo correcto:
-- ojo_izquierdo_blanco (región 1)
-- ojo_izquierdo_pupila (región 2)
-- ojo_izquierdo_brillo (región 3)
-- mejilla_izquierda_rosa (región 4)
-- mejilla_izquierda_sombra (región 5)
-- boca_roja (región 6)
-- diente_blanco (región 7)
-- cuerpo_principal (región 8)
-- contorno_oscuro (región 9)
+PASO 1 - DETECTAR ÁREAS DE COLOR SÓLIDO (Primero):
+Identifica todas las áreas homogéneas de color:
+- Cuerpo principal (color sólido)
+- Superficies planas (ropa, piel base)
+- Regiones extensas del mismo color
 
-REGLAS CRÍTICAS:
-1. **Segmentación por COLOR**: Si ves 2 colores diferentes = 2 regiones (NO agrupar)
-2. **Detalles internos OBLIGATORIOS**: Ojos, pupilas, brillos, mejillas, boca, sombras
-3. **Area_mm2**: Estima realista (ojo pequeño ~20mm², cuerpo ~500mm²)
-4. **Stitch_type**:
-   - "fill": área >= 50mm² AND forma compacta
-   - "satin": 10-50mm² OR forma alargada (línea)
-   - "running_stitch": contornos visibles, líneas, bordes oscuros
-5. **Path_points**: Polígono cerrado (último = primer punto), mínimo 4 puntos
+PASO 2 - DETECTAR DETALLES INTERNOS (Segundo - CRÍTICO):
+Dentro de cada región, busca detalles finos como regiones INDEPENDIENTES:
+- Ojos: blanco separado + pupila separada + brillo separado = 3 regiones
+- Mejillas: forma base + sombra/detalle = 2+ regiones
+- Boca: labios + dientes = 2+ regiones
+- Nariz: base + sombra = 2 regiones
+- Cejas, pestañas = regiones separadas si visibles
+- REGLA: Cualquier color/sombra diferente = región nueva independiente
 
-ORDENA POR IMPORTANCIA:
-- layer_order 1: fills principales (cuerpo)
-- layer_order 2-5: fills detalles (mejillas, boca)
-- layer_order 6+: contornos y detalles finos
+PASO 3 - CONTORNOS Y BORDES (Último):
+- Solo si hay líneas oscuras visibles como elementos independientes
+- NO AGRUPAR con rellenos
+
+ESPECIFICACIONES:
+- name: Jerárquico (ej: "cuerpo", "ojo_izq_blanco", "ojo_izq_pupila", "mejilla_rosa")
+- stitch_type: "fill" (sólido), "satin" (detalle), "running_stitch" (línea)
+- color: Paleta exacta o #rrggbb más cercano
+- area_mm2: Realista (cuerpo ~500mm², ojo ~15mm², mejilla ~50mm²)
+- density: 0.6-0.9
+- layer_order: cuerpo=1, detalles grandes=2-3, finos=4-6, contornos=7+
+- path_points: ${pointsPerShape} puntos, polígono cerrado
+
+CRÍTICO: NO OMITAS PEQUEÑOS DETALLES. Incluye todos.
 
 Responde SOLO JSON válido:
 {
