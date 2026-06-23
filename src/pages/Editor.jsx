@@ -167,23 +167,53 @@ export default function Editor() {
         });
 
         // ── Clasificación correcta de tipo de puntada ─────────────────────────
-        const newRegions = filtered.map(r => {
-          const hex = (r.color || '').toLowerCase();
-          const isContourColor = hex === '#000000' || hex === '#1a1a1a';
-          const isContourName  = (r.name || '').toLowerCase().includes('contour_');
-          const isRingShape    = r.area_mm2 && r.perimeter_mm && (r.area_mm2 / (r.perimeter_mm * r.perimeter_mm)) < 0.05;
-          const isAdjacentMany = Array.isArray(r.neighbors) && r.neighbors.length >= 3;
-          const isContour = isContourColor || isContourName || isRingShape || isAdjacentMany || r.isContour;
-
-          let stitch_type;
-          if (isContour) {
-            stitch_type = 'running_stitch';
-          } else if ((r.area_mm2 || 0) < 80 || (r.avgWidth_mm || 0) < 3.0) {
-            stitch_type = 'satin';
+        const classifyStitchType = (region) => {
+          const hex = (region.color || '').toLowerCase();
+          const isDark = hex === '#000000' || hex === '#1a1a1a';
+          const isContourName = (region.name || '').toLowerCase().includes('contour_');
+          
+          if (isDark || isContourName || region.isContour) return 'running_stitch';
+          
+          const area = region.area_mm2 || 0;
+          const perim = region.perimeter_mm || 1;
+          const avgWidth = area / perim;
+          const compactness = (perim * perim) / Math.max(area, 1);
+          
+          if (area > 200 && avgWidth > 5.0) {
+            return 'fill';
+          } else if (area < 50 || avgWidth < 3.0 || compactness > 15) {
+            return 'satin';
           } else {
-            stitch_type = 'fill';
+            return 'fill';
           }
-          return { ...r, stitch_type };
+        };
+
+        const calculateStitchCount = (region) => {
+          const type = region.stitch_type;
+          const area = region.area_mm2 || 0;
+          const perim = region.perimeter_mm || 0;
+          const density = region.density || 0.7;
+          
+          if (type === 'fill') {
+            // fill: area × density × 2.5 (zig-zag + conexiones)
+            return Math.round(area * density * 2.5);
+          } else if (type === 'satin') {
+            // satin: (perimeter / stitch_length) × (width / density)
+            const width = Math.max(0.5, area / (perim || 1));
+            return Math.round((perim / 3) * (width / density));
+          } else {
+            // running_stitch: perímetro / stitch_length
+            return Math.round(perim / 2);
+          }
+        };
+
+        const newRegions = filtered.map(r => {
+          const type = classifyStitchType(r);
+          return {
+            ...r,
+            stitch_type: type,
+            stitch_count: calculateStitchCount({ ...r, stitch_type: type })
+          };
         });
 
         setRegions(newRegions);

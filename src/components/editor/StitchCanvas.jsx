@@ -91,8 +91,6 @@ export default function StitchCanvas({
     ctx.fillStyle = '#1a1a2e';
     ctx.fillRect(0, 0, W, H);
 
-    drawGrid(ctx, W, H, zoom, offset);
-
     if (!imageRef.current || imageOpacity <= 0) return;
 
     const { drawW, drawH } = getDrawSize(imageRef.current, W, H);
