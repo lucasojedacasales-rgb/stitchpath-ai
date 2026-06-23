@@ -60,10 +60,10 @@ Deno.serve(async (req) => {
       colorCounts.set(hex, (colorCounts.get(hex) || 0) + 1);
     }
 
-    // Keep top colors
+    // Keep top colors (increased detection)
     const topColors = Array.from(colorCounts.entries())
       .sort((a, b) => b[1] - a[1])
-      .slice(0, Math.min(color_count, 8))
+      .slice(0, Math.min(color_count, 16)) // Allow up to 16 colors for granular detection
       .map(([hex]) => hex);
 
     // Process colors and shadows
@@ -72,86 +72,91 @@ Deno.serve(async (req) => {
       allRegionColors.push('#0a0a0a'); // Add shadow as explicit region
     }
 
-    // For each color/shadow, create a simple region
+    // Build pixel mask for each color
+    const pixelMasks = new Map();
     for (const hex of allRegionColors) {
-      // Create bounding box mask
-      let minX = width, maxX = 0, minY = height, maxY = 0;
-      let pixelCount = 0;
-      const isShadow = hex === '#0a0a0a';
+      pixelMasks.set(hex, new Set());
+    }
+    
+    // Assign pixels to colors
+    for (let idx = 0; idx < width * height; idx++) {
+      const i = idx * 4;
+      const isShadowPixel = shadowPixels.has(idx);
+      
+      if (isShadowPixel) {
+        pixelMasks.get('#0a0a0a').add(idx);
+      } else {
+        const r = pixelArray[i];
+        const g = pixelArray[i + 1];
+        const b = pixelArray[i + 2];
+        const a = pixelArray[i + 3] || 255;
+        if (a < 128) continue;
+        
+        const hex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+        if (pixelMasks.has(hex)) pixelMasks.get(hex).add(idx);
+      }
+    }
 
-      for (let idx = 0; idx < width * height; idx++) {
-        const i = idx * 4;
-        const isShadowPixel = shadowPixels.has(idx);
+    // For each color, extract connected regions via flood fill
+    for (const hex of allRegionColors) {
+      const colorPixels = pixelMasks.get(hex);
+      if (colorPixels.size < 5) continue; // Skip tiny regions
+
+      // Group connected components
+      const visited = new Set();
+      const components = [];
+      
+      for (const startIdx of colorPixels) {
+        if (visited.has(startIdx)) continue;
         
-        if (isShadow) {
-          // Process shadow pixels
-          if (!isShadowPixel) continue;
-        } else {
-          // Process color pixels
-          const r = pixelArray[i];
-          const g = pixelArray[i + 1];
-          const b = pixelArray[i + 2];
-          const a = pixelArray[i + 3] || 255;
-          
-          if (a < 128 || isShadowPixel) continue;
-          
-          const currentHex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
-          if (currentHex !== hex) continue;
+        // Flood fill to find connected component
+        const component = floodFill(startIdx, colorPixels, visited, width, height);
+        if (component.length > 0) {
+          components.push(component);
         }
-        
-        const x = idx % width;
-        const y = Math.floor(idx / width);
-        
-        minX = Math.min(minX, x);
-        maxX = Math.max(maxX, x);
-        minY = Math.min(minY, y);
-        maxY = Math.max(maxY, y);
-        pixelCount++;
       }
 
-      if (pixelCount < 1) continue;
+      // Create region for each significant component
+      for (const component of components) {
+        const path = extractContourPoints(component, width, height);
+        if (path.length < 3) continue;
 
-      const w = (maxX - minX + 1) / width;
-      const h = (maxY - minY + 1) / height;
-      const area = w * h;
+        const pixelCount = component.length;
+        const box = getComponentBounds(component, width, height);
+        const w = (box.maxX - box.minX + 1) / width;
+        const h = (box.maxY - box.minY + 1) / height;
+        const area = w * h;
 
-      if (area < 0.001) continue;
+        if (area < 0.0005) continue;
 
-      // Simple rectangle contour
-      const path = [
-        [minX / width, minY / height],
-        [maxX / width, minY / height],
-        [maxX / width, maxY / height],
-        [minX / width, maxY / height],
-        [minX / width, minY / height]
-      ];
+        const perimeter = estimatePerimeter(path);
+        const isShadow = hex === '#0a0a0a';
+        
+        // Shadow regions should be running stitch (contours/details)
+        let type = area > 0.1 ? 'fill' : area > 0.02 ? 'satin' : 'running_stitch';
+        if (isShadow) type = 'running_stitch';
+        
+        const stitches = type === 'fill' 
+          ? Math.round(area * width_mm * height_mm * 0.7 * 2.5)
+          : type === 'satin'
+          ? Math.round(perimeter * Math.sqrt(width_mm * height_mm) * 20)
+          : Math.round(perimeter * Math.sqrt(width_mm * height_mm) * 15);
 
-      const perimeter = 2 * (w + h);
-      
-      // Shadow regions should be running stitch (contours/details)
-      let type = area > 0.1 ? 'fill' : 'satin';
-      if (isShadow) type = 'running_stitch';
-      
-      const stitches = type === 'fill' 
-        ? Math.round(area * width_mm * height_mm * 0.7 * 2.5)
-        : type === 'satin'
-        ? Math.round(perimeter * Math.sqrt(width_mm * height_mm) * 20)
-        : Math.round(perimeter * Math.sqrt(width_mm * height_mm) * 15); // shadows: lighter stitch count
-
-      regions.push({
-        id: `r${regions.length}`,
-        name: isShadow ? `sombra_${type}` : `${hex}_${type}`,
-        color: hex,
-        stitch_type: type,
-        density: isShadow ? 0.5 : 0.7,
-        angle: isShadow ? 60 : 45,
-        path_points: path,
-        area_mm2: area * width_mm * height_mm,
-        perimeter_mm: perimeter * Math.sqrt(width_mm * height_mm),
-        stitch_count: stitches,
-        visible: true,
-        isShadow: isShadow
-      });
+        regions.push({
+          id: `r${regions.length}`,
+          name: isShadow ? `sombra_${type}` : `${hex}_${type}`,
+          color: hex,
+          stitch_type: type,
+          density: isShadow ? 0.5 : 0.7,
+          angle: isShadow ? 60 : 45,
+          path_points: path,
+          area_mm2: area * width_mm * height_mm,
+          perimeter_mm: perimeter * Math.sqrt(width_mm * height_mm),
+          stitch_count: stitches,
+          visible: true,
+          isShadow: isShadow
+        });
+      }
     }
 
     if (regions.length === 0) {
@@ -208,3 +213,123 @@ Deno.serve(async (req) => {
     }, { status: 422 });
   }
 });
+
+// ─── Flood Fill: Extract connected components ──────────────────────────────
+
+function floodFill(startIdx, colorPixels, visited, width, height) {
+  const queue = [startIdx];
+  const component = [];
+  visited.add(startIdx);
+
+  while (queue.length > 0) {
+    const idx = queue.shift();
+    component.push(idx);
+
+    const x = idx % width;
+    const y = Math.floor(idx / width);
+
+    // Check 4-connected neighbors
+    const neighbors = [
+      (y - 1) * width + x,     // up
+      (y + 1) * width + x,     // down
+      y * width + (x - 1),     // left
+      y * width + (x + 1)      // right
+    ];
+
+    for (const nIdx of neighbors) {
+      if (!visited.has(nIdx) && colorPixels.has(nIdx)) {
+        visited.add(nIdx);
+        queue.push(nIdx);
+      }
+    }
+  }
+
+  return component;
+}
+
+// ─── Contour Extraction: Get boundary points ───────────────────────────────
+
+function extractContourPoints(component, width, height) {
+  const componentSet = new Set(component);
+  const boundary = [];
+
+  // Find boundary pixels (adjacent to non-component pixels)
+  for (const idx of component) {
+    const x = idx % width;
+    const y = Math.floor(idx / width);
+
+    const neighbors = [
+      (y - 1) * width + x,
+      (y + 1) * width + x,
+      y * width + (x - 1),
+      y * width + (x + 1)
+    ];
+
+    if (neighbors.some(n => !componentSet.has(n))) {
+      boundary.push({ x, y, idx });
+    }
+  }
+
+  if (boundary.length === 0) return [];
+
+  // Simplify boundary to key points (convex hull approximation)
+  const startPoint = boundary.reduce((a, b) => a.y < b.y ? a : b);
+  const sorted = sortBoundaryPoints(boundary, startPoint);
+
+  // Reduce points via distance threshold
+  const simplified = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const p = sorted[i];
+    const last = simplified[simplified.length - 1];
+    
+    if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 2) {
+      simplified.push(p);
+    }
+  }
+
+  // Normalize to [0,1] coordinates
+  return simplified.map(p => [p.x / width, p.y / height]);
+}
+
+function sortBoundaryPoints(boundary, start) {
+  const cx = boundary.reduce((s, p) => s + p.x, 0) / boundary.length;
+  const cy = boundary.reduce((s, p) => s + p.y, 0) / boundary.length;
+
+  return boundary.sort((a, b) => {
+    const angleA = Math.atan2(a.y - cy, a.x - cx);
+    const angleB = Math.atan2(b.y - cy, b.x - cx);
+    return angleA - angleB;
+  });
+}
+
+// ─── Component Bounds ───────────────────────────────────────────────────────
+
+function getComponentBounds(component, width, height) {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+
+  for (const idx of component) {
+    const x = idx % width;
+    const y = Math.floor(idx / width);
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+
+  return { minX, maxX, minY, maxY };
+}
+
+// ─── Perimeter Estimation ──────────────────────────────────────────────────
+
+function estimatePerimeter(pathPoints) {
+  if (pathPoints.length < 2) return 0;
+
+  let perim = 0;
+  for (let i = 0; i < pathPoints.length; i++) {
+    const p1 = pathPoints[i];
+    const p2 = pathPoints[(i + 1) % pathPoints.length];
+    perim += Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+  }
+
+  return perim;
+}
