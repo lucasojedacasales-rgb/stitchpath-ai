@@ -169,35 +169,30 @@ export function generateTatamiLines(pts, region, drawW, drawH) {
 
   // ── TATAMI FILL ──────────────────────────────────────────────────────────
   let lineIdx = 0;
-  // Divide u-extent into sections of sectionWidth
-  const totalU = bbox.maxU - bbox.minU;
-  const numSections = Math.max(1, Math.ceil(totalU / sectionWidth));
+  
+  // Generate scanlines across entire polygon without sections
+  for (let v = bbox.minV; v <= bbox.maxV; v += spacing) {
+    // Create a full-width line across the entire bounding box
+    const worldA = toWorld(bbox.minU, v);
+    const worldB = toWorld(bbox.maxU, v);
 
-  for (let sec = 0; sec < numSections; sec++) {
-    const uStart = bbox.minU + sec * sectionWidth;
-    const uEnd   = Math.min(bbox.maxU, uStart + sectionWidth);
+    // Clip against polygon boundary
+    const clipped = clipLineAgainstPolygon(worldA, worldB, expandedPoly);
+    
+    for (const [p0, p1] of clipped) {
+      // Alternate direction (zig-zag / tatami)
+      const isOdd = lineIdx % 2 === 1;
+      const start = isOdd ? p1 : p0;
+      const end   = isOdd ? p0 : p1;
 
-    for (let v = bbox.minV; v <= bbox.maxV; v += spacing) {
-      // Line endpoints in world space (full section width)
-      const worldA = toWorld(uStart, v);
-      const worldB = toWorld(uEnd, v);
+      // Needle offset: subtle alternation ±needleOffset along perpendicular axis
+      const perp = [-sin, cos]; // perpendicular to stitch direction
+      const off = (lineIdx % 4 < 2 ? 1 : -1) * needleOffset;
+      const s = add(start, scale(perp, off));
+      const e = add(end,   scale(perp, off));
 
-      const clipped = clipLineAgainstPolygon(worldA, worldB, expandedPoly);
-      for (const [p0, p1] of clipped) {
-        // Alternate direction (zig-zag / tatami)
-        const isOdd = lineIdx % 2 === 1;
-        const start = isOdd ? p1 : p0;
-        const end   = isOdd ? p0 : p1;
-
-        // Needle offset: alternate entry/exit points ±needleOffset along V axis
-        const perp = [-sin, cos]; // perpendicular to stitch direction
-        const off = (lineIdx % 4 < 2 ? 1 : -1) * needleOffset;
-        const s = add(start, scale(perp, off));
-        const e = add(end,   scale(perp, off));
-
-        fillLines.push([s, e]);
-        lineIdx++;
-      }
+      fillLines.push([s, e]);
+      lineIdx++;
     }
   }
 
