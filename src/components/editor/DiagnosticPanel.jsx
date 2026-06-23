@@ -49,23 +49,23 @@ export default function DiagnosticPanel({ imageUrl, onClose }) {
             <>
               {/* Summary */}
               <div className={`p-3 rounded-lg border ${
-                report.summary.pipeline_status === 'success'
+                report?.summary?.pipeline_status === 'success'
                   ? 'bg-emerald-900/20 border-emerald-500/30'
                   : 'bg-red-900/20 border-red-500/30'
               }`}>
                 <div className="flex items-center gap-2 mb-2">
-                  {report.summary.pipeline_status === 'success' ? (
+                  {report?.summary?.pipeline_status === 'success' ? (
                     <CheckCircle2 className="w-5 h-5 text-emerald-400" />
                   ) : (
                     <AlertCircle className="w-5 h-5 text-red-400" />
                   )}
                   <span className="font-bold text-white">
-                    {report.summary.passed}/{report.summary.total_steps} pasos exitosos
+                    {report?.summary?.passed}/{report?.summary?.total_steps} pasos exitosos
                   </span>
                 </div>
-                {report.summary.bottleneck && (
+                {report?.summary?.bottleneck && (
                   <div className="text-xs text-red-300">
-                    Cuello de botella: <span className="font-mono">{report.summary.bottleneck}</span>
+                    Cuello de botella: <span className="font-mono">{report?.summary?.bottleneck}</span>
                   </div>
                 )}
               </div>
