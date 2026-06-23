@@ -151,16 +151,32 @@ export default function Editor() {
       }
 
       // Extract pixels from image first
-      const pixelData = await extractImagePixels(finalImageUrl);
-      
-      const res = await base44.functions.invoke('robustVectorization', {
-        pixels: pixelData.pixels,
-        width: pixelData.width,
-        height: pixelData.height,
-        width_mm: config.width_mm,
-        height_mm: config.height_mm,
-        color_count: config.color_count
-      });
+      let pixelData;
+      try {
+       pixelData = await extractImagePixels(finalImageUrl);
+      } catch (err) {
+       console.error('Failed to extract pixels:', err);
+       throw new Error('No se pudo cargar la imagen');
+      }
+
+      let res;
+      try {
+       res = await base44.functions.invoke('robustVectorization', {
+         pixels: pixelData.pixels,
+         width: pixelData.width,
+         height: pixelData.height,
+         width_mm: config.width_mm,
+         height_mm: config.height_mm,
+         color_count: config.color_count
+       });
+      } catch (err) {
+       console.error('Vectorization backend failed:', err);
+       throw new Error('Error en vectorización: ' + err.message);
+      }
+
+      if (!res?.data) {
+       throw new Error('Respuesta inválida del servidor');
+      }
 
       if (res.data?.success) {
         const rawData = res.data.data?.response || res.data.data;
@@ -371,7 +387,8 @@ export default function Editor() {
         });
       }
     } catch (e) {
-      console.error(e);
+      console.error('Processing error:', e);
+      alert('Error: ' + (e.message || 'Algo salió mal en la vectorización'));
     } finally {
       setProcessing(false);
       clearInterval(timerRef.current);
