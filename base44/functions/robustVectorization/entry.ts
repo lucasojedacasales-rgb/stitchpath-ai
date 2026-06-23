@@ -17,6 +17,18 @@ Deno.serve(async (req) => {
       fill_angle = 45
     } = await req.json();
 
+    // ─── INFORME DE VECTORIZACIÓN ────────────────────────────────────────────
+    const vectorReport = {
+      timestamp: new Date().toISOString(),
+      regionsProcessed: [],
+      totalPointsDetected: 0,
+      totalContoursDetected: 0,
+      emptyContours: 0,
+      invalidPolygons: 0,
+      joinErrors: [],
+      errors: []
+    };
+
     if (!pixels || !width || !height) {
       return Response.json({ error: 'Missing required parameters' }, { status: 400 });
     }
@@ -76,7 +88,24 @@ Deno.serve(async (req) => {
           diagnostics.regionsDetected++;
 
           const contour = extractAndValidateContour(regionPixels, width, height);
-          if (!contour || contour.length < 3) continue;
+          
+          console.log('VECTORIZE DEBUG - CONTOUR EXTRACTION', {
+            regionId: `r${allRegions.length}`,
+            colorHex,
+            pixelCount: regionPixels.length,
+            contour: contour ? `${contour.length} points` : 'NULL',
+            isValid: contour && contour.length >= 3
+          });
+
+          if (!contour || contour.length < 3) {
+            vectorReport.emptyContours++;
+            console.error('Invalid contour detected', {
+              regionId: `r${allRegions.length}`,
+              colorHex,
+              contourLength: contour ? contour.length : 0
+            });
+            continue;
+          }
 
           const bounds = getBounds(regionPixels);
           const area_px = regionPixels.length;
@@ -94,8 +123,26 @@ Deno.serve(async (req) => {
           if (simplifiedContour.length < 3) continue;
 
           // Validación y reparación
+          if (!Array.isArray(simplifiedContour)) {
+            console.error('INVALID SIMPLIFIED CONTOUR', {
+              regionId: `r${allRegions.length}`,
+              colorHex,
+              type: typeof simplifiedContour,
+              value: simplifiedContour
+            });
+            vectorReport.invalidPolygons++;
+            continue;
+          }
+
           const validation = validateAndRepairPolygon(simplifiedContour);
-          if (!validation.valid) {
+          
+          if (!validation || !validation.valid) {
+            console.error('POLYGON VALIDATION FAILED', {
+              regionId: `r${allRegions.length}`,
+              colorHex,
+              validationResult: validation
+            });
+            vectorReport.invalidPolygons++;
             diagnostics.warnings.push(`Región ${colorHex} no pudo repararse`);
             continue;
           }
@@ -108,13 +155,33 @@ Deno.serve(async (req) => {
 
           // ─── FASE 4-5: GENERACIÓN DE PUNTADAS + CLIPPING ──────────────────
 
+          if (!validation.polygon || !Array.isArray(validation.polygon)) {
+            console.error('INVALID POLYGON OBJECT', {
+              regionId: `r${allRegions.length}`,
+              colorHex,
+              polygon: validation.polygon,
+              polygonType: typeof validation.polygon,
+              polygonIsArray: Array.isArray(validation.polygon)
+            });
+            vectorReport.invalidPolygons++;
+            continue;
+          }
+
           const stitches = generateRegionStitches(validation.polygon, {
             stitchType,
             density: stitch_density,
             angle: fill_angle
           });
 
-          if (stitches.length === 0) continue;
+          if (!Array.isArray(stitches) || stitches.length === 0) {
+            console.error('STITCH GENERATION FAILED', {
+              regionId: `r${allRegions.length}`,
+              colorHex,
+              stitches: stitches ? `${stitches.length} stitches` : 'NULL',
+              stitchesIsArray: Array.isArray(stitches)
+            });
+            continue;
+          }
 
           // Validar que todas las puntadas están dentro
           const outOfBounds = stitches.filter(pt => !isPointInPolygon(pt, validation.polygon)).length;
@@ -127,19 +194,56 @@ Deno.serve(async (req) => {
           const perimeter_px = estimatePerimeter(simplifiedContour);
           const perimeter_mm = perimeter_px * Math.sqrt(px_to_mm_x * px_to_mm_y);
 
-          allRegions.push({
+          // Normalizar contorno
+          const normalizedPath = normalizeContour(validation.polygon, width, height);
+          
+          if (!Array.isArray(normalizedPath)) {
+            console.error('PATH NORMALIZATION FAILED', {
+              regionId: `r${allRegions.length}`,
+              colorHex,
+              normalizedPath,
+              normalizedPathType: typeof normalizedPath
+            });
+            vectorReport.invalidPolygons++;
+            continue;
+          }
+
+          const regionName = `${colorHex.slice(1, 4)}_${stitchType[0]}`;
+          
+          const region = {
             id: `r${allRegions.length}`,
-            name: `${colorHex.slice(1, 4)}_${stitchType[0]}`,
+            name: regionName,
             color: colorHex,
             stitch_type: stitchType,
             density: stitch_density,
             angle: stitchType === 'fill' ? fill_angle : 0,
-            path_points: normalizeContour(validation.polygon, width, height),
+            path_points: normalizedPath,
             area_mm2,
             perimeter_mm,
             stitch_count: stitches.length,
             visible: true
+          };
+
+          console.log('VECTORIZE DEBUG - REGION COMPLETE', {
+            regionId: region.id,
+            regionName: region.name,
+            pointsInPath: normalizedPath.length,
+            stitchCount: stitches.length,
+            areaM2: area_mm2,
+            perimeterMm: perimeter_mm,
+            stitchType
           });
+
+          allRegions.push(region);
+          vectorReport.regionsProcessed.push({
+            id: region.id,
+            name: region.name,
+            color: colorHex,
+            pointCount: normalizedPath.length,
+            stitchCount: stitches.length
+          });
+          vectorReport.totalPointsDetected += normalizedPath.length;
+          vectorReport.totalContoursDetected++;
 
           diagnostics.totalStitches += stitches.length;
         }
@@ -159,6 +263,7 @@ Deno.serve(async (req) => {
     diagnostics.estimatedTime = Math.round(diagnostics.totalStitches / 800);
 
     console.log(`ÉXITO: ${allRegions.length} regiones válidas, ${diagnostics.totalStitches} puntadas`);
+    console.log('VECTORIZATION REPORT', vectorReport);
 
     return Response.json({
       success: true,
@@ -168,16 +273,26 @@ Deno.serve(async (req) => {
         colors_used: dominantColors.length,
         generation_method: 'professional_vectorization',
         vector_source: true,
-        diagnostics
+        diagnostics,
+        vectorReport
       }
     });
 
   } catch (error) {
     console.error('Vectorization error:', error.message);
+    console.error('Stack trace:', error.stack);
+    
+    vectorReport.errors.push({
+      message: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+
     return Response.json({
       success: false,
       error: error.message,
-      data: { regions: [], total_stitches: 0, diagnostics: { errors: [error.message] } }
+      data: { regions: [], total_stitches: 0, diagnostics: { errors: [error.message] }, vectorReport },
+      stack: error.stack
     }, { status: 422 });
   }
 });
@@ -194,15 +309,34 @@ function extractDominantColors(pixelArray, width, height, maxColors) {
     const r = pixelArray[i];
     const g = pixelArray[i + 1];
     const b = pixelArray[i + 2];
-    const hexArray = [r, g, b].map(x => x.toString(16).padStart(2, '0'));
-    const hex = '#' + (Array.isArray(hexArray) ? hexArray.join('') : '000000');
-    colorCounts.set(hex, (colorCounts.get(hex) || 0) + 1);
+    
+    try {
+      const hexArray = [r, g, b].map(x => x.toString(16).padStart(2, '0'));
+      
+      if (!Array.isArray(hexArray)) {
+        console.error('EXTRACT COLORS - INVALID HEX ARRAY', {
+          hexArray,
+          type: typeof hexArray,
+          r, g, b
+        });
+        continue;
+      }
+      
+      const hex = '#' + hexArray.join('');
+      colorCounts.set(hex, (colorCounts.get(hex) || 0) + 1);
+    } catch (err) {
+      console.error('EXTRACT COLORS ERROR', { r, g, b, error: err.message });
+      continue;
+    }
   }
 
-  return Array.from(colorCounts.entries())
+  const result = Array.from(colorCounts.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, maxColors)
     .map(([hex]) => hex);
+  
+  console.log('DOMINANT COLORS EXTRACTED', { count: result.length, colors: result });
+  return result;
 }
 
 function getPixelColor(pixelArray, x, y, width) {
@@ -211,12 +345,26 @@ function getPixelColor(pixelArray, x, y, width) {
   const r = pixelArray[idx];
   const g = pixelArray[idx + 1];
   const b = pixelArray[idx + 2];
-  const hexArray = [r, g, b].map(x => x.toString(16).padStart(2, '0'));
-  if (!Array.isArray(hexArray)) {
-    console.error('getPixelColor: hexArray is not an array', { type: typeof hexArray, value: hexArray });
+  
+  try {
+    const hexArray = [r, g, b].map(x => x.toString(16).padStart(2, '0'));
+    
+    if (!Array.isArray(hexArray)) {
+      console.error('GET PIXEL COLOR - INVALID HEX', {
+        x, y, width,
+        r, g, b,
+        hexArray,
+        type: typeof hexArray
+      });
+      return '#000000';
+    }
+    
+    const hex = '#' + hexArray.join('');
+    return hex;
+  } catch (err) {
+    console.error('GET PIXEL COLOR ERROR', { x, y, r, g, b, error: err.message });
     return '#000000';
   }
-  return '#' + hexArray.join('');
 }
 
 function floodFill(pixelArray, startX, startY, targetColor, width, height, visited) {
