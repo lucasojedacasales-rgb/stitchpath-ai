@@ -77,8 +77,34 @@ Responde SOLO JSON:
 
       const finalRegions = clientRegions.slice(0, 40).map((r, i) => {
         const label = labelMap[i] || {};
-        const stitch_type = label.stitch_type || (r.coverage > 0.05 ? 'fill' : r.coverage > 0.01 ? 'satin' : 'running_stitch');
-        const stitch_count = Math.round((r.area_px || r.pixelCount || 100) * (label.density || 0.7) * 0.4);
+        
+        // Calculate perimeter from path_points
+        let perimeterMm = 0;
+        if (r.path_points && r.path_points.length >= 3) {
+          for (let j = 0; j < r.path_points.length; j++) {
+            const p1 = r.path_points[j];
+            const p2 = r.path_points[(j + 1) % r.path_points.length];
+            perimeterMm += Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+          }
+        }
+        
+        const areaMm2 = Math.round(r.coverage * w * h);
+        const avgWidth = perimeterMm > 0 ? areaMm2 / perimeterMm : 0;
+        
+        // Smart stitch type classification
+        let stitch_type = label.stitch_type;
+        if (!stitch_type) {
+          if (areaMm2 > 200 && avgWidth > 4.0) {
+            stitch_type = 'fill';
+          } else if (areaMm2 < 50 || avgWidth < 2.5) {
+            stitch_type = 'running_stitch';
+          } else {
+            stitch_type = 'satin';
+          }
+        }
+        
+        const stitch_count = Math.round(areaMm2 * (label.density || 0.7) * 0.4);
+        
         return {
           id: `r${i + 1}`,
           name: label.name || `region_${r.hex.replace('#', '')}_${i}`,
@@ -89,7 +115,8 @@ Responde SOLO JSON:
           layer_order: label.layer_order || (i + 1),
           pull_compensation: label.pull_compensation || 0.15,
           underlay: label.underlay !== undefined ? label.underlay : stitch_type !== 'running_stitch',
-          area_mm2: Math.round(r.coverage * w * h),
+          area_mm2: areaMm2,
+          perimeter_mm: parseFloat(perimeterMm.toFixed(2)),
           stitch_count,
           is_auto_contour: false,
           visible: true,
