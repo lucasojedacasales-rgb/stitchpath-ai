@@ -191,36 +191,81 @@ export default function Editor() {
         const calculateStitchCount = (region) => {
           const type = region.stitch_type;
           const area = region.area_mm2 || 0;
-          const perim = region.perimeter_mm || 0;
+          const perim = region.perimeter_mm || 1;
           const density = region.density || 0.7;
           
           if (type === 'fill') {
-            // fill: area × density × 2.5 (zig-zag + conexiones)
+            // fill: area × density × 2.5 (zig-zag + conexiones + underlay)
             return Math.round(area * density * 2.5);
           } else if (type === 'satin') {
             // satin: (perimeter / stitch_length) × (width / density)
-            const width = Math.max(0.5, area / (perim || 1));
-            return Math.round((perim / 3) * (width / density));
+            const width = Math.max(1, area / perim);
+            const stitchLength = 2.5; // 2.5mm stitch length for satin
+            return Math.round((perim / stitchLength) * (width / Math.max(0.4, density)));
           } else {
             // running_stitch: perímetro / stitch_length
-            return Math.round(perim / 2);
+            const stitchLength = 1.5; // 1.5mm stitch length for contours
+            return Math.round(perim / stitchLength);
           }
         };
 
-        const newRegions = filtered.map(r => {
+        // Color naming utilities
+        const COLOR_NAMES = {
+          '#000000': 'negro', '#1a1a1a': 'negro', '#ffffff': 'blanco', '#ffff00': 'amarillo',
+          '#ff0000': 'rojo', '#00ff00': 'verde', '#0000ff': 'azul', '#ff69b4': 'rosa',
+          '#ffa500': 'naranja', '#800080': 'morado', '#ffc0cb': 'rosa', '#ee82ee': 'violeta'
+        };
+
+        const getColorName = (hex) => {
+          if (!hex) return 'color';
+          const h = hex.toLowerCase();
+          if (COLOR_NAMES[h]) return COLOR_NAMES[h];
+          const matches = Object.entries(COLOR_NAMES).map(([k, v]) => ({
+            name: v,
+            dist: Math.sqrt(
+              Math.pow(parseInt(k.slice(1, 3), 16) - parseInt(h.slice(1, 3), 16), 2) +
+              Math.pow(parseInt(k.slice(3, 5), 16) - parseInt(h.slice(3, 5), 16), 2) +
+              Math.pow(parseInt(k.slice(5, 7), 16) - parseInt(h.slice(5, 7), 16), 2)
+            )
+          })).sort((a, b) => a.dist - b.dist);
+          return matches[0]?.name || 'color';
+        };
+
+        const getPosition = (region, allRegions) => {
+          const centroid = region.centroid || [0.5, 0.5];
+          const [cx, cy] = centroid;
+          const v = cy < 0.33 ? 'sup' : cy > 0.66 ? 'inf' : 'cen';
+          const h = cx < 0.33 ? 'izq' : cx > 0.66 ? 'der' : '';
+          return h ? `${v}_${h}` : v;
+        };
+
+        const getStitchAbbr = (type) => {
+          return type === 'fill' ? 'fill' : type === 'satin' ? 'sat' : 'run';
+        };
+
+        const newRegions = filtered.map((r, idx) => {
           const type = classifyStitchType(r);
+          const colorName = getColorName(r.color);
+          const position = getPosition(r, filtered);
+          const typeAbbr = getStitchAbbr(type);
+          const name = `${position}_${colorName}_${typeAbbr}`;
+
           return {
             ...r,
+            name: r.name || name,
             stitch_type: type,
             stitch_count: calculateStitchCount({ ...r, stitch_type: type })
           };
         });
 
+        // Recalculate total stitches
+        const totalCalculatedStitches = newRegions.reduce((sum, r) => sum + (r.stitch_count || 0), 0);
+
         setRegions(newRegions);
         setStep(3);
         await base44.entities.Project.update(id, {
           regions: newRegions, step: 3, status: 'ready',
-          total_stitches,
+          total_stitches: totalCalculatedStitches,
           color_count: new Set((newRegions || []).map(r => r.color)).size
         });
         // Save version
