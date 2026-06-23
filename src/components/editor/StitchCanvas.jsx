@@ -272,24 +272,7 @@ export default function StitchCanvas({
     ctx.restore();
   }
 
-  // ── Grid & badge (drawn on image layer) ───────────────────────────────────
-
-  function drawGrid(ctx, W, H, zoom, offset) {
-    if (zoom < 3) return;
-    const gridSize = zoom >= 6 ? 10 : 20;
-    ctx.save();
-    ctx.strokeStyle = zoom >= 6 ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.04)';
-    ctx.lineWidth = 0.5;
-    const ox = (offset.x + W / 2) % (gridSize * zoom);
-    const oy = (offset.y + H / 2) % (gridSize * zoom);
-    for (let x = ox - gridSize * zoom; x < W + gridSize * zoom; x += gridSize * zoom) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-    }
-    for (let y = oy - gridSize * zoom; y < H + gridSize * zoom; y += gridSize * zoom) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-    }
-    ctx.restore();
-  }
+  // ── Badge (drawn on stitch layer) ──────────────────────────────────────────
 
   function drawZoomBadge(ctx, W, H, zoom) {
     const text = `${Math.round(zoom * 100)}%`;
