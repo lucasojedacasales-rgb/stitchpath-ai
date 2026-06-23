@@ -48,39 +48,24 @@ Deno.serve(async (req) => {
       colorDataBlock = `\nPALETA DE COLORES DETECTADA:\n${image_analysis.dominantColors.slice(0, 12).map((c, i) => `${i+1}. ${c.hex} - ${(c.coverage * 100).toFixed(1)}% cobertura - REUSAR EXACTAMENTE ESTE COLOR`).join('\n')}\n`;
     }
 
-    const prompt = `Eres un sistema de vectorización para diseños de bordado. Analiza esta imagen Y DEVUELVE SOLO JSON VÁLIDO.
+    const prompt = `Analiza esta imagen de bordado y devuelve regiones de color como JSON.
 
-${colorDataBlock}
-
-TAREA: Segmenta la imagen en bloques de color sólido. CADA bloque de color homogéneo = 1 región.
+IMPORTANTE: Devuelve SOLO JSON válido, sin markdown ni explicaciones.
 
 REGLAS:
-1. Escanea cada área de color uniforme en la imagen
-2. Cada región debe tener path_points (contorno cerrado)
-3. Usa los colores exactos de la paleta detectada
-4. Calcula área en mm² basado en tamaño estimado
-5. Para cada región: stitch_count = area_mm2 × 0.7 × 2.5
+- Cada región = área de color uniforme
+- path_points: coordenadas normalizadas 0-1, lista cerrada [[x,y],...]
+- Mínimo 3 puntos por región
+- color: hex color (ej: #ff0000)
+- stitch_type: "fill" para áreas grandes, "satin" para líneas, "running_stitch" para contornos
 
-DEVUELVE ESTO (SOLO JSON, SIN MARKDOWN):
+ESTRUCTURA JSON:
 {
   "regions": [
-    {
-      "id": "r1",
-      "name": "region_1",
-      "color": "#9d5c9d",
-      "stitch_type": "fill",
-      "density": 0.7,
-      "angle": 45,
-      "area_mm2": 1000,
-      "stitch_count": 1750,
-      "path_points": [[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]
-    }
+    {"id":"r0","name":"area_1","color":"#9d5c9d","stitch_type":"fill","density":0.7,"angle":45,"path_points":[[0,0],[1,0],[1,1],[0,1],[0,0]],"area_mm2":500,"stitch_count":875}
   ],
-  "total_stitches": 5000,
-  "estimated_time_min": 6,
-  "colors_used": 3,
-  "width_mm": ${w},
-  "height_mm": ${h}
+  "total_stitches":875,
+  "colors_used":1
 }`;
 
     const result = await base44.asServiceRole.integrations.Core.InvokeLLM({
@@ -106,67 +91,62 @@ DEVUELVE ESTO (SOLO JSON, SIN MARKDOWN):
     console.log('Total stitches:', result.total_stitches);
     console.log('Raw:', JSON.stringify(result));
 
-    // ─── POST-PROCESAMIENTO: Validar bloques como regiones independientes ─────
-    // Claude puede devolver {regions: [...]} o {response: {regions: [...]}}
-    const claudeData = result.response || result;
-    let regions = (claudeData.regions || []).filter(r => {
-      // Validar path_points válido (mínimo 3 puntos = triángulo)
-      if (!r.path_points || r.path_points.length < 3) return false;
-      // NO filtrar por área pequeña (mantener detalles)
-      // Validar polígono cerrado
-      const first = r.path_points[0];
-      const last = r.path_points[r.path_points.length - 1];
-      if (Math.hypot(first[0] - last[0], first[1] - last[1]) > 0.01) {
-        r.path_points.push(first); // Cerrar polígono si no lo está
-      }
-      return true;
-    }).map(r => {
-      // Para bloques de color sólido: siempre "fill"
-      r.stitch_type = r.stitch_type || 'fill';
-      
-      // Calcular stitch_count basado en área y densidad
-      if (!r.stitch_count) {
-        const area = r.area_mm2 || 0;
-        // Bloques pequeños (~5mm²) = ~15-20 stitches, bloques grandes = más
-        const density = r.density || 0.7;
-        const baseCount = Math.max(8, area * density * 2.5);
-        r.stitch_count = Math.round(baseCount);
-      }
-      
-      return r;
-    });
+    // Procesar respuesta de Claude (puede venir anidada)
+    let regions = [];
+    try {
+      const data = result.response?.regions ? result.response : result;
+      regions = (data.regions || [])
+        .filter(r => r?.path_points && Array.isArray(r.path_points) && r.path_points.length >= 3)
+        .map(r => {
+          // Asegurar polígono cerrado
+          const pts = r.path_points;
+          const first = pts[0];
+          const last = pts[pts.length - 1];
+          if (Math.hypot(first[0] - last[0], first[1] - last[1]) > 0.01) {
+            pts.push([...first]);
+          }
+          
+          return {
+            id: r.id || `r${Math.random()}`,
+            name: r.name || `region_${Math.random()}`,
+            color: r.color || '#9d5c9d',
+            stitch_type: r.stitch_type || 'fill',
+            density: r.density ?? 0.7,
+            angle: r.angle ?? 45,
+            path_points: pts,
+            area_mm2: r.area_mm2 || (Math.random() * 500 + 100),
+            stitch_count: r.stitch_count || Math.round((r.area_mm2 || 300) * (r.density ?? 0.7) * 2.5),
+            visible: true
+          };
+        });
+    } catch (e) {
+      console.warn('Error parsing Claude response:', e);
+    }
 
-    // ─── FALLBACK: Si Claude no devuelve regiones, generar con colores detectados ───
-    const fallbackColors = image_analysis?.dominantColors || [
-      { hex: '#9d5c9d' }, { hex: '#1a1a3e' }, { hex: '#ffffff' },
-      { hex: '#e8949e' }, { hex: '#6b4c8a' }, { hex: '#2d1b47' }
-    ];
-    if (regions.length === 0 && fallbackColors.length > 0) {
-      console.warn('Claude returned 0 regions, generating from dominant colors');
-      regions = fallbackColors.slice(0, Math.min(8, color_count || 6)).map((color, idx) => {
-        const area = 200 + Math.random() * 800;
-        const density = 0.7;
-        const stitches = Math.round(area * density * 2.5);
+    // FALLBACK: Si Claude falló, generar con colores detectados
+    if (regions.length === 0) {
+      console.warn('Generando fallback desde colores detectados');
+      const colors = image_analysis?.dominantColors?.slice(0, Math.min(8, color_count || 6)) || [
+        { hex: '#9d5c9d' }, { hex: '#1a1a3e' }, { hex: '#ffffff' },
+        { hex: '#e8949e' }, { hex: '#6b4c8a' }, { hex: '#2d1b47' }
+      ];
+      
+      regions = colors.map((color, i) => {
+        const area = 250 + Math.random() * 600;
         const s = Math.sqrt(area) / 200;
-        const offsetX = 0.2 + (idx % 3) * 0.25;
-        const offsetY = 0.2 + Math.floor(idx / 3) * 0.25;
+        const ox = 0.15 + (i % 3) * 0.27;
+        const oy = 0.15 + Math.floor(i / 3) * 0.27;
         return {
-          id: `r${idx+1}`,
-          name: `color_${idx+1}`,
+          id: `r${i}`,
+          name: `region_${i}`,
           color: color.hex,
           stitch_type: 'fill',
-          density,
-          angle: 45 + idx * 12,
+          density: 0.7,
+          angle: 45 + i * 15,
           area_mm2: Math.round(area),
-          stitch_count: stitches,
+          stitch_count: Math.round(area * 0.7 * 2.5),
           visible: true,
-          path_points: [
-            [offsetX, offsetY],
-            [offsetX + s, offsetY],
-            [offsetX + s, offsetY + s],
-            [offsetX, offsetY + s],
-            [offsetX, offsetY]
-          ]
+          path_points: [[ox, oy], [ox + s, oy], [ox + s, oy + s], [ox, oy + s], [ox, oy]]
         };
       });
     }
