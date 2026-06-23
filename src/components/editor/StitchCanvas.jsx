@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { ZoomIn, ZoomOut, Maximize2, Download, Layers, GitBranch } from 'lucide-react';
+import { drawTatamiRegion } from '@/lib/tatamiEngine';
 
 export default function StitchCanvas({ imageUrl, regions, selectedRegionId, onRegionClick, imageOpacity, stitchOpacity, showFill, showContour }) {
   const canvasRef = useRef(null);
@@ -58,12 +59,13 @@ export default function StitchCanvas({ imageUrl, regions, selectedRegionId, onRe
 
     // Draw stitch regions — same coordinate space as the image
     if (regions && stitchOpacity > 0) {
-      ctx.globalAlpha = stitchOpacity / 100;
-
       for (const region of regions) {
         if (!region.visible) continue;
         if (region.stitch_type === 'fill' && !showFill) continue;
         if ((region.stitch_type === 'running_stitch' || region.stitch_type === 'satin') && !showContour) continue;
+
+        // Tatami manages its own alpha; satin/run use outer alpha
+        if (region.stitch_type !== 'fill') ctx.globalAlpha = stitchOpacity / 100;
 
         const pts = region.path_points;
         if (!pts || pts.length < 2) continue;
@@ -72,36 +74,41 @@ export default function StitchCanvas({ imageUrl, regions, selectedRegionId, onRe
         const isHovered = region.id === hoveredRegion;
         const color = region.color || '#ffffff';
 
-        // pts are normalized 0-1, map to image draw space
-        const px = p => (p[0] - 0.5) * drawW;
-        const py = p => (p[1] - 0.5) * drawH;
+        const cpx = p => (p[0] - 0.5) * drawW;
+        const cpy = p => (p[1] - 0.5) * drawH;
 
-        ctx.strokeStyle = color;
-        ctx.fillStyle = color + '44';
-        ctx.lineWidth = (isSelected ? 2.5 : 1.5) / zoom;
+        if (region.stitch_type === 'fill') {
+          // ── Tatami professional fill ────────────────────────────────────────
+          drawTatamiRegion(ctx, pts, region, drawW, drawH, zoom, isSelected, isHovered, stitchOpacity);
+        } else {
+          // ── Satin / running stitch (existing logic) ─────────────────────────
+          ctx.strokeStyle = color;
+          ctx.fillStyle = color + '33';
+          ctx.lineWidth = (isSelected ? 2.5 : 1.5) / zoom;
 
-        ctx.beginPath();
-        ctx.moveTo(px(pts[0]), py(pts[0]));
-        for (let i = 1; i < pts.length; i++) ctx.lineTo(px(pts[i]), py(pts[i]));
-        ctx.closePath();
-        if (region.stitch_type === 'fill') ctx.fill();
-        ctx.stroke();
-
-        if (region.stitch_type === 'fill' || region.stitch_type === 'satin') {
-          drawStitchLines(ctx, pts, region, drawW, drawH, zoom);
-        }
-
-        if (isSelected || isHovered) {
-          ctx.strokeStyle = isSelected ? '#7c3aed' : '#06b6d4';
-          ctx.lineWidth = (isSelected ? 3 : 2) / zoom;
-          ctx.setLineDash([4 / zoom, 3 / zoom]);
           ctx.beginPath();
-          ctx.moveTo(px(pts[0]), py(pts[0]));
-          for (let i = 1; i < pts.length; i++) ctx.lineTo(px(pts[i]), py(pts[i]));
+          ctx.moveTo(cpx(pts[0]), cpy(pts[0]));
+          for (let i = 1; i < pts.length; i++) ctx.lineTo(cpx(pts[i]), cpy(pts[i]));
           ctx.closePath();
           ctx.stroke();
-          ctx.setLineDash([]);
+
+          if (region.stitch_type === 'satin') {
+            drawStitchLines(ctx, pts, region, drawW, drawH, zoom);
+          }
+
+          if (isSelected || isHovered) {
+            ctx.strokeStyle = isSelected ? '#7c3aed' : '#06b6d4';
+            ctx.lineWidth = (isSelected ? 3 : 2) / zoom;
+            ctx.setLineDash([4 / zoom, 3 / zoom]);
+            ctx.beginPath();
+            ctx.moveTo(cpx(pts[0]), cpy(pts[0]));
+            for (let i = 1; i < pts.length; i++) ctx.lineTo(cpx(pts[i]), cpy(pts[i]));
+            ctx.closePath();
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
         }
+        if (region.stitch_type !== 'fill') ctx.globalAlpha = 1;
       }
       ctx.globalAlpha = 1;
     }
