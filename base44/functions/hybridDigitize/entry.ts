@@ -107,7 +107,9 @@ DEVUELVE ESTO (SOLO JSON, SIN MARKDOWN):
     console.log('Raw:', JSON.stringify(result));
 
     // ─── POST-PROCESAMIENTO: Validar bloques como regiones independientes ─────
-    let regions = (result.regions || []).filter(r => {
+    // Claude puede devolver {regions: [...]} o {response: {regions: [...]}}
+    const claudeData = result.response || result;
+    let regions = (claudeData.regions || []).filter(r => {
       // Validar path_points válido (mínimo 3 puntos = triángulo)
       if (!r.path_points || r.path_points.length < 3) return false;
       // NO filtrar por área pequeña (mantener detalles)
@@ -176,10 +178,10 @@ DEVUELVE ESTO (SOLO JSON, SIN MARKDOWN):
       data: {
         regions,
         total_stitches,
-        estimated_time_min: result.estimated_time_min || Math.round(total_stitches / 800),
+        estimated_time_min: claudeData.estimated_time_min || Math.round(total_stitches / 800),
         colors_used: new Set(regions.map(r => r.color)).size,
-        width_mm: w,
-        height_mm: h,
+        width_mm: claudeData.width_mm || w,
+        height_mm: claudeData.height_mm || h,
       }
     });
   } catch (error) {
