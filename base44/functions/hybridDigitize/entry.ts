@@ -2,14 +2,18 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 // Fetch image and re-upload via Base44 UploadFile so Claude Vision can access it
 async function reuploadForClaude(imageUrl, base44) {
-  const res = await fetch(imageUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-  if (!res.ok) throw new Error(`HTTP ${res.status} fetching image`);
-  const contentType = res.headers.get('content-type') || 'image/png';
-  const buffer = await res.arrayBuffer();
-  const ext = contentType.includes('png') ? 'png' : contentType.includes('gif') ? 'gif' : contentType.includes('webp') ? 'webp' : 'jpg';
-  const file = new File([buffer], `image.${ext}`, { type: contentType });
-  const uploaded = await base44.asServiceRole.integrations.Core.UploadFile({ file });
-  return uploaded.file_url;
+  try {
+    const res = await fetch(imageUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!res.ok) return imageUrl; // fallback to original URL if fetch fails
+    const contentType = res.headers.get('content-type') || 'image/png';
+    const buffer = await res.arrayBuffer();
+    const ext = contentType.includes('png') ? 'png' : contentType.includes('gif') ? 'gif' : contentType.includes('webp') ? 'webp' : 'jpg';
+    const file = new File([buffer], `image.${ext}`, { type: contentType });
+    const uploaded = await base44.asServiceRole.integrations.Core.UploadFile({ file });
+    return uploaded.file_url;
+  } catch (e) {
+    return imageUrl; // fallback: use original URL if re-upload fails
+  }
 }
 
 Deno.serve(async (req) => {
