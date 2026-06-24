@@ -1,120 +1,116 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
-
 /**
  * Motor de Vectorización 100% JavaScript Puro para Deno
- * Basado en algoritmo Marching Squares + Scanline Fill
- * Sin dependencias externas
+ * Raster → Vector → Stitches sin dependencias externas
+ * 
+ * Algoritmos:
+ * - K-means color quantization
+ * - Flood fill 8-conectado
+ * - Marching squares (contour extraction)
+ * - Ramer-Douglas-Peucker simplification
+ * - Scanline fill con point-in-polygon
  */
 
-Deno.serve(async (req) => {
-  try {
-    const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+/**
+ * Función principal: recibe imagen como File/Blob, devuelve regiones con puntadas
+ * 
+ * @param {File|Blob} imageFile - Archivo de imagen subido por el usuario
+ * @param {Object} options - Configuración
+ * @param {number} options.colorCount - Número de colores (default: 6)
+ * @param {number} options.widthMM - Ancho físico en mm (default: 100)
+ * @param {number} options.heightMM - Alto físico en mm (default: 100)
+ * @param {number} options.stitchDensity - Densidad en mm (default: 0.7)
+ * @param {number} options.fillAngle - Ángulo de fill en grados (default: 45)
+ * @returns {Promise<Object>} - Objeto con regions, totalStitches, etc.
+ */
+export async function robustVectorization(imageFile, options = {}) {
+  const {
+    colorCount = 6,
+    widthMM = 100,
+    heightMM = 100,
+    stitchDensity = 0.7,
+    fillAngle = 45
+  } = options;
 
-    const {
-      pixels,
-      width,
-      height,
-      width_mm = 100,
-      height_mm = 100,
-      color_count = 6,
-      stitch_density = 0.7,
-      fill_angle = 45
-    } = await req.json();
+  console.log(`[VECTORIZER] Starting: colorCount=${colorCount}, ${widthMM}x${heightMM}mm, density=${stitchDensity}`);
 
-    if (!pixels || !width || !height) {
-      return Response.json({ error: 'Missing image data' }, { status: 400 });
-    }
+  // 1. Cargar imagen y extraer píxeles
+  const { pixels, width, height } = await loadImagePixels(imageFile);
 
-    console.log(`[VECTORIZER] Input: ${width}×${height}px → ${width_mm}×${height_mm}mm, ${color_count} colors`);
+  // 2. Cuantización de color (K-means simplificado)
+  const { quantized, palette } = quantizeColors(pixels, width, height, colorCount);
 
-    // Convertir array de pixels a Uint8ClampedArray si es necesario
-    const pixelArray = new Uint8ClampedArray(pixels);
+  // 3. Detectar regiones conectadas por color (Flood Fill)
+  const regions = findConnectedRegions(quantized, palette, width, height);
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // PASO 1: Cuantización de Color (K-means)
-    // ──────────────────────────────────────────────────────────────────────────
-    const { quantized, palette } = quantizeColors(pixelArray, width, height, color_count);
+  // 4. Procesar cada región: contornos + puntadas
+  const pxPerMM = width / widthMM;
+  const stitchPX = stitchDensity * pxPerMM;
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // PASO 2: Detectar Regiones Conectadas (Flood Fill)
-    // ──────────────────────────────────────────────────────────────────────────
-    const regions = findConnectedRegions(quantized, palette, width, height);
-    console.log(`[VECTORIZER] Detected ${regions.length} regions`);
+  const processedRegions = [];
+  let totalStitches = 0;
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // PASO 3: Procesar cada región → Contornos → Puntadas
-    // ──────────────────────────────────────────────────────────────────────────
-    const pxPerMM = width / width_mm;
-    const stitchPX = stitch_density * pxPerMM;
+  for (const region of regions) {
+    try {
+      const regionData = processRegion(region, {
+        width,
+        height,
+        pxPerMM,
+        stitchPX,
+        fillAngle,
+        widthMM,
+        heightMM
+      });
 
-    const processedRegions = [];
-    let totalStitches = 0;
-
-    for (const region of regions) {
-      try {
-        const regionData = processRegion(region, {
-          width,
-          height,
-          pxPerMM,
-          stitchPX,
-          fillAngle: fill_angle,
-          widthMM: width_mm,
-          heightMM: height_mm
-        });
-
-        if (regionData.stitches && regionData.stitches.length >= 2) {
-          processedRegions.push({
-            id: regionData.id,
-            name: regionData.name,
-            color: `#${regionData.color.r.toString(16).padStart(2, '0')}${regionData.color.g.toString(16).padStart(2, '0')}${regionData.color.b.toString(16).padStart(2, '0')}`,
-            stitch_type: regionData.type,
-            stitches: regionData.stitches,
-            pointCount: regionData.pointCount,
-            path_points: regionData.pathPoints || [],
-            visible: true
-          });
-
-          totalStitches += regionData.pointCount;
-        }
-      } catch (err) {
-        console.warn(`[VECTORIZER] Region processing error:`, err.message);
+      if (regionData.stitches && regionData.stitches.length >= 2) {
+        processedRegions.push(regionData);
+        totalStitches += regionData.pointCount;
       }
+    } catch (err) {
+      console.warn(`[VECTORIZER] Region processing error: ${err.message}`);
     }
-
-    console.log(`[VECTORIZER] SUCCESS: ${processedRegions.length} regions, ${totalStitches} stitches`);
-
-    return Response.json({
-      success: true,
-      data: {
-        regions: processedRegions,
-        total_stitches: totalStitches,
-        colors_used: palette.length,
-        generation_method: 'native_javascript_puro',
-        vector_source: true,
-        diagnostics: {
-          regionsDetected: processedRegions.length,
-          totalStitches,
-          colorsUsed: palette.length,
-          errors: []
-        }
-      }
-    });
-
-  } catch (error) {
-    console.error('[VECTORIZER] ERROR:', error.message);
-    return Response.json({
-      success: false,
-      error: error.message,
-      data: { regions: [], total_stitches: 0, diagnostics: { errors: [error.message] } }
-    }, { status: 500 });
   }
-});
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PASO 1: CUANTIZACIÓN DE COLOR (K-means simplificado)
-// ═══════════════════════════════════════════════════════════════════════════════
+  console.log(`[VECTORIZER] SUCCESS: ${processedRegions.length} regions, ${totalStitches} stitches`);
+
+  return {
+    regions: processedRegions,
+    totalStitches,
+    colorCount: palette.length,
+    width: widthMM,
+    height: heightMM
+  };
+}
+
+// ============================================================
+// PASO 1: CARGAR IMAGEN Y EXTRAER PÍXELES
+// ============================================================
+
+async function loadImagePixels(file) {
+  // Crear bitmap desde archivo
+  const bitmap = await createImageBitmap(file);
+
+  // Crear canvas offscreen
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Failed to get canvas context');
+
+  ctx.drawImage(bitmap, 0, 0);
+
+  // Extraer píxeles como Uint8ClampedArray [R,G,B,A, R,G,B,A, ...]
+  const imageData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+
+  bitmap.close();
+
+  return {
+    pixels: imageData.data,
+    width: bitmap.width,
+    height: bitmap.height
+  };
+}
+
+// ============================================================
+// PASO 2: CUANTIZACIÓN DE COLOR (K-means simplificado)
+// ============================================================
 
 function quantizeColors(pixels, width, height, k) {
   // Extraer colores únicos con frecuencia
@@ -128,7 +124,7 @@ function quantizeColors(pixels, width, height, k) {
     colorFreq.set(key, (colorFreq.get(key) || 0) + 1);
   }
 
-  // Extraer colores únicos ordenados por frecuencia
+  // Si hay menos colores que k, usarlos todos
   const uniqueColors = Array.from(colorFreq.entries())
     .sort((a, b) => b[1] - a[1])
     .map(([key]) => {
@@ -137,7 +133,6 @@ function quantizeColors(pixels, width, height, k) {
     });
 
   if (uniqueColors.length <= k) {
-    // Si hay menos colores que k, usarlos todos
     const palette = uniqueColors;
     const colorIndexMap = new Map();
     palette.forEach((c, i) => colorIndexMap.set(`${c.r},${c.g},${c.b}`, i));
@@ -151,10 +146,9 @@ function quantizeColors(pixels, width, height, k) {
     return { quantized, palette };
   }
 
-  // K-means simplificado para reducir colores
+  // K-means simplificado
   let palette = initializePalette(uniqueColors, k);
 
-  // Iteraciones de k-means (3-5 son suficientes)
   for (let iter = 0; iter < 5; iter++) {
     const clusters = Array.from({ length: k }, () => []);
 
@@ -173,7 +167,6 @@ function quantizeColors(pixels, width, height, k) {
       clusters[bestIdx].push(color);
     }
 
-    // Recalcular centroides
     const newPalette = [];
     for (let i = 0; i < k; i++) {
       if (clusters[i].length === 0) {
@@ -260,9 +253,9 @@ function colorDistance(c1, c2) {
   return (dr * dr * 0.299) + (dg * dg * 0.587) + (db * db * 0.114);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PASO 2: DETECTAR REGIONES CONECTADAS (Flood Fill)
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
+// PASO 3: DETECTAR REGIONES CONECTADAS (Flood Fill)
+// ============================================================
 
 function findConnectedRegions(quantized, palette, width, height) {
   const visited = new Uint8Array(width * height);
@@ -325,27 +318,27 @@ function findConnectedRegions(quantized, palette, width, height) {
   return regions;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PASO 3: PROCESAR CADA REGIÓN
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
+// PASO 4: PROCESAR CADA REGIÓN
+// ============================================================
 
 function processRegion(region, options) {
-  const { pxPerMM, stitchPX, fillAngle, widthMM, heightMM } = options;
+  const { width, height, pxPerMM, stitchPX, fillAngle, widthMM, heightMM } = options;
 
-  // Crear máscara binaria
+  // Crear máscara binaria para esta región
   const mask = createRegionMask(region);
 
-  // Extraer contorno
+  // Extraer contorno (Marching Squares simplificado)
   const contour = extractContour(region, mask);
 
   if (contour.length < 3) {
     return { ...region, type: 'run', stitches: [], pointCount: 0, pathPoints: [] };
   }
 
-  // Simplificar contorno
+  // Simplificar contorno (Ramer-Douglas-Peucker)
   const simplifiedContour = simplifyContour(contour, 1.0 * pxPerMM);
 
-  // Cerrar loop
+  // Cerrar contorno
   if (simplifiedContour.length > 0) {
     const first = simplifiedContour[0];
     const last = simplifiedContour[simplifiedContour.length - 1];
@@ -354,10 +347,10 @@ function processRegion(region, options) {
     }
   }
 
-  // Clasificar tipo
+  // Clasificar tipo de región
   const regionType = classifyRegion(region, pxPerMM);
 
-  // Generar puntadas
+  // Generar puntadas según tipo
   let stitches = [];
 
   if (regionType === 'fill') {
@@ -380,8 +373,8 @@ function processRegion(region, options) {
 
   // Path points normalizados
   const pathPoints = simplifiedContour.map(p => [
-    p.x / options.width,
-    p.y / options.height
+    p.x / width,
+    p.y / height
   ]);
 
   return {
@@ -411,9 +404,9 @@ function createRegionMask(region) {
   return mask;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// EXTRACTOR DE CONTORNO
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
+// EXTRACTOR DE CONTORNO (Marching Squares simplificado)
+// ============================================================
 
 function extractContour(region, mask) {
   const w = region.width;
@@ -474,9 +467,9 @@ function orderPointsAsPath(points) {
   return ordered;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
 // SIMPLIFICACIÓN (Ramer-Douglas-Peucker)
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
 
 function simplifyContour(points, tolerance) {
   if (points.length <= 2) return points;
@@ -538,9 +531,9 @@ function pointToLineDistanceSq(point, lineStart, lineEnd) {
   return ddx * ddx + ddy * ddy;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
 // CLASIFICACIÓN DE REGIÓN
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
 
 function classifyRegion(region, pxPerMM) {
   const areaMM2 = region.area / (pxPerMM * pxPerMM);
@@ -558,9 +551,9 @@ function classifyRegion(region, pxPerMM) {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// GENERACIÓN DE FILL (Scanline con clipping)
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
+// GENERACIÓN DE FILL (Scanline con clipping point-in-polygon)
+// ============================================================
 
 function generateFillStitches(contour, region, mask, options) {
   const { stitchPX, fillAngle, pxPerMM } = options;
@@ -653,9 +646,9 @@ function zigzagConnect(stitches, step) {
   return result;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
 // GENERACIÓN DE SATIN
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
 
 function generateSatinStitches(contour, stitchPX) {
   const stitches = [];
@@ -689,17 +682,17 @@ function generateSatinStitches(contour, stitchPX) {
   return stitches;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
 // GENERACIÓN DE RUN
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
 
 function generateRunStitches(contour, stitchPX) {
   return resampleContour(contour, stitchPX);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
 // RESAMPLEAR CONTORNO
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
 
 function resampleContour(points, step) {
   if (points.length < 2) return points;
@@ -748,9 +741,9 @@ function resampleContour(points, step) {
   return result;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
 // POINT-IN-POLYGON (Ray Casting)
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
 
 function isPointInPolygon(x, y, polygon) {
   let inside = false;
@@ -769,9 +762,9 @@ function isPointInPolygon(x, y, polygon) {
   return inside;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
 // UTILIDADES
-// ═══════════════════════════════════════════════════════════════════════════════
+// ============================================================
 
 function generateRegionName(region, type) {
   const colorNames = [
@@ -784,3 +777,5 @@ function generateRegionName(region, type) {
 
   return `${colorName}_${typeSuffix}`;
 }
+
+export default robustVectorization;
