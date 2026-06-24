@@ -50,7 +50,13 @@ Deno.serve(async (req) => {
     console.log(`[LITE] Palette: ${palette.length} colors`);
 
     // 3. GENERAR PUNTADAS: scanlines horizontales
-    const regions = generateScanlineStitches(labels, palette, scaledW, scaledH, stitch_density);
+    let regions = generateScanlineStitches(labels, palette, scaledW, scaledH, stitch_density);
+
+    // Fallback: si no hay regiones, crear una región default
+    if (regions.length === 0) {
+      console.log('[LITE] No regions found, generating default grayscale...');
+      regions = [generateDefaultRegion(scaledPixels, scaledW, scaledH, stitch_density)];
+    }
 
     // 4. LIMITAR: máx 20 regiones, máx 10k puntadas
     const filtered = regions.slice(0, 20).map(r => ({
@@ -277,4 +283,44 @@ function classifyType(count) {
 function getColorName(color, idx) {
   const names = ['negro', 'rojo', 'verde', 'azul', 'amarillo', 'rosa'];
   return names[idx] || `color${idx}`;
+}
+
+// ============================================================================
+// FALLBACK: región default si no se encuentran regiones
+// ============================================================================
+
+function generateDefaultRegion(pixels, width, height, stitchDensity) {
+  const STEP = Math.max(1, Math.round(5 / stitchDensity));
+  const stitches = [];
+
+  // Scanlines simples de luminancia (grayscale)
+  for (let y = 0; y < height; y += STEP) {
+    for (let x = 0; x < width; x += STEP) {
+      const idx = (y * width + x) * 4;
+      const luma = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
+      
+      // Solo añadir si no es muy brillante (evitar fondo blanco)
+      if (luma < 200) {
+        stitches.push({ x, y });
+      }
+    }
+  }
+
+  // Si aún no hay stitches, generar grid mínimo
+  if (stitches.length === 0) {
+    for (let y = 5; y < height; y += 10) {
+      for (let x = 5; x < width; x += 10) {
+        stitches.push({ x, y });
+      }
+    }
+  }
+
+  return {
+    id: 'r_default',
+    name: 'default_run',
+    color: '#4a4a4a',
+    type: 'running_stitch',
+    stitches,
+    pointCount: stitches.length
+  };
 }
