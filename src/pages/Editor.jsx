@@ -177,16 +177,38 @@ export default function Editor() {
       // Convertir bloques a regiones para visualización
       const motorData = res.data;
       const blocks = Array.isArray(motorData.blocks) ? motorData.blocks : [];
-      const newRegions = blocks.map((block, idx) => ({
-        id: block.id || `block_${idx}`,
-        color: block.color || '#000000',
-        stitch_type: block.stitch_type || block.type || 'fill',
-        stitches: block.stitches || [],
-        path_points: block.path_points || block.stitches || [],
-        pointCount: block.pointCount || block.stitches?.length || 0,
-        stitch_count: block.stitch_count || block.stitches?.length || 0,
-        visible: true
-      }));
+      const newRegions = blocks.map((block, idx) => {
+        const stitches = block.stitches || [];
+        // path_points must be [[normX, normY], ...] in 0-1 range for StitchCanvas
+        // The motor returns path_points as [[x/w, y/h], ...] already normalized
+        // But if they're objects {x,y} in mm, convert them
+        let path_points = block.path_points;
+        if (!Array.isArray(path_points) || path_points.length === 0) {
+          // Build from stitches in mm → normalize by design dimensions
+          const wMm = config.width_mm || 100;
+          const hMm = config.height_mm || 100;
+          path_points = stitches.map(s => [
+            (s.x || 0) / wMm,
+            (s.y || 0) / hMm
+          ]);
+        } else if (path_points.length > 0 && !Array.isArray(path_points[0])) {
+          // path_points are objects {x,y} — convert to arrays
+          const wMm = config.width_mm || 100;
+          const hMm = config.height_mm || 100;
+          path_points = path_points.map(p => [(p.x || 0) / wMm, (p.y || 0) / hMm]);
+        }
+
+        return {
+          id: block.id || `block_${idx}`,
+          color: block.color || '#000000',
+          stitch_type: block.stitch_type || block.type || 'fill',
+          stitches,
+          path_points,
+          pointCount: block.pointCount || stitches.length,
+          stitch_count: block.stitch_count || stitches.length,
+          visible: true
+        };
+      });
 
       const totalCalculatedStitches = motorData.stitches || blocks.reduce((s, b) => s + (b.stitches?.length || 0), 0);
 
