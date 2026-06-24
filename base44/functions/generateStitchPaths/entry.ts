@@ -10,8 +10,9 @@ Deno.serve(async (req) => {
     if (!regions || !Array.isArray(regions)) return Response.json({ error: 'regions array required' }, { status: 400 });
 
     const sp = {
-      fillDensity: 1.0,        // maps to 0.4mm row spacing
-      fillAngle: 45,
+      tatamiDensityMm: 0.4,    // direct mm row spacing; overrides fillDensity
+      fillAngle: null,          // null = auto PCA, number = fixed degrees
+      fillDensity: 1.0,
       satinWidth: 3.0,
       runningStitchLength: 2.5,
       pullCompensation: 0.15,
@@ -19,6 +20,9 @@ Deno.serve(async (req) => {
       underlayDensity: 0.5,
       underlayAngle: -45,
       ...stitchParams,
+      // support flat snake_case keys from editor config
+      tatamiDensityMm: stitchParams?.tatami_density || stitchParams?.tatamiDensityMm || 0.4,
+      fillAngle: stitchParams?.fill_angle !== undefined ? stitchParams.fill_angle : (stitchParams?.fillAngle !== undefined ? stitchParams.fillAngle : null),
     };
 
     // ── Classify and generate stitch paths per region ────────────────────────
@@ -43,18 +47,21 @@ Deno.serve(async (req) => {
       let jumps = 0;
 
       if (type === 'fill') {
-        // Use dominant angle from polygon PCA, or fall back to sp.fillAngle
-        const polyAngleDeg = region.angle !== undefined ? region.angle : dominantAngleDeg(poly);
+        // Use sp.fillAngle if set (not null), else region.angle, else PCA dominant angle
+        const polyAngleDeg = sp.fillAngle !== null && sp.fillAngle !== undefined
+          ? sp.fillAngle
+          : (region.angle !== undefined ? region.angle : dominantAngleDeg(poly));
         const perpAngle = polyAngleDeg + 90;
 
         // Optional underlay first (perpendicular, sparser)
         if (sp.underlay) {
-          const underlayPts = generateFillLines(poly, perpAngle, sp.underlayDensity, sp.pullCompensation);
+          const underlaySpacingMm = sp.tatamiDensityMm * 2; // underlay is 2× sparser
+          const underlayPts = generateFillLines(poly, perpAngle, underlaySpacingMm, sp.pullCompensation);
           points.push(...underlayPts.points);
           jumps += underlayPts.jumps;
           if (underlayPts.points.length > 0) jumps++;
         }
-        const fillResult = generateFillLines(poly, polyAngleDeg, sp.fillDensity, sp.pullCompensation);
+        const fillResult = generateFillLines(poly, polyAngleDeg, sp.tatamiDensityMm, sp.pullCompensation);
         points.push(...fillResult.points);
         jumps += fillResult.jumps;
 
@@ -121,12 +128,12 @@ Deno.serve(async (req) => {
 // ── TATAMI FILL ───────────────────────────────────────────────────────────────
 // Dense tatami fill with serpentine rows, cyclic 25% offset, and row connection.
 
-function generateFillLines(poly, angleDeg, density, pullComp) {
+function generateFillLines(poly, angleDeg, spacingMm, pullComp) {
   const expanded = expandPolygon(poly, pullComp);
   const angle = angleDeg * Math.PI / 180;
 
-  // 0.4mm row spacing at density=1.0 (denser than before)
-  const rowSpacing = Math.max(0.2, 0.4 / Math.max(0.2, density));
+  // spacingMm is the direct row spacing in mm (e.g. 0.4)
+  const rowSpacing = Math.max(0.15, spacingMm || 0.4);
   // Stitch pitch along each row — same as row spacing for uniform tatami density
   const stitchPitch = rowSpacing;
   // Cyclic tatami offsets: 0%, 25%, 50%, 75%

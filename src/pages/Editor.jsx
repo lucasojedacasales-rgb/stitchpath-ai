@@ -158,6 +158,8 @@ export default function Editor() {
         use_full_bg: config.use_full_bg,
         image_analysis: imageAnalysis,
         traced_contours: tracedContours,
+        tatami_density: config.tatami_density || 0.4,
+        fill_angle: config.fill_angle !== undefined ? config.fill_angle : null,
       });
 
       if (res.data?.success) {

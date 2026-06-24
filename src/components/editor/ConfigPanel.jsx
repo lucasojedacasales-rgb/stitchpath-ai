@@ -130,6 +130,70 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
         </div>
       </Section>
 
+      {/* TATAMI FILL */}
+      <Section title="Relleno Tatami" icon={Cpu}>
+        <div className="space-y-3">
+          <div>
+            <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-2 block">Densidad</label>
+            <div className="grid grid-cols-2 gap-1.5">
+              {[
+                { id: 'low',   label: 'Baja',  sub: '0.6mm · rápido',         value: 0.6 },
+                { id: 'mid',   label: 'Media', sub: '0.4mm · balance',         value: 0.4, badge: 'Rec.' },
+                { id: 'high',  label: 'Alta',  sub: '0.3mm · detalle',         value: 0.3 },
+                { id: 'ultra', label: 'Ultra', sub: '0.25mm · <50mm',          value: 0.25 },
+              ].map(opt => {
+                const active = (cfg.tatami_density || 0.4) === opt.value;
+                return (
+                  <button
+                    key={opt.id}
+                    onClick={() => set('tatami_density', opt.value)}
+                    className={`text-left px-2.5 py-2 rounded-lg border transition-all ${
+                      active
+                        ? 'border-violet-500/60 bg-violet-900/20 text-white'
+                        : 'border-[#2a2d3a] bg-[#161a23] text-slate-400 hover:border-[#3a3d4a] hover:text-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold">{opt.label}</span>
+                      {opt.badge && <span className="text-[9px] px-1 rounded bg-violet-600/30 text-violet-300 border border-violet-500/30">{opt.badge}</span>}
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-0.5">{opt.sub}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-2 block">Ángulo de relleno</label>
+            <div className="flex gap-1 flex-wrap">
+              {[
+                { label: 'Auto', value: null },
+                { label: '0°',   value: 0 },
+                { label: '45°',  value: 45 },
+                { label: '90°',  value: 90 },
+                { label: '135°', value: 135 },
+              ].map(opt => {
+                const current = cfg.fill_angle === undefined ? null : cfg.fill_angle;
+                const active = current === opt.value;
+                return (
+                  <button
+                    key={String(opt.value)}
+                    onClick={() => set('fill_angle', opt.value)}
+                    className={`px-2.5 py-1 rounded text-[11px] font-medium border transition-colors ${
+                      active
+                        ? 'border-cyan-500/60 bg-cyan-900/20 text-cyan-300'
+                        : 'border-[#2a2d3a] bg-[#161a23] text-slate-400 hover:text-slate-300 hover:border-[#3a3d4a]'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </Section>
+
       {/* MOTOR IA */}
       <Section title="Motor IA" icon={Cpu}>
         <div className="space-y-1">
