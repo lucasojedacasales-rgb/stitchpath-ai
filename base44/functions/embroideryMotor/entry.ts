@@ -42,8 +42,11 @@ Deno.serve(async (req) => {
     // FASE 1: VECTORIZACIÓN (raster → regiones cerradas)
     // ═══════════════════════════════════════════════════════════════════════════
     console.log('[MOTOR] Phase 1: Vectorization');
-    const regions = vectorizeImage(pixelData, width, height, width_mm, height_mm);
-    console.log(`[MOTOR] → ${regions.length} regions, ${regions.reduce((s, r) => s + r.stitches.length, 0)} candidate stitches`);
+    
+    // Vectorización integrada: escala → bilateral → kmeans → componentes → scanlines
+    const vecResult = vectorizeWithAdvancedEngine(pixelData, width, height, width_mm, height_mm);
+    const regions = vecResult.regions;
+    console.log(`[MOTOR] → ${regions.length} regions, ${regions.reduce((s, r) => s + (r.pointCount || 0), 0)} candidate stitches`);
 
     if (regions.length === 0) {
       throw new Error('Vectorization produced no regions');
@@ -103,41 +106,45 @@ Deno.serve(async (req) => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// FASE 1: VECTORIZACIÓN
+// VECTORIZACIÓN INTEGRADA - Engine Avanzado Inline
 // ═════════════════════════════════════════════════════════════════════════════
 
-function vectorizeImage(pixels, srcW, srcH, mmW, mmH) {
-  // Redimensionar a máx 256px para eficiencia
-  const SCALE = 256;
-  const s = Math.max(srcW, srcH);
-  const scale = s > SCALE ? SCALE / s : 1;
-  const dstW = Math.round(srcW * scale);
-  const dstH = Math.round(srcH * scale);
+function vectorizeWithAdvancedEngine(pixels, srcW, srcH, mmW, mmH) {
+  // PASO 1: Escalar inteligentemente
+  const scaled = intelligentScale(pixels, srcW, srcH);
 
-  const scaled = scaleImage(pixels, srcW, srcH, dstW, dstH);
+  // PASO 2: Bilateral filter
+  const filtered = bilateralFilterInline(scaled.data, scaled.w, scaled.h);
 
-  // Cuantizar a 8 colores principales
-  const { labels, palette } = quantizeColors(scaled.pixels, dstW, dstH, 8);
+  // PASO 3: K-means clustering
+  const { quantized, palette } = kmeansClusterInline(filtered, scaled.w, scaled.h, 8);
 
-  // Generar regiones por color (scanlines)
+  // PASO 4: Detectar componentes
+  const components = findComponentsInline(quantized, scaled.w, scaled.h);
+
+  // PASO 5: Generar regiones
   const regions = [];
-  const pxPerMMx = mmW / dstW;
-  const pxPerMMy = mmH / dstH;
+  const pxPerMM_x = mmW / scaled.w;
+  const pxPerMM_y = mmH / scaled.h;
 
-  for (let colorIdx = 0; colorIdx < palette.length; colorIdx++) {
-    const stitches = scanlineRegion(labels, dstW, dstH, colorIdx);
+  for (const comp of components) {
+    if (comp.pixels.length < 8) continue;
 
-    if (stitches.length > 5) {
+    const color = palette[comp.color];
+    const hexColor = rgbToHex(color);
+    const stitches = generateTatamiScanlinesInline(comp.pixels, scaled.w, scaled.h, 0.8);
+
+    if (stitches.length > 3) {
       // Convertir a mm
       const pathPoints = stitches.map(p => [
-        p.x * pxPerMMx,
-        p.y * pxPerMMy
+        p.x * pxPerMM_x / mmW,
+        p.y * pxPerMM_y / mmH
       ]);
 
       regions.push({
-        id: `r${colorIdx}`,
-        color: palette[colorIdx],
-        stitches: stitches,
+        id: `r${regions.length}`,
+        color: hexColor,
+        stitches: stitches.map(p => ({ x: p.x * pxPerMM_x, y: p.y * pxPerMM_y })),
         path_points: pathPoints,
         pointCount: stitches.length,
         visible: true
@@ -145,110 +152,295 @@ function vectorizeImage(pixels, srcW, srcH, mmW, mmH) {
     }
   }
 
-  return regions;
+  return { regions, palette };
 }
 
-function scaleImage(pixels, srcW, srcH, dstW, dstH) {
+function intelligentScale(src, srcW, srcH) {
+  const maxDim = 512;
+  const aspect = srcW / srcH;
+  let dstW = Math.min(srcW, maxDim);
+  let dstH = Math.round(dstW / aspect);
+
+  if (dstH > maxDim) {
+    dstH = maxDim;
+    dstW = Math.round(dstH * aspect);
+  }
+
+  dstW = Math.max(16, dstW);
+  dstH = Math.max(16, dstH);
+
   const dst = new Uint8ClampedArray(dstW * dstH * 4);
 
   for (let y = 0; y < dstH; y++) {
     for (let x = 0; x < dstW; x++) {
-      const sx = Math.floor((x / dstW) * srcW);
-      const sy = Math.floor((y / dstH) * srcH);
-      const srcIdx = (sy * srcW + sx) * 4;
-      const dstIdx = (y * dstW + x) * 4;
+      const fx = (x / dstW) * srcW;
+      const fy = (y / dstH) * srcH;
 
-      dst[dstIdx] = pixels[srcIdx];
-      dst[dstIdx + 1] = pixels[srcIdx + 1];
-      dst[dstIdx + 2] = pixels[srcIdx + 2];
-      dst[dstIdx + 3] = 255;
+      const x0 = Math.floor(fx);
+      const y0 = Math.floor(fy);
+      const x1 = Math.min(x0 + 1, srcW - 1);
+      const y1 = Math.min(y0 + 1, srcH - 1);
+
+      const wx = fx - x0;
+      const wy = fy - y0;
+
+      const p00 = (y0 * srcW + x0) * 4;
+      const p10 = (y0 * srcW + x1) * 4;
+      const p01 = (y1 * srcW + x0) * 4;
+      const p11 = (y1 * srcW + x1) * 4;
+
+      for (let i = 0; i < 3; i++) {
+        const val = 
+          (1 - wx) * (1 - wy) * src[p00 + i] +
+          wx * (1 - wy) * src[p10 + i] +
+          (1 - wx) * wy * src[p01 + i] +
+          wx * wy * src[p11 + i];
+
+        dst[(y * dstW + x) * 4 + i] = Math.round(val);
+      }
+
+      dst[(y * dstW + x) * 4 + 3] = 255;
     }
   }
 
-  return { pixels: dst, width: dstW, height: dstH };
+  return { data: dst, w: dstW, h: dstH };
 }
 
-function quantizeColors(pixels, width, height, k) {
-  const colorMap = new Map();
+function bilateralFilterInline(src, w, h) {
+  const dst = new Uint8ClampedArray(src.length);
+  const sigma_s = 2;
+  const sigma_r = 25;
 
-  for (let i = 0; i < pixels.length; i += 4) {
-    const r = pixels[i] & 0xE0;
-    const g = pixels[i + 1] & 0xE0;
-    const b = pixels[i + 2] & 0xE0;
-    const key = `${r},${g},${b}`;
-    colorMap.set(key, (colorMap.get(key) || 0) + 1);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let sumR = 0, sumG = 0, sumB = 0, sumW = 0;
+      const cIdx = (y * w + x) * 4;
+      const cR = src[cIdx], cG = src[cIdx + 1], cB = src[cIdx + 2];
+
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const nx = Math.max(0, Math.min(w - 1, x + dx));
+          const ny = Math.max(0, Math.min(h - 1, y + dy));
+          const nIdx = (ny * w + nx) * 4;
+
+          const nR = src[nIdx], nG = src[nIdx + 1], nB = src[nIdx + 2];
+
+          const dSq = dx * dx + dy * dy;
+          const colorDist = Math.hypot(cR - nR, cG - nG, cB - nB);
+
+          const wS = Math.exp(-dSq / (2 * sigma_s * sigma_s));
+          const wR = Math.exp(-(colorDist * colorDist) / (2 * sigma_r * sigma_r));
+          const w_total = wS * wR;
+
+          sumR += nR * w_total;
+          sumG += nG * w_total;
+          sumB += nB * w_total;
+          sumW += w_total;
+        }
+      }
+
+      dst[cIdx] = Math.round(sumR / sumW);
+      dst[cIdx + 1] = Math.round(sumG / sumW);
+      dst[cIdx + 2] = Math.round(sumB / sumW);
+      dst[cIdx + 3] = 255;
+    }
   }
 
-  const palette = Array.from(colorMap.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, k)
-    .map(([key]) => {
-      const [r, g, b] = key.split(',').map(Number);
-      return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-    });
+  return dst;
+}
 
-  const labels = new Uint8Array(width * height);
+function kmeansClusterInline(pixels, w, h, k) {
+  const points = [];
+  for (let i = 0; i < pixels.length; i += 4) {
+    points.push({ r: pixels[i], g: pixels[i + 1], b: pixels[i + 2] });
+  }
 
-  for (let i = 0, idx = 0; i < pixels.length; i += 4, idx++) {
-    const r = pixels[i] & 0xE0;
-    const g = pixels[i + 1] & 0xE0;
-    const b = pixels[i + 2] & 0xE0;
+  const centroids = [];
+  centroids.push({ ...points[Math.floor(Math.random() * points.length)] });
 
-    let bestIdx = 0;
-    let bestDist = Infinity;
+  for (let c = 1; c < Math.min(k, points.length); c++) {
+    let maxDist = -1, bestIdx = 0;
 
-    for (let j = 0; j < palette.length; j++) {
-      const hexR = parseInt(palette[j].slice(1, 3), 16);
-      const hexG = parseInt(palette[j].slice(3, 5), 16);
-      const hexB = parseInt(palette[j].slice(5, 7), 16);
-      const dist = (r - hexR) ** 2 + (g - hexG) ** 2 + (b - hexB) ** 2;
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestIdx = j;
+    for (let i = 0; i < points.length; i++) {
+      let minDist = Infinity;
+
+      for (const cent of centroids) {
+        const d = (points[i].r - cent.r) ** 2 + (points[i].g - cent.g) ** 2 + (points[i].b - cent.b) ** 2;
+        minDist = Math.min(minDist, d);
+      }
+
+      if (minDist > maxDist) {
+        maxDist = minDist;
+        bestIdx = i;
       }
     }
 
-    labels[idx] = bestIdx;
+    centroids.push({ ...points[bestIdx] });
   }
 
-  return { labels, palette };
+  for (let iter = 0; iter < 5; iter++) {
+    const clusters = Array(centroids.length).fill(null).map(() => []);
+
+    for (let i = 0; i < points.length; i++) {
+      let best = 0, bestDist = Infinity;
+
+      for (let j = 0; j < centroids.length; j++) {
+        const d = (points[i].r - centroids[j].r) ** 2 + (points[i].g - centroids[j].g) ** 2 + (points[i].b - centroids[j].b) ** 2;
+        if (d < bestDist) {
+          best = j;
+          bestDist = d;
+        }
+      }
+
+      clusters[best].push(i);
+    }
+
+    for (let j = 0; j < centroids.length; j++) {
+      if (clusters[j].length === 0) continue;
+
+      let sr = 0, sg = 0, sb = 0;
+      for (const idx of clusters[j]) {
+        sr += points[idx].r;
+        sg += points[idx].g;
+        sb += points[idx].b;
+      }
+
+      centroids[j] = {
+        r: sr / clusters[j].length,
+        g: sg / clusters[j].length,
+        b: sb / clusters[j].length
+      };
+    }
+  }
+
+  const quantized = new Uint8Array(points.length);
+  for (let i = 0; i < points.length; i++) {
+    let best = 0, bestDist = Infinity;
+
+    for (let j = 0; j < centroids.length; j++) {
+      const d = (points[i].r - centroids[j].r) ** 2 + (points[i].g - centroids[j].g) ** 2 + (points[i].b - centroids[j].b) ** 2;
+      if (d < bestDist) {
+        best = j;
+        bestDist = d;
+      }
+    }
+
+    quantized[i] = best;
+  }
+
+  return { quantized, palette: centroids };
 }
 
-function scanlineRegion(labels, width, height, colorIdx) {
-  const stitches = [];
-  const STEP = 2; // cada 2 píxeles = resolución base
+function findComponentsInline(labels, w, h) {
+  const visited = new Uint8Array(w * h);
+  const components = [];
 
-  for (let y = 0; y < height; y += STEP) {
-    let inRun = false;
-    let runStart = -1;
+  for (let idx = 0; idx < w * h; idx++) {
+    if (visited[idx]) continue;
 
-    for (let x = 0; x < width; x++) {
-      const current = labels[y * width + x];
+    const color = labels[idx];
+    const pixels = [];
+    const stack = [idx];
 
-      if (current === colorIdx && !inRun) {
-        inRun = true;
-        runStart = x;
-      } else if (current !== colorIdx && inRun) {
-        // Fin de run: agregar puntos del run
-        for (let px = runStart; px < x; px += STEP) {
-          if (labels[y * width + px] === colorIdx) {
-            stitches.push({ x: px, y });
+    while (stack.length > 0) {
+      const cur = stack.pop();
+      if (visited[cur]) continue;
+
+      visited[cur] = 1;
+      pixels.push(cur);
+
+      const x = cur % w;
+      const y = Math.floor(cur / w);
+
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+
+          const nx = x + dx;
+          const ny = y + dy;
+
+          if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+            const nIdx = ny * w + nx;
+            if (!visited[nIdx] && labels[nIdx] === color) {
+              stack.push(nIdx);
+            }
           }
         }
-        inRun = false;
       }
     }
 
-    if (inRun) {
-      for (let px = runStart; px < width; px += STEP) {
-        if (labels[y * width + px] === colorIdx) {
-          stitches.push({ x: px, y });
-        }
+    components.push({ color, pixels });
+  }
+
+  return components;
+}
+
+function generateTatamiScanlinesInline(pixelIndices, w, h, density) {
+  const step = Math.max(1, Math.round(2 / Math.max(0.1, density)));
+  const pixelSet = new Set();
+
+  const pixels = pixelIndices.map(idx => ({
+    x: idx % w,
+    y: Math.floor(idx / w)
+  }));
+
+  for (const p of pixels) {
+    pixelSet.add(`${p.x},${p.y}`);
+  }
+
+  let minX = w, maxX = -1, minY = h, maxY = -1;
+  for (const p of pixels) {
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y);
+    maxY = Math.max(maxY, p.y);
+  }
+
+  const width = maxX - minX;
+  const height = maxY - minY;
+  const stitches = [];
+
+  // Zigzag pattern para reducir saltos
+  for (let yy = 0; yy <= height; yy += step) {
+    const y = minY + yy;
+    const xVals = [];
+
+    for (let x = minX; x <= maxX; x++) {
+      if (pixelSet.has(`${x},${y}`)) {
+        xVals.push(x);
       }
+    }
+
+    for (let i = 0; i < xVals.length; i++) {
+      const start = xVals[i];
+      let end = start;
+
+      while (i + 1 < xVals.length && xVals[i + 1] === xVals[i] + 1) {
+        i++;
+        end = xVals[i];
+      }
+
+      const points = [];
+      for (let x = start; x <= end; x += step) {
+        points.push({ x, y });
+      }
+
+      if ((yy / step) % 2 === 1) {
+        points.reverse(); // Invertir dirección en líneas alternas
+      }
+
+      stitches.push(...points);
     }
   }
 
   return stitches;
+}
+
+function rgbToHex(color) {
+  const r = Math.round(color.r).toString(16).padStart(2, '0');
+  const g = Math.round(color.g).toString(16).padStart(2, '0');
+  const b = Math.round(color.b).toString(16).padStart(2, '0');
+  return `#${r}${g}${b}`;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

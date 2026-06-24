@@ -1,9 +1,14 @@
 /* global Deno */
 
 /**
- * ROBUST VECTORIZATION - Alias to vectorizationEngine
- * This function is kept for backward compatibility.
- * All vectorization logic is now in vectorizationEngine.js
+ * MOTOR DE VECTORIZACIÓN AVANZADO v4
+ * Fusión de todas las técnicas funcionales:
+ * - Scaling inteligente con interpolación bilineal
+ * - Filtro bilateral para preservar bordes
+ * - K-means++ clustering
+ * - Detección de componentes conectadas (Union-Find 8-conectividad)
+ * - Scanlines densos generados por región
+ * - Clasificación de stitch types basada en geometría
  */
 
 Deno.serve(async (req) => {
@@ -11,14 +16,9 @@ Deno.serve(async (req) => {
     if (req.method !== 'POST') return Response.json({ error: 'POST only' }, { status: 405 });
 
     const payload = await req.json();
-
-    // Call vectorizationEngine with same payload
-    // (In a real scenario, you would invoke another function, but for now, inline the logic)
-    // For now, just re-implement the same logic
-    
     const { pixels, width, height, width_mm = 100, height_mm = 100, color_count = 8, stitch_density = 0.8 } = payload;
 
-    console.log(`[ROBUST_VEC] Delegating to vectorizationEngine`);
+    console.log(`[VECTORIZATION] Input: ${width}x${height}, ${color_count} colors, density=${stitch_density}`);
 
     if (!pixels || width < 2 || height < 2) {
       return Response.json({ success: false, error: 'Invalid dimensions' });
@@ -31,19 +31,19 @@ Deno.serve(async (req) => {
 
     // PASO 1: Escalar inteligentemente
     const scaled = intelligentScale(data, width, height);
-    console.log(`[ROBUST_VEC] Scaled to ${scaled.w}x${scaled.h}`);
+    console.log(`[VECTORIZATION] Scaled to ${scaled.w}x${scaled.h}`);
 
     // PASO 2: Aplicar filtro bilateral
     const filtered = bilateralFilter(scaled.data, scaled.w, scaled.h);
-    console.log('[ROBUST_VEC] Bilateral filter applied');
+    console.log('[VECTORIZATION] Bilateral filter applied');
 
     // PASO 3: K-means clustering
     const { quantized, palette } = kmeansCluster(filtered, scaled.w, scaled.h, color_count);
-    console.log(`[ROBUST_VEC] Clustered to ${palette.length} colors`);
+    console.log(`[VECTORIZATION] Clustered to ${palette.length} colors`);
 
     // PASO 4: Detectar componentes
     const components = findComponents(quantized, scaled.w, scaled.h);
-    console.log(`[ROBUST_VEC] Found ${components.length} components`);
+    console.log(`[VECTORIZATION] Found ${components.length} components`);
 
     // PASO 5: Generar regiones
     const regions = [];
@@ -57,17 +57,22 @@ Deno.serve(async (req) => {
       const stitches = generateTatamiScanlines(comp.pixels, scaled.w, scaled.h, stitch_density);
 
       if (stitches.length > 3) {
+        // MEJORA: Clasificación inteligente basada en área Y densidad de puntos
+        const area = comp.pixels.length;
+        const pointDensity = stitches.length / Math.max(1, area);
+        
         regions.push({
           id: `r${regions.length}`,
           color: hexColor,
           stitches: stitches,
           pointCount: stitches.length,
-          area: comp.pixels.length
+          area: area,
+          density: pointDensity
         });
       }
     }
 
-    console.log(`[ROBUST_VEC] Generated ${regions.length} regions`);
+    console.log(`[VECTORIZATION] Generated ${regions.length} regions`);
 
     if (regions.length === 0) {
       throw new Error('No regions generated');
@@ -78,7 +83,17 @@ Deno.serve(async (req) => {
     const pxPerMM_y = height_mm / scaled.h;
 
     const finalRegions = regions.map(r => {
-      const stitch_type = r.pointCount < 40 ? 'running_stitch' : r.pointCount < 300 ? 'satin' : 'fill';
+      // MEJORA: Clasificación mejorada
+      let stitch_type = 'fill';
+      if (r.pointCount < 30) {
+        stitch_type = 'running_stitch';
+      } else if (r.area < 50 && r.pointCount < 150) {
+        stitch_type = 'running_stitch'; // Regiones pequeñas
+      } else if (r.pointCount < 250) {
+        stitch_type = 'satin';
+      } else if (r.density > 0.5) {
+        stitch_type = 'fill'; // Alta densidad = relleno
+      }
 
       return {
         id: r.id,
@@ -92,7 +107,7 @@ Deno.serve(async (req) => {
     });
 
     const totalStitches = finalRegions.reduce((s, r) => s + r.pointCount, 0);
-    console.log(`[ROBUST_VEC] ✅ Success: ${finalRegions.length} regions, ${totalStitches} stitches`);
+    console.log(`[VECTORIZATION] ✅ Success: ${finalRegions.length} regions, ${totalStitches} stitches`);
 
     return Response.json({
       success: true,
@@ -107,16 +122,17 @@ Deno.serve(async (req) => {
       }
     });
   } catch (err) {
-    console.error('[ROBUST_VEC] Error:', err.message);
+    console.error('[VECTORIZATION] Error:', err.message);
     return Response.json({ success: false, error: err.message }, { status: 500 });
   }
 });
 
 // ============================================================================
-// INLINE ALL HELPER FUNCTIONS (same as vectorizationEngine)
+// PASO 1: ESCALAR INTELIGENTEMENTE
 // ============================================================================
 
 function intelligentScale(src, srcW, srcH) {
+  // Máx 512px manteniendo aspecto
   const maxDim = 512;
   const aspect = srcW / srcH;
   let dstW = Math.min(srcW, maxDim);
@@ -132,6 +148,7 @@ function intelligentScale(src, srcW, srcH) {
 
   const dst = new Uint8ClampedArray(dstW * dstH * 4);
 
+  // Interpolación bilineal
   for (let y = 0; y < dstH; y++) {
     for (let x = 0; x < dstW; x++) {
       const fx = (x / dstW) * srcW;
@@ -166,6 +183,10 @@ function intelligentScale(src, srcW, srcH) {
 
   return { data: dst, w: dstW, h: dstH };
 }
+
+// ============================================================================
+// PASO 2: FILTRO BILATERAL
+// ============================================================================
 
 function bilateralFilter(src, w, h) {
   const dst = new Uint8ClampedArray(src.length);
@@ -210,12 +231,17 @@ function bilateralFilter(src, w, h) {
   return dst;
 }
 
+// ============================================================================
+// PASO 3: K-MEANS CLUSTERING
+// ============================================================================
+
 function kmeansCluster(pixels, w, h, k) {
   const points = [];
   for (let i = 0; i < pixels.length; i += 4) {
     points.push({ r: pixels[i], g: pixels[i + 1], b: pixels[i + 2] });
   }
 
+  // K-means++ init
   const centroids = [];
   centroids.push({ ...points[Math.floor(Math.random() * points.length)] });
 
@@ -239,6 +265,7 @@ function kmeansCluster(pixels, w, h, k) {
     centroids.push({ ...points[bestIdx] });
   }
 
+  // Iteraciones K-means
   for (let iter = 0; iter < 5; iter++) {
     const clusters = Array(centroids.length).fill(null).map(() => []);
 
@@ -274,6 +301,7 @@ function kmeansCluster(pixels, w, h, k) {
     }
   }
 
+  // Asignar labels
   const quantized = new Uint8Array(points.length);
   for (let i = 0; i < points.length; i++) {
     let best = 0, bestDist = Infinity;
@@ -291,6 +319,10 @@ function kmeansCluster(pixels, w, h, k) {
 
   return { quantized, palette: centroids };
 }
+
+// ============================================================================
+// PASO 4: DETECTAR COMPONENTES CONECTADAS
+// ============================================================================
 
 function findComponents(labels, w, h) {
   const visited = new Uint8Array(w * h);
@@ -313,6 +345,7 @@ function findComponents(labels, w, h) {
       const x = cur % w;
       const y = Math.floor(cur / w);
 
+      // 8-conectividad
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           if (dx === 0 && dy === 0) continue;
@@ -336,6 +369,10 @@ function findComponents(labels, w, h) {
   return components;
 }
 
+// ============================================================================
+// PASO 5: GENERAR SCANLINES TATAMI
+// ============================================================================
+
 function generateTatamiScanlines(pixelIndices, w, h, density) {
   const step = Math.max(1, Math.round(2 / Math.max(0.1, density)));
   const pixelSet = new Set();
@@ -349,6 +386,7 @@ function generateTatamiScanlines(pixelIndices, w, h, density) {
     pixelSet.add(`${p.x},${p.y}`);
   }
 
+  // Bounding box
   let minX = w, maxX = -1, minY = h, maxY = -1;
   for (const p of pixels) {
     minX = Math.min(minX, p.x);
@@ -357,9 +395,13 @@ function generateTatamiScanlines(pixelIndices, w, h, density) {
     maxY = Math.max(maxY, p.y);
   }
 
+  const width = maxX - minX;
+  const height = maxY - minY;
   const stitches = [];
 
-  for (let y = minY; y <= maxY; y += step) {
+  // MEJORA 1: Alternar dirección para reducir saltos (zigzag pattern)
+  for (let yy = 0; yy <= height; yy += step) {
+    const y = minY + yy;
     const xVals = [];
 
     for (let x = minX; x <= maxX; x++) {
@@ -368,6 +410,7 @@ function generateTatamiScanlines(pixelIndices, w, h, density) {
       }
     }
 
+    // Extraer runs contiguos
     for (let i = 0; i < xVals.length; i++) {
       const start = xVals[i];
       let end = start;
@@ -377,14 +420,50 @@ function generateTatamiScanlines(pixelIndices, w, h, density) {
         end = xVals[i];
       }
 
+      // MEJORA 2: Zigzag - invertir dirección en líneas alternas
+      const points = [];
       for (let x = start; x <= end; x += step) {
-        stitches.push({ x, y });
+        points.push({ x, y });
       }
+
+      if ((yy / step) % 2 === 1) {
+        points.reverse(); // Invertir para reducir saltos
+      }
+
+      stitches.push(...points);
     }
   }
 
-  return stitches;
+  // MEJORA 3: Suavizado simple - eliminar picos aislados
+  return smoothStitches(stitches);
 }
+
+function smoothStitches(stitches) {
+  if (stitches.length < 3) return stitches;
+
+  const smoothed = [stitches[0]];
+
+  for (let i = 1; i < stitches.length - 1; i++) {
+    const prev = stitches[i - 1];
+    const curr = stitches[i];
+    const next = stitches[i + 1];
+
+    // Si el punto actual está muy lejos de sus vecinos, interpolar
+    const d1 = Math.hypot(curr.x - prev.x, curr.y - prev.y);
+    const d2 = Math.hypot(next.x - curr.x, next.y - curr.y);
+
+    if (d1 + d2 < 5) {
+      smoothed.push(curr);
+    }
+  }
+
+  smoothed.push(stitches[stitches.length - 1]);
+  return smoothed;
+}
+
+// ============================================================================
+// HELPERS
+// ============================================================================
 
 function rgbToHex(color) {
   const r = Math.round(color.r).toString(16).padStart(2, '0');
