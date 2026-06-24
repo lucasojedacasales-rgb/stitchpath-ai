@@ -166,9 +166,16 @@ export default function Editor() {
       setRegions(newRegions);
       setStep(3);
 
-      // 4. Guardar en DB
+      // 4. Guardar en DB — solo metadatos ligeros (sin stitches, son demasiado grandes)
+      const regionsMetadata = newRegions.map(r => ({
+        id: r.id,
+        color: r.color,
+        stitch_type: r.stitch_type,
+        stitch_count: r.stitch_count,
+        visible: r.visible
+      }));
       await base44.entities.Project.update(id, {
-        regions: newRegions,
+        regions: regionsMetadata,
         step: 3,
         status: 'ready',
         total_stitches: totalStitches,
