@@ -10,13 +10,13 @@ Deno.serve(async (req) => {
     if (!regions || !Array.isArray(regions)) return Response.json({ error: 'regions array required' }, { status: 400 });
 
     const sp = {
-      fillDensity: 0.7,
+      fillDensity: 1.0,        // maps to 0.4mm row spacing
       fillAngle: 45,
       satinWidth: 3.0,
       runningStitchLength: 2.5,
       pullCompensation: 0.15,
       underlay: true,
-      underlayDensity: 0.4,
+      underlayDensity: 0.5,
       underlayAngle: -45,
       ...stitchParams,
     };
@@ -43,14 +43,18 @@ Deno.serve(async (req) => {
       let jumps = 0;
 
       if (type === 'fill') {
-        // Optional underlay first
+        // Use dominant angle from polygon PCA, or fall back to sp.fillAngle
+        const polyAngleDeg = region.angle !== undefined ? region.angle : dominantAngleDeg(poly);
+        const perpAngle = polyAngleDeg + 90;
+
+        // Optional underlay first (perpendicular, sparser)
         if (sp.underlay) {
-          const underlayPts = generateFillLines(poly, sp.underlayAngle, sp.underlayDensity, sp.pullCompensation);
+          const underlayPts = generateFillLines(poly, perpAngle, sp.underlayDensity, sp.pullCompensation);
           points.push(...underlayPts.points);
           jumps += underlayPts.jumps;
-          if (underlayPts.points.length > 0) jumps++; // jump between underlay and fill
+          if (underlayPts.points.length > 0) jumps++;
         }
-        const fillResult = generateFillLines(poly, sp.fillAngle, sp.fillDensity, sp.pullCompensation);
+        const fillResult = generateFillLines(poly, polyAngleDeg, sp.fillDensity, sp.pullCompensation);
         points.push(...fillResult.points);
         jumps += fillResult.jumps;
 
@@ -114,58 +118,111 @@ Deno.serve(async (req) => {
   }
 });
 
-// ── FILL ──────────────────────────────────────────────────────────────────────
+// ── TATAMI FILL ───────────────────────────────────────────────────────────────
+// Dense tatami fill with serpentine rows, cyclic 25% offset, and row connection.
 
 function generateFillLines(poly, angleDeg, density, pullComp) {
   const expanded = expandPolygon(poly, pullComp);
   const angle = angleDeg * Math.PI / 180;
-  const spacing = 1 / Math.max(0.1, density);
 
-  // Rotate polygon to align fill direction with X axis
-  const rotated = expanded.map(([x, y]) => [
-    x * Math.cos(-angle) - y * Math.sin(-angle),
-    x * Math.sin(-angle) + y * Math.cos(-angle),
-  ]);
+  // 0.4mm row spacing at density=1.0 (denser than before)
+  const rowSpacing = Math.max(0.2, 0.4 / Math.max(0.2, density));
+  // Stitch pitch along each row — same as row spacing for uniform tatami density
+  const stitchPitch = rowSpacing;
+  // Cyclic tatami offsets: 0%, 25%, 50%, 75%
+  const OFFSETS = [0, 0.25, 0.5, 0.75];
+  // Max allowed stitch length before inserting extra point
+  const MAX_STITCH = 2.5;
 
+  const cos = Math.cos(-angle), sin = Math.sin(-angle);
+  const cosR = Math.cos(angle), sinR = Math.sin(angle);
+
+  // Rotate polygon into fill-angle space
+  const rotated = expanded.map(([x, y]) => [x * cos - y * sin, x * sin + y * cos]);
   const minY = Math.min(...rotated.map(p => p[1]));
   const maxY = Math.max(...rotated.map(p => p[1]));
-  const minX = Math.min(...rotated.map(p => p[0]));
-  const maxX = Math.max(...rotated.map(p => p[0]));
 
-  const points = [];
+  const allPoints = [];
   let jumps = 0;
-  let lineIdx = 0;
+  let rowIdx = 0;
 
-  for (let y = minY + spacing / 2; y <= maxY; y += spacing) {
-    const intersections = linePolyIntersectX(rotated, y, minX - 1, maxX + 1);
-    if (intersections.length < 2) continue;
-    intersections.sort((a, b) => a - b);
+  for (let y = minY + rowSpacing / 2; y <= maxY; y += rowSpacing) {
+    const xs = scanLineIntersect(rotated, y);
+    if (xs.length < 2) { rowIdx++; continue; }
+    xs.sort((a, b) => a - b);
 
-    // Pair intersections left→right or right→left (zig-zag)
-    const forward = lineIdx % 2 === 0;
-    for (let i = 0; i < intersections.length - 1; i += 2) {
-      const x0 = intersections[i], x1 = intersections[i + 1];
-      const pts = interpolateLine(forward ? x0 : x1, forward ? x1 : x0, y, spacing / 2);
-      if (points.length > 0) {
-        const last = points[points.length - 1];
-        const dist = Math.hypot(pts[0][0] - last[0], pts[0][1] - last[1]);
-        if (dist > spacing * 3) jumps++;
+    const cycleOffset = OFFSETS[rowIdx % 4] * stitchPitch;
+    const forward = rowIdx % 2 === 0;
+
+    const rowPoints = [];
+
+    for (let i = 0; i < xs.length - 1; i += 2) {
+      const xL = xs[i], xR = xs[i + 1];
+      const segLen = xR - xL;
+      if (segLen < 0.1) continue;
+
+      // Always include polygon entry point
+      rowPoints.push(forward ? [xL, y] : [xR, y]);
+
+      // Generate interior stitches with cyclic offset
+      const firstX = xL + ((cycleOffset % stitchPitch + stitchPitch) % stitchPitch);
+      for (let x = firstX; x < xR - 0.05; x += stitchPitch) {
+        if (x > xL + 0.05) {
+          rowPoints.push([x, y]);
+        }
       }
-      points.push(...pts);
+
+      // Always include exit point
+      const exitPt = forward ? [xR, y] : [xL, y];
+      const lastAdded = rowPoints[rowPoints.length - 1];
+      if (Math.hypot(exitPt[0] - lastAdded[0]) > 0.05) {
+        rowPoints.push(exitPt);
+      }
     }
-    lineIdx++;
+
+    if (rowPoints.length === 0) { rowIdx++; continue; }
+
+    // Apply serpentine: if backward row, reverse the point order
+    const orderedPts = forward ? rowPoints : rowPoints.slice().reverse();
+
+    // Check if we need a jump to reach this row
+    if (allPoints.length > 0) {
+      const last = allPoints[allPoints.length - 1];
+      const first = orderedPts[0];
+      const jumpDist = Math.hypot(first[0] - last[0], first[1] - last[1]);
+      if (jumpDist > 5.0) jumps++;
+    }
+
+    // Subdivide any segment longer than MAX_STITCH
+    for (let j = 0; j < orderedPts.length; j++) {
+      if (j > 0) {
+        const prev = orderedPts[j - 1];
+        const curr = orderedPts[j];
+        const segLen = Math.hypot(curr[0] - prev[0], curr[1] - prev[1]);
+        if (segLen > MAX_STITCH) {
+          const steps = Math.ceil(segLen / MAX_STITCH);
+          for (let s = 1; s < steps; s++) {
+            const t = s / steps;
+            allPoints.push([prev[0] + t * (curr[0] - prev[0]), prev[1] + t * (curr[1] - prev[1])]);
+          }
+        }
+      }
+      allPoints.push(orderedPts[j]);
+    }
+
+    rowIdx++;
   }
 
-  // Rotate points back
-  const finalPoints = points.map(([x, y]) => [
-    parseFloat((x * Math.cos(angle) - y * Math.sin(angle)).toFixed(3)),
-    parseFloat((x * Math.sin(angle) + y * Math.cos(angle)).toFixed(3)),
+  // Rotate all points back to world space
+  const finalPoints = allPoints.map(([x, y]) => [
+    parseFloat((x * cosR - y * sinR).toFixed(3)),
+    parseFloat((x * sinR + y * cosR).toFixed(3)),
   ]);
 
   return { points: finalPoints, jumps };
 }
 
-function linePolyIntersectX(poly, y, minX, maxX) {
+function scanLineIntersect(poly, y) {
   const xs = [];
   for (let i = 0; i < poly.length; i++) {
     const a = poly[i], b = poly[(i + 1) % poly.length];
@@ -175,15 +232,6 @@ function linePolyIntersectX(poly, y, minX, maxX) {
     }
   }
   return xs;
-}
-
-function interpolateLine(x0, x1, y, step) {
-  const pts = [];
-  const dir = x1 >= x0 ? 1 : -1;
-  for (let x = x0; dir > 0 ? x <= x1 : x >= x1; x += dir * step) {
-    pts.push([x, y]);
-  }
-  return pts;
 }
 
 // ── SATIN ─────────────────────────────────────────────────────────────────────
@@ -345,6 +393,18 @@ function sequencePaths(paths, mode) {
 }
 
 // ── GEOMETRY HELPERS ──────────────────────────────────────────────────────────
+
+function dominantAngleDeg(poly) {
+  if (!poly || poly.length < 2) return 45;
+  const cx = poly.reduce((s, p) => s + p[0], 0) / poly.length;
+  const cy = poly.reduce((s, p) => s + p[1], 0) / poly.length;
+  let cxx = 0, cxy = 0, cyy = 0;
+  for (const [x, y] of poly) {
+    const dx = x - cx, dy = y - cy;
+    cxx += dx * dx; cxy += dx * dy; cyy += dy * dy;
+  }
+  return parseFloat((0.5 * Math.atan2(2 * cxy, cxx - cyy) * 180 / Math.PI).toFixed(1));
+}
 
 function expandPolygon(poly, amount) {
   if (!amount || amount === 0) return poly;
