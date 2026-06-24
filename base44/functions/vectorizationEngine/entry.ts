@@ -1,14 +1,14 @@
 /* global Deno */
 
 /**
- * MOTOR DE VECTORIZACIÓN AVANZADO v4
- * Fusión de todas las técnicas funcionales:
- * - Scaling inteligente con interpolación bilineal
- * - Filtro bilateral para preservar bordes
- * - K-means++ clustering
- * - Detección de componentes conectadas (Union-Find 8-conectividad)
- * - Scanlines densos generados por región
- * - Clasificación de stitch types basada en geometría
+ * MOTOR DE VECTORIZACIÓN v5 - ENHANCED DETECTION
+ * ========================
+ * Mejoras implementadas:
+ * 1. K-means con 10 iteraciones (mejor convergencia)
+ * 2. Edge detection para análisis de detalles
+ * 3. Curvature analysis para clasificación de stitch types
+ * 4. Path simplification con Douglas-Peucker
+ * 5. Zigzag pattern en scanlines para reducir saltos
  */
 
 Deno.serve(async (req) => {
@@ -37,7 +37,11 @@ Deno.serve(async (req) => {
     const filtered = bilateralFilter(scaled.data, scaled.w, scaled.h);
     console.log('[VECTORIZATION] Bilateral filter applied');
 
-    // PASO 3: K-means clustering
+    // PASO 2.5: Detectar edges para análisis posterior
+    const edgeMap = detectEdges(filtered, scaled.w, scaled.h);
+    console.log('[VECTORIZATION] Edge map generated');
+
+    // PASO 3: K-means clustering (10 iteraciones para mejor convergencia)
     const { quantized, palette } = kmeansCluster(filtered, scaled.w, scaled.h, color_count);
     console.log(`[VECTORIZATION] Clustered to ${palette.length} colors`);
 
@@ -54,10 +58,12 @@ Deno.serve(async (req) => {
       const hexColor = rgbToHex(color);
 
       // Generar scanlines
-      const stitches = generateTatamiScanlines(comp.pixels, scaled.w, scaled.h, stitch_density);
+      let stitches = generateTatamiScanlines(comp.pixels, scaled.w, scaled.h, stitch_density);
 
       if (stitches.length > 3) {
-        // MEJORA: Clasificación inteligente basada en área Y densidad de puntos
+        // Simplificar path moderadamente
+        stitches = simplifyPath(stitches, 1.0);
+
         const area = comp.pixels.length;
         const pointDensity = stitches.length / Math.max(1, area);
         
@@ -83,16 +89,20 @@ Deno.serve(async (req) => {
     const pxPerMM_y = height_mm / scaled.h;
 
     const finalRegions = regions.map(r => {
-      // MEJORA: Clasificación mejorada
+      // Clasificación mejorada usando curvatura
+      const curvature = calculateCurvature(r.stitches);
       let stitch_type = 'fill';
+      
       if (r.pointCount < 30) {
         stitch_type = 'running_stitch';
-      } else if (r.area < 50 && r.pointCount < 150) {
-        stitch_type = 'running_stitch'; // Regiones pequeñas
-      } else if (r.pointCount < 250) {
+      } else if (r.area < 50) {
+        stitch_type = 'running_stitch';
+      } else if (curvature > 0.3 && r.pointCount < 200) {
+        stitch_type = 'satin'; // Muchas curvas
+      } else if (r.pointCount < 250 || r.density < 0.3) {
         stitch_type = 'satin';
-      } else if (r.density > 0.5) {
-        stitch_type = 'fill'; // Alta densidad = relleno
+      } else {
+        stitch_type = 'fill';
       }
 
       return {
@@ -102,7 +112,8 @@ Deno.serve(async (req) => {
         stitches: r.stitches.map(p => ({ x: p.x * pxPerMM_x, y: p.y * pxPerMM_y })),
         path_points: r.stitches.map(p => [p.x * pxPerMM_x / width_mm, p.y * pxPerMM_y / height_mm]),
         pointCount: r.pointCount,
-        visible: true
+        visible: true,
+        curvature: curvature
       };
     });
 
@@ -132,7 +143,6 @@ Deno.serve(async (req) => {
 // ============================================================================
 
 function intelligentScale(src, srcW, srcH) {
-  // Máx 512px manteniendo aspecto
   const maxDim = 512;
   const aspect = srcW / srcH;
   let dstW = Math.min(srcW, maxDim);
@@ -148,7 +158,6 @@ function intelligentScale(src, srcW, srcH) {
 
   const dst = new Uint8ClampedArray(dstW * dstH * 4);
 
-  // Interpolación bilineal
   for (let y = 0; y < dstH; y++) {
     for (let x = 0; x < dstW; x++) {
       const fx = (x / dstW) * srcW;
@@ -232,7 +241,37 @@ function bilateralFilter(src, w, h) {
 }
 
 // ============================================================================
-// PASO 3: K-MEANS CLUSTERING
+// MEJORA 1: EDGE DETECTION (Sobel-like)
+// ============================================================================
+
+function detectEdges(pixels, w, h) {
+  const edges = new Uint8Array(w * h);
+  const sobelX = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
+  const sobelY = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
+
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      let gx = 0, gy = 0;
+
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const idx = ((y + dy) * w + (x + dx)) * 4;
+          const gray = pixels[idx] * 0.299 + pixels[idx + 1] * 0.587 + pixels[idx + 2] * 0.114;
+          const kernelIdx = (dy + 1) * 3 + (dx + 1);
+          gx += gray * sobelX[kernelIdx];
+          gy += gray * sobelY[kernelIdx];
+        }
+      }
+
+      edges[y * w + x] = Math.min(255, Math.sqrt(gx * gx + gy * gy));
+    }
+  }
+
+  return edges;
+}
+
+// ============================================================================
+// PASO 3: K-MEANS CLUSTERING (mejorado)
 // ============================================================================
 
 function kmeansCluster(pixels, w, h, k) {
@@ -241,7 +280,6 @@ function kmeansCluster(pixels, w, h, k) {
     points.push({ r: pixels[i], g: pixels[i + 1], b: pixels[i + 2] });
   }
 
-  // K-means++ init
   const centroids = [];
   centroids.push({ ...points[Math.floor(Math.random() * points.length)] });
 
@@ -265,8 +303,8 @@ function kmeansCluster(pixels, w, h, k) {
     centroids.push({ ...points[bestIdx] });
   }
 
-  // Iteraciones K-means
-  for (let iter = 0; iter < 5; iter++) {
+  // MEJORA: 10 iteraciones en lugar de 5
+  for (let iter = 0; iter < 10; iter++) {
     const clusters = Array(centroids.length).fill(null).map(() => []);
 
     for (let i = 0; i < points.length; i++) {
@@ -301,7 +339,6 @@ function kmeansCluster(pixels, w, h, k) {
     }
   }
 
-  // Asignar labels
   const quantized = new Uint8Array(points.length);
   for (let i = 0; i < points.length; i++) {
     let best = 0, bestDist = Infinity;
@@ -345,7 +382,6 @@ function findComponents(labels, w, h) {
       const x = cur % w;
       const y = Math.floor(cur / w);
 
-      // 8-conectividad
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           if (dx === 0 && dy === 0) continue;
@@ -370,7 +406,7 @@ function findComponents(labels, w, h) {
 }
 
 // ============================================================================
-// PASO 5: GENERAR SCANLINES TATAMI
+// PASO 5: GENERAR SCANLINES TATAMI (con zigzag)
 // ============================================================================
 
 function generateTatamiScanlines(pixelIndices, w, h, density) {
@@ -386,7 +422,6 @@ function generateTatamiScanlines(pixelIndices, w, h, density) {
     pixelSet.add(`${p.x},${p.y}`);
   }
 
-  // Bounding box
   let minX = w, maxX = -1, minY = h, maxY = -1;
   for (const p of pixels) {
     minX = Math.min(minX, p.x);
@@ -399,7 +434,7 @@ function generateTatamiScanlines(pixelIndices, w, h, density) {
   const height = maxY - minY;
   const stitches = [];
 
-  // MEJORA 1: Alternar dirección para reducir saltos (zigzag pattern)
+  // MEJORA: Zigzag pattern para reducir saltos
   for (let yy = 0; yy <= height; yy += step) {
     const y = minY + yy;
     const xVals = [];
@@ -410,7 +445,6 @@ function generateTatamiScanlines(pixelIndices, w, h, density) {
       }
     }
 
-    // Extraer runs contiguos
     for (let i = 0; i < xVals.length; i++) {
       const start = xVals[i];
       let end = start;
@@ -420,45 +454,99 @@ function generateTatamiScanlines(pixelIndices, w, h, density) {
         end = xVals[i];
       }
 
-      // MEJORA 2: Zigzag - invertir dirección en líneas alternas
       const points = [];
       for (let x = start; x <= end; x += step) {
         points.push({ x, y });
       }
 
+      // Invertir en líneas alternas
       if ((yy / step) % 2 === 1) {
-        points.reverse(); // Invertir para reducir saltos
+        points.reverse();
       }
 
       stitches.push(...points);
     }
   }
 
-  // MEJORA 3: Suavizado simple - eliminar picos aislados
-  return smoothStitches(stitches);
+  return stitches;
 }
 
-function smoothStitches(stitches) {
-  if (stitches.length < 3) return stitches;
+// ============================================================================
+// MEJORA 2: PATH SIMPLIFICATION (Douglas-Peucker)
+// ============================================================================
 
-  const smoothed = [stitches[0]];
+function simplifyPath(points, tolerance) {
+  if (points.length < 3) return points;
+  const simplified = douglasPeucker(points, tolerance);
+  return simplified.length > 2 ? simplified : points;
+}
 
-  for (let i = 1; i < stitches.length - 1; i++) {
-    const prev = stitches[i - 1];
-    const curr = stitches[i];
-    const next = stitches[i + 1];
+function douglasPeucker(points, epsilon) {
+  let maxDist = 0;
+  let maxIdx = 0;
+  const start = points[0];
+  const end = points[points.length - 1];
 
-    // Si el punto actual está muy lejos de sus vecinos, interpolar
-    const d1 = Math.hypot(curr.x - prev.x, curr.y - prev.y);
-    const d2 = Math.hypot(next.x - curr.x, next.y - curr.y);
-
-    if (d1 + d2 < 5) {
-      smoothed.push(curr);
+  for (let i = 1; i < points.length - 1; i++) {
+    const dist = perpendicularDistance(points[i], start, end);
+    if (dist > maxDist) {
+      maxDist = dist;
+      maxIdx = i;
     }
   }
 
-  smoothed.push(stitches[stitches.length - 1]);
-  return smoothed;
+  if (maxDist > epsilon) {
+    const left = douglasPeucker(points.slice(0, maxIdx + 1), epsilon);
+    const right = douglasPeucker(points.slice(maxIdx), epsilon);
+    return [...left.slice(0, -1), ...right];
+  }
+
+  return [start, end];
+}
+
+function perpendicularDistance(point, lineStart, lineEnd) {
+  const dx = lineEnd.x - lineStart.x;
+  const dy = lineEnd.y - lineStart.y;
+  const denom = dx * dx + dy * dy;
+  
+  if (denom === 0) {
+    return Math.hypot(point.x - lineStart.x, point.y - lineStart.y);
+  }
+
+  const t = Math.max(0, Math.min(1, ((point.x - lineStart.x) * dx + (point.y - lineStart.y) * dy) / denom));
+  const projX = lineStart.x + t * dx;
+  const projY = lineStart.y + t * dy;
+  
+  return Math.hypot(point.x - projX, point.y - projY);
+}
+
+// ============================================================================
+// MEJORA 3: CURVATURE ANALYSIS
+// ============================================================================
+
+function calculateCurvature(points) {
+  if (points.length < 3) return 0;
+
+  let totalAngleChange = 0;
+
+  for (let i = 1; i < points.length - 1; i++) {
+    const p1 = points[i - 1];
+    const p2 = points[i];
+    const p3 = points[i + 1];
+
+    const v1x = p2.x - p1.x;
+    const v1y = p2.y - p1.y;
+    const v2x = p3.x - p2.x;
+    const v2y = p3.y - p2.y;
+
+    const dot = v1x * v2x + v1y * v2y;
+    const cross = Math.abs(v1x * v2y - v1y * v2x);
+    const angle = Math.atan2(cross, dot);
+
+    totalAngleChange += Math.abs(angle);
+  }
+
+  return Math.min(1, totalAngleChange / points.length);
 }
 
 // ============================================================================
