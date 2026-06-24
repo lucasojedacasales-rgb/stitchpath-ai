@@ -150,19 +150,19 @@ export default function Editor() {
         throw new Error('Datos de imagen inválidos');
       }
 
-      // Invocar motor integrado
+      // Invocar motor ULTIMATE para vectorización
       let res;
       try {
         res = await retryWithBackoff(async () => {
-          console.log('[EDITOR] Invoking embroideryMotor...');
-          return await base44.functions.invoke('embroideryMotor', {
+          console.log('[EDITOR] Invoking ultimateVectorization...');
+          return await base44.functions.invoke('ultimateVectorization', {
             pixels: pixelData.pixels,
             width: pixelData.width,
             height: pixelData.height,
             width_mm: config.width_mm,
             height_mm: config.height_mm,
-            format_type: 'DST',
-            project_name: project?.name || 'design'
+            color_count: config.color_count || 6,
+            stitch_density: 0.8
           });
         });
       } catch (err) {
