@@ -141,14 +141,15 @@ export default function Editor() {
         stitch_density: 0.8
       });
 
-      console.log('[EDITOR] Respuesta del motor:', res?.data);
+      const motorData = res?.data;
+      console.log('[EDITOR] Respuesta del motor:', motorData);
 
-      if (!res?.data?.success) {
-        throw new Error(res?.data?.error || 'El motor devolvió error');
+      if (!motorData?.success) {
+        throw new Error(motorData?.error || 'El motor devolvió error');
       }
 
       // 3. Mapear bloques a regiones — StitchCanvas usa region.stitches [{x,y}] directamente
-      const blocks = Array.isArray(res.data.blocks) ? res.data.blocks : [];
+      const blocks = Array.isArray(motorData.blocks) ? motorData.blocks : [];
       if (blocks.length === 0) throw new Error('El motor no generó regiones');
 
       const newRegions = blocks.map((block, idx) => ({
@@ -160,7 +161,7 @@ export default function Editor() {
         visible: true
       }));
 
-      const totalStitches = res.data.stitches || newRegions.reduce((s, r) => s + r.stitch_count, 0);
+      const totalStitches = motorData.stitches || newRegions.reduce((s, r) => s + r.stitch_count, 0);
       console.log('[EDITOR] ✅', newRegions.length, 'regiones,', totalStitches, 'puntadas');
 
       setRegions(newRegions);

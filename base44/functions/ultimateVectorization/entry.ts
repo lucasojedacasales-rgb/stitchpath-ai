@@ -99,13 +99,11 @@ Deno.serve(async (req) => {
 
     return Response.json({
       success: true,
-      data: {
-        blocks: finalRegions,
-        stitches: totalStitches,
-        color_count: palette.length,
-        width: width_mm,
-        height: height_mm
-      }
+      blocks: finalRegions,
+      stitches: totalStitches,
+      color_count: palette.length,
+      width: width_mm,
+      height: height_mm
     });
   } catch (err) {
     console.error('[ULTIMATE] Error:', err.message);
