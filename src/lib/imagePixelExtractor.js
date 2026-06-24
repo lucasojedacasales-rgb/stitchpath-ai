@@ -11,8 +11,12 @@ export async function extractImagePixels(imageUrl) {
     img.onload = () => {
       try {
         const canvas = document.createElement('canvas');
-        const w = Math.min(img.width, 800); // Cap at 800px for performance
-        const h = Math.min(img.height, 800);
+        // Cap at 200px — más grande hace timeout en el backend
+        const aspect = img.width / img.height;
+        let w = Math.min(img.width, 200);
+        let h = Math.round(w / aspect);
+        if (h > 200) { h = 200; w = Math.round(h * aspect); }
+        w = Math.max(8, w); h = Math.max(8, h);
 
         canvas.width = w;
         canvas.height = h;

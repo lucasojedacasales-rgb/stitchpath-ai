@@ -175,20 +175,20 @@ export default function Editor() {
       }
 
       // Convertir bloques a regiones para visualización
-      const motorData = res.data.data;
+      const motorData = res.data;
       const blocks = Array.isArray(motorData.blocks) ? motorData.blocks : [];
       const newRegions = blocks.map((block, idx) => ({
         id: block.id || `block_${idx}`,
         color: block.color || '#000000',
-        stitch_type: block.type || 'fill',
+        stitch_type: block.stitch_type || block.type || 'fill',
         stitches: block.stitches || [],
-        path_points: block.stitches || [],
-        pointCount: block.stitches?.length || 0,
-        stitch_count: block.stitches?.length || 0,
+        path_points: block.path_points || block.stitches || [],
+        pointCount: block.pointCount || block.stitches?.length || 0,
+        stitch_count: block.stitch_count || block.stitches?.length || 0,
         visible: true
       }));
 
-      const totalCalculatedStitches = motorData.stitches || 0;
+      const totalCalculatedStitches = motorData.stitches || blocks.reduce((s, b) => s + (b.stitches?.length || 0), 0);
 
       console.log('[EDITOR] Motor output:', newRegions.length, 'regions,', totalCalculatedStitches, 'stitches');
 
