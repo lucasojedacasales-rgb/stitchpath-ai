@@ -495,6 +495,26 @@ export default function Editor() {
         } catch (svgErr) {
           console.warn('[EDITOR] SVG generation failed, continuing:', svgErr);
         }
+
+        // Digitize with AI: analyze shapes, apply pull compensation, generate optimal stitches
+        try {
+          const digitizeRes = await base44.functions.invoke('embroideryDigitizer', {
+            regions: newRegions,
+            width_mm: config.width_mm,
+            height_mm: config.height_mm,
+            fabric_type: config.fabric_type || 'cotton',
+            export_format: 'DST'
+          });
+          
+          if (digitizeRes?.data?.success) {
+            console.log('[EDITOR] Digitizer output:', {
+              blocks: digitizeRes.data.data?.block_count,
+              totalStitches: digitizeRes.data.data?.total_stitches
+            });
+          }
+        } catch (digitizeErr) {
+          console.warn('[EDITOR] Digitization failed, continuing:', digitizeErr);
+        }
         
         setRegions(newRegions);
         setVectorDiagnostics(res.data.diagnostics || {});
