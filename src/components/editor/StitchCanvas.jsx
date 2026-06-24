@@ -22,23 +22,25 @@ export default function StitchCanvas({
 
   // ── Geometry helpers ──────────────────────────────────────────────────────
   function getDesignBounds(regs) {
-    let maxX = 0, maxY = 0;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const r of (regs || [])) {
       for (const s of (r.stitches || [])) {
+        if (s.x < minX) minX = s.x;
+        if (s.y < minY) minY = s.y;
         if (s.x > maxX) maxX = s.x;
         if (s.y > maxY) maxY = s.y;
       }
     }
-    return { maxX: maxX || 100, maxY: maxY || 100 };
+    if (!isFinite(minX)) return { minX: 0, minY: 0, maxX: 100, maxY: 100, w: 100, h: 100 };
+    return { minX, minY, maxX, maxY, w: maxX - minX || 1, h: maxY - minY || 1 };
   }
 
-  function getTransform(W, H, maxX, maxY) {
-    const scale = Math.min((W * 0.8) / maxX, (H * 0.8) / maxY);
-    return {
-      scale,
-      ox: W / 2 - (maxX * scale) / 2,
-      oy: H / 2 - (maxY * scale) / 2,
-    };
+  function getTransform(W, H, bounds) {
+    const scale = Math.min((W * 0.88) / bounds.w, (H * 0.88) / bounds.h);
+    // Origin: map design's minX/minY to top-left of the centered rect
+    const ox = W / 2 - (bounds.minX + bounds.w / 2) * scale;
+    const oy = H / 2 - (bounds.minY + bounds.h / 2) * scale;
+    return { scale, ox, oy };
   }
 
   function toCanvas(sx, sy, t, z, off, W, H) {
@@ -129,8 +131,8 @@ export default function StitchCanvas({
       return;
     }
 
-    const { maxX, maxY } = getDesignBounds(regions);
-    const t = getTransform(W, H, maxX, maxY);
+    const bounds = getDesignBounds(regions);
+    const t = getTransform(W, H, bounds);
     const alpha = stitchOpacity / 100;
 
     for (const region of regions) {
@@ -241,8 +243,8 @@ export default function StitchCanvas({
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
     const W = canvas.width, H = canvas.height;
-    const { maxX, maxY } = getDesignBounds(regions);
-    const t = getTransform(W, H, maxX, maxY);
+    const bounds = getDesignBounds(regions);
+    const t = getTransform(W, H, bounds);
 
     for (const region of regions) {
       if (!(region.stitches || []).length) continue;
