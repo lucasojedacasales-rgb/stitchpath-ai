@@ -1,226 +1,281 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { ZoomIn, ZoomOut, Maximize2, Download } from 'lucide-react';
+import { drawTatamiRegion } from '@/lib/tatamiEngine';
 
-/**
- * StitchCanvas — renders region.stitches [{x,y}] in mm on an HTML5 Canvas.
- * Two canvas layers: image (bottom) + stitches (top, pointer-events:none).
- * Correct bounding-box centering: uses full minX/minY/maxX/maxY.
- */
+// ── Contour detection helpers ─────────────────────────────────────────────────
+
+function isContourRegion(region) {
+  if (!region) return false;
+  if ((region.name || '').toLowerCase().includes('contour_')) return true;
+  const hex = (region.color || '').toLowerCase();
+  if (hex === '#000000' || hex === '#1a1a1a') return true;
+  // Ring/line shape: area/perimeter ratio < 0.5
+  if (region.area_mm2 && region.perimeter_mm) {
+    const ratio = region.area_mm2 / (region.perimeter_mm * region.perimeter_mm);
+    if (ratio < 0.05) return true; // very elongated or ring-shaped
+  }
+  // Adjacent to ≥3 different regions
+  if (Array.isArray(region.neighbors) && region.neighbors.length >= 3) return true;
+  return false;
+}
+
+function getDrawSize(imageEl, W, H) {
+  if (!imageEl) return { drawW: W * 0.75, drawH: H * 0.75 };
+  const iw = imageEl.width, ih = imageEl.height;
+  const s = Math.min(W * 0.75 / iw, H * 0.75 / ih);
+  return { drawW: iw * s, drawH: ih * s };
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
 export default function StitchCanvas({
   imageUrl, regions, selectedRegionId, onRegionClick,
   imageOpacity, stitchOpacity, showFill, showContour
 }) {
-  const containerRef    = useRef(null);
+  // Three canvas refs: image layer, stitch layer, overlay layer
   const imgCanvasRef    = useRef(null);
   const stitchCanvasRef = useRef(null);
-  const imageRef        = useRef(null);
-  const sizeRef         = useRef({ w: 0, h: 0 }); // actual pixel size after DPR
+  const overlayCanvasRef = useRef(null);
+  const containerRef    = useRef(null);
 
-  const [zoom, setZoom]         = useState(1);
-  const [offset, setOffset]     = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart]   = useState(null);
-  const [tick, setTick]         = useState(0); // force redraw
+  const [dragStart, setDragStart] = useState(null);
+  const [hoveredRegion, setHoveredRegion] = useState(null);
+  const [tooltip, setTooltip] = useState(null);
+  const imageRef = useRef(null);
 
-  const redraw = useCallback(() => setTick(n => n + 1), []);
-
-  // ── Canvas sizing ─────────────────────────────────────────────────────────
-  const syncSize = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const W = Math.floor(rect.width);
-    const H = Math.floor(rect.height);
-    if (W < 1 || H < 1) return;
-    sizeRef.current = { w: W, h: H };
-    for (const ref of [imgCanvasRef, stitchCanvasRef]) {
-      if (ref.current) {
-        ref.current.width  = W;
-        ref.current.height = H;
-      }
-    }
+  // Resize canvases to container
+  useEffect(() => {
+    const obs = new ResizeObserver(() => resizeAll());
+    if (containerRef.current) obs.observe(containerRef.current);
+    resizeAll();
+    return () => obs.disconnect();
   }, []);
 
-  useEffect(() => {
-    syncSize();
-    redraw(); // force initial draw after size is known
-    const obs = new ResizeObserver(() => { syncSize(); redraw(); });
-    if (containerRef.current) obs.observe(containerRef.current);
-    return () => obs.disconnect();
-  }, [syncSize, redraw]);
+  function resizeAll() {
+    const el = containerRef.current;
+    if (!el) return;
+    const W = el.clientWidth, H = el.clientHeight;
+    for (const ref of [imgCanvasRef, stitchCanvasRef, overlayCanvasRef]) {
+      if (ref.current) { ref.current.width = W; ref.current.height = H; }
+    }
+    drawImageLayer();
+    drawStitchLayer();
+    drawOverlayLayer();
+  }
 
-  // Redraw whenever regions change (new vectorization result)
+  // Load image → redraw image layer
   useEffect(() => {
-    syncSize();
-    redraw();
-  }, [regions]);
-
-  // ── Load image ────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!imageUrl) { imageRef.current = null; redraw(); return; }
+    if (!imageUrl) return;
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload = () => { imageRef.current = img; redraw(); };
-    img.onerror = () => {
-      const img2 = new Image();
-      img2.onload = () => { imageRef.current = img2; redraw(); };
-      img2.src = imageUrl;
-    };
+    img.onload = () => { imageRef.current = img; drawImageLayer(); drawStitchLayer(); drawOverlayLayer(); };
     img.src = imageUrl;
-  }, [imageUrl, redraw]);
+  }, [imageUrl]);
 
-  // ── Geometry helpers ──────────────────────────────────────────────────────
-  function getDesignBounds(regs) {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const r of (regs || [])) {
-      for (const s of (r.stitches || [])) {
-        if (s.x < minX) minX = s.x;
-        if (s.y < minY) minY = s.y;
-        if (s.x > maxX) maxX = s.x;
-        if (s.y > maxY) maxY = s.y;
-      }
-    }
-    if (!isFinite(minX)) return { minX: 0, minY: 0, w: 100, h: 100 };
-    return { minX, minY, w: Math.max(maxX - minX, 1), h: Math.max(maxY - minY, 1) };
-  }
+  // Redraw on relevant state changes
+  useEffect(() => { drawImageLayer(); }, [zoom, offset, imageOpacity]);
+  useEffect(() => { drawStitchLayer(); }, [regions, zoom, offset, stitchOpacity, showFill, showContour]);
+  useEffect(() => { drawOverlayLayer(); }, [selectedRegionId, hoveredRegion, zoom, offset, regions]);
 
-  function getTransform(W, H, bounds) {
-    const scale = Math.min((W * 0.88) / bounds.w, (H * 0.88) / bounds.h);
-    const ox = W / 2 - (bounds.minX + bounds.w / 2) * scale;
-    const oy = H / 2 - (bounds.minY + bounds.h / 2) * scale;
-    return { scale, ox, oy };
-  }
-
-  function toCanvas(sx, sy, t, z, off, W, H) {
-    const px = t.ox + sx * t.scale;
-    const py = t.oy + sy * t.scale;
-    const cx = W / 2, cy = H / 2;
-    return {
-      x: cx + (px - cx + off.x) * z,
-      y: cy + (py - cy + off.y) * z,
-    };
-  }
-
-  // ── Draw image layer ──────────────────────────────────────────────────────
-  useEffect(() => {
+  // ── LAYER 1: Image ──────────────────────────────────────────────────────────
+  const drawImageLayer = useCallback(() => {
     const canvas = imgCanvasRef.current;
-    if (!canvas || canvas.width < 1 || canvas.height < 1) return;
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const W = canvas.width, H = canvas.height;
 
     ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = '#0d0f14';
+    ctx.fillStyle = '#1a1a2e';
     ctx.fillRect(0, 0, W, H);
 
-    const img = imageRef.current;
-    if (!img || imageOpacity <= 0) return;
+    if (!imageRef.current || imageOpacity <= 0) return;
 
-    const aspect = img.naturalWidth / img.naturalHeight || 1;
-    const fitW = Math.min(W * 0.85, H * 0.85 * aspect);
-    const fitH = fitW / aspect;
-    const cx = W / 2, cy = H / 2;
-
+    const { drawW, drawH } = getDrawSize(imageRef.current, W, H);
     ctx.save();
+    ctx.translate(offset.x + W / 2, offset.y + H / 2);
+    ctx.scale(zoom, zoom);
     ctx.globalAlpha = imageOpacity / 100;
-    ctx.drawImage(
-      img,
-      cx + (-fitW / 2 + offset.x) * zoom,
-      cy + (-fitH / 2 + offset.y) * zoom,
-      fitW * zoom,
-      fitH * zoom
-    );
+    ctx.imageSmoothingEnabled = zoom < 4;
+    ctx.drawImage(imageRef.current, -drawW / 2, -drawH / 2, drawW, drawH);
     ctx.restore();
-  }, [tick, imageOpacity, zoom, offset]);
+  }, [zoom, offset, imageOpacity]);
 
-  // ── Draw stitch layer ─────────────────────────────────────────────────────
-  useEffect(() => {
+  // ── LAYER 2: Stitches only — clipped per region ────────────────────────────
+  const drawStitchLayer = useCallback(() => {
     const canvas = stitchCanvasRef.current;
-    if (!canvas || canvas.width < 1 || canvas.height < 1) return;
+    const imgCanvas = imgCanvasRef.current;
+    if (!canvas || !imgCanvas) return;
     const ctx = canvas.getContext('2d');
     const W = canvas.width, H = canvas.height;
 
     ctx.clearRect(0, 0, W, H);
+    if (!regions || regions.length === 0 || stitchOpacity <= 0) return;
 
-    if (!regions || regions.length === 0 || stitchOpacity <= 0) {
-      drawZoomBadge(ctx, W, H, zoom);
-      return;
-    }
+    const { drawW, drawH } = getDrawSize(imageRef.current, W, H);
 
-    const bounds = getDesignBounds(regions);
-    const t = getTransform(W, H, bounds);
-    const alpha = stitchOpacity / 100;
+    ctx.save();
+    ctx.translate(offset.x + W / 2, offset.y + H / 2);
+    ctx.scale(zoom, zoom);
 
-    for (const region of regions) {
+    // Filter out "phantom" regions that cover >90% of canvas
+    const canvasArea = drawW * drawH;
+    const validRegions = regions.filter(r => {
+      if ((r.area_mm2 || 0) > canvasArea * 0.9) return false;
+      return true;
+    });
+
+    for (const region of validRegions) {
       if (!region.visible) continue;
-      const stitches = region.stitches || [];
-      if (stitches.length < 2) continue;
 
-      const type = region.stitch_type || region.type || 'fill';
-      const isFill = type === 'fill';
-      const isContour = type === 'running_stitch' || type === 'run' || type === 'satin';
-      if (isFill && !showFill) continue;
-      if (isContour && !showContour) continue;
+      const pts = region.path_points;
+      if (!pts || pts.length < 3) continue;
+
+      // Determine effective stitch type (contour detection override)
+      const effectiveType = isContourRegion(region) ? 'running_stitch' : region.stitch_type;
+
+      if (effectiveType === 'fill' && !showFill) continue;
+      if ((effectiveType === 'running_stitch' || effectiveType === 'satin') && !showContour) continue;
 
       const color = region.color || '#ffffff';
-      const isSelected = region.id === selectedRegionId;
-      const pts = stitches.map(s => toCanvas(s.x, s.y, t, zoom, offset, W, H));
+      const alpha = stitchOpacity / 100;
 
+      // Clip all stitches to region polygon
       ctx.save();
-      ctx.globalAlpha = alpha * (isSelected ? 1.0 : 0.85);
-      ctx.strokeStyle = color;
-      ctx.fillStyle   = color;
-      ctx.lineCap  = 'round';
-      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo((pts[0][0] - 0.5) * drawW, (pts[0][1] - 0.5) * drawH);
+      for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo((pts[i][0] - 0.5) * drawW, (pts[i][1] - 0.5) * drawH);
+      }
+      ctx.closePath();
+      ctx.clip();
 
-      if (type === 'running_stitch' || type === 'run') {
-        ctx.lineWidth = Math.max(0.8, 1.2 * zoom);
-        ctx.setLineDash([Math.max(2, 4 * zoom), Math.max(1, 2 * zoom)]);
-        ctx.beginPath();
-        ctx.moveTo(pts[0].x, pts[0].y);
-        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-        ctx.stroke();
-        ctx.setLineDash([]);
+      if (effectiveType === 'fill') {
+        // Tatami fill — now fully clipped
+        drawTatamiRegion(ctx, pts, region, drawW, drawH, zoom, false, false, stitchOpacity);
 
-      } else if (type === 'satin') {
-        ctx.lineWidth = Math.max(0.8, 1.5 * zoom);
-        ctx.beginPath();
-        ctx.moveTo(pts[0].x, pts[0].y);
-        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-        ctx.stroke();
+      } else if (effectiveType === 'satin') {
+        // Satin: parallel lines (already clipped above)
+        drawSatinLines(ctx, pts, region, drawW, drawH, zoom, color, alpha);
 
       } else {
-        // fill — dot per stitch point
-        const r = Math.max(0.5, 0.8 * zoom);
-        for (const pt of pts) {
-          ctx.beginPath();
-          ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-
-      // Selection highlight
-      if (isSelected) {
-        const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
-        ctx.globalAlpha = 0.25;
-        ctx.strokeStyle = '#7c3aed';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 3]);
-        ctx.strokeRect(
-          Math.min(...xs) - 4, Math.min(...ys) - 4,
-          Math.max(...xs) - Math.min(...xs) + 8,
-          Math.max(...ys) - Math.min(...ys) + 8
-        );
-        ctx.setLineDash([]);
+        // Running stitch: dashed path along polygon boundary
+        drawRunningStitch(ctx, pts, region, drawW, drawH, zoom, color, alpha);
       }
 
       ctx.restore();
     }
 
+    ctx.restore();
     drawZoomBadge(ctx, W, H, zoom);
-  }, [tick, regions, selectedRegionId, stitchOpacity, showFill, showContour, zoom, offset]);
+  }, [regions, zoom, offset, stitchOpacity, showFill, showContour]);
 
-  function drawZoomBadge(ctx, W, H, z) {
-    const text = `${Math.round(z * 100)}%`;
+  // ── LAYER 3: Selection / hover overlay only ─────────────────────────────────
+  const drawOverlayLayer = useCallback(() => {
+    const canvas = overlayCanvasRef.current;
+    const imgCanvas = imgCanvasRef.current;
+    if (!canvas || !imgCanvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+
+    ctx.clearRect(0, 0, W, H);
+    if (!regions) return;
+
+    const { drawW, drawH } = getDrawSize(imageRef.current, W, H);
+
+    const toX = p => (p[0] - 0.5) * drawW;
+    const toY = p => (p[1] - 0.5) * drawH;
+
+    ctx.save();
+    ctx.translate(offset.x + W / 2, offset.y + H / 2);
+    ctx.scale(zoom, zoom);
+
+    for (const region of regions) {
+      const isSelected = region.id === selectedRegionId;
+      const isHovered  = region.id === hoveredRegion;
+      if (!isSelected && !isHovered) continue;
+
+      const pts = region.path_points;
+      if (!pts || pts.length < 3) continue;
+
+      ctx.beginPath();
+      ctx.moveTo(toX(pts[0]), toY(pts[0]));
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(toX(pts[i]), toY(pts[i]));
+      ctx.closePath();
+
+      // Semi-transparent fill tint
+      ctx.fillStyle = isSelected ? 'rgba(124,58,237,0.12)' : 'rgba(6,182,212,0.08)';
+      ctx.fill();
+
+      // Dashed outline
+      ctx.strokeStyle = isSelected ? '#7c3aed' : '#06b6d4';
+      ctx.lineWidth = (isSelected ? 2.5 : 1.8) / zoom;
+      ctx.setLineDash([5 / zoom, 3 / zoom]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    ctx.restore();
+  }, [regions, selectedRegionId, hoveredRegion, zoom, offset]);
+
+  // ── Stitch drawing helpers ──────────────────────────────────────────────────
+
+  function drawSatinLines(ctx, pts, region, drawW, drawH, zoom, color, alpha) {
+    const angle = ((region.angle || 45) * Math.PI) / 180;
+    const density = region.density || 0.8;
+    const spacing = Math.max(1.5, 6 / density) / zoom;
+
+    ctx.globalAlpha = alpha * 0.85;
+
+    const xs = pts.map(p => (p[0] - 0.5) * drawW);
+    const ys = pts.map(p => (p[1] - 0.5) * drawH);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const diagLen = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) + spacing * 2;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 0.9 / zoom;
+    ctx.lineCap = 'round';
+
+    for (let y = -diagLen; y < diagLen; y += spacing) {
+      ctx.beginPath();
+      ctx.moveTo(-diagLen, y);
+      ctx.lineTo(diagLen, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawRunningStitch(ctx, pts, region, drawW, drawH, zoom, color, alpha) {
+    if (pts.length < 2) return;
+    const dashLen = Math.max(1.5, 3.0 / zoom);
+    const gapLen  = Math.max(1.0, 2.0 / zoom);
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.2 / zoom;
+    ctx.lineCap = 'round';
+    ctx.setLineDash([dashLen, gapLen]);
+
+    ctx.beginPath();
+    ctx.moveTo((pts[0][0] - 0.5) * drawW, (pts[0][1] - 0.5) * drawH);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo((pts[i][0] - 0.5) * drawW, (pts[i][1] - 0.5) * drawH);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  // ── Badge (drawn on stitch layer) ──────────────────────────────────────────
+
+  function drawZoomBadge(ctx, W, H, zoom) {
+    const text = `${Math.round(zoom * 100)}%`;
     ctx.save();
     ctx.font = 'bold 11px Inter, sans-serif';
     const tw = ctx.measureText(text).width;
@@ -228,15 +283,24 @@ export default function StitchCanvas({
     ctx.fillStyle = 'rgba(13,15,20,0.85)';
     ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 4); ctx.fill();
     ctx.strokeStyle = '#2a2d3a'; ctx.lineWidth = 1; ctx.stroke();
-    ctx.fillStyle = '#94a3b8';
+    ctx.fillStyle = zoom > 3 ? '#06b6d4' : '#94a3b8';
     ctx.fillText(text, bx + 8, by + 15);
     ctx.restore();
   }
 
-  // ── Interaction ───────────────────────────────────────────────────────────
+  // ── Interaction ────────────────────────────────────────────────────────────
+
+  const getDrawDims = () => {
+    const canvas = imgCanvasRef.current;
+    if (!canvas) return { drawW: 600, drawH: 450 };
+    return getDrawSize(imageRef.current, canvas.width, canvas.height);
+  };
+
   const handleWheel = (e) => {
     e.preventDefault();
-    setZoom(z => Math.max(0.1, Math.min(32, z * (e.deltaY < 0 ? 1.15 : 0.87))));
+    const step = e.ctrlKey ? 0.05 : 0.15;
+    const delta = e.deltaY < 0 ? 1 + step : 1 - step;
+    setZoom(z => Math.max(0.1, Math.min(32, z * delta)));
   };
 
   const handleMouseDown = (e) => {
@@ -248,82 +312,127 @@ export default function StitchCanvas({
     if (isDragging && dragStart) {
       setOffset({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
     }
+    updateTooltip(e);
   };
 
   const handleMouseUp = () => { setIsDragging(false); setDragStart(null); };
 
-  const handleClick = (e) => {
-    if (!regions || !onRegionClick) return;
-    const canvas = stitchCanvasRef.current;
-    if (!canvas) return;
+  const updateTooltip = (e) => {
+    const canvas = overlayCanvasRef.current;
+    if (!canvas || !regions) return;
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
     const W = canvas.width, H = canvas.height;
-    const bounds = getDesignBounds(regions);
-    const t = getTransform(W, H, bounds);
+    const { drawW, drawH } = getDrawDims();
+    const nx = ((mx - offset.x - W / 2) / zoom) / drawW + 0.5;
+    const ny = ((my - offset.y - H / 2) / zoom) / drawH + 0.5;
 
+    let found = null;
     for (const region of regions) {
-      if (!(region.stitches || []).length) continue;
-      const pts = region.stitches.map(s => toCanvas(s.x, s.y, t, zoom, offset, W, H));
-      const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
-      if (mx >= Math.min(...xs) && mx <= Math.max(...xs) &&
-          my >= Math.min(...ys) && my <= Math.max(...ys)) {
-        onRegionClick(region.id);
-        return;
-      }
+      if (!region.visible || !region.path_points) continue;
+      const pts = region.path_points;
+      const minX = Math.min(...pts.map(p => p[0]));
+      const maxX = Math.max(...pts.map(p => p[0]));
+      const minY = Math.min(...pts.map(p => p[1]));
+      const maxY = Math.max(...pts.map(p => p[1]));
+      if (nx >= minX && nx <= maxX && ny >= minY && ny <= maxY) { found = region; break; }
     }
+    setHoveredRegion(found?.id || null);
+    setTooltip(found ? { region: found, x: e.clientX - rect.left, y: e.clientY - rect.top } : null);
   };
 
+  const handleClick = () => { if (hoveredRegion && onRegionClick) onRegionClick(hoveredRegion); };
+  const handleDblClick = () => { if (hoveredRegion && onRegionClick) onRegionClick(hoveredRegion, true); };
+
   const fitToScreen = () => { setZoom(1); setOffset({ x: 0, y: 0 }); };
+  const zoomIn  = () => setZoom(z => Math.min(32, z * 1.25));
+  const zoomOut = () => setZoom(z => Math.max(0.1, z / 1.25));
+
+  const downloadPNG = () => {
+    // Composite all 3 layers into a temporary canvas for download
+    const src = imgCanvasRef.current;
+    if (!src) return;
+    const tmp = document.createElement('canvas');
+    tmp.width = src.width; tmp.height = src.height;
+    const ctx = tmp.getContext('2d');
+    [imgCanvasRef, stitchCanvasRef, overlayCanvasRef].forEach(ref => {
+      if (ref.current) ctx.drawImage(ref.current, 0, 0);
+    });
+    const a = document.createElement('a');
+    a.download = 'stitch-preview.png';
+    a.href = tmp.toDataURL('image/png');
+    a.click();
+  };
+
+  const canvasEvents = {
+    onWheel: handleWheel,
+    onMouseDown: handleMouseDown,
+    onMouseMove: handleMouseMove,
+    onMouseUp: handleMouseUp,
+    onMouseLeave: handleMouseUp,
+    onClick: handleClick,
+    onDoubleClick: handleDblClick,
+  };
+
+  const cursor = isDragging ? 'grabbing' : hoveredRegion ? 'pointer' : 'grab';
 
   return (
-    <div className="relative flex flex-col w-full h-full bg-[#0d0f14]">
+    <div className="relative flex flex-col w-full h-full bg-[#1a1a2e]">
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-3 py-2 bg-[#0d0f14] border-b border-[#1e2130] flex-shrink-0">
+      <div className="flex items-center justify-between px-3 py-2 bg-[#0d0f14] border-b border-[#1e2130]">
         <div className="flex items-center gap-1">
-          <Btn onClick={() => setZoom(z => Math.min(32, z * 1.25))} title="Zoom In"><ZoomIn className="w-3.5 h-3.5" /></Btn>
-          <Btn onClick={() => setZoom(z => Math.max(0.1, z / 1.25))} title="Zoom Out"><ZoomOut className="w-3.5 h-3.5" /></Btn>
-          <Btn onClick={fitToScreen} title="Ajustar"><Maximize2 className="w-3.5 h-3.5" /></Btn>
+          <CanvasButton onClick={zoomIn}      title="Zoom In"><ZoomIn  className="w-3.5 h-3.5" /></CanvasButton>
+          <CanvasButton onClick={zoomOut}     title="Zoom Out"><ZoomOut className="w-3.5 h-3.5" /></CanvasButton>
+          <CanvasButton onClick={fitToScreen} title="Fit"><Maximize2   className="w-3.5 h-3.5" /></CanvasButton>
         </div>
-        <Btn onClick={() => {
-          const src = imgCanvasRef.current;
-          if (!src) return;
-          const tmp = document.createElement('canvas');
-          tmp.width = src.width; tmp.height = src.height;
-          const ctx = tmp.getContext('2d');
-          [imgCanvasRef, stitchCanvasRef].forEach(r => r.current && ctx.drawImage(r.current, 0, 0));
-          const a = document.createElement('a');
-          a.download = 'stitch-preview.png';
-          a.href = tmp.toDataURL('image/png');
-          a.click();
-        }} title="PNG" className="text-cyan-400 border-cyan-500/30">
-          <Download className="w-3.5 h-3.5" /><span className="text-xs ml-1">PNG</span>
-        </Btn>
+        <CanvasButton onClick={downloadPNG} title="Descargar PNG" className="text-cyan-400 border-cyan-500/30 hover:bg-cyan-500/10">
+          <Download className="w-3.5 h-3.5" />
+          <span className="text-xs ml-1">PNG</span>
+        </CanvasButton>
       </div>
 
-      {/* Canvas area — must be position:relative + overflow:visible for full render */}
-      <div
-        ref={containerRef}
-        className="relative flex-1 stitch-canvas-grid"
-        style={{ cursor: isDragging ? 'grabbing' : 'grab', overflow: 'hidden' }}
-        onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        onClick={handleClick}
-      >
-        <canvas ref={imgCanvasRef}    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }} />
-        <canvas ref={stitchCanvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />
+      {/* Layered canvas stack */}
+      <div ref={containerRef} className="relative flex-1 overflow-hidden stitch-canvas-grid">
+        {/* Layer 1: image + grid background */}
+        <canvas ref={imgCanvasRef}     className="absolute inset-0 w-full h-full" />
+        {/* Layer 2: stitches only */}
+        <canvas ref={stitchCanvasRef}  className="absolute inset-0 w-full h-full" />
+        {/* Layer 3: hover/selection overlay — receives all pointer events */}
+        <canvas
+          ref={overlayCanvasRef}
+          className="absolute inset-0 w-full h-full"
+          style={{ cursor }}
+          {...canvasEvents}
+        />
+
+        {/* Tooltip */}
+        {tooltip && (
+          <div
+            className="absolute pointer-events-none z-10 bg-[#0d0f14] border border-[#2a2d3a] rounded-lg px-3 py-2 text-xs shadow-xl"
+            style={{ left: tooltip.x + 12, top: tooltip.y - 40 }}
+          >
+            <div className="font-semibold text-white">{tooltip.region.name}</div>
+            <div className="text-slate-400 flex items-center gap-2 mt-0.5">
+              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                tooltip.region.stitch_type === 'fill' ? 'badge-fill' :
+                tooltip.region.stitch_type === 'satin' ? 'badge-satin' : 'badge-run'
+              }`}>{tooltip.region.stitch_type}</span>
+              <span>{tooltip.region.stitch_count || 0} ptos</span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function Btn({ onClick, children, title, className = '' }) {
+function CanvasButton({ onClick, children, title, className = '' }) {
   return (
-    <button onClick={onClick} title={title}
-      className={`flex items-center px-2 py-1.5 rounded border border-[#2a2d3a] bg-[#161a23] text-slate-400 hover:text-white hover:bg-[#1e2130] transition-colors text-xs ${className}`}>
+    <button
+      onClick={onClick}
+      title={title}
+      className={`flex items-center px-2 py-1.5 rounded border border-[#2a2d3a] bg-[#161a23] text-slate-400 hover:text-white hover:bg-[#1e2130] transition-colors text-xs ${className}`}
+    >
       {children}
     </button>
   );

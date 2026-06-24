@@ -6,7 +6,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { imageUrl, colorClusters = 8, edgeThreshold = 0.25, minRegionArea = 1.5 } = await req.json();
+    const { imageUrl, colorClusters = 8, edgeThreshold = 0.3, minRegionArea = 2 } = await req.json();
     if (!imageUrl) return Response.json({ error: 'imageUrl required' }, { status: 400 });
 
     const startMs = Date.now();
@@ -42,7 +42,7 @@ Deno.serve(async (req) => {
 
     const mmPerPx = 100 / origW / scale;
 
-    // ── 2. Edge detection ─────────────────────────────────────────────────────
+    // ── 2. Edge detection with adaptive thresholds ─────────────────────────────
     const gray = new Float32Array(W * H);
     for (let i = 0; i < W * H; i++) {
       const r = rgba[i*4], g = rgba[i*4+1], b = rgba[i*4+2];
@@ -56,12 +56,12 @@ Deno.serve(async (req) => {
     for (let i = 0; i < mag.length; i++) { sum += mag[i]; sum2 += mag[i]*mag[i]; }
     const mean = sum / mag.length;
     const stddev = Math.sqrt(sum2 / mag.length - mean * mean);
-    const highT = edgeThreshold * (mean + stddev);
-    const lowT  = highT * 0.5;
+    const highT = edgeThreshold * (mean + 2 * stddev);
+    const lowT  = highT * 0.4;
     const edges = cannyNMS(mag, gx, gy, W, H, lowT, highT);
 
     // ── 3. K-means++ clustering ─────────────────────────────────────────────────
-    const k = Math.max(4, Math.min(colorClusters, 24));
+    const k = Math.max(3, Math.min(colorClusters, 20));
     const samples = [];
     for (let i = 0; i < W * H; i++) {
       if (rgba[i*4+3] < 128) continue;
@@ -69,7 +69,7 @@ Deno.serve(async (req) => {
     }
 
     const nonEdge = samples.filter(s => !s.isEdge);
-    const seed = nonEdge.length > k/2 ? nonEdge : samples;
+    const seed = nonEdge.length > 0 ? nonEdge : samples;
     if (seed.length === 0) return Response.json({ error: 'No foreground pixels' }, { status: 400 });
     
     const centroids = [seed[Math.floor(Math.random() * seed.length)].rgb];
@@ -85,7 +85,7 @@ Deno.serve(async (req) => {
     }
 
     const labels = new Int32Array(W * H).fill(-1);
-    for (let iter = 0; iter < 25; iter++) {
+    for (let iter = 0; iter < 20; iter++) {
       const sums = centroids.map(() => [0, 0, 0, 0]);
       for (const s of samples) {
         const ci = nearestIdx(s.rgb, centroids);
@@ -105,43 +105,43 @@ Deno.serve(async (req) => {
     }
 
     // ── 4. Flood fill regions ───────────────────────────────────────────────────
-    const minPx = Math.max(1, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
+    const minPx = Math.max(2, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
     const regions = floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroids);
 
-    // ── 5. Contour extraction with Bézier smoothing ──────────────────────────────
+    // ── 5. Extract contours with conservative RDP simplification ─────────────────
     const outputRegions = [];
 
     for (const reg of regions) {
       const contour = traceContour(reg.mask, W, H);
-      if (contour.length < 4) continue;
+      if (contour.length < 3) continue;
 
-      // Validate shape
+      // Filter only regions with significant interior (not just borders)
       const bbox = reg.bbox;
-      const bboxW = bbox.maxX - bbox.minX + 1;
-      const bboxH = bbox.maxY - bbox.minY + 1;
+      const bboxW = bbox.maxX - bbox.minX;
+      const bboxH = bbox.maxY - bbox.minY;
       const regionAspect = bboxW / Math.max(1, bboxH);
-      if (regionAspect < 0.15 || regionAspect > 6.5) continue;
+      const isValidShape = regionAspect >= 0.2 && regionAspect <= 5.0; // reject very thin/elongated
+      if (!isValidShape) continue;
 
-      // Conservative RDP simplification
-      let epsilon = 0.2 / mmPerPx;
+      // Conservative RDP: keep more points for better interior representation
+      let epsilon = 0.3 / mmPerPx;
       let simplified = rdp(contour, epsilon);
       
-      // Apply Bézier smoothing for continuous curves
-      const bezierSmoothed = bezierSmooth(simplified, 3);
-      
-      // Re-sample to control point density
-      const resampled = resampleCurve(bezierSmoothed, Math.max(8, Math.round(bezierSmoothed.length * 0.6)));
+      // Avoid over-simplification
+      if (simplified.length < 10 && contour.length > 20) {
+        epsilon = 0.1 / mmPerPx;
+        simplified = rdp(contour, epsilon);
+      }
 
-      if (resampled.length < 4) continue;
+      if (simplified.length < 4) continue;
 
-      const polygon = resampled.map(([x, y]) => [
+      const polygon = simplified.map(([x, y]) => [
         parseFloat(((x - W/2) * mmPerPx).toFixed(4)),
         parseFloat(((y - H/2) * mmPerPx).toFixed(4)),
       ]);
 
       const areaMm2 = reg.pixelCount * mmPerPx * mmPerPx;
-      const perimeterMm = contourPerimeterMm(resampled, mmPerPx);
-      const compactness = perimeterMm > 0 ? (perimeterMm * perimeterMm) / areaMm2 : 0;
+      const perimeterMm = contourPerimeterMm(simplified, mmPerPx);
 
       outputRegions.push({
         id: reg.id,
@@ -149,7 +149,6 @@ Deno.serve(async (req) => {
         path_points: polygon,
         area_mm2: parseFloat(areaMm2.toFixed(2)),
         perimeter_mm: parseFloat(perimeterMm.toFixed(2)),
-        compactness: parseFloat(compactness.toFixed(2)),
         centroid: [
           parseFloat(((reg.centroid[0] - W/2) * mmPerPx).toFixed(4)),
           parseFloat(((reg.centroid[1] - H/2) * mmPerPx).toFixed(4)),
@@ -170,80 +169,6 @@ Deno.serve(async (req) => {
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
-
-// ── BÉZIER SMOOTHING ──────────────────────────────────────────────────────────
-
-function bezierSmooth(pts, passes = 2) {
-  if (pts.length < 3) return pts;
-  
-  let smoothed = [...pts];
-  for (let pass = 0; pass < passes; pass++) {
-    const result = [];
-    const n = smoothed.length;
-    
-    for (let i = 0; i < n; i++) {
-      const p0 = smoothed[i];
-      const p1 = smoothed[(i + 1) % n];
-      const p2 = smoothed[(i + 2) % n];
-      
-      // Quadratic Bézier: B(t) = (1-t)²P0 + 2(1-t)tP1 + t²P2
-      const steps = 3;
-      for (let t = 0; t < 1; t += 1/steps) {
-        const mt = 1 - t;
-        const x = mt*mt*p0[0] + 2*mt*t*p1[0] + t*t*p2[0];
-        const y = mt*mt*p0[1] + 2*mt*t*p1[1] + t*t*p2[1];
-        result.push([x, y]);
-      }
-    }
-    smoothed = result;
-  }
-  
-  return smoothed;
-}
-
-// ── CURVE RESAMPLING (uniform point distribution) ───────────────────────────
-
-function resampleCurve(pts, targetCount) {
-  if (pts.length <= 2) return pts;
-  
-  // Calculate total arc length
-  let totalLen = 0;
-  const lengths = [0];
-  for (let i = 0; i < pts.length - 1; i++) {
-    const d = Math.hypot(pts[i+1][0] - pts[i][0], pts[i+1][1] - pts[i][1]);
-    totalLen += d;
-    lengths.push(totalLen);
-  }
-  
-  if (totalLen === 0) return pts;
-  
-  // Interpolate evenly spaced points
-  const result = [pts[0]];
-  const step = totalLen / (targetCount - 1);
-  
-  for (let i = 1; i < targetCount - 1; i++) {
-    const targetLen = step * i;
-    let segIdx = lengths.findIndex(l => l >= targetLen);
-    if (segIdx === -1) segIdx = pts.length - 1;
-    if (segIdx === 0) segIdx = 1;
-    
-    const p0 = pts[segIdx - 1];
-    const p1 = pts[segIdx];
-    const len0 = lengths[segIdx - 1];
-    const len1 = lengths[segIdx];
-    
-    if (len1 - len0 > 0.001) {
-      const t = (targetLen - len0) / (len1 - len0);
-      result.push([
-        p0[0] + t * (p1[0] - p0[0]),
-        p0[1] + t * (p1[1] - p0[1])
-      ]);
-    }
-  }
-  
-  result.push(pts[pts.length - 1]);
-  return result;
-}
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
 

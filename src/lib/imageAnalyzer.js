@@ -34,19 +34,15 @@ export async function analyzeImage(imageUrl, maxColors = 10) {
   // --- 4. Aspect ratio ---
   const aspectRatio = img.width / img.height;
 
-  // --- 5. Shadow detection (dark areas) ---
-  const shadowRegions = detectShadows(pixels, W, H);
-
   return {
-   imageWidth: img.width,
-   imageHeight: img.height,
-   aspectRatio,
-   dominantColors,
-   colorRegions,
-   edgeDensityMap,
-   shadowRegions,
-   analysisW: W,
-   analysisH: H,
+    imageWidth: img.width,
+    imageHeight: img.height,
+    aspectRatio,
+    dominantColors,
+    colorRegions,
+    edgeDensityMap,
+    analysisW: W,
+    analysisH: H,
   };
 }
 
@@ -202,56 +198,12 @@ function rgbToHex([r, g, b]) {
   return '#' + [r, g, b].map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
 }
 
-// ─── Shadow Detection ─────────────────────────────────────────────────────────
-
-function detectShadows(pixels, W, H) {
-  const SHADOW_THRESHOLD = 85; // pixels darker than this are shadows (0-255)
-  const MIN_SHADOW_AREA = 0.01; // minimum 1% of image
-
-  let minX = W, maxX = 0, minY = H, maxY = 0, pixelCount = 0;
-
-  for (let i = 0; i < pixels.length; i += 4) {
-    const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2], a = pixels[i + 3];
-    if (a < 128) continue;
-
-    // Brightness calculation (luminance)
-    const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
-
-    if (brightness < SHADOW_THRESHOLD) {
-      const idx = i / 4;
-      const x = idx % W, y = Math.floor(idx / W);
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
-      pixelCount++;
-    }
-  }
-
-  // Return shadow regions as connected dark areas
-  const shadowArea = (maxX - minX + 1) * (maxY - minY + 1) / (W * H);
-  const hasShadows = pixelCount > 0 && shadowArea >= MIN_SHADOW_AREA;
-
-  return {
-    detected: hasShadows,
-    boundingBox: hasShadows ? {
-      minX: minX / W,
-      maxX: maxX / W,
-      minY: minY / H,
-      maxY: maxY / H,
-      coverage: pixelCount / (W * H)
-    } : null,
-    pixelCount: pixelCount,
-    shadowThreshold: SHADOW_THRESHOLD
-  };
-}
-
 function loadImage(url) {
-   return new Promise((resolve, reject) => {
-     const img = new Image();
-     img.crossOrigin = 'anonymous';
-     img.onload = () => resolve(img);
-     img.onerror = reject;
-     img.src = url;
-   });
- }
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}

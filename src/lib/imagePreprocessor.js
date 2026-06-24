@@ -19,15 +19,11 @@
 export async function preprocessImage(imageUrl, options = {}) {
   const {
     gaussianRadius = 1,
-    contrastBoost = 1.5,
+    contrastBoost = 1.4,
     saturationBoost = 1.6,
     sharpenEdges = true,
     sharpenStrength = 0.8,
     outputSize = 1024,
-    removeBackground = false,
-    maxColors = 8,
-    minDetailSize = 1.0,
-    dpi = 300,
   } = options;
 
   const img = await loadImage(imageUrl);
@@ -48,25 +44,10 @@ export async function preprocessImage(imageUrl, options = {}) {
     applyGaussianBlur(ctx, W, H, gaussianRadius);
   }
 
-  // Step 2: Remove background (if enabled)
-  if (removeBackground) {
-    removeWhiteBackground(ctx, W, H);
-  }
-
-  // Step 3: Contrast + saturation enhancement
+  // Step 2: Contrast + saturation enhancement
   applyContrastSaturation(ctx, W, H, contrastBoost, saturationBoost);
 
-  // Step 4: Reduce color palette
-  if (maxColors > 0 && maxColors < 256) {
-    reduceColorPalette(ctx, W, H, maxColors);
-  }
-
-  // Step 5: Remove small details (< minDetailSize mm)
-  if (minDetailSize > 0) {
-    removeSmallDetails(ctx, W, H, minDetailSize, dpi);
-  }
-
-  // Step 6: Unsharp mask (edge sharpening)
+  // Step 3: Unsharp mask (edge sharpening)
   if (sharpenEdges) {
     applyUnsharpMask(ctx, W, H, sharpenStrength);
   }
@@ -211,138 +192,3 @@ function applyUnsharpMask(ctx, W, H, strength) {
 
 function clamp(v) { return Math.max(0, Math.min(1, v)); }
 function clamp255(v) { return Math.max(0, Math.min(255, Math.round(v))); }
-
-/**
- * Remove white/light background by setting to transparent
- */
-function removeWhiteBackground(ctx, W, H) {
-  const imageData = ctx.getImageData(0, 0, W, H);
-  const d = imageData.data;
-  const threshold = 240; // pixels brighter than this are background
-  
-  for (let i = 0; i < d.length; i += 4) {
-    const r = d[i], g = d[i + 1], b = d[i + 2];
-    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-    
-    if (lum > threshold) {
-      d[i + 3] = 0; // Set alpha to transparent
-    }
-  }
-  
-  ctx.putImageData(imageData, 0, 0);
-}
-
-/**
- * Reduce color palette to max N colors using k-means-like quantization
- */
-function reduceColorPalette(ctx, W, H, maxColors) {
-  const imageData = ctx.getImageData(0, 0, W, H);
-  const d = imageData.data;
-  
-  // Sample colors and find dominant palette
-  const colorMap = new Map();
-  for (let i = 0; i < d.length; i += 4) {
-    const r = d[i], g = d[i + 1], b = d[i + 2], a = d[i + 3];
-    
-    if (a < 128) continue; // Skip transparent
-    
-    // Quantize to 5 bits per channel
-    const qr = r >> 3, qg = g >> 3, qb = b >> 3;
-    const key = `${qr},${qg},${qb}`;
-    colorMap.set(key, (colorMap.get(key) || 0) + 1);
-  }
-  
-  // Pick top maxColors
-  const palette = Array.from(colorMap.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, maxColors)
-    .map(([key]) => {
-      const [r, g, b] = key.split(',').map(x => parseInt(x) << 3);
-      return { r, g, b };
-    });
-  
-  // Remap pixels to nearest palette color
-  for (let i = 0; i < d.length; i += 4) {
-    const r = d[i], g = d[i + 1], b = d[i + 2];
-    
-    let bestIdx = 0, bestDist = Infinity;
-    for (let j = 0; j < palette.length; j++) {
-      const dr = r - palette[j].r;
-      const dg = g - palette[j].g;
-      const db = b - palette[j].b;
-      const dist = dr * dr + dg * dg + db * db;
-      
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestIdx = j;
-      }
-    }
-    
-    const mapped = palette[bestIdx];
-    d[i] = mapped.r;
-    d[i + 1] = mapped.g;
-    d[i + 2] = mapped.b;
-  }
-  
-  ctx.putImageData(imageData, 0, 0);
-}
-
-/**
- * Remove small connected components (noise smaller than minDetailSize mm)
- */
-function removeSmallDetails(ctx, W, H, minDetailSize, dpi) {
-  // Convert mm to pixels: minDetailSize mm * (dpi / 25.4 mm/inch)
-  const minPixels = Math.ceil(minDetailSize * dpi / 25.4);
-  
-  const imageData = ctx.getImageData(0, 0, W, H);
-  const d = imageData.data;
-  const visited = new Uint8Array(W * H);
-  
-  // Find all connected components
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const idx = y * W + x;
-      if (visited[idx]) continue;
-      
-      const pixelIdx = idx * 4;
-      const alpha = d[pixelIdx + 3];
-      
-      if (alpha < 128) continue; // Skip transparent
-      
-      // Flood fill to count connected component
-      const component = [];
-      const queue = [{ x, y }];
-      visited[idx] = 1;
-      
-      while (queue.length > 0) {
-        const { x: cx, y: cy } = queue.shift();
-        component.push({ x: cx, y: cy });
-        
-        // Check 4-connected neighbors
-        for (const [dx, dy] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) {
-          const nx = cx + dx, ny = cy + dy;
-          if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
-          
-          const nidx = ny * W + nx;
-          if (visited[nidx]) continue;
-          
-          const npixelIdx = nidx * 4;
-          if (d[npixelIdx + 3] >= 128) {
-            visited[nidx] = 1;
-            queue.push({ x: nx, y: ny });
-          }
-        }
-      }
-      
-      // If component is too small, erase it
-      if (component.length < minPixels) {
-        for (const { x: px, y: py } of component) {
-          const pidx = (py * W + px) * 4;
-          d[pidx + 3] = 0; // Set alpha to transparent
-        }
-      }
-    }
-  }
-  
-  ctx.putImageData(imageData, 0, 0);
-}

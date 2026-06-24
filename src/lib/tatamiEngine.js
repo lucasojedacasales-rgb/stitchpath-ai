@@ -169,30 +169,35 @@ export function generateTatamiLines(pts, region, drawW, drawH) {
 
   // ── TATAMI FILL ──────────────────────────────────────────────────────────
   let lineIdx = 0;
-  
-  // Generate scanlines across entire polygon without sections
-  for (let v = bbox.minV; v <= bbox.maxV; v += spacing) {
-    // Create a full-width line across the entire bounding box
-    const worldA = toWorld(bbox.minU, v);
-    const worldB = toWorld(bbox.maxU, v);
+  // Divide u-extent into sections of sectionWidth
+  const totalU = bbox.maxU - bbox.minU;
+  const numSections = Math.max(1, Math.ceil(totalU / sectionWidth));
 
-    // Clip against polygon boundary
-    const clipped = clipLineAgainstPolygon(worldA, worldB, expandedPoly);
-    
-    for (const [p0, p1] of clipped) {
-      // Alternate direction (zig-zag / tatami)
-      const isOdd = lineIdx % 2 === 1;
-      const start = isOdd ? p1 : p0;
-      const end   = isOdd ? p0 : p1;
+  for (let sec = 0; sec < numSections; sec++) {
+    const uStart = bbox.minU + sec * sectionWidth;
+    const uEnd   = Math.min(bbox.maxU, uStart + sectionWidth);
 
-      // Needle offset: subtle alternation ±needleOffset along perpendicular axis
-      const perp = [-sin, cos]; // perpendicular to stitch direction
-      const off = (lineIdx % 4 < 2 ? 1 : -1) * needleOffset;
-      const s = add(start, scale(perp, off));
-      const e = add(end,   scale(perp, off));
+    for (let v = bbox.minV; v <= bbox.maxV; v += spacing) {
+      // Line endpoints in world space (full section width)
+      const worldA = toWorld(uStart, v);
+      const worldB = toWorld(uEnd, v);
 
-      fillLines.push([s, e]);
-      lineIdx++;
+      const clipped = clipLineAgainstPolygon(worldA, worldB, expandedPoly);
+      for (const [p0, p1] of clipped) {
+        // Alternate direction (zig-zag / tatami)
+        const isOdd = lineIdx % 2 === 1;
+        const start = isOdd ? p1 : p0;
+        const end   = isOdd ? p0 : p1;
+
+        // Needle offset: alternate entry/exit points ±needleOffset along V axis
+        const perp = [-sin, cos]; // perpendicular to stitch direction
+        const off = (lineIdx % 4 < 2 ? 1 : -1) * needleOffset;
+        const s = add(start, scale(perp, off));
+        const e = add(end,   scale(perp, off));
+
+        fillLines.push([s, e]);
+        lineIdx++;
+      }
     }
   }
 
@@ -210,20 +215,7 @@ export function drawTatamiRegion(ctx, pts, region, drawW, drawH, zoom, isSelecte
   // Map normalized pts to canvas px
   const cpx = pts.map(p => [(p[0] - 0.5) * drawW, (p[1] - 0.5) * drawH]);
 
-  // Ensure polygon is closed for clipping
-  const closedPoly = cpx[cpx.length - 1] !== cpx[0] ? [...cpx, cpx[0]] : cpx;
-
   const { fillLines, underlayLines } = generateTatamiLines(cpx, region, drawW, drawH);
-
-  // ── Set clip region (MANDATORY) ───────────────────────────────────────────
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(closedPoly[0][0], closedPoly[0][1]);
-  for (let i = 1; i < closedPoly.length; i++) {
-    ctx.lineTo(closedPoly[i][0], closedPoly[i][1]);
-  }
-  ctx.closePath();
-  ctx.clip();
 
   // ── Draw underlay (40% opacity, darker color) ─────────────────────────────
   if (underlayLines.length > 0) {
@@ -257,8 +249,6 @@ export function drawTatamiRegion(ctx, pts, region, drawW, drawH, zoom, isSelecte
     ctx.lineTo(p1[0] + fuzz, p1[1] + fuzz);
     ctx.stroke();
   }
-
-  ctx.restore(); // END CLIP
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

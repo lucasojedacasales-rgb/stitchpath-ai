@@ -3,7 +3,7 @@ import { X, Download, Clock, Layers, Palette, FileText, ChevronRight, ShieldChec
 import { base44 } from '@/api/base44Client';
 import PreflightPanel from './PreflightPanel';
 
-const FORMATS = ['DST', 'PES', 'JEF', 'EXP', 'VP3'];
+const FORMATS = ['DST', 'PES', 'JEF', 'DSB'];
 
 export default function ExportModal({ project, regions: initialRegions, onClose }) {
   const [step, setStep] = useState('preflight'); // 'preflight' | 'export'
@@ -27,39 +27,28 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
   const handleExport = async () => {
     setExporting(true);
     try {
-      // Convert regions to stitch blocks format
-      const stitchBlocks = regions.map(r => ({
-        id: r.id,
-        type: r.stitch_type,
-        color: r.color,
-        stitches: r.path_points?.map(p => [p[0] * (widthMm || 100), p[1] * (heightMm || 100)]) || []
-      }));
-
-      const res = await base44.functions.invoke('exportToMachineFormat', {
-        stitch_blocks: stitchBlocks,
-        format_type: format,
-        project_name: project?.name || 'design',
-        metadata: {
-          machine: machine || 'Generic',
-          speed: speed
-        }
+      const res = await base44.functions.invoke('generateEmbroideryFile', {
+        regions,
+        format,
+        width_mm: widthMm,
+        height_mm: heightMm,
+        machine_name: machine || 'Generic',
+        speed_rpm: speed,
+        cuts,
+        project_name: project?.name || 'design'
       });
-
-      if (!res?.data?.success) throw new Error(res?.data?.error || 'Export failed');
-
-      const { binary, filename } = res.data;
-      const bytes = new Uint8Array(binary);
+      const { file_base64, file_name } = res.data;
+      const byteStr = atob(file_base64);
+      const bytes = new Uint8Array(byteStr.length);
+      for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
       const blob = new Blob([bytes], { type: 'application/octet-stream' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.click();
+      a.href = url; a.download = file_name; a.click();
       URL.revokeObjectURL(url);
       onClose();
     } catch (e) {
-      console.error('[EXPORT]', e);
-      alert('Error: ' + (e.message || 'Export failed'));
+      console.error(e);
     } finally {
       setExporting(false);
     }

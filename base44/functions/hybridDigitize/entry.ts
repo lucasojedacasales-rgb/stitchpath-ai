@@ -1,197 +1,182 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
+// Fetch image and re-upload via Base44 UploadFile so Claude Vision can access it
+async function reuploadForClaude(imageUrl, base44) {
+  const res = await fetch(imageUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (!res.ok) throw new Error(`HTTP ${res.status} fetching image`);
+  const contentType = res.headers.get('content-type') || 'image/png';
+  const buffer = await res.arrayBuffer();
+  const ext = contentType.includes('png') ? 'png' : contentType.includes('gif') ? 'gif' : contentType.includes('webp') ? 'webp' : 'jpg';
+  const file = new File([buffer], `image.${ext}`, { type: contentType });
+  const uploaded = await base44.asServiceRole.integrations.Core.UploadFile({ file });
+  return uploaded.file_url;
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { image_url, mode, width_mm, height_mm, color_count } = await req.json();
+    const { image_url, mode, width_mm, height_mm, color_count, use_ia_vision, image_analysis, traced_contours } = await req.json();
 
     if (!image_url) return Response.json({ error: 'image_url required' }, { status: 400 });
 
+    const maxColors = Math.min(color_count || 8, 20);
     const w = width_mm || 100;
     const h = height_mm || 100;
-    const maxColors = Math.min(color_count || 8, 20);
 
-    // ─── CRITICAL: Use real vectorization, not Claude coordinates ────────────
-    // NOTE: Geometric pipeline (Close → Offset → Clip) is executed client-side in pages/Editor.js
-    console.log('Using real vectorization (robustVectorization)...');
-    
-    const vectorRes = await base44.functions.invoke('robustVectorization', {
-      pixels,
-      width: imageWidth,
-      height: imageHeight,
-      width_mm: w,
-      height_mm: h,
-      color_count: maxColors,
-      apply_pipeline: false // Pipeline runs client-side
-    });
+    // Re-upload image so Claude Vision always gets a valid Base44-hosted URL
+    const imageDataUrl = await reuploadForClaude(image_url, base44);
 
-    if (!vectorRes?.data?.success) {
-      return Response.json({
-        success: false,
-        error: vectorRes?.data?.error || 'Vectorization failed',
-        data: { regions: [], total_stitches: 0 }
-      }, { status: 422 });
-    }
+    // ─── PATH A: Use real traced contours from client ────────────────────────
+    if (traced_contours && traced_contours.regions && traced_contours.regions.length > 0) {
+      const clientRegions = traced_contours.regions;
 
-    let regions = vectorRes.data.data?.regions || [];
+      const regionDescriptions = clientRegions.slice(0, 40).map((r, i) => {
+        const bbox = r.bbox;
+        const cx = ((bbox.minX + bbox.maxX) / 2 / (traced_contours.analysisW || 512)).toFixed(3);
+        const cy = ((bbox.minY + bbox.maxY) / 2 / (traced_contours.analysisH || 512)).toFixed(3);
+        const areaPct = (r.coverage * 100).toFixed(1);
+        return `Región ${i}: color=${r.hex} centro=(${cx},${cy}) cobertura=${areaPct}%`;
+      }).join('\n');
 
-    if (regions.length === 0) {
-      return Response.json({
-        success: false,
-        error: 'No valid regions extracted from image',
-        data: { regions: [], total_stitches: 0 }
-      }, { status: 422 });
-    }
+      const labelPrompt = `Eres un experto digitalizador de bordados. Analiza la imagen.
 
-    // ─── Classification & Optimization ────────────────────────────────────
-    
-    // Clasificación inteligente de tipo de puntada (geométrica)
-    const classifyStitchType = (region) => {
-      const hex = (region.color || '').toLowerCase();
-      const isDark = hex === '#000000' || hex === '#1a1a1a';
+Tengo ${Math.min(clientRegions.length, 40)} regiones detectadas píxel a píxel:
+${regionDescriptions}
 
-      if (isDark) return 'running_stitch';
+Para CADA región asigna (en orden 0, 1, 2...):
+- name: nombre descriptivo (ej: "cuerpo_principal", "ojo_izquierdo")
+- stitch_type: "fill" zonas grandes, "satin" bordes medianos, "running_stitch" detalles finos
+- density: 0.4-0.9
+- angle: 0-180 (ángulo puntadas)
+- layer_order: 1=primero (fills grandes antes que contornos)
+- underlay: true para fill/satin grandes, false para detalles
+- pull_compensation: 0.1-0.2
 
-      const area = region.area_mm2 || 0;
-      const perim = region.perimeter_mm || 1;
-      const avgWidth = perim > 0 ? area / perim : 0;
-      const compactness = perim > 0 ? (perim * perim) / Math.max(area, 1) : 999;
+Responde SOLO JSON:
+{"labels":[{"index":0,"name":"...","stitch_type":"fill","density":0.7,"angle":45,"layer_order":1,"underlay":true,"pull_compensation":0.15}],"estimated_time_min":12}`;
 
-      if (area < 30) return 'running_stitch';
-      if (area > 500 && avgWidth > 8) return 'fill';
-      if (avgWidth < 2.5 || compactness > 20) return 'satin';
-      if (area < 100 || compactness > 12) return 'satin';
-      return 'fill';
-    };
-
-    // Optimización de secuencia (reduce saltos)
-    const optimizeStitchSequence = (blocks) => {
-      if (blocks.length <= 1) return blocks;
-
-      const colorGroups = {};
-      blocks.forEach((b, i) => {
-        const c = b.color || b.color_index || 0;
-        if (!colorGroups[c]) colorGroups[c] = [];
-        colorGroups[c].push({ ...b, idx: i });
-      });
-
-      const optimized = [];
-      Object.keys(colorGroups).sort().forEach(color => {
-        const group = colorGroups[color];
-        if (group.length <= 1) {
-          optimized.push(...group);
-          return;
-        }
-
-        const visited = new Set();
-        const ordered = [group[0]];
-        visited.add(0);
-
-        for (let i = 1; i < group.length; i++) {
-          const lastBlock = ordered[ordered.length - 1];
-          const lastX = lastBlock.centroid?.[0] ?? 0.5;
-          const lastY = lastBlock.centroid?.[1] ?? 0.5;
-
-          let minDist = Infinity, nextIdx = -1;
-          for (let j = 0; j < group.length; j++) {
-            if (visited.has(j)) continue;
-            const b = group[j];
-            const bx = b.centroid?.[0] ?? 0.5;
-            const by = b.centroid?.[1] ?? 0.5;
-            const dist = Math.hypot(bx - lastX, by - lastY);
-            if (dist < minDist) { minDist = dist; nextIdx = j; }
-          }
-
-          ordered.push(group[nextIdx]);
-          visited.add(nextIdx);
-        }
-
-        optimized.push(...ordered);
-      });
-
-      return optimized;
-    };
-
-    // Inserción automática de trims
-    const insertTrims = (blocks) => {
-      const MAX_JUMP_MM = 7.0;
-      const result = [];
-
-      for (let i = 0; i < blocks.length; i++) {
-        const block = blocks[i];
-
-        if (i > 0) {
-          const prevBlock = result[result.length - 1];
-          const prevCentroid = prevBlock.centroid || [0.5, 0.5];
-          const currCentroid = block.centroid || [0.5, 0.5];
-          const dist = Math.hypot(
-            (currCentroid[0] - prevCentroid[0]) * w,
-            (currCentroid[1] - prevCentroid[1]) * h
-          );
-
-          if (dist > MAX_JUMP_MM) {
-            block.has_jump_before = true;
+      const labelResult = await base44.asServiceRole.integrations.Core.InvokeLLM({
+        prompt: labelPrompt,
+        file_urls: [imageDataUrl],
+        model: 'claude_sonnet_4_6',
+        response_json_schema: {
+          type: 'object',
+          properties: {
+            labels: { type: 'array', items: { type: 'object' } },
+            estimated_time_min: { type: 'number' }
           }
         }
+      });
 
-        result.push(block);
+      const labels = labelResult.labels || [];
+      const labelMap = {};
+      for (const l of labels) labelMap[l.index] = l;
+
+      const finalRegions = clientRegions.slice(0, 40).map((r, i) => {
+        const label = labelMap[i] || {};
+        const stitch_type = label.stitch_type || (r.coverage > 0.05 ? 'fill' : r.coverage > 0.01 ? 'satin' : 'running_stitch');
+        const stitch_count = Math.round((r.area_px || r.pixelCount || 100) * (label.density || 0.7) * 0.4);
+        return {
+          id: `r${i + 1}`,
+          name: label.name || `region_${r.hex.replace('#', '')}_${i}`,
+          color: r.hex,
+          stitch_type,
+          density: label.density || 0.7,
+          angle: label.angle || (i * 17 % 180),
+          layer_order: label.layer_order || (i + 1),
+          pull_compensation: label.pull_compensation || 0.15,
+          underlay: label.underlay !== undefined ? label.underlay : stitch_type !== 'running_stitch',
+          area_mm2: Math.round(r.coverage * w * h),
+          stitch_count,
+          is_auto_contour: false,
+          visible: true,
+          path_points: r.path_points,
+        };
+      });
+
+      const total_stitches = finalRegions.reduce((s, r) => s + r.stitch_count, 0);
+      return Response.json({
+        success: true,
+        data: {
+          regions: finalRegions,
+          total_stitches,
+          estimated_time_min: labelResult.estimated_time_min || Math.round(total_stitches / 800),
+          colors_used: new Set(finalRegions.map(r => r.color)).size,
+          width_mm: w,
+          height_mm: h,
+        }
+      });
+    }
+
+    // ─── PATH B: Pure AI generation ───────────────────────────────────────────
+    const regionTarget = mode === 'ultra' ? '80-120' : mode === 'precision' ? '50-80' : mode === 'standard' ? '15-30' : '30-60';
+    const pointsPerShape = mode === 'ultra' ? '40-80' : mode === 'precision' ? '30-60' : '15-40';
+
+    let colorDataBlock = '';
+    if (image_analysis?.dominantColors?.length > 0) {
+      colorDataBlock = `\nCOLORES DETECTADOS:\n${image_analysis.dominantColors.map(c => `  ${c.hex} (${(c.coverage * 100).toFixed(1)}%)`).join('\n')}\n`;
+    }
+
+    const prompt = `Eres el mejor digitalizador de bordados. Analiza la imagen adjunta y genera ${regionTarget} regiones de bordado con contornos precisos.
+TAMAÑO DISEÑO: ${w}mm × ${h}mm | COLORES MÁX: ${maxColors} | MODO: ${mode || 'hybrid'}
+${colorDataBlock}
+INSTRUCCIONES:
+- path_points: ${pointsPerShape} puntos siguiendo el contorno REAL de cada zona de color
+- Coordenadas normalizadas 0.0–1.0 (0,0 = arriba-izquierda, 1,1 = abajo-derecha)
+- Polígono cerrado: el último punto debe ser igual al primero
+- Orden de capas: fills grandes primero (layer_order=1), luego medianos, luego contornos satin, luego detalles running_stitch
+- Usa los colores REALES que ves en la imagen para los hex codes
+- stitch_count: estima realista según area (fill ~15pts/mm², satin ~20pts/mm, running ~5pts/mm)
+
+Responde SOLO con JSON válido (sin texto extra):
+{
+  "regions": [
+    {
+      "id": "r1",
+      "name": "nombre_descriptivo",
+      "color": "#rrggbb",
+      "stitch_type": "fill",
+      "density": 0.7,
+      "angle": 45,
+      "layer_order": 1,
+      "pull_compensation": 0.15,
+      "underlay": true,
+      "area_mm2": 800,
+      "stitch_count": 2200,
+      "is_auto_contour": false,
+      "visible": true,
+      "path_points": [[0.1,0.1],[0.9,0.1],[0.9,0.9],[0.1,0.9],[0.1,0.1]]
+    }
+  ],
+  "total_stitches": 18000,
+  "estimated_time_min": 12,
+  "colors_used": 6,
+  "width_mm": ${w},
+  "height_mm": ${h}
+}`;
+
+    const result = await base44.asServiceRole.integrations.Core.InvokeLLM({
+      prompt,
+      file_urls: [imageDataUrl],
+      model: 'claude_sonnet_4_6',
+      response_json_schema: {
+        type: 'object',
+        properties: {
+          regions: { type: 'array', items: { type: 'object' } },
+          total_stitches: { type: 'number' },
+          estimated_time_min: { type: 'number' },
+          colors_used: { type: 'number' },
+          width_mm: { type: 'number' },
+          height_mm: { type: 'number' }
+        }
       }
-
-      return result;
-    };
-
-    const calculateStitchCount = (region) => {
-      const type = region.stitch_type;
-      const area = region.area_mm2 || 0;
-      const perim = region.perimeter_mm || 1;
-      const density = region.density || 0.7;
-
-      if (type === 'fill') {
-        return Math.round(area * density * 2.5);
-      } else if (type === 'satin') {
-        const width = Math.max(1, area / perim);
-        const stitchLength = 2.5;
-        return Math.round((perim / stitchLength) * (width / Math.max(0.4, density)));
-      } else {
-        const stitchLength = 1.5;
-        return Math.round(perim / stitchLength);
-      }
-    };
-
-    // Procesar regiones
-    let processedRegions = regions.map((r, idx) => {
-      const type = classifyStitchType(r);
-      return {
-        ...r,
-        stitch_type: type,
-        stitch_count: calculateStitchCount({ ...r, stitch_type: type })
-      };
     });
 
-    // Optimizar secuencia + insertar trims
-    processedRegions = optimizeStitchSequence(processedRegions);
-    processedRegions = insertTrims(processedRegions);
-
-    const totalStitches = processedRegions.reduce((sum, r) => sum + (r.stitch_count || 0), 0);
-
-    return Response.json({
-      success: true,
-      data: {
-        regions: processedRegions,
-        total_stitches: totalStitches,
-        estimated_time_min: Math.round(totalStitches / 800),
-        colors_used: new Set(processedRegions.map(r => r.color)).size,
-        width_mm: w,
-        height_mm: h,
-        generation_method: 'real_vectorization'
-      }
-    });
-
+    return Response.json({ success: true, data: result });
   } catch (error) {
-    console.error('hybridDigitize error:', error);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });

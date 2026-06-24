@@ -4,15 +4,11 @@ import { Sliders, ChevronDown, ChevronRight, Zap } from 'lucide-react';
 export const DEFAULT_PREPROCESS = {
   enabled: true,
   gaussianRadius: 1,
-  contrastBoost: 1.5,
+  contrastBoost: 1.4,
   saturationBoost: 1.6,
   sharpenEdges: true,
   sharpenStrength: 0.8,
   outputSize: 1024,
-  removeBackground: false,
-  maxColors: 8,
-  minDetailSize: 1.0,
-  dpi: 300,
 };
 
 function SliderRow({ label, value, min, max, step, onChange, format }) {
@@ -96,23 +92,6 @@ export default function PreprocessingPanel({ settings, onChange }) {
                 value={s.saturationBoost} min={1.0} max={3.0} step={0.1}
                 onChange={v => set('saturationBoost', v)}
                 format={v => `×${v.toFixed(1)}`}
-              />
-
-              <div className="pt-1 pb-0.5">
-                <span className="text-[10px] text-slate-600 uppercase tracking-widest">Limpieza</span>
-              </div>
-              <Toggle label="Eliminar fondo blanco" value={s.removeBackground} onChange={v => set('removeBackground', v)} />
-              <SliderRow
-                label="Paleta de colores máx"
-                value={s.maxColors} min={2} max={16} step={1}
-                onChange={v => set('maxColors', v)}
-                format={v => `${v} colores`}
-              />
-              <SliderRow
-                label="Tamaño mín detalles"
-                value={s.minDetailSize} min={0} max={5} step={0.5}
-                onChange={v => set('minDetailSize', v)}
-                format={v => v === 0 ? 'off' : `${v}mm`}
               />
 
               <div className="pt-1 pb-0.5">
