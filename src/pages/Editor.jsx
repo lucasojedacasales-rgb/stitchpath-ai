@@ -227,28 +227,42 @@ export default function Editor() {
         const rawData = res.data.data?.response || res.data.data;
         const { regions: rawRegions, total_stitches } = rawData;
 
+        console.log('[EDITOR] Raw response:', {
+          success: res.data.success,
+          hasRegions: !!rawRegions,
+          regionCount: rawRegions?.length,
+          totalStitches: total_stitches,
+          firstRegion: rawRegions?.[0]
+        });
+
         // ── Normalizar regiones: mapear stitches → path_points ──────────────────
         const normalized = (rawRegions || []).map(r => {
-         // Si viene de robustVectorization, tiene `stitches` en mm
-         // Convertir a path_points (normalizados 0-1)
-         const pathPoints = (r.stitches || []).map(s => [
-           s.x / (config.width_mm || 100),
-           s.y / (config.height_mm || 100)
-         ]);
+          const pathPoints = (r.stitches || []).map(s => [
+            s.x / (config.width_mm || 100),
+            s.y / (config.height_mm || 100)
+          ]);
 
-         return {
-           ...r,
-           path_points: r.path_points || pathPoints,
-           stitches: r.stitches || [],
-           pointCount: r.pointCount || (r.stitches?.length || 0)
-         };
+          const normalized = {
+            ...r,
+            path_points: r.path_points || pathPoints,
+            stitches: r.stitches || [],
+            pointCount: r.pointCount || (r.stitches?.length || 0)
+          };
+
+          console.log('[EDITOR] Normalized region:', { id: r.id, stitches: r.stitches?.length, name: r.name });
+          return normalized;
         });
+
+        console.log('[EDITOR] Normalized regions:', normalized.length);
 
         // Filtrado permisivo: confía en regiones con puntadas
         const filtered = normalized.filter(r => {
-         if (!r.stitches || r.stitches.length < 1) return false;
-         return true;
+          const keep = r.stitches && r.stitches.length >= 1;
+          if (!keep) console.log('[EDITOR] Filtered out region:', r.id, 'stitches:', r.stitches?.length);
+          return keep;
         });
+
+        console.log('[EDITOR] Filtered regions:', filtered.length);
 
         // ── Clasificación inteligente de tipo de puntada (geométrica) ────────
          const classifyStitchType = (region) => {
@@ -455,6 +469,12 @@ export default function Editor() {
          // Recalculate total stitches
          const totalCalculatedStitches = newRegions.reduce((sum, r) => sum + (r.stitch_count || 0), 0);
 
+        console.log('[EDITOR] Setting regions:', {
+          count: newRegions.length,
+          totalStitches: totalCalculatedStitches,
+          firstRegion: newRegions[0]
+        });
+        
         setRegions(newRegions);
         setVectorDiagnostics(res.data.diagnostics || {});
         setStep(3);
