@@ -1,8 +1,8 @@
 /* global Deno */
 
 /**
- * Motor de Vectorización Ultra-Ligero para Deno
- * Redimensiona a 128px, scanlines horizontales, sin k-means/contornos
+ * Motor de Vectorización Robusto para Deno
+ * Genera regiones rellenas a partir de imagen rasterizada
  */
 
 Deno.serve(async (req) => {
@@ -22,9 +22,9 @@ Deno.serve(async (req) => {
       stitch_density = 0.7
     } = payload;
 
-    console.log(`[LITE] Starting: ${width}x${height}px → ${width_mm}x${height_mm}mm`);
+    console.log(`[ROBUST] Starting vectorization: ${width}x${height}px → ${width_mm}x${height_mm}mm`);
 
-    // Validar entrada mínima
+    // Validar entrada
     if (!pixels || !width || !height || pixels.length < 4) {
       return Response.json({ 
         success: false, 
@@ -32,51 +32,60 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Convertir pixels a Uint8ClampedArray si es necesario
+    // Convertir a Uint8ClampedArray
     let pixelData = pixels;
     if (!(pixelData instanceof Uint8ClampedArray) && Array.isArray(pixelData)) {
       pixelData = new Uint8ClampedArray(pixelData);
     }
 
-    // 1. ESCALAR a máximo 128px
-    const scaled = scaleImage(pixelData, width, height, 128, 128);
-    const { pixels: scaledPixels, width: scaledW, height: scaledH } = scaled;
+    // 1. ESCALAR imagen (máximo 256px para velocidad)
+    const maxDim = 256;
+    const aspect = width / height;
+    let scaledW, scaledH;
+    if (aspect > 1) {
+      scaledW = Math.min(width, maxDim);
+      scaledH = Math.round(scaledW / aspect);
+    } else {
+      scaledH = Math.min(height, maxDim);
+      scaledW = Math.round(scaledH * aspect);
+    }
+    scaledW = Math.max(16, Math.min(256, scaledW));
+    scaledH = Math.max(16, Math.min(256, scaledH));
 
-    console.log(`[LITE] Scaled to ${scaledW}x${scaledH}px`);
+    const { pixels: scaled, width: sW, height: sH } = scaleImage(pixelData, width, height, scaledW, scaledH);
+    console.log(`[ROBUST] Scaled to ${sW}x${sH}px`);
 
-    // 2. CUANTIZAR: truncar RGB a 3 bits
-    const { labels, palette } = quantizeToFrequency(scaledPixels, scaledW, scaledH, color_count);
+    // 2. CUANTIZAR colores
+    const { labels, palette } = quantizeImage(scaled, sW, sH, color_count);
+    console.log(`[ROBUST] Palette: ${palette.length} colors`);
 
-    console.log(`[LITE] Palette: ${palette.length} colors`);
+    // 3. GENERAR REGIONES con scanlines densas
+    const regions = generateRegions(labels, palette, sW, sH, stitch_density);
+    console.log(`[ROBUST] Generated ${regions.length} regions`);
 
-    // 3. GENERAR PUNTADAS: scanlines horizontales
-    let regions = generateScanlineStitches(labels, palette, scaledW, scaledH, stitch_density);
-
-    // Fallback: si no hay regiones, crear una región default
     if (regions.length === 0) {
-      console.log('[LITE] No regions found, generating default grayscale...');
-      regions = [generateDefaultRegion(scaledPixels, scaledW, scaledH, stitch_density)];
+      throw new Error('No regions generated from image');
     }
 
-    // 4. LIMITAR: máx 20 regiones, máx 10k puntadas
-    const filtered = regions.slice(0, 20).map(r => ({
-      ...r,
-      stitches: r.stitches.slice(0, Math.ceil(10000 / Math.max(1, regions.length)))
-    }));
+    // 4. CONVERTIR a milímetros
+    const pxPerMM_x = width_mm / sW;
+    const pxPerMM_y = height_mm / sH;
 
-    const totalStitches = filtered.reduce((s, r) => s + r.pointCount, 0);
-
-    // 5. CONVERTIR a milímetros
-    const pxPerMM = width_mm / scaledW;
-    const finalRegions = filtered.map(r => ({
+    const finalRegions = regions.map(r => ({
       ...r,
       stitches: r.stitches.map(pt => ({
-        x: Math.max(0, Math.min(width_mm, pt.x * pxPerMM)),
-        y: Math.max(0, Math.min(height_mm, pt.y * pxPerMM))
-      }))
+        x: Math.max(0, Math.min(width_mm, pt.x * pxPerMM_x)),
+        y: Math.max(0, Math.min(height_mm, pt.y * pxPerMM_y))
+      })),
+      path_points: r.stitches.map(pt => [
+        pt.x * pxPerMM_x / width_mm,
+        pt.y * pxPerMM_y / height_mm
+      ])
     }));
 
-    console.log(`[LITE] SUCCESS: ${finalRegions.length} regions, ${totalStitches} stitches`);
+    const totalStitches = finalRegions.reduce((s, r) => s + r.pointCount, 0);
+
+    console.log(`[ROBUST] SUCCESS: ${finalRegions.length} regions, ${totalStitches} stitches`);
 
     return Response.json({
       success: true,
@@ -91,7 +100,7 @@ Deno.serve(async (req) => {
       }
     });
   } catch (err) {
-    console.error('[LITE] Error:', err.message);
+    console.error('[ROBUST] Error:', err.message);
     return Response.json({
       success: false,
       error: err.message
@@ -103,21 +112,7 @@ Deno.serve(async (req) => {
 // ESCALAR IMAGEN
 // ============================================================================
 
-function scaleImage(pixels, srcW, srcH, maxW, maxH) {
-  const aspect = srcW / srcH;
-  let dstW, dstH;
-
-  if (aspect > 1) {
-    dstW = Math.min(srcW, maxW);
-    dstH = Math.round(dstW / aspect);
-  } else {
-    dstH = Math.min(srcH, maxH);
-    dstW = Math.round(dstH * aspect);
-  }
-
-  dstW = Math.max(8, Math.min(128, dstW));
-  dstH = Math.max(8, Math.min(128, dstH));
-
+function scaleImage(src, srcW, srcH, dstW, dstH) {
   const dst = new Uint8ClampedArray(dstW * dstH * 4);
 
   for (let y = 0; y < dstH; y++) {
@@ -127,10 +122,10 @@ function scaleImage(pixels, srcW, srcH, maxW, maxH) {
       const srcIdx = (srcY * srcW + srcX) * 4;
       const dstIdx = (y * dstW + x) * 4;
 
-      dst[dstIdx] = pixels[srcIdx];
-      dst[dstIdx + 1] = pixels[srcIdx + 1];
-      dst[dstIdx + 2] = pixels[srcIdx + 2];
-      dst[dstIdx + 3] = pixels[srcIdx + 3] || 255;
+      dst[dstIdx]     = src[srcIdx];
+      dst[dstIdx + 1] = src[srcIdx + 1];
+      dst[dstIdx + 2] = src[srcIdx + 2];
+      dst[dstIdx + 3] = src[srcIdx + 3] || 255;
     }
   }
 
@@ -138,23 +133,33 @@ function scaleImage(pixels, srcW, srcH, maxW, maxH) {
 }
 
 // ============================================================================
-// CUANTIZAR: truncar RGB a 3 bits + frecuencias
+// CUANTIZAR IMAGEN
 // ============================================================================
 
-function quantizeToFrequency(pixels, width, height, k) {
-  const colorMap = new Map();
+function quantizeImage(pixels, width, height, k) {
+  const colorFreq = new Map();
 
+  // Contar frecuencias
   for (let i = 0; i < pixels.length; i += 4) {
-    const r = pixels[i] & 0xE0;
-    const g = pixels[i + 1] & 0xE0;
-    const b = pixels[i + 2] & 0xE0;
-    const key = `${r},${g},${b}`;
+    const r = pixels[i];
+    const g = pixels[i + 1];
+    const b = pixels[i + 2];
+    const a = pixels[i + 3] || 255;
 
-    colorMap.set(key, (colorMap.get(key) || 0) + 1);
+    // Ignorar píxeles muy transparentes
+    if (a < 128) continue;
+
+    // Cuantizar a 4 bits por canal para acelerar
+    const qr = r & 0xF0;
+    const qg = g & 0xF0;
+    const qb = b & 0xF0;
+    const key = `${qr},${qg},${qb}`;
+
+    colorFreq.set(key, (colorFreq.get(key) || 0) + 1);
   }
 
-  // K colores más frecuentes
-  const palette = Array.from(colorMap.entries())
+  // Top K colores por frecuencia
+  const palette = Array.from(colorFreq.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, Math.max(1, k))
     .map(([key]) => {
@@ -162,84 +167,85 @@ function quantizeToFrequency(pixels, width, height, k) {
       return { r, g, b };
     });
 
-  // Asignar cada píxel
+  // Asignar cada píxel al color más cercano
   const labels = new Uint8Array(width * height);
-
   for (let i = 0, idx = 0; i < pixels.length; i += 4, idx++) {
-    const r = pixels[i] & 0xE0;
-    const g = pixels[i + 1] & 0xE0;
-    const b = pixels[i + 2] & 0xE0;
+    const r = pixels[i];
+    const g = pixels[i + 1];
+    const b = pixels[i + 2];
+    const a = pixels[i + 3] || 255;
 
-    let bestIdx = 0;
-    let bestDist = Infinity;
+    // Píxeles transparentes = fondo
+    if (a < 128) {
+      labels[idx] = 255; // "background"
+      continue;
+    }
 
+    let best = 0, bestDist = Infinity;
     for (let j = 0; j < palette.length; j++) {
       const dr = r - palette[j].r;
       const dg = g - palette[j].g;
       const db = b - palette[j].b;
       const dist = dr * dr + dg * dg + db * db;
-
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestIdx = j;
-      }
+      if (dist < bestDist) { best = j; bestDist = dist; }
     }
-
-    labels[idx] = bestIdx;
+    labels[idx] = best;
   }
 
   return { labels, palette };
 }
 
 // ============================================================================
-// GENERAR PUNTADAS: scanlines horizontales
+// GENERAR REGIONES CON SCANLINES
 // ============================================================================
 
-function generateScanlineStitches(labels, palette, width, height, stitchDensity) {
-  const STEP = Math.max(1, Math.round(5 / stitchDensity));
+function generateRegions(labels, palette, width, height, density) {
   const regions = [];
+  const STEP = Math.max(1, Math.round(3 / Math.max(0.1, density)));
 
+  // Procesar cada color
   for (let colorIdx = 0; colorIdx < palette.length; colorIdx++) {
     const stitches = [];
 
+    // Scanlines horizontales
     for (let y = 0; y < height; y += STEP) {
-      let inSegment = false;
-      let segStart = -1;
+      let inRun = false;
+      let runStart = -1;
 
-      for (let x = 0; x < width; x++) {
-        const current = labels[y * width + x];
-        const prev = x > 0 ? labels[y * width + x - 1] : -1;
+      for (let x = 0; x <= width; x++) {
+        const isColor = x < width && labels[y * width + x] === colorIdx;
+        const wasColor = x > 0 && labels[y * width + x - 1] === colorIdx;
 
-        if (current === colorIdx && prev !== colorIdx) {
-          inSegment = true;
-          segStart = x;
+        if (isColor && !wasColor) {
+          // Inicio de run
+          inRun = true;
+          runStart = x;
         }
 
-        if (inSegment && (current !== colorIdx || x === width - 1)) {
-          const segEnd = current === colorIdx ? x : x - 1;
-
-          if (segEnd >= segStart) {
-            for (let sx = segStart; sx <= segEnd; sx += STEP) {
-              if (labels[y * width + sx] === colorIdx) {
-                stitches.push({ x: sx, y });
-              }
-            }
+        if (!isColor && wasColor) {
+          // Fin de run: añadir puntos
+          for (let px = runStart; px < x; px += STEP) {
+            stitches.push({ x: px, y });
           }
-
-          inSegment = false;
+          inRun = false;
         }
       }
     }
 
     if (stitches.length > 0) {
-      const zigzagged = zigzagConnect(stitches, STEP);
+      // Zigzag para conectar líneas adyacentes
+      const zigzagged = zigzagConnect(stitches, width, height, STEP);
+
+      const color = `#${palette[colorIdx].r.toString(16).padStart(2, '0')}${palette[colorIdx].g.toString(16).padStart(2, '0')}${palette[colorIdx].b.toString(16).padStart(2, '0')}`;
+
       regions.push({
-        id: `r${colorIdx}`,
-        name: getColorName(palette[colorIdx], colorIdx),
-        color: `#${palette[colorIdx].r.toString(16).padStart(2, '0')}${palette[colorIdx].g.toString(16).padStart(2, '0')}${palette[colorIdx].b.toString(16).padStart(2, '0')}`,
+        id: `region_${colorIdx}`,
+        name: `color_${colorIdx}`,
+        color: color,
         type: classifyType(zigzagged.length),
         stitches: zigzagged,
-        pointCount: zigzagged.length
+        pointCount: zigzagged.length,
+        visible: true
       });
     }
   }
@@ -247,9 +253,10 @@ function generateScanlineStitches(labels, palette, width, height, stitchDensity)
   return regions;
 }
 
-function zigzagConnect(stitches, step) {
+function zigzagConnect(stitches, width, height, step) {
   if (stitches.length < 2) return stitches;
 
+  // Agrupar por filas (y)
   const rows = new Map();
   for (const s of stitches) {
     const yKey = Math.round(s.y / step);
@@ -257,6 +264,7 @@ function zigzagConnect(stitches, step) {
     rows.get(yKey).push(s);
   }
 
+  // Ordenar filas por y
   const sorted = Array.from(rows.entries())
     .sort((a, b) => a[0] - b[0])
     .map(([_, row]) => {
@@ -264,9 +272,11 @@ function zigzagConnect(stitches, step) {
       return row;
     });
 
+  // Conectar filas con zigzag
   const result = [];
   for (let i = 0; i < sorted.length; i++) {
     const row = sorted[i];
+    // Alternar dirección para minimizar saltos
     if (i % 2 === 1) row.reverse();
     result.push(...row);
   }
@@ -275,52 +285,7 @@ function zigzagConnect(stitches, step) {
 }
 
 function classifyType(count) {
-  if (count < 100) return 'running_stitch';
-  if (count < 1000) return 'satin';
+  if (count < 50) return 'running_stitch';
+  if (count < 500) return 'satin';
   return 'fill';
-}
-
-function getColorName(color, idx) {
-  const names = ['negro', 'rojo', 'verde', 'azul', 'amarillo', 'rosa'];
-  return names[idx] || `color${idx}`;
-}
-
-// ============================================================================
-// FALLBACK: región default si no se encuentran regiones
-// ============================================================================
-
-function generateDefaultRegion(pixels, width, height, stitchDensity) {
-  const STEP = Math.max(1, Math.round(5 / stitchDensity));
-  const stitches = [];
-
-  // Scanlines simples de luminancia (grayscale)
-  for (let y = 0; y < height; y += STEP) {
-    for (let x = 0; x < width; x += STEP) {
-      const idx = (y * width + x) * 4;
-      const luma = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
-      
-      // Solo añadir si no es muy brillante (evitar fondo blanco)
-      if (luma < 200) {
-        stitches.push({ x, y });
-      }
-    }
-  }
-
-  // Si aún no hay stitches, generar grid mínimo
-  if (stitches.length === 0) {
-    for (let y = 5; y < height; y += 10) {
-      for (let x = 5; x < width; x += 10) {
-        stitches.push({ x, y });
-      }
-    }
-  }
-
-  return {
-    id: 'r_default',
-    name: 'default_run',
-    color: '#4a4a4a',
-    type: 'running_stitch',
-    stitches,
-    pointCount: stitches.length
-  };
 }
