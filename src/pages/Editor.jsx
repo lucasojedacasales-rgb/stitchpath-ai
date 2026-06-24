@@ -497,6 +497,7 @@ export default function Editor() {
         }
 
         // Digitize with AI: analyze shapes, apply pull compensation, generate optimal stitches
+        let stitchBlocks = [];
         try {
           const digitizeRes = await base44.functions.invoke('embroideryDigitizer', {
             regions: newRegions,
@@ -507,10 +508,32 @@ export default function Editor() {
           });
           
           if (digitizeRes?.data?.success) {
+            stitchBlocks = digitizeRes.data.data?.stitch_blocks || [];
             console.log('[EDITOR] Digitizer output:', {
               blocks: digitizeRes.data.data?.block_count,
               totalStitches: digitizeRes.data.data?.total_stitches
             });
+
+            // Optimize stitch sequence: center→outward, light→dark, minimize jumps
+            try {
+              const optimizeRes = await base44.functions.invoke('optimizeStitchSequence', {
+                stitch_blocks: stitchBlocks,
+                width_mm: config.width_mm,
+                height_mm: config.height_mm,
+                strategy: 'professional'
+              });
+
+              if (optimizeRes?.data?.success) {
+                stitchBlocks = optimizeRes.data.data?.optimized_blocks || stitchBlocks;
+                console.log('[EDITOR] Sequence optimized:', {
+                  jumpDistance: optimizeRes.data.data?.jump_stats?.totalJumpDistance?.toFixed(1),
+                  jumps: optimizeRes.data.data?.jump_stats?.jumpCount,
+                  colorChanges: optimizeRes.data.data?.jump_stats?.colorChanges
+                });
+              }
+            } catch (optimizeErr) {
+              console.warn('[EDITOR] Sequence optimization failed, using digitizer output:', optimizeErr);
+            }
           }
         } catch (digitizeErr) {
           console.warn('[EDITOR] Digitization failed, continuing:', digitizeErr);
