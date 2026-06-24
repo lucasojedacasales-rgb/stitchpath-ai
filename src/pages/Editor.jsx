@@ -475,13 +475,35 @@ export default function Editor() {
           firstRegion: newRegions[0]
         });
         
+        // Generate optimized SVG for embroidery (paths closed, simplified, by color)
+        let svgUrl = null;
+        try {
+          const svgRes = await base44.functions.invoke('vectorizeForEmbroidery', {
+            pixels: pixelData.pixels,
+            width: pixelData.width,
+            height: pixelData.height,
+            width_mm: config.width_mm,
+            height_mm: config.height_mm,
+            color_count: config.color_count,
+            detail_level: config.mode || 'medium'
+          });
+          
+          if (svgRes?.data?.success && svgRes.data.data?.svg) {
+            console.log('[EDITOR] SVG generated:', svgRes.data.data.svg.length, 'bytes');
+            svgUrl = 'data:image/svg+xml;base64,' + btoa(svgRes.data.data.svg);
+          }
+        } catch (svgErr) {
+          console.warn('[EDITOR] SVG generation failed, continuing:', svgErr);
+        }
+        
         setRegions(newRegions);
         setVectorDiagnostics(res.data.diagnostics || {});
         setStep(3);
         await base44.entities.Project.update(id, {
           regions: newRegions, step: 3, status: 'ready',
           total_stitches: totalCalculatedStitches,
-          color_count: new Set((newRegions || []).map(r => r.color)).size
+          color_count: new Set((newRegions || []).map(r => r.color)).size,
+          svg_url: svgUrl
         });
         // Save version
         await base44.entities.VersionHistory.create({
