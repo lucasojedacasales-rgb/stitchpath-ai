@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import {
-  Save, Download, Zap, ChevronRight, ArrowLeft
-} from 'lucide-react';
+import { Save, Download, Zap, ChevronRight, ArrowLeft } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import StepPipeline from '@/components/editor/StepPipeline';
 import AIProgressIndicator from '@/components/editor/AIProgressIndicator';
@@ -13,18 +11,15 @@ import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
 import MaskCanvas from '@/components/editor/MaskCanvas';
-import DiagnosticPanel from '@/components/editor/DiagnosticPanel';
-import VectorizationDiagnostics from '@/components/editor/VectorizationDiagnostics';
-import { preprocessImage } from '@/lib/imagePreprocessor';
-import { analyzeImage } from '@/lib/imageAnalyzer';
-import { traceImageContours } from '@/lib/contourTracer';
 import { extractImagePixels } from '@/lib/imagePixelExtractor';
-import { executeGeometricPipeline, exportPipelineReport } from '@/lib/geometricPipeline';
 
 const DEFAULT_CONFIG = {
-  fabric_type: 'Algodón', width_mm: 100, height_mm: 100, color_count: 6,
-  mode: 'hybrid', use_full_bg: false, use_ia_vision: false,
-  remove_bg: false, tension_comp: 0.5, ai_sequence: false
+  fabric_type: 'Algodón',
+  width_mm: 100,
+  height_mm: 100,
+  color_count: 6,
+  mode: 'hybrid',
+  tension_comp: 0.5
 };
 
 export default function Editor() {
@@ -47,13 +42,9 @@ export default function Editor() {
   const [showFill, setShowFill] = useState(true);
   const [showContour, setShowContour] = useState(true);
   const [showExport, setShowExport] = useState(false);
-  const [showDiagnostic, setShowDiagnostic] = useState(false);
-  const [vectorDiagnostics, setVectorDiagnostics] = useState(null);
   const [activeTab, setActiveTab] = useState('editor');
   const [uploadingImage, setUploadingImage] = useState(false);
   const [preprocessSettings, setPreprocessSettings] = useState(DEFAULT_PREPROCESS);
-  const [preprocessedUrl, setPreprocessedUrl] = useState(null);
-  const timerRef = useRef(null);
 
   // Mask tool state
   const maskCanvasRef = useRef(null);
@@ -65,6 +56,8 @@ export default function Editor() {
   const [showOriginal, setShowOriginal] = useState(false);
   const [maskedPixelCount, setMaskedPixelCount] = useState(0);
   const [applyingMask, setApplyingMask] = useState(false);
+
+  const timerRef = useRef(null);
 
   useEffect(() => {
     if (id) loadProject();
@@ -125,8 +118,7 @@ export default function Editor() {
     setProcessingElapsed(0);
     timerRef.current = setInterval(() => setProcessingElapsed(s => s + 1), 1000);
     setStep(2);
-    
-    // Retry logic with exponential backoff
+
     const retryWithBackoff = async (fn, maxAttempts = 3) => {
       let lastError;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -145,421 +137,81 @@ export default function Editor() {
     };
 
     try {
-      // Pre-process image if enabled
-      let finalImageUrl = imageUrl;
-      if (preprocessSettings.enabled) {
-        try {
-          const processed = await preprocessImage(imageUrl, preprocessSettings);
-          const { file_url } = await base44.integrations.Core.UploadFile({ file: processed.blob });
-          finalImageUrl = file_url;
-          setPreprocessedUrl(file_url);
-        } catch (prepErr) {
-          console.warn('Preprocessing failed, using original:', prepErr);
-        }
-      }
-
-      // Trace real contours client-side + analyze colors
-      let imageAnalysis = null;
-      let tracedContours = null;
-      try {
-        const [analysis, contours] = await Promise.all([
-          analyzeImage(finalImageUrl, config.color_count || 8),
-          traceImageContours(finalImageUrl, config.color_count || 8, 0.003),
-        ]);
-        imageAnalysis = analysis;
-        tracedContours = contours;
-      } catch (e) {
-        console.warn('Client analysis failed, continuing without:', e);
-      }
-
-      // Extract pixels from image first
+      // Extract pixels
       let pixelData;
       try {
-       pixelData = await extractImagePixels(finalImageUrl);
-       console.log('[EDITOR] Pixels extracted:', {
-         width: pixelData.width,
-         height: pixelData.height,
-         bytesLength: pixelData.pixels?.length,
-         type: pixelData.pixels?.constructor?.name
-       });
+        pixelData = await extractImagePixels(imageUrl);
+        console.log('[EDITOR] Pixels extracted:', pixelData.width, 'x', pixelData.height);
       } catch (err) {
-       console.error('Failed to extract pixels:', err);
-       throw new Error('No se pudo cargar la imagen');
+        throw new Error('No se pudo cargar la imagen');
       }
 
-      // Validar pixels antes de enviar
       if (!pixelData.pixels || pixelData.pixels.length < 4) {
-        throw new Error(`Invalid pixel data: length=${pixelData.pixels?.length}`);
+        throw new Error('Datos de imagen inválidos');
       }
 
+      // Invocar motor integrado
       let res;
       try {
-       res = await retryWithBackoff(async () => {
-         const payload = {
-           pixels: pixelData.pixels, // Ya es array vía JSON.stringify
-           width: pixelData.width,
-           height: pixelData.height,
-           width_mm: config.width_mm,
-           height_mm: config.height_mm,
-           color_count: config.color_count
-         };
-         console.log('[EDITOR] Sending to robustVectorization:', {
-           pixelsLen: payload.pixels.length,
-           w: payload.width,
-           h: payload.height,
-           colorCount: payload.color_count
-         });
-         return await base44.functions.invoke('robustVectorization', payload);
-       });
-      } catch (err) {
-       console.error('Vectorization backend failed:', err);
-       const errorMsg = err.response?.status === 429 
-         ? 'Demasiadas solicitudes. Espera un momento e intenta de nuevo.'
-         : 'Error en vectorización: ' + (err.message || String(err));
-       throw new Error(errorMsg);
-      }
-
-      if (!res?.data) {
-       throw new Error('Respuesta inválida del servidor');
-      }
-
-      if (res.data?.success) {
-        const rawData = res.data.data?.response || res.data.data;
-        const { regions: rawRegions, total_stitches } = rawData;
-
-        console.log('[EDITOR] Raw response:', {
-          success: res.data.success,
-          hasRegions: !!rawRegions,
-          regionCount: rawRegions?.length,
-          totalStitches: total_stitches,
-          firstRegion: rawRegions?.[0]
-        });
-
-        // ── Normalizar regiones: mapear stitches → path_points ──────────────────
-        const normalized = (rawRegions || []).map(r => {
-          const pathPoints = (r.stitches || []).map(s => [
-            s.x / (config.width_mm || 100),
-            s.y / (config.height_mm || 100)
-          ]);
-
-          const normalized = {
-            ...r,
-            path_points: r.path_points || pathPoints,
-            stitches: r.stitches || [],
-            pointCount: r.pointCount || (r.stitches?.length || 0)
-          };
-
-          console.log('[EDITOR] Normalized region:', { id: r.id, stitches: r.stitches?.length, name: r.name });
-          return normalized;
-        });
-
-        console.log('[EDITOR] Normalized regions:', normalized.length);
-
-        // Filtrado permisivo: confía en regiones con puntadas
-        const filtered = normalized.filter(r => {
-          const keep = r.stitches && r.stitches.length >= 1;
-          if (!keep) console.log('[EDITOR] Filtered out region:', r.id, 'stitches:', r.stitches?.length);
-          return keep;
-        });
-
-        console.log('[EDITOR] Filtered regions:', filtered.length);
-
-        // ── Clasificación inteligente de tipo de puntada (geométrica) ────────
-         const classifyStitchType = (region) => {
-           const hex = (region.color || '').toLowerCase();
-           const isDark = hex === '#000000' || hex === '#1a1a1a';
-           const isContourName = (region.name || '').toLowerCase().includes('contour_');
-
-           if (isDark || isContourName || region.isContour) return 'running_stitch';
-
-           const area = region.area_mm2 || 0;
-           const perim = region.perimeter_mm || 1;
-           const avgWidth = perim > 0 ? area / perim : 0;
-           const compactness = perim > 0 ? (perim * perim) / Math.max(area, 1) : 999;
-           const circularity = perim > 0 ? (4 * Math.PI * area) / (perim * perim) : 0;
-
-           // Clasificación basada en geometría
-           if (area < 30) return 'running_stitch';  // muy pequeño → contorno
-           if (area > 500 && circularity > 0.6) return 'fill';  // grande + circular → tatami
-           if (avgWidth > 8 && area > 300) return 'fill';  // ancho + grande → fill
-           if (avgWidth < 2.5 || compactness > 20) return 'satin';  // estrecho/elongado → satin
-           if (area < 100 || compactness > 12) return 'satin';  // pequeño/irregular → satin
-           return 'fill';  // default
-         };
-
-         // ── Optimización de secuencia (reduce saltos y cambios de color) ────
-         const optimizeStitchSequence = (blocks) => {
-           if (blocks.length <= 1) return blocks;
-
-           // Agrupar por color
-           const colorGroups = {};
-           blocks.forEach((b, i) => {
-             const c = b.color || b.color_index || 0;
-             if (!colorGroups[c]) colorGroups[c] = [];
-             colorGroups[c].push({ ...b, idx: i });
-           });
-
-           // Optimizar cada grupo por proximidad (greedy TSP)
-           const optimized = [];
-           Object.keys(colorGroups).sort().forEach(color => {
-             const group = colorGroups[color];
-             if (group.length <= 1) {
-               optimized.push(...group);
-               return;
-             }
-
-             const visited = new Set();
-             const ordered = [group[0]];
-             visited.add(0);
-
-             for (let i = 1; i < group.length; i++) {
-               const lastBlock = ordered[ordered.length - 1];
-               const lastX = lastBlock.centroid?.[0] ?? 0.5;
-               const lastY = lastBlock.centroid?.[1] ?? 0.5;
-
-               let minDist = Infinity, nextIdx = -1;
-               for (let j = 0; j < group.length; j++) {
-                 if (visited.has(j)) continue;
-                 const b = group[j];
-                 const bx = b.centroid?.[0] ?? 0.5;
-                 const by = b.centroid?.[1] ?? 0.5;
-                 const dist = Math.hypot(bx - lastX, by - lastY);
-                 if (dist < minDist) { minDist = dist; nextIdx = j; }
-               }
-
-               ordered.push(group[nextIdx]);
-               visited.add(nextIdx);
-             }
-
-             optimized.push(...ordered);
-           });
-
-           return optimized;
-         };
-
-         // ── Inserción automática de trims (saltos > 7mm) ──────────────────
-         const insertTrims = (blocks) => {
-           const MAX_JUMP_MM = 7.0;
-           const result = [];
-
-           for (let i = 0; i < blocks.length; i++) {
-             const block = blocks[i];
-
-             if (i > 0) {
-               const prevBlock = result[result.length - 1];
-               const prevCentroid = prevBlock.centroid || [0.5, 0.5];
-               const currCentroid = block.centroid || [0.5, 0.5];
-               const dist = Math.hypot(
-                 (currCentroid[0] - prevCentroid[0]) * (config.width_mm || 100),
-                 (currCentroid[1] - prevCentroid[1]) * (config.height_mm || 100)
-               );
-
-               if (dist > MAX_JUMP_MM) {
-                 block.has_jump_before = true;
-               }
-             }
-
-             result.push(block);
-           }
-
-           return result;
-         };
-
-        const calculateStitchCount = (region) => {
-          // Usar pointCount directo del servidor si existe
-          if (region.pointCount && region.pointCount > 0) {
-            return region.pointCount;
-          }
-          
-          const type = region.stitch_type;
-          const area = region.area_mm2 || 0;
-          const perim = region.perimeter_mm || 1;
-          const density = region.density || 0.7;
-          
-          if (type === 'fill') {
-            return Math.round(area * density * 2.5);
-          } else if (type === 'satin') {
-            const width = Math.max(1, area / perim);
-            const stitchLength = 2.5;
-            return Math.round((perim / stitchLength) * (width / Math.max(0.4, density)));
-          } else {
-            const stitchLength = 1.5;
-            return Math.round(perim / stitchLength);
-          }
-        };
-
-        const COLOR_NAMES = {
-          '#000000': 'negro', '#1a1a1a': 'negro', '#ffffff': 'blanco', '#ffff00': 'amarillo',
-          '#ff0000': 'rojo', '#00ff00': 'verde', '#0000ff': 'azul', '#ff69b4': 'rosa',
-          '#ffa500': 'naranja', '#800080': 'morado', '#ffc0cb': 'rosa', '#ee82ee': 'violeta'
-        };
-
-        const getColorName = (hex) => {
-          if (!hex) return 'color';
-          const h = hex.toLowerCase();
-          if (COLOR_NAMES[h]) return COLOR_NAMES[h];
-          const matches = Object.entries(COLOR_NAMES).map(([k, v]) => ({
-            name: v,
-            dist: Math.sqrt(
-              Math.pow(parseInt(k.slice(1, 3), 16) - parseInt(h.slice(1, 3), 16), 2) +
-              Math.pow(parseInt(k.slice(3, 5), 16) - parseInt(h.slice(3, 5), 16), 2) +
-              Math.pow(parseInt(k.slice(5, 7), 16) - parseInt(h.slice(5, 7), 16), 2)
-            )
-          })).sort((a, b) => a.dist - b.dist);
-          return matches[0]?.name || 'color';
-        };
-
-        const getPosition = (region, allRegions) => {
-          const centroid = region.centroid || [0.5, 0.5];
-          const [cx, cy] = centroid;
-          const v = cy < 0.33 ? 'sup' : cy > 0.66 ? 'inf' : 'cen';
-          const h = cx < 0.33 ? 'izq' : cx > 0.66 ? 'der' : '';
-          return h ? `${v}_${h}` : v;
-        };
-
-        const getStitchAbbr = (type) => {
-          return type === 'fill' ? 'fill' : type === 'satin' ? 'sat' : 'run';
-        };
-
-        // ── GEOMETRIC PIPELINE: Close → Offset → Clip ────────────────────────
-        console.log('Executing geometric pipeline on', filtered.length, 'regions...');
-        let pipelinedRegions = filtered;
-        
-        try {
-          const pipelineResult = await executeGeometricPipeline(
-            filtered,
-            100, // Canvas width (normalized)
-            100, // Canvas height (normalized)
-            {
-              safetyMargin: 0.5,
-              pullCompensation: config.tension_comp || 0
-            }
-          );
-
-          if (pipelineResult.success) {
-            console.log('Pipeline executed:', exportPipelineReport(pipelineResult));
-            pipelinedRegions = pipelineResult.regions;
-          } else {
-            console.warn('Pipeline warning, using unprocessed regions:', pipelineResult.error);
-          }
-        } catch (pipelineErr) {
-          console.warn('Pipeline failed, using raw regions:', pipelineErr.message);
-        }
-
-        // Clasificar tipos de puntada
-        let processedRegions = pipelinedRegions.map((r, idx) => {
-          const type = classifyStitchType(r);
-          const colorName = getColorName(r.color);
-          const position = getPosition(r, pipelinedRegions);
-          const typeAbbr = getStitchAbbr(type);
-          const name = `${position}_${colorName}_${typeAbbr}`;
-
-          return {
-            ...r,
-            name: r.name || name,
-            stitch_type: type,
-            stitch_count: calculateStitchCount({ ...r, stitch_type: type })
-          };
-        });
-
-        // Optimizar secuencia (reduce saltos) + insertar trims automáticamente
-        processedRegions = optimizeStitchSequence(processedRegions);
-        const newRegions = insertTrims(processedRegions);
-
-         // Recalculate total stitches
-         const totalCalculatedStitches = newRegions.reduce((sum, r) => sum + (r.stitch_count || 0), 0);
-
-        console.log('[EDITOR] Setting regions:', {
-          count: newRegions.length,
-          totalStitches: totalCalculatedStitches,
-          firstRegion: newRegions[0]
-        });
-        
-        // Generate optimized SVG for embroidery (paths closed, simplified, by color)
-        let svgUrl = null;
-        try {
-          const svgRes = await base44.functions.invoke('vectorizeForEmbroidery', {
+        res = await retryWithBackoff(async () => {
+          console.log('[EDITOR] Invoking embroideryMotor...');
+          return await base44.functions.invoke('embroideryMotor', {
             pixels: pixelData.pixels,
             width: pixelData.width,
             height: pixelData.height,
             width_mm: config.width_mm,
             height_mm: config.height_mm,
-            color_count: config.color_count,
-            detail_level: config.mode || 'medium'
+            format_type: 'DST',
+            project_name: project?.name || 'design'
           });
-          
-          if (svgRes?.data?.success && svgRes.data.data?.svg) {
-            console.log('[EDITOR] SVG generated:', svgRes.data.data.svg.length, 'bytes');
-            svgUrl = 'data:image/svg+xml;base64,' + btoa(svgRes.data.data.svg);
-          }
-        } catch (svgErr) {
-          console.warn('[EDITOR] SVG generation failed, continuing:', svgErr);
-        }
-
-        // Digitize with AI: analyze shapes, apply pull compensation, generate optimal stitches
-        let stitchBlocks = [];
-        try {
-          const digitizeRes = await base44.functions.invoke('embroideryDigitizer', {
-            regions: newRegions,
-            width_mm: config.width_mm,
-            height_mm: config.height_mm,
-            fabric_type: config.fabric_type || 'cotton',
-            export_format: 'DST'
-          });
-          
-          if (digitizeRes?.data?.success) {
-            stitchBlocks = digitizeRes.data.data?.stitch_blocks || [];
-            console.log('[EDITOR] Digitizer output:', {
-              blocks: digitizeRes.data.data?.block_count,
-              totalStitches: digitizeRes.data.data?.total_stitches
-            });
-
-            // Optimize stitch sequence: center→outward, light→dark, minimize jumps
-            try {
-              const optimizeRes = await base44.functions.invoke('optimizeStitchSequence', {
-                stitch_blocks: stitchBlocks,
-                width_mm: config.width_mm,
-                height_mm: config.height_mm,
-                strategy: 'professional'
-              });
-
-              if (optimizeRes?.data?.success) {
-                stitchBlocks = optimizeRes.data.data?.optimized_blocks || stitchBlocks;
-                console.log('[EDITOR] Sequence optimized:', {
-                  jumpDistance: optimizeRes.data.data?.jump_stats?.totalJumpDistance?.toFixed(1),
-                  jumps: optimizeRes.data.data?.jump_stats?.jumpCount,
-                  colorChanges: optimizeRes.data.data?.jump_stats?.colorChanges
-                });
-              }
-            } catch (optimizeErr) {
-              console.warn('[EDITOR] Sequence optimization failed, using digitizer output:', optimizeErr);
-            }
-          }
-        } catch (digitizeErr) {
-          console.warn('[EDITOR] Digitization failed, continuing:', digitizeErr);
-        }
-        
-        setRegions(newRegions);
-        setVectorDiagnostics(res.data.diagnostics || {});
-        setStep(3);
-        await base44.entities.Project.update(id, {
-          regions: newRegions, step: 3, status: 'ready',
-          total_stitches: totalCalculatedStitches,
-          color_count: new Set((newRegions || []).map(r => r.color)).size,
-          svg_url: svgUrl
         });
-        // Save version
-        await base44.entities.VersionHistory.create({
-          project_id: id,
-          label: `Vectorización ${config.mode}`,
-          description: `${newRegions?.length || 0} regiones generadas`,
-          snapshot: { regions: newRegions, config },
-          step: 3
-        });
+      } catch (err) {
+        console.error('Motor failed:', err);
+        throw new Error('Error motor: ' + (err.message || String(err)));
       }
+
+      if (!res?.data?.success) {
+        throw new Error(res?.data?.error || 'Motor failed');
+      }
+
+      // Convertir bloques a regiones para visualización
+      const motorData = res.data.data;
+      const newRegions = (motorData.blocks || []).map((block, idx) => ({
+        id: block.id || `block_${idx}`,
+        color: block.color || '#000000',
+        stitch_type: block.type || 'fill',
+        stitches: block.stitches || [],
+        path_points: block.stitches || [],
+        pointCount: block.stitches?.length || 0,
+        stitch_count: block.stitches?.length || 0,
+        visible: true
+      }));
+
+      const totalCalculatedStitches = motorData.stitches || 0;
+
+      console.log('[EDITOR] Motor output:', newRegions.length, 'regions,', totalCalculatedStitches, 'stitches');
+
+      setRegions(newRegions);
+      setStep(3);
+      await base44.entities.Project.update(id, {
+        regions: newRegions,
+        step: 3,
+        status: 'ready',
+        total_stitches: totalCalculatedStitches,
+        color_count: new Set((newRegions || []).map(r => r.color)).size
+      });
+
+      // Save version
+      await base44.entities.VersionHistory.create({
+        project_id: id,
+        label: `Vectorización ${config.mode}`,
+        description: `${newRegions?.length || 0} regiones, ${totalCalculatedStitches} puntadas`,
+        snapshot: { regions: newRegions, config },
+        step: 3
+      });
     } catch (e) {
       console.error('Processing error:', e);
-      alert('Error: ' + (e.message || 'Algo salió mal en la vectorización'));
+      alert('Error: ' + (e.message || 'Algo salió mal'));
     } finally {
       setProcessing(false);
       clearInterval(timerRef.current);
@@ -584,7 +236,7 @@ export default function Editor() {
     }
   };
 
-  const handleRegionClick = (regionId, dblClick) => {
+  const handleRegionClick = (regionId) => {
     setSelectedRegionId(regionId);
   };
 
@@ -613,46 +265,33 @@ export default function Editor() {
     <div className="h-screen bg-[#0d0f14] flex flex-col overflow-hidden text-white">
       {/* TOP NAV */}
       <div className="flex-shrink-0 border-b border-[#1e2130] bg-[#0d0f14]">
-        {/* Top row */}
         <div className="flex items-center gap-3 px-4 py-2.5">
           <Link to="/" className="p-1.5 rounded-lg hover:bg-[#1e2130] text-slate-500 hover:text-white transition-colors">
             <ArrowLeft className="w-4 h-4" />
           </Link>
           <div className="w-px h-4 bg-[#2a2d3a]" />
 
-          {/* Breadcrumb / project name */}
           <ProjectNameInput name={project?.name || 'Sin título'} onSave={handleRename} />
 
           <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
           <span className="text-xs text-slate-400">{config.mode || 'hybrid'}</span>
 
-          {/* Pipeline */}
           <div className="flex-1 flex justify-center">
             <StepPipeline currentStep={step} />
           </div>
 
-          {/* AI Progress */}
           <AIProgressIndicator active={processing} elapsed={processingElapsed} />
 
-          {/* Right actions */}
           <div className="flex items-center gap-1.5">
             <NavButton onClick={() => setShowExport(true)} icon={Download} label="Exportar" accent />
             <NavButton onClick={startProcessing} icon={Zap} label="Procesar" disabled={!imageUrl || processing} />
             <NavButton onClick={() => saveProject()} icon={Save} label={saving ? '...' : 'Guardar'} />
-            <button
-              onClick={() => setShowDiagnostic(true)}
-              className="text-[10px] px-2 py-1.5 rounded bg-[#161a23] border border-[#2a2d3a] text-slate-500 hover:text-slate-300 transition-colors"
-              title="Diagnóstico del pipeline"
-            >
-              🔧
-            </button>
           </div>
         </div>
 
-        {/* Tabs + Metrics */}
         <div className="flex items-center justify-between px-4 py-1.5 border-t border-[#1a1d27]">
           <div className="flex items-center gap-1">
-            {[['editor', 'Editor'], ['mask', '✂ Máscara'], ['preview', 'Vista Previa'], ['panel', 'Panel']].map(([id, label]) => (
+            {[['editor', 'Editor'], ['mask', '✂ Máscara']].map(([id, label]) => (
               <button
                 key={id}
                 onClick={() => setActiveTab(id)}
@@ -663,28 +302,15 @@ export default function Editor() {
             ))}
           </div>
 
-          {/* Metrics */}
           <div className="flex items-center gap-4 text-[11px]">
-            <div className="group relative">
-              <span className="text-slate-600 cursor-help">Puntadas <span className="text-violet-400 font-bold">{totalStitches.toLocaleString()}</span></span>
-              <div className="absolute right-0 bottom-full mb-2 hidden group-hover:block bg-[#0d0f14] border border-[#2a2d3a] rounded-lg p-2 w-48 text-xs text-slate-300 z-10 shadow-xl max-h-48 overflow-y-auto">
-                {regions.map((r, i) => (
-                  <div key={i} className="flex justify-between gap-2 py-1 border-b border-[#1a1d27] last:border-0">
-                    <span className="text-slate-400 truncate">{r.name || `Region ${i+1}`}</span>
-                    <span className="text-violet-400 font-bold flex-shrink-0">{(r.stitch_count || 0).toLocaleString()}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <span className="text-slate-600">Puntadas <span className="text-violet-400 font-bold">{totalStitches.toLocaleString()}</span></span>
             <span className="text-slate-600">Colores <span className="text-cyan-400 font-bold">{colorsUsed}</span></span>
-            <span className="text-slate-600">Tamaño <span className="text-emerald-400 font-bold">{config.width_mm}×{config.height_mm}mm</span></span>
           </div>
         </div>
       </div>
 
-      {/* MAIN EDITOR LAYOUT */}
+      {/* MAIN LAYOUT */}
       <div className="flex-1 flex overflow-hidden">
-        {/* LEFT PANEL */}
         <div className="w-64 flex-shrink-0 border-r border-[#1e2130] overflow-y-auto">
           <ConfigPanel
             config={config}
@@ -696,25 +322,14 @@ export default function Editor() {
           <PreprocessingPanel settings={preprocessSettings} onChange={setPreprocessSettings} />
         </div>
 
-        {/* CENTER CANVAS */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Opacity sliders — hidden in mask mode */}
           {activeTab !== 'mask' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
             <SliderControl label="Imagen" value={imageOpacity} onChange={setImageOpacity} color="text-amber-400" />
             <SliderControl label="Puntadas" value={stitchOpacity} onChange={setStitchOpacity} color="text-violet-400" />
-            <div className="flex items-center gap-2 ml-auto">
-              <FilterToggle label="Rellenos" active={showFill} onChange={setShowFill} color="violet" />
-              <FilterToggle label="Contornos" active={showContour} onChange={setShowContour} color="cyan" />
-            </div>
           </div>}
 
-          {/* Upload zone or Canvas */}
           {!imageUrl ? (
-            <UploadZone
-              onUpload={handleImageUpload}
-              fileInputRef={fileInputRef}
-              uploading={uploadingImage}
-            />
+            <UploadZone onUpload={handleImageUpload} fileInputRef={fileInputRef} uploading={uploadingImage} />
           ) : activeTab === 'mask' ? (
             <div className="flex-1 flex flex-col overflow-hidden">
               <MaskToolbar
@@ -772,21 +387,19 @@ export default function Editor() {
             </div>
           )}
 
-          {/* Process button when image uploaded but not processed */}
           {imageUrl && regions.length === 0 && !processing && (
             <div className="border-t border-[#1a1d27] p-3 flex items-center gap-3 bg-[#0a0c12]">
-              <div className="flex-1 text-xs text-slate-500">Imagen cargada. Inicia la vectorización con IA.</div>
+              <div className="flex-1 text-xs text-slate-500">Imagen cargada. Inicia la vectorización.</div>
               <button
                 onClick={startProcessing}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors"
               >
-                <Zap className="w-3.5 h-3.5" /> Vectorizar con IA
+                <Zap className="w-3.5 h-3.5" /> Vectorizar
               </button>
             </div>
           )}
         </div>
 
-        {/* RIGHT PANEL */}
         <div className="w-64 flex-shrink-0 border-l border-[#1e2130] overflow-hidden">
           <RegionsPanel
             regions={regions}
@@ -797,30 +410,7 @@ export default function Editor() {
         </div>
       </div>
 
-      {/* Export modal */}
-      {showExport && (
-        <ExportModal
-          project={project}
-          regions={regions}
-          onClose={() => setShowExport(false)}
-        />
-      )}
-
-      {/* Diagnostic modal */}
-      {showDiagnostic && (
-        <DiagnosticPanel
-          imageUrl={imageUrl}
-          onClose={() => setShowDiagnostic(false)}
-        />
-      )}
-
-      {/* Vectorization Diagnostics */}
-      {vectorDiagnostics && (
-        <VectorizationDiagnostics
-          diagnostics={vectorDiagnostics}
-          onClose={() => setVectorDiagnostics(null)}
-        />
-      )}
+      {showExport && <ExportModal project={project} regions={regions} onClose={() => setShowExport(false)} />}
     </div>
   );
 }
@@ -838,9 +428,7 @@ function ProjectNameInput({ name, onSave }) {
       className="bg-[#1e2130] border border-violet-500/50 rounded px-2 py-1 text-sm text-white focus:outline-none w-40"
     />
   );
-  return (
-    <button onClick={() => setEditing(true)} className="text-sm font-semibold text-slate-200 hover:text-white truncate max-w-[160px]">{name}</button>
-  );
+  return <button onClick={() => setEditing(true)} className="text-sm font-semibold text-slate-200 hover:text-white truncate max-w-[160px]">{name}</button>;
 }
 
 function NavButton({ onClick, icon: Icon, label, accent, disabled }) {
@@ -872,29 +460,13 @@ function SliderControl({ label, value, onChange, color }) {
   );
 }
 
-function FilterToggle({ label, active, onChange, color }) {
-  const accent = color === 'violet' ? 'border-violet-500/50 bg-violet-900/20 text-violet-300' : 'border-cyan-500/50 bg-cyan-900/20 text-cyan-300';
-  return (
-    <button
-      onClick={() => onChange(!active)}
-      className={`text-[10px] px-2 py-1 rounded border transition-colors font-medium ${active ? accent : 'border-[#2a2d3a] text-slate-600 hover:text-slate-400'}`}
-    >
-      {label}
-    </button>
-  );
-}
-
 function UploadZone({ onUpload, fileInputRef, uploading }) {
   const [dragOver, setDragOver] = useState(false);
-
   const handleDrop = (e) => {
     e.preventDefault();
     setDragOver(false);
     const file = e.dataTransfer.files?.[0];
-    if (file) {
-      const mockEvent = { target: { files: [file] } };
-      onUpload(mockEvent);
-    }
+    if (file) onUpload({ target: { files: [file] } });
   };
 
   return (
@@ -907,26 +479,15 @@ function UploadZone({ onUpload, fileInputRef, uploading }) {
       onDrop={handleDrop}
       onClick={() => fileInputRef.current?.click()}
     >
-      <input
-        ref={fileInputRef}
-        type="file" accept="image/png,image/jpeg,image/jpg,image/svg+xml"
-        className="hidden" onChange={onUpload}
-      />
+      <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/jpg" className="hidden" onChange={onUpload} />
       <div className="text-center">
         {uploading ? (
           <div className="w-10 h-10 border-2 border-violet-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
         ) : (
           <div className="text-5xl mb-3">🧵</div>
         )}
-        <h3 className="text-base font-semibold text-white mb-1">
-          {uploading ? 'Subiendo imagen...' : 'Sube tu imagen'}
-        </h3>
-        <p className="text-sm text-slate-500">PNG, JPG o SVG • Arrastra o haz click</p>
-        {!uploading && (
-          <div className="mt-4 px-4 py-2 rounded-lg bg-violet-600/20 border border-violet-500/30 text-violet-300 text-xs inline-block">
-            Seleccionar archivo
-          </div>
-        )}
+        <h3 className="text-base font-semibold text-white mb-1">{uploading ? 'Subiendo...' : 'Sube tu imagen'}</h3>
+        <p className="text-sm text-slate-500">PNG o JPG • Arrastra o haz click</p>
       </div>
     </div>
   );
