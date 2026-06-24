@@ -11,9 +11,9 @@
  */
 
 /**
- * Función principal: recibe imagen como File/Blob, devuelve regiones con puntadas
+ * Función principal: recibe imagen como File/Blob o pixels pre-extraídos
  * 
- * @param {File|Blob} imageFile - Archivo de imagen subido por el usuario
+ * @param {File|Blob|Object} imageData - Archivo/Blob O {pixels: Uint8Array, width: num, height: num}
  * @param {Object} options - Configuración
  * @param {number} options.colorCount - Número de colores (default: 6)
  * @param {number} options.widthMM - Ancho físico en mm (default: 100)
@@ -22,7 +22,7 @@
  * @param {number} options.fillAngle - Ángulo de fill en grados (default: 45)
  * @returns {Promise<Object>} - Objeto con regions, totalStitches, etc.
  */
-export async function robustVectorization(imageFile, options = {}) {
+export async function robustVectorization(imageData, options = {}) {
   const {
     colorCount = 6,
     widthMM = 100,
@@ -34,7 +34,7 @@ export async function robustVectorization(imageFile, options = {}) {
   console.log(`[VECTORIZER] Starting: colorCount=${colorCount}, ${widthMM}x${heightMM}mm, density=${stitchDensity}`);
 
   // 1. Cargar imagen y extraer píxeles
-  let { pixels, width, height } = await loadImagePixels(imageFile);
+  let { pixels, width, height } = await loadImagePixels(imageData);
   
   // Validación mínima
   if (!pixels || pixels.length < 4 || width < 1 || height < 1) {
@@ -90,29 +90,45 @@ export async function robustVectorization(imageFile, options = {}) {
 // PASO 1: CARGAR IMAGEN Y EXTRAER PÍXELES
 // ============================================================
 
-async function loadImagePixels(file) {
+async function loadImagePixels(imageData) {
   try {
-    // Intenta usar createImageBitmap + OffscreenCanvas (navegador)
+    // Si ya es pixels extraídos ({pixels, width, height})
+    if (imageData && typeof imageData === 'object' && imageData.pixels && imageData.width && imageData.height) {
+      console.log('[VECTORIZER] Using pre-extracted pixels');
+      // Convertir a Uint8ClampedArray si es necesario
+      let pixels = imageData.pixels;
+      if (!(pixels instanceof Uint8ClampedArray)) {
+        pixels = new Uint8ClampedArray(pixels);
+      }
+      return {
+        pixels,
+        width: imageData.width,
+        height: imageData.height
+      };
+    }
+
+    // Si es un File o Blob
     if (typeof createImageBitmap !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
-      const bitmap = await createImageBitmap(file);
+      // Browser: usar createImageBitmap + OffscreenCanvas
+      const bitmap = await createImageBitmap(imageData);
       const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Failed to get canvas context');
 
       ctx.drawImage(bitmap, 0, 0);
-      const imageData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+      const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
       bitmap.close();
 
       return {
-        pixels: imageData.data,
+        pixels: imgData.data,
         width: bitmap.width,
         height: bitmap.height
       };
     }
 
-    // Fallback para Deno: leer buffer y parsear PNG manualmente
+    // Fallback para Deno: parsear PNG desde buffer
     console.log('[VECTORIZER] Using Deno PNG parsing fallback...');
-    const buffer = await file.arrayBuffer();
+    const buffer = await imageData.arrayBuffer();
     const pixels = parsePNGDeno(new Uint8Array(buffer));
     return pixels;
   } catch (err) {
