@@ -41,7 +41,7 @@ Deno.serve(async (req) => {
     const formData = new FormData();
     
     // Convertir pixel array a Blob PNG
-    const pixelBlob = pixelsToImageBlob(pixels, width, height);
+    const pixelBlob = await pixelsToImageBlob(pixels, width, height);
     formData.append('image', pixelBlob, 'image.png');
     formData.append('color_count', color_count.toString());
     formData.append('width_mm', width_mm.toString());
@@ -136,22 +136,30 @@ Deno.serve(async (req) => {
  * Convertir array de pixels a PNG Blob
  * Usa canvas nativo para encoding
  */
-function pixelsToImageBlob(pixels, width, height) {
-  // Los pixels vienen como array plano RGBA
-  const imageData = new ImageData(
-    new Uint8ClampedArray(pixels),
-    width,
-    height
-  );
-  
-  // Crear canvas y dibujar
-  const canvas = new OffscreenCanvas(width, height);
-  const ctx = canvas.getContext('2d');
-  ctx.putImageData(imageData, 0, 0);
-  
-  // Convertir a PNG
-  const blob = canvas.convertToBlob({ type: 'image/png' });
-  return blob;
+async function pixelsToImageBlob(pixels, width, height) {
+  try {
+    // Los pixels vienen como array plano RGBA
+    const imageData = new ImageData(
+      new Uint8ClampedArray(pixels),
+      width,
+      height
+    );
+    
+    // Crear canvas y dibujar
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('Failed to get canvas context');
+    }
+    ctx.putImageData(imageData, 0, 0);
+    
+    // Convertir a PNG (convertToBlob retorna Promise)
+    const blob = await canvas.convertToBlob({ type: 'image/png' });
+    return blob;
+  } catch (err) {
+    console.error('[CONNECTOR] Error converting pixels to blob:', err.message);
+    throw new Error(`Cannot convert pixels to image: ${err.message}`);
+  }
 }
 
 /**
