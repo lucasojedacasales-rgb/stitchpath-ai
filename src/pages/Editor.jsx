@@ -327,6 +327,19 @@ export default function Editor() {
           {activeTab !== 'mask' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
             <SliderControl label="Imagen" value={imageOpacity} onChange={setImageOpacity} color="text-amber-400" />
             <SliderControl label="Puntadas" value={stitchOpacity} onChange={setStitchOpacity} color="text-violet-400" />
+            <div className="w-px h-5 bg-[#2a2d3a]" />
+            <button
+              onClick={() => setShowFill(!showFill)}
+              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${showFill ? 'bg-violet-900/30 border border-violet-500 text-violet-300' : 'bg-[#1e2130] border border-[#2a2d3a] text-slate-500'}`}
+            >
+              Relleno
+            </button>
+            <button
+              onClick={() => setShowContour(!showContour)}
+              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${showContour ? 'bg-cyan-900/30 border border-cyan-500 text-cyan-300' : 'bg-[#1e2130] border border-[#2a2d3a] text-slate-500'}`}
+            >
+              Contorno
+            </button>
           </div>}
 
           {!imageUrl ? (
