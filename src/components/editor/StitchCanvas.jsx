@@ -43,10 +43,17 @@ export default function StitchCanvas({
 
   useEffect(() => {
     syncSize();
+    redraw(); // force initial draw after size is known
     const obs = new ResizeObserver(() => { syncSize(); redraw(); });
     if (containerRef.current) obs.observe(containerRef.current);
     return () => obs.disconnect();
   }, [syncSize, redraw]);
+
+  // Redraw whenever regions change (new vectorization result)
+  useEffect(() => {
+    syncSize();
+    redraw();
+  }, [regions]);
 
   // ── Load image ────────────────────────────────────────────────────────────
   useEffect(() => {
