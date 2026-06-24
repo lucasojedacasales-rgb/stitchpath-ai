@@ -1,405 +1,270 @@
-/**
- * Motor de Vectorización 100% JavaScript Puro para Deno
- * Raster → Vector → Stitches sin dependencias externas
- * 
- * Algoritmos:
- * - K-means color quantization
- * - Flood fill 8-conectado
- * - Marching squares (contour extraction)
- * - Ramer-Douglas-Peucker simplification
- * - Scanline fill con point-in-polygon
- */
+/* global Deno */
 
 /**
- * Función principal: recibe imagen como File/Blob o pixels pre-extraídos
- * 
- * @param {File|Blob|Object} imageData - Archivo/Blob O {pixels: Uint8Array, width: num, height: num}
- * @param {Object} options - Configuración
- * @param {number} options.colorCount - Número de colores (default: 6)
- * @param {number} options.widthMM - Ancho físico en mm (default: 100)
- * @param {number} options.heightMM - Alto físico en mm (default: 100)
- * @param {number} options.stitchDensity - Densidad en mm (default: 0.7)
- * @param {number} options.fillAngle - Ángulo de fill en grados (default: 45)
- * @returns {Promise<Object>} - Objeto con regions, totalStitches, etc.
+ * Motor de Vectorización Ultra-Ligero para Deno
+ * Redimensiona a 128px, scanlines horizontales, sin k-means/contornos/rotaciones
  */
+
 export async function robustVectorization(imageData, options = {}) {
   const {
     colorCount = 6,
     widthMM = 100,
     heightMM = 100,
-    stitchDensity = 0.7,
-    fillAngle = 45
+    stitchDensity = 0.7
   } = options;
 
-  console.log(`[VECTORIZER] Starting: colorCount=${colorCount}, ${widthMM}x${heightMM}mm, density=${stitchDensity}`);
-
-  // 1. Cargar imagen y extraer píxeles
-  let { pixels, width, height } = await loadImagePixels(imageData);
-  
-  // Validación mínima
-  if (!pixels || pixels.length < 4 || width < 1 || height < 1) {
-    throw new Error('Invalid image data: too small or corrupted');
-  }
-
-  // 2. Cuantización de color (K-means simplificado)
-  const { quantized, palette } = quantizeColors(pixels, width, height, colorCount);
-
-  // 3. Detectar regiones conectadas por color (Flood Fill)
-  const regions = findConnectedRegions(quantized, palette, width, height);
-
-  // 4. Procesar cada región: contornos + puntadas
-  const pxPerMM = width / widthMM;
-  const stitchPX = stitchDensity * pxPerMM;
-
-  const processedRegions = [];
-  let totalStitches = 0;
-
-  for (const region of regions) {
-    try {
-      const regionData = processRegion(region, {
-        width,
-        height,
-        pxPerMM,
-        stitchPX,
-        fillAngle,
-        widthMM,
-        heightMM
-      });
-
-      if (regionData.stitches && regionData.stitches.length >= 2) {
-        processedRegions.push(regionData);
-        totalStitches += regionData.pointCount;
-      }
-    } catch (err) {
-      console.warn(`[VECTORIZER] Region processing error: ${err.message}`);
-    }
-  }
-
-  console.log(`[VECTORIZER] SUCCESS: ${processedRegions.length} regions, ${totalStitches} stitches`);
-
-  return {
-    regions: processedRegions,
-    totalStitches,
-    colorCount: palette.length,
-    width: widthMM,
-    height: heightMM
-  };
-}
-
-// ============================================================
-// PASO 1: CARGAR IMAGEN Y EXTRAER PÍXELES
-// ============================================================
-
-async function loadImagePixels(imageData) {
   try {
-    // Si ya es pixels extraídos ({pixels, width, height})
-    if (imageData && typeof imageData === 'object' && imageData.pixels && imageData.width && imageData.height) {
-      console.log('[VECTORIZER] Using pre-extracted pixels');
-      // Convertir a Uint8ClampedArray si es necesario
-      let pixels = imageData.pixels;
-      if (!(pixels instanceof Uint8ClampedArray)) {
-        pixels = new Uint8ClampedArray(pixels);
-      }
-      return {
-        pixels,
-        width: imageData.width,
-        height: imageData.height
-      };
-    }
+    console.log(`[LITE] Starting: ${widthMM}x${heightMM}mm, colorCount=${colorCount}`);
 
-    // Si es un File o Blob
-    if (typeof createImageBitmap !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
-      // Browser: usar createImageBitmap + OffscreenCanvas
-      const bitmap = await createImageBitmap(imageData);
-      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('Failed to get canvas context');
+    // 1. CARGAR y REDIMENSIONAR a 128px máximo
+    const { pixels: origPixels, width: origW, height: origH } = await loadImage(imageData);
+    
+    // Escalar a máximo 128px manteniendo aspect ratio
+    const scaled = scaleImage(origPixels, origW, origH, 128, 128);
+    const { pixels, width, height } = scaled;
 
-      ctx.drawImage(bitmap, 0, 0);
-      const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
-      bitmap.close();
+    console.log(`[LITE] Scaled to ${width}x${height}px`);
 
-      return {
-        pixels: imgData.data,
-        width: bitmap.width,
-        height: bitmap.height
-      };
-    }
+    // 2. REDUCIR COLORES: truncar RGB a 3 bits + frecuencias
+    const { labels, palette } = quantizeToFrequency(pixels, width, height, colorCount);
+    
+    console.log(`[LITE] Palette: ${palette.length} colors`);
 
-    // Fallback para Deno: parsear PNG desde buffer
-    console.log('[VECTORIZER] Using Deno PNG parsing fallback...');
-    const buffer = await imageData.arrayBuffer();
-    const pixels = parsePNGDeno(new Uint8Array(buffer));
-    return pixels;
+    // 3. GENERAR PUNTADAS: scanlines horizontales simples
+    const regions = generateScanlineStitches(labels, palette, width, height, stitchDensity);
+
+    // 4. LIMITAR: máx 20 regiones, máx 10k puntadas
+    const filtered = regions.slice(0, 20).map(r => ({
+      ...r,
+      stitches: r.stitches.slice(0, Math.ceil(10000 / Math.max(1, regions.length)))
+    }));
+
+    const totalStitches = filtered.reduce((s, r) => s + r.pointCount, 0);
+
+    // 5. CONVERTIR a milímetros
+    const pxPerMM = widthMM / width;
+    const finalRegions = filtered.map(r => ({
+      ...r,
+      stitches: r.stitches.map(pt => ({
+        x: Math.max(0, Math.min(widthMM, pt.x * pxPerMM)),
+        y: Math.max(0, Math.min(heightMM, pt.y * pxPerMM))
+      }))
+    }));
+
+    console.log(`[LITE] SUCCESS: ${finalRegions.length} regions, ${totalStitches} stitches`);
+
+    return {
+      success: true,
+      regions: finalRegions,
+      totalStitches,
+      colorCount: palette.length,
+      width: widthMM,
+      height: heightMM
+    };
   } catch (err) {
-    throw new Error(`Failed to load image: ${err.message}`);
+    console.error('[LITE] Error:', err.message);
+    return {
+      success: false,
+      error: err.message,
+      regions: [],
+      totalStitches: 0,
+      colorCount: 0,
+      width: widthMM,
+      height: heightMM
+    };
   }
 }
 
-// Fallback mínimo para parsear PNG en Deno (solo estructura básica)
-function parsePNGDeno(data) {
-  // Verificar firma PNG
-  if (data[0] !== 0x89 || data[1] !== 0x50 || data[2] !== 0x4E || data[3] !== 0x47) {
-    throw new Error('Invalid PNG file');
+// ============================================================================
+// PASO 1: CARGAR IMAGEN
+// ============================================================================
+
+async function loadImage(imageData) {
+  // Si ya son pixels
+  if (imageData?.pixels && imageData?.width && imageData?.height) {
+    return {
+      pixels: new Uint8ClampedArray(imageData.pixels),
+      width: imageData.width,
+      height: imageData.height
+    };
   }
 
-  let width = 0, height = 0;
-  let idx = 8;
-  let pixelData = null;
+  // File/Blob → bitmap → canvas
+  if (typeof createImageBitmap !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
+    const bitmap = await createImageBitmap(imageData);
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas context failed');
 
-  // Leer chunks
-  while (idx < data.length - 12) {
-    const chunkSize = (data[idx] << 24) | (data[idx + 1] << 16) | (data[idx + 2] << 8) | data[idx + 3];
-    const chunkType = String.fromCharCode(data[idx + 4], data[idx + 5], data[idx + 6], data[idx + 7]);
+    ctx.drawImage(bitmap, 0, 0);
+    const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+    bitmap.close();
 
-    if (chunkType === 'IHDR') {
-      width = (data[idx + 8] << 24) | (data[idx + 9] << 16) | (data[idx + 10] << 8) | data[idx + 11];
-      height = (data[idx + 12] << 24) | (data[idx + 13] << 16) | (data[idx + 14] << 8) | data[idx + 15];
+    return {
+      pixels: imgData.data,
+      width: bitmap.width,
+      height: bitmap.height
+    };
+  }
+
+  throw new Error('Image loading not supported');
+}
+
+// ============================================================================
+// ESCALAR IMAGEN a máximo 128px
+// ============================================================================
+
+function scaleImage(pixels, srcW, srcH, maxW, maxH) {
+  const aspect = srcW / srcH;
+  let dstW, dstH;
+
+  if (aspect > 1) {
+    dstW = Math.min(srcW, maxW);
+    dstH = Math.round(dstW / aspect);
+  } else {
+    dstH = Math.min(srcH, maxH);
+    dstW = Math.round(dstH * aspect);
+  }
+
+  dstW = Math.max(8, Math.min(128, dstW));
+  dstH = Math.max(8, Math.min(128, dstH));
+
+  const dst = new Uint8ClampedArray(dstW * dstH * 4);
+
+  for (let y = 0; y < dstH; y++) {
+    for (let x = 0; x < dstW; x++) {
+      const srcX = Math.floor((x / dstW) * srcW);
+      const srcY = Math.floor((y / dstH) * srcH);
+      const srcIdx = (srcY * srcW + srcX) * 4;
+      const dstIdx = (y * dstW + x) * 4;
+
+      dst[dstIdx] = pixels[srcIdx];
+      dst[dstIdx + 1] = pixels[srcIdx + 1];
+      dst[dstIdx + 2] = pixels[srcIdx + 2];
+      dst[dstIdx + 3] = pixels[srcIdx + 3] || 255;
     }
-
-    if (chunkType === 'IDAT' && !pixelData) {
-      // Extraer datos comprimidos IDAT (esto es simplificado)
-      const compressedData = data.slice(idx + 8, idx + 8 + chunkSize);
-      try {
-        // Usar decompresión mínima (nota: esto requeriría zlib en producción)
-        // Por ahora, crear pixels genéricos
-        pixelData = generateFallbackPixels(width, height);
-      } catch {
-        pixelData = generateFallbackPixels(width, height);
-      }
-    }
-
-    idx += chunkSize + 12; // size + type + data + crc
   }
 
-  if (!pixelData) {
-    pixelData = generateFallbackPixels(width || 256, height || 256);
-  }
-
-  return {
-    pixels: pixelData,
-    width: width || 256,
-    height: height || 256
-  };
+  return { pixels: dst, width: dstW, height: dstH };
 }
 
-// Generar píxeles fallback (grises variados) cuando no se puede parsear PNG
-function generateFallbackPixels(width, height) {
-  const pixels = new Uint8ClampedArray(width * height * 4);
-  for (let i = 0; i < pixels.length; i += 4) {
-    const gray = Math.floor(Math.random() * 256);
-    pixels[i] = gray;      // R
-    pixels[i + 1] = gray;  // G
-    pixels[i + 2] = gray;  // B
-    pixels[i + 3] = 255;   // A
-  }
-  return pixels;
-}
+// ============================================================================
+// PASO 2: CUANTIZAR SIN K-MEANS (truncar a 3 bits + frecuencias)
+// ============================================================================
 
-// ============================================================
-// PASO 2: CUANTIZACIÓN DE COLOR (K-means simplificado)
-// ============================================================
-
-function quantizeColors(pixels, width, height, k) {
-  // Extraer colores únicos con frecuencia
-  const colorFreq = new Map();
+function quantizeToFrequency(pixels, width, height, k) {
+  // Truncar RGB a 3 bits: (valor & 0xE0) = (valor >> 5) << 5
+  const colorMap = new Map();
+  const pixelCount = (width * height);
 
   for (let i = 0; i < pixels.length; i += 4) {
-    const r = pixels[i];
-    const g = pixels[i + 1];
-    const b = pixels[i + 2];
+    const r = pixels[i] & 0xE0;
+    const g = pixels[i + 1] & 0xE0;
+    const b = pixels[i + 2] & 0xE0;
     const key = `${r},${g},${b}`;
-    colorFreq.set(key, (colorFreq.get(key) || 0) + 1);
+
+    colorMap.set(key, (colorMap.get(key) || 0) + 1);
   }
 
-  // Si hay menos colores que k, usarlos todos
-  const uniqueColors = Array.from(colorFreq.entries())
+  // Tomar los K colores más frecuentes
+  const palette = Array.from(colorMap.entries())
     .sort((a, b) => b[1] - a[1])
+    .slice(0, k)
     .map(([key]) => {
       const [r, g, b] = key.split(',').map(Number);
       return { r, g, b };
     });
 
-  if (uniqueColors.length <= k) {
-    const palette = uniqueColors;
-    const colorIndexMap = new Map();
-    palette.forEach((c, i) => colorIndexMap.set(`${c.r},${c.g},${c.b}`, i));
+  // Asignar cada píxel al color más cercano de la paleta
+  const labels = new Uint8Array(width * height);
 
-    const quantized = new Uint8Array(width * height);
-    for (let i = 0, idx = 0; i < pixels.length; i += 4, idx++) {
-      const key = `${pixels[i]},${pixels[i+1]},${pixels[i+2]}`;
-      quantized[idx] = colorIndexMap.get(key) || 0;
-    }
-
-    return { quantized, palette };
-  }
-
-  // K-means simplificado
-  let palette = initializePalette(uniqueColors, k);
-
-  for (let iter = 0; iter < 5; iter++) {
-    const clusters = Array.from({ length: k }, () => []);
-
-    for (const color of uniqueColors) {
-      let bestIdx = 0;
-      let bestDist = Infinity;
-
-      for (let i = 0; i < palette.length; i++) {
-        const dist = colorDistance(color, palette[i]);
-        if (dist < bestDist) {
-          bestDist = dist;
-          bestIdx = i;
-        }
-      }
-
-      clusters[bestIdx].push(color);
-    }
-
-    const newPalette = [];
-    for (let i = 0; i < k; i++) {
-      if (clusters[i].length === 0) {
-        newPalette.push(palette[i]);
-      } else {
-        const avg = {
-          r: Math.round(clusters[i].reduce((s, c) => s + c.r, 0) / clusters[i].length),
-          g: Math.round(clusters[i].reduce((s, c) => s + c.g, 0) / clusters[i].length),
-          b: Math.round(clusters[i].reduce((s, c) => s + c.b, 0) / clusters[i].length)
-        };
-        newPalette.push(avg);
-      }
-    }
-
-    palette = newPalette;
-  }
-
-  // Cuantizar imagen completa
-  const quantized = new Uint8Array(width * height);
   for (let i = 0, idx = 0; i < pixels.length; i += 4, idx++) {
-    const pixel = { r: pixels[i], g: pixels[i+1], b: pixels[i+2] };
+    const r = pixels[i] & 0xE0;
+    const g = pixels[i + 1] & 0xE0;
+    const b = pixels[i + 2] & 0xE0;
+
     let bestIdx = 0;
     let bestDist = Infinity;
 
     for (let j = 0; j < palette.length; j++) {
-      const dist = colorDistance(pixel, palette[j]);
+      const dr = r - palette[j].r;
+      const dg = g - palette[j].g;
+      const db = b - palette[j].b;
+      const dist = dr * dr + dg * dg + db * db;
+
       if (dist < bestDist) {
         bestDist = dist;
         bestIdx = j;
       }
     }
 
-    quantized[idx] = bestIdx;
+    labels[idx] = bestIdx;
   }
 
-  return { quantized, palette };
+  return { labels, palette };
 }
 
-function initializePalette(colors, k) {
-  const palette = [];
-  const used = new Set();
+// ============================================================================
+// PASO 3: GENERAR PUNTADAS (scanlines horizontales simples)
+// ============================================================================
 
-  palette.push(colors[0]);
-  used.add(0);
-
-  while (palette.length < k && used.size < colors.length) {
-    let maxDist = -1;
-    let maxIdx = -1;
-
-    for (let i = 0; i < colors.length; i++) {
-      if (used.has(i)) continue;
-
-      let minDist = Infinity;
-      for (const p of palette) {
-        const d = colorDistance(colors[i], p);
-        if (d < minDist) minDist = d;
-      }
-
-      if (minDist > maxDist) {
-        maxDist = minDist;
-        maxIdx = i;
-      }
-    }
-
-    if (maxIdx >= 0) {
-      palette.push(colors[maxIdx]);
-      used.add(maxIdx);
-    } else {
-      break;
-    }
-  }
-
-  while (palette.length < k) {
-    palette.push({ r: 128, g: 128, b: 128 });
-  }
-
-  return palette;
-}
-
-function colorDistance(c1, c2) {
-  const dr = c1.r - c2.r;
-  const dg = c1.g - c2.g;
-  const db = c1.b - c2.b;
-  // Distancia RGB ponderada perceptual exacta
-  return (dr * dr * 0.299) + (dg * dg * 0.587) + (db * db * 0.114);
-}
-
-// ============================================================
-// PASO 3: DETECTAR REGIONES CONECTADAS (Flood Fill)
-// ============================================================
-
-function findConnectedRegions(quantized, palette, width, height) {
-  const visited = new Uint8Array(width * height);
+function generateScanlineStitches(labels, palette, width, height, stitchDensity) {
+  const SCANLINE_STEP = Math.max(1, Math.round(5 / stitchDensity)); // ~5px
+  const STITCH_STEP = SCANLINE_STEP;
   const regions = [];
-  let regionId = 0;
 
-  const directions = [
-    [-1, 0], [1, 0], [0, -1], [0, 1],
-    [-1, -1], [1, -1], [-1, 1], [1, 1]
-  ];
+  // Para cada color
+  for (let colorIdx = 0; colorIdx < palette.length; colorIdx++) {
+    const stitches = [];
 
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = y * width + x;
-      if (visited[idx]) continue;
+    // Para cada scanline Y (saltando cada SCANLINE_STEP)
+    for (let y = 0; y < height; y += SCANLINE_STEP) {
+      let inSegment = false;
+      let segmentStart = -1;
 
-      const colorIdx = quantized[idx];
-      const pixels = [];
-      const stack = [{x, y}];
+      // Recorrer X
+      for (let x = 0; x < width; x++) {
+        const idx = y * width + x;
+        const currentColor = labels[idx];
+        const prevColor = x > 0 ? labels[idx - 1] : -1;
 
-      while (stack.length > 0) {
-        const {x: cx, y: cy} = stack.pop();
-        const cidx = cy * width + cx;
+        // Inicio de segmento: color actual == nuestro color, anterior != nuestro color
+        if (currentColor === colorIdx && prevColor !== colorIdx) {
+          inSegment = true;
+          segmentStart = x;
+        }
 
-        if (cx < 0 || cx >= width || cy < 0 || cy >= height) continue;
-        if (visited[cidx]) continue;
-        if (quantized[cidx] !== colorIdx) continue;
+        // Fin de segmento
+        if (inSegment && (currentColor !== colorIdx || x === width - 1)) {
+          const segmentEnd = currentColor === colorIdx ? x : x - 1;
 
-        visited[cidx] = 1;
-        pixels.push({x: cx, y: cy});
+          // Generar puntos cada STITCH_STEP en este segmento
+          if (segmentEnd >= segmentStart) {
+            for (let sx = segmentStart; sx <= segmentEnd; sx += STITCH_STEP) {
+              // Verificar que el punto está en el color correcto
+              if (labels[y * width + sx] === colorIdx) {
+                stitches.push({ x: sx, y });
+              }
+            }
+          }
 
-        for (const [dx, dy] of directions) {
-          stack.push({x: cx + dx, y: cy + dy});
+          inSegment = false;
         }
       }
+    }
 
-      if (pixels.length < 20) continue;
-
-      let minX = width, minY = height, maxX = 0, maxY = 0;
-      for (const p of pixels) {
-        minX = Math.min(minX, p.x);
-        minY = Math.min(minY, p.y);
-        maxX = Math.max(maxX, p.x);
-        maxY = Math.max(maxY, p.y);
-      }
+    if (stitches.length > 0) {
+      // Zigzag: alternar dirección X en cada scanline
+      const zigzagged = zigzagConnect(stitches, SCANLINE_STEP);
+      const type = classifyType(zigzagged.length);
 
       regions.push({
-        id: regionId++,
-        colorIdx,
+        id: `r${colorIdx}`,
+        name: getColorName(palette[colorIdx], colorIdx),
         color: palette[colorIdx],
-        pixels,
-        bounds: { minX, minY, maxX, maxY },
-        width: maxX - minX + 1,
-        height: maxY - minY + 1,
-        area: pixels.length
+        type,
+        stitches: zigzagged,
+        pointCount: zigzagged.length
       });
     }
   }
@@ -407,539 +272,48 @@ function findConnectedRegions(quantized, palette, width, height) {
   return regions;
 }
 
-// ============================================================
-// PASO 4: PROCESAR CADA REGIÓN
-// ============================================================
-
-function processRegion(region, options) {
-  const { width, height, pxPerMM, stitchPX, fillAngle, widthMM, heightMM } = options;
-
-  // Crear máscara binaria para esta región
-  const mask = createRegionMask(region);
-
-  // Extraer contorno (Marching Squares simplificado)
-  const contour = extractContour(region, mask);
-
-  if (contour.length < 3) {
-    return { ...region, type: 'run', stitches: [], pointCount: 0, pathPoints: [] };
-  }
-
-  // Simplificar contorno (Ramer-Douglas-Peucker)
-  const simplifiedContour = simplifyContour(contour, 1.0 * pxPerMM);
-
-  // Cerrar contorno
-  if (simplifiedContour.length > 0) {
-    const first = simplifiedContour[0];
-    const last = simplifiedContour[simplifiedContour.length - 1];
-    if (first.x !== last.x || first.y !== last.y) {
-      simplifiedContour.push({ ...first });
-    }
-  }
-
-  // Clasificar tipo de región
-  const regionType = classifyRegion(region, pxPerMM);
-
-  // Generar puntadas según tipo
-  let stitches = [];
-
-  if (regionType === 'fill') {
-    stitches = generateFillStitches(simplifiedContour, region, mask, {
-      stitchPX,
-      fillAngle,
-      pxPerMM
-    });
-  } else if (regionType === 'satin') {
-    stitches = generateSatinStitches(simplifiedContour, stitchPX);
-  } else {
-    stitches = generateRunStitches(simplifiedContour, stitchPX);
-  }
-
-  // Convertir a mm
-  const stitchesMM = stitches.map(pt => ({
-    x: Math.max(0, Math.min(widthMM, pt.x / pxPerMM)),
-    y: Math.max(0, Math.min(heightMM, pt.y / pxPerMM))
-  }));
-
-  // Path points normalizados
-  const pathPoints = simplifiedContour.map(p => [
-    p.x / width,
-    p.y / height
-  ]);
-
-  return {
-    id: `region_${region.id}`,
-    name: generateRegionName(region, regionType),
-    color: region.color,
-    type: regionType,
-    pointCount: stitchesMM.length,
-    stitches: stitchesMM,
-    pathPoints,
-    angle: regionType === 'fill' ? fillAngle : 0,
-    density: stitchPX / pxPerMM
-  };
-}
-
-function createRegionMask(region) {
-  const w = region.width;
-  const h = region.height;
-  const mask = new Uint8Array(w * h);
-
-  for (const p of region.pixels) {
-    const mx = p.x - region.bounds.minX;
-    const my = p.y - region.bounds.minY;
-    mask[my * w + mx] = 1;
-  }
-
-  return mask;
-}
-
-// ============================================================
-// EXTRACTOR DE CONTORNO (Marching Squares simplificado)
-// ============================================================
-
-function extractContour(region, mask) {
-  const w = region.width;
-  const h = region.height;
-  const edgePixels = [];
-
-  for (const p of region.pixels) {
-    const mx = p.x - region.bounds.minX;
-    const my = p.y - region.bounds.minY;
-
-    let isEdge = false;
-    const neighbors = [[-1,0], [1,0], [0,-1], [0,1]];
-
-    for (const [dx, dy] of neighbors) {
-      const nx = mx + dx;
-      const ny = my + dy;
-      if (nx < 0 || nx >= w || ny < 0 || ny >= h || mask[ny * w + nx] === 0) {
-        isEdge = true;
-        break;
-      }
-    }
-
-    if (isEdge) {
-      edgePixels.push({ x: p.x, y: p.y });
-    }
-  }
-
-  return orderPointsAsPath(edgePixels);
-}
-
-function orderPointsAsPath(points) {
-  if (points.length === 0) return [];
-  if (points.length === 1) return points;
-
-  // Encontrar punto inicial (top-left para consistencia)
-  let startIdx = 0;
-  for (let i = 1; i < points.length; i++) {
-    if (points[i].y < points[startIdx].y || 
-        (points[i].y === points[startIdx].y && points[i].x < points[startIdx].x)) {
-      startIdx = i;
-    }
-  }
-
-  const ordered = [points[startIdx]];
-  const remaining = new Set(points.map((p, i) => i).filter(i => i !== startIdx));
-
-  while (remaining.size > 0) {
-    const last = ordered[ordered.length - 1];
-    let nearestIdx = -1;
-    let nearestDist = Infinity;
-
-    for (const idx of remaining) {
-      const dx = points[idx].x - last.x;
-      const dy = points[idx].y - last.y;
-      const dist = dx * dx + dy * dy;
-
-      if (dist < nearestDist) {
-        nearestDist = dist;
-        nearestIdx = idx;
-      }
-    }
-
-    if (nearestIdx >= 0) {
-      ordered.push(points[nearestIdx]);
-      remaining.delete(nearestIdx);
-    } else {
-      break;
-    }
-  }
-
-  // Cerrar path: conectar último con primero
-  if (ordered.length > 1) {
-    const first = ordered[0];
-    const last = ordered[ordered.length - 1];
-    if (first.x !== last.x || first.y !== last.y) {
-      ordered.push({ ...first });
-    }
-  }
-
-  return ordered;
-}
-
-// ============================================================
-// SIMPLIFICACIÓN (Ramer-Douglas-Peucker)
-// ============================================================
-
-function simplifyContour(points, tolerance) {
-  if (points.length <= 2) return points;
-
-  const result = rdpRecursive(points, 0, points.length - 1, tolerance * tolerance);
-
-  if (result.length > 0 && (result[0].x !== result[result.length - 1].x || result[0].y !== result[result.length - 1].y)) {
-    result.push({ ...result[0] });
-  }
-
-  return result;
-}
-
-function rdpRecursive(points, start, end, tolSq) {
-  if (end <= start + 1) {
-    return [points[start], points[end]];
-  }
-
-  let maxDist = -1;
-  let maxIdx = -1;
-
-  const lineStart = points[start];
-  const lineEnd = points[end];
-
-  for (let i = start + 1; i < end; i++) {
-    const dist = pointToLineDistanceSq(points[i], lineStart, lineEnd);
-    if (dist > maxDist) {
-      maxDist = dist;
-      maxIdx = i;
-    }
-  }
-
-  if (maxDist > tolSq) {
-    const left = rdpRecursive(points, start, maxIdx, tolSq);
-    const right = rdpRecursive(points, maxIdx, end, tolSq);
-    return left.slice(0, -1).concat(right);
-  } else {
-    return [points[start], points[end]];
-  }
-}
-
-function pointToLineDistanceSq(point, lineStart, lineEnd) {
-  const dx = lineEnd.x - lineStart.x;
-  const dy = lineEnd.y - lineStart.y;
-  const lenSq = dx * dx + dy * dy;
-
-  if (lenSq === 0) {
-    const ddx = point.x - lineStart.x;
-    const ddy = point.y - lineStart.y;
-    return ddx * ddx + ddy * ddy;
-  }
-
-  const t = Math.max(0, Math.min(1, ((point.x - lineStart.x) * dx + (point.y - lineStart.y) * dy) / lenSq));
-  const projX = lineStart.x + t * dx;
-  const projY = lineStart.y + t * dy;
-
-  const ddx = point.x - projX;
-  const ddy = point.y - projY;
-  return ddx * ddx + ddy * ddy;
-}
-
-// ============================================================
-// CLASIFICACIÓN DE REGIÓN
-// ============================================================
-
-function classifyRegion(region, pxPerMM) {
-  const areaMM2 = region.area / (pxPerMM * pxPerMM);
-  const wMM = region.width / pxPerMM;
-  const hMM = region.height / pxPerMM;
-  const aspect = Math.max(wMM, hMM) / Math.max(Math.min(wMM, hMM), 0.1);
-  const avgWidth = Math.sqrt(areaMM2) / Math.max((region.width + region.height) / 2 / pxPerMM, 0.1);
-
-  if (areaMM2 < 5 || avgWidth < 1.5) {
-    return 'running_stitch';
-  } else if (areaMM2 < 30 || (aspect < 4 && avgWidth < 4)) {
-    return 'satin';
-  } else {
-    return 'fill';
-  }
-}
-
-// ============================================================
-// GENERACIÓN DE FILL (Scanline con clipping point-in-polygon)
-// ============================================================
-
-function generateFillStitches(contour, region, mask, options) {
-  const { stitchPX, fillAngle, pxPerMM } = options;
-  const stitches = [];
-
-  if (contour.length < 3) return stitches;
-
-  const angleRad = (fillAngle * Math.PI) / 180;
-  const cosA = Math.cos(angleRad);
-  const sinA = Math.sin(angleRad);
-
-  // 1. Rotar contorno al ángulo de fill
-  let rMin = Infinity, rMax = -Infinity;
-  const rotContour = contour.map(p => {
-    const rx = p.x * cosA + p.y * sinA;
-    const ry = -p.x * sinA + p.y * cosA;
-    rMin = Math.min(rMin, ry);
-    rMax = Math.max(rMax, ry);
-    return { rx, ry };
-  });
-
-  const step = stitchPX;
-  const scanlines = [];
-
-  // 2. Generar scanlines paralelas al ángulo
-  for (let r = rMin; r <= rMax; r += step) {
-    const intersections = [];
-
-    // Encontrar intersecciones con contorno
-    for (let i = 0; i < rotContour.length - 1; i++) {
-      const p1 = rotContour[i];
-      const p2 = rotContour[i + 1];
-
-      const minY = Math.min(p1.ry, p2.ry);
-      const maxY = Math.max(p1.ry, p2.ry);
-
-      if (r >= minY && r <= maxY) {
-        if (Math.abs(p2.ry - p1.ry) > 1e-6) {
-          const t = (r - p1.ry) / (p2.ry - p1.ry);
-          const rx = p1.rx + t * (p2.rx - p1.rx);
-          intersections.push(rx);
-        }
-      }
-    }
-
-    if (intersections.length >= 2) {
-      intersections.sort((a, b) => a - b);
-      scanlines.push({ r, intersections });
-    }
-  }
-
-  // 3. Generar puntadas entre intersecciones
-  for (const scanline of scanlines) {
-    const { r, intersections } = scanline;
-
-    // Procesar pares de intersecciones (entrada/salida)
-    for (let i = 0; i < intersections.length - 1; i += 2) {
-      const x1 = intersections[i];
-      const x2 = intersections[i + 1];
-      const lineLen = x2 - x1;
-
-      if (lineLen < step * 0.5) continue;
-
-      // Generar puntos cada stitchPX
-      const numPoints = Math.max(2, Math.floor(lineLen / step) + 1);
-
-      for (let j = 0; j < numPoints; j++) {
-        const t = j / (numPoints - 1);
-        const rx = x1 + t * lineLen;
-        const ry = r;
-
-        // 4. Rotar de vuelta a coordenadas originales
-        const ox = rx * cosA - ry * sinA;
-        const oy = rx * sinA + ry * cosA;
-
-        // 5. Verificar point-in-polygon
-        if (isPointInPolygon(ox, oy, contour)) {
-          stitches.push({ x: ox, y: oy });
-        }
-      }
-    }
-  }
-
-  // 6. Conectar scanlines en zigzag
-  return zigzagConnectFillRows(stitches, step);
-}
-
-function zigzagConnectFillRows(stitches, step) {
+function zigzagConnect(stitches, scanlineStep) {
   if (stitches.length < 2) return stitches;
 
-  // Agrupar puntadas por fila Y (con tolerancia)
-  const tolerance = step * 0.8;
+  // Agrupar por Y
   const rows = new Map();
-
   for (const s of stitches) {
-    let foundRow = false;
-
-    for (const [yKey, rowStitches] of rows) {
-      if (Math.abs(s.y - yKey) < tolerance) {
-        rowStitches.push(s);
-        foundRow = true;
-        break;
-      }
-    }
-
-    if (!foundRow) {
-      rows.set(s.y, [s]);
-    }
+    const yKey = Math.round(s.y / scanlineStep);
+    if (!rows.has(yKey)) rows.set(yKey, []);
+    rows.get(yKey).push(s);
   }
 
-  // Ordenar filas por Y
+  // Ordenar cada fila por X, alternar dirección en zigzag
   const sortedRows = Array.from(rows.entries())
     .sort((a, b) => a[0] - b[0])
-    .map(([_, stitches]) => stitches);
+    .map(([_, row]) => {
+      row.sort((a, b) => a.x - b.x);
+      return row;
+    });
 
-  // Alternar dirección en zigzag
   const result = [];
   for (let i = 0; i < sortedRows.length; i++) {
     const row = sortedRows[i];
-    row.sort((a, b) => a.x - b.x);
-    
-    // Alternar dirección: par = izq→der, impar = der→izq
-    if (i % 2 === 1) {
-      row.reverse();
-    }
-
+    if (i % 2 === 1) row.reverse(); // Alternar dirección
     result.push(...row);
   }
 
   return result;
 }
 
-// ============================================================
-// GENERACIÓN DE SATIN
-// ============================================================
+// ============================================================================
+// CLASIFICAR TIPO DE PUNTADA
+// ============================================================================
 
-function generateSatinStitches(contour, stitchPX) {
-  const stitches = [];
-  if (contour.length < 3) return stitches;
-
-  // Calcular centro geométrico
-  const center = {
-    x: contour.reduce((s, p) => s + p.x, 0) / contour.length,
-    y: contour.reduce((s, p) => s + p.y, 0) / contour.length
-  };
-
-  // Offset interior (0.35mm típico)
-  const offset = stitchPX * 0.5;
-
-  // Crear contorno interior (offset hacia centro)
-  const innerContour = contour.map(p => {
-    const dx = p.x - center.x;
-    const dy = p.y - center.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    
-    if (dist < 1) {
-      return { x: p.x, y: p.y };
-    }
-
-    // Mover punto hacia centro por offset
-    const factor = Math.max(0, (dist - offset) / dist);
-    return {
-      x: center.x + dx * factor,
-      y: center.y + dy * factor
-    };
-  });
-
-  // Resamplear ambos contornos a stitchPX (0.7mm)
-  const outerResampled = resampleContour(contour, stitchPX);
-  const innerResampled = resampleContour(innerContour, stitchPX);
-
-  // Alternar exterior → interior → exterior
-  const count = Math.min(outerResampled.length, innerResampled.length);
-  for (let i = 0; i < count; i++) {
-    stitches.push(outerResampled[i]);
-    stitches.push(innerResampled[i]);
-  }
-
-  return stitches;
+function classifyType(pointCount) {
+  if (pointCount < 100) return 'running_stitch';
+  if (pointCount < 1000) return 'satin';
+  return 'fill';
 }
 
-// ============================================================
-// GENERACIÓN DE RUN
-// ============================================================
-
-function generateRunStitches(contour, stitchPX) {
-  return resampleContour(contour, stitchPX);
-}
-
-// ============================================================
-// RESAMPLEAR CONTORNO
-// ============================================================
-
-function resampleContour(points, step) {
-  if (points.length < 2) return points;
-
-  let totalLen = 0;
-  const lengths = [0];
-
-  for (let i = 1; i < points.length; i++) {
-    const dx = points[i].x - points[i-1].x;
-    const dy = points[i].y - points[i-1].y;
-    totalLen += Math.sqrt(dx * dx + dy * dy);
-    lengths.push(totalLen);
-  }
-
-  if (totalLen < step) return [points[0]];
-
-  const numPoints = Math.max(2, Math.floor(totalLen / step) + 1);
-  const result = [];
-
-  for (let i = 0; i < numPoints; i++) {
-    const targetDist = (i / (numPoints - 1)) * totalLen;
-
-    let segIdx = 0;
-    for (let j = 1; j < lengths.length; j++) {
-      if (lengths[j] >= targetDist) {
-        segIdx = j - 1;
-        break;
-      }
-    }
-
-    const segStart = points[segIdx];
-    const segEnd = points[segIdx + 1] || points[points.length - 1];
-    const segLen = lengths[segIdx + 1] - lengths[segIdx];
-
-    if (segLen < 1e-6) {
-      result.push({ ...segStart });
-    } else {
-      const t = (targetDist - lengths[segIdx]) / segLen;
-      result.push({
-        x: segStart.x + t * (segEnd.x - segStart.x),
-        y: segStart.y + t * (segEnd.y - segStart.y)
-      });
-    }
-  }
-
-  return result;
-}
-
-// ============================================================
-// POINT-IN-POLYGON (Ray Casting)
-// ============================================================
-
-function isPointInPolygon(x, y, polygon) {
-  let inside = false;
-  const n = polygon.length;
-
-  for (let i = 0, j = n - 1; i < n; j = i++) {
-    const xi = polygon[i].x, yi = polygon[i].y;
-    const xj = polygon[j].x, yj = polygon[j].y;
-
-    if (((yi > y) !== (yj > y)) && 
-        (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
-      inside = !inside;
-    }
-  }
-
-  return inside;
-}
-
-// ============================================================
-// UTILIDADES
-// ============================================================
-
-function generateRegionName(region, type) {
-  const colorNames = [
-    'negro', 'rojo', 'rosa', 'azul', 'verde', 'amarillo',
-    'naranja', 'morado', 'cafe', 'blanco', 'gris', 'cyan'
-  ];
-
-  const typeSuffix = type === 'fill' ? 'fill' : type === 'satin' ? 'sat' : 'run';
-  const colorName = colorNames[region.colorIdx % colorNames.length] || 'color';
-
-  return `${colorName}_${typeSuffix}`;
+function getColorName(color, idx) {
+  const names = ['negro', 'rojo', 'verde', 'azul', 'amarillo', 'rosa'];
+  return (names[idx] || `color${idx}`);
 }
 
 export default robustVectorization;
