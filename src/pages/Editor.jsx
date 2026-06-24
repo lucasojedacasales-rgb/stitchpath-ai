@@ -119,122 +119,73 @@ export default function Editor() {
     timerRef.current = setInterval(() => setProcessingElapsed(s => s + 1), 1000);
     setStep(2);
 
-    const retryWithBackoff = async (fn, maxAttempts = 3) => {
-      let lastError;
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-          return await fn();
-        } catch (err) {
-          lastError = err;
-          if (attempt < maxAttempts) {
-            const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
-            console.warn(`Attempt ${attempt} failed, retrying in ${delay}ms...`, err);
-            await new Promise(r => setTimeout(r, delay));
-          }
-        }
-      }
-      throw lastError;
-    };
-
     try {
-      // Extract pixels
-      let pixelData;
-      try {
-        pixelData = await extractImagePixels(imageUrl);
-        console.log('[EDITOR] Pixels extracted:', pixelData.width, 'x', pixelData.height);
-      } catch (err) {
-        throw new Error('No se pudo cargar la imagen');
+      // 1. Extraer píxeles de la imagen
+      console.log('[EDITOR] Extrayendo píxeles...');
+      const pixelData = await extractImagePixels(imageUrl);
+      console.log('[EDITOR] Píxeles:', pixelData.width, 'x', pixelData.height, '=', pixelData.pixels.length / 4, 'px');
+
+      if (!pixelData.pixels || pixelData.pixels.length < 16) {
+        throw new Error('Imagen demasiado pequeña o inválida');
       }
 
-      if (!pixelData.pixels || pixelData.pixels.length < 4) {
-        throw new Error('Datos de imagen inválidos');
-      }
-
-      // Invocar motor ULTIMATE para vectorización
-      let res;
-      try {
-        res = await retryWithBackoff(async () => {
-          console.log('[EDITOR] Invoking ultimateVectorization...');
-          return await base44.functions.invoke('ultimateVectorization', {
-            pixels: pixelData.pixels,
-            width: pixelData.width,
-            height: pixelData.height,
-            width_mm: config.width_mm,
-            height_mm: config.height_mm,
-            color_count: config.color_count || 6,
-            stitch_density: 0.8
-          });
-        });
-      } catch (err) {
-        console.error('Motor failed:', err);
-        throw new Error('Error motor: ' + (err.message || String(err)));
-      }
-
-      if (!res?.data?.success) {
-        throw new Error(res?.data?.error || 'Motor failed');
-      }
-
-      // Convertir bloques a regiones para visualización
-      const motorData = res.data;
-      const blocks = Array.isArray(motorData.blocks) ? motorData.blocks : [];
-      const newRegions = blocks.map((block, idx) => {
-        const stitches = block.stitches || [];
-        // path_points must be [[normX, normY], ...] in 0-1 range for StitchCanvas
-        // The motor returns path_points as [[x/w, y/h], ...] already normalized
-        // But if they're objects {x,y} in mm, convert them
-        let path_points = block.path_points;
-        if (!Array.isArray(path_points) || path_points.length === 0) {
-          // Build from stitches in mm → normalize by design dimensions
-          const wMm = config.width_mm || 100;
-          const hMm = config.height_mm || 100;
-          path_points = stitches.map(s => [
-            (s.x || 0) / wMm,
-            (s.y || 0) / hMm
-          ]);
-        } else if (path_points.length > 0 && !Array.isArray(path_points[0])) {
-          // path_points are objects {x,y} — convert to arrays
-          const wMm = config.width_mm || 100;
-          const hMm = config.height_mm || 100;
-          path_points = path_points.map(p => [(p.x || 0) / wMm, (p.y || 0) / hMm]);
-        }
-
-        return {
-          id: block.id || `block_${idx}`,
-          color: block.color || '#000000',
-          stitch_type: block.stitch_type || block.type || 'fill',
-          stitches,
-          path_points,
-          pointCount: block.pointCount || stitches.length,
-          stitch_count: block.stitch_count || stitches.length,
-          visible: true
-        };
+      // 2. Llamar al motor de vectorización
+      console.log('[EDITOR] Llamando ultimateVectorization...');
+      const res = await base44.functions.invoke('ultimateVectorization', {
+        pixels: Array.isArray(pixelData.pixels) ? pixelData.pixels : Array.from(pixelData.pixels),
+        width: pixelData.width,
+        height: pixelData.height,
+        width_mm: config.width_mm || 100,
+        height_mm: config.height_mm || 100,
+        color_count: config.color_count || 6,
+        stitch_density: 0.8
       });
 
-      const totalCalculatedStitches = motorData.stitches || blocks.reduce((s, b) => s + (b.stitches?.length || 0), 0);
+      console.log('[EDITOR] Respuesta del motor:', res?.data);
 
-      console.log('[EDITOR] Motor output:', newRegions.length, 'regions,', totalCalculatedStitches, 'stitches');
+      if (!res?.data?.success) {
+        throw new Error(res?.data?.error || 'El motor devolvió error');
+      }
+
+      // 3. Mapear bloques a regiones — StitchCanvas usa region.stitches [{x,y}] directamente
+      const blocks = Array.isArray(res.data.blocks) ? res.data.blocks : [];
+      if (blocks.length === 0) throw new Error('El motor no generó regiones');
+
+      const newRegions = blocks.map((block, idx) => ({
+        id: block.id || `r${idx}`,
+        color: block.color || '#888888',
+        stitch_type: block.stitch_type || 'fill',
+        stitches: block.stitches || [],
+        stitch_count: block.stitch_count || (block.stitches?.length || 0),
+        visible: true
+      }));
+
+      const totalStitches = res.data.stitches || newRegions.reduce((s, r) => s + r.stitch_count, 0);
+      console.log('[EDITOR] ✅', newRegions.length, 'regiones,', totalStitches, 'puntadas');
 
       setRegions(newRegions);
       setStep(3);
+
+      // 4. Guardar en DB
       await base44.entities.Project.update(id, {
         regions: newRegions,
         step: 3,
         status: 'ready',
-        total_stitches: totalCalculatedStitches,
-        color_count: new Set((newRegions || []).map(r => r.color)).size
+        total_stitches: totalStitches,
+        color_count: new Set(newRegions.map(r => r.color)).size
       });
 
-      // Save version
       await base44.entities.VersionHistory.create({
         project_id: id,
-        label: `Vectorización ${config.mode}`,
-        description: `${newRegions?.length || 0} regiones, ${totalCalculatedStitches} puntadas`,
+        label: `Vectorización`,
+        description: `${newRegions.length} regiones, ${totalStitches} puntadas`,
         snapshot: { regions: newRegions, config },
         step: 3
       });
+
     } catch (e) {
-      console.error('Processing error:', e);
-      alert('Error: ' + (e.message || 'Algo salió mal'));
+      console.error('[EDITOR] Error en procesamiento:', e);
+      alert('Error al vectorizar: ' + (e.message || 'Algo salió mal. Revisa la consola.'));
     } finally {
       setProcessing(false);
       clearInterval(timerRef.current);
