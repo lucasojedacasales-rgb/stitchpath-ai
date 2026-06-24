@@ -1,9 +1,8 @@
 /* global Deno */
 
 /**
- * Motor de Vectorización - SIMPLE + EFECTIVO
- * Scanlines + Cuantización por frecuencia
- * (Lo que funcionaba antes)
+ * Motor de Vectorización - FLOOD FILL + SCANLINES
+ * Detecta regiones cerradas y genera scanlines densos
  */
 
 Deno.serve(async (req) => {
@@ -15,7 +14,7 @@ Deno.serve(async (req) => {
     const payload = await req.json();
     const { pixels, width, height, width_mm = 100, height_mm = 100, color_count = 6, stitch_density = 0.7 } = payload;
 
-    console.log(`[VECTORIZER] Starting: ${width}x${height}px → ${color_count} colors, density=${stitch_density}`);
+    console.log(`[VECTORIZER] Starting: ${width}x${height}px → ${color_count} colors`);
 
     if (!pixels || !width || !height || pixels.length < 4) {
       return Response.json({ success: false, error: 'Invalid image data' });
@@ -27,30 +26,37 @@ Deno.serve(async (req) => {
     }
 
     // 1. ESCALAR
-    const maxDim = 256;
-    const scaled = scaleImage(pixelData, width, height, maxDim);
+    const scaled = scaleImage(pixelData, width, height, 256);
     console.log(`[VECTORIZER] Scaled to ${scaled.width}x${scaled.height}`);
 
-    // 2. CUANTIZAR (simple por frecuencia)
-    const { labels, palette } = quantizeColors(scaled.pixels, scaled.width, scaled.height, color_count);
+    // 2. CUANTIZAR COLORES
+    const { quantized, palette } = quantizeImage(scaled.pixels, scaled.width, scaled.height, color_count);
     console.log(`[VECTORIZER] Quantized to ${palette.length} colors`);
 
-    // 3. GENERAR REGIONES CON SCANLINES
-    const regions = generateScanlineRegions(labels, palette, scaled.width, scaled.height, stitch_density);
-    console.log(`[VECTORIZER] Generated ${regions.length} regions`);
+    // 3. DETECTAR REGIONES POR FLOOD FILL
+    const regions = detectRegionsByFloodFill(quantized, palette, scaled.width, scaled.height);
+    console.log(`[VECTORIZER] Detected ${regions.length} regions via flood fill`);
 
     if (regions.length === 0) {
-      throw new Error('No regions generated from image');
+      throw new Error('No regions detected');
     }
 
-    // 4. CONVERTIR A MM
+    // 4. GENERAR SCANLINES PARA CADA REGIÓN
+    const scannedRegions = regions.map(region => ({
+      ...region,
+      stitches: generateRegionScanlines(region, scaled.width, scaled.height, stitch_density)
+    })).filter(r => r.stitches.length > 5);
+
+    console.log(`[VECTORIZER] Generated scanlines for ${scannedRegions.length} regions`);
+
+    // 5. CONVERTIR A MM
     const pxPerMM_x = width_mm / scaled.width;
     const pxPerMM_y = height_mm / scaled.height;
 
-    const finalRegions = regions.map(r => ({
+    const finalRegions = scannedRegions.map(r => ({
       id: r.id,
       color: r.color,
-      stitch_type: r.stitch_type,
+      stitch_type: r.stitches.length < 50 ? 'running_stitch' : r.stitches.length < 400 ? 'satin' : 'fill',
       stitches: r.stitches.map(p => ({ x: p.x * pxPerMM_x, y: p.y * pxPerMM_y })),
       path_points: r.stitches.map(p => [p.x * pxPerMM_x / width_mm, p.y * pxPerMM_y / height_mm]),
       pointCount: r.stitches.length,
@@ -107,32 +113,32 @@ function scaleImage(src, srcW, srcH, maxDim) {
 }
 
 // ============================================================================
-// 2. CUANTIZAR (por frecuencia de colores)
+// 2. CUANTIZAR
 // ============================================================================
 
-function quantizeColors(pixels, width, height, k) {
-  const colorFreq = new Map();
+function quantizeImage(pixels, width, height, k) {
+  // Contar colores
+  const colorMap = new Map();
 
-  // Contar frecuencias
   for (let i = 0; i < pixels.length; i += 4) {
-    const r = pixels[i] & 0xE0;
-    const g = pixels[i + 1] & 0xE0;
-    const b = pixels[i + 2] & 0xE0;
+    const r = pixels[i];
+    const g = pixels[i + 1];
+    const b = pixels[i + 2];
     const key = `${r},${g},${b}`;
-    colorFreq.set(key, (colorFreq.get(key) || 0) + 1);
+    colorMap.set(key, (colorMap.get(key) || 0) + 1);
   }
 
-  // Top K por frecuencia
-  const palette = Array.from(colorFreq.entries())
+  // Top K colores
+  const palette = Array.from(colorMap.entries())
     .sort((a, b) => b[1] - a[1])
-    .slice(0, Math.max(1, k))
+    .slice(0, Math.max(2, k))
     .map(([key]) => {
       const [r, g, b] = key.split(',').map(Number);
       return { r, g, b };
     });
 
-  // Asignar cada píxel al color más cercano
-  const labels = new Uint8Array(width * height);
+  // Asignar a índices
+  const quantized = new Uint8Array(width * height);
 
   for (let i = 0, idx = 0; i < pixels.length; i += 4, idx++) {
     const r = pixels[i];
@@ -153,62 +159,127 @@ function quantizeColors(pixels, width, height, k) {
       }
     }
 
-    labels[idx] = best;
+    quantized[idx] = best;
   }
 
-  return { labels, palette };
+  return { quantized, palette };
 }
 
 // ============================================================================
-// 3. GENERAR REGIONES CON SCANLINES
+// 3. DETECTAR REGIONES POR FLOOD FILL
 // ============================================================================
 
-function generateScanlineRegions(labels, palette, width, height, density) {
+function detectRegionsByFloodFill(quantized, palette, width, height) {
+  const visited = new Set();
   const regions = [];
-  const STEP = Math.max(1, Math.round(3 / Math.max(0.1, density)));
+  let regionId = 0;
 
-  // Para cada color
-  for (let colorIdx = 0; colorIdx < palette.length; colorIdx++) {
-    const stitches = [];
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = y * width + x;
+      if (visited.has(idx)) continue;
 
-    // Scanlines horizontales
-    for (let y = 0; y < height; y += STEP) {
-      let inRun = false;
-      let runStart = -1;
+      const colorIdx = quantized[idx];
+      const pixels = floodFill(quantized, width, height, x, y, colorIdx, visited);
 
-      for (let x = 0; x <= width; x++) {
-        const isColor = x < width && labels[y * width + x] === colorIdx;
-        const wasColor = x > 0 && labels[y * width + x - 1] === colorIdx;
-
-        if (isColor && !wasColor) {
-          inRun = true;
-          runStart = x;
-        }
-
-        if (!isColor && wasColor) {
-          for (let px = runStart; px < x; px += STEP) {
-            stitches.push({ x: px, y });
-          }
-          inRun = false;
-        }
+      if (pixels.length > 10) {
+        regions.push({
+          id: `region_${regionId++}`,
+          colorIdx: colorIdx,
+          color: rgbToHex(palette[colorIdx]),
+          pixels: pixels
+        });
       }
-    }
-
-    if (stitches.length > 5) {
-      const color = `#${palette[colorIdx].r.toString(16).padStart(2, '0')}${palette[colorIdx].g.toString(16).padStart(2, '0')}${palette[colorIdx].b.toString(16).padStart(2, '0')}`;
-
-      const stitch_type = stitches.length < 50 ? 'running_stitch' : stitches.length < 400 ? 'satin' : 'fill';
-
-      regions.push({
-        id: `region_${colorIdx}`,
-        color: color,
-        stitch_type: stitch_type,
-        stitches: stitches,
-        pointCount: stitches.length,
-        visible: true
-      });
     }
   }
 
   return regions;
+}
+
+function floodFill(quantized, width, height, startX, startY, colorIdx, visited) {
+  const stack = [[startX, startY]];
+  const pixels = [];
+  const localVisited = new Set();
+  const idx = startY * width + startX;
+
+  if (visited.has(idx)) return pixels;
+
+  while (stack.length > 0) {
+    const [x, y] = stack.pop();
+
+    if (x < 0 || x >= width || y < 0 || y >= height) continue;
+
+    const i = y * width + x;
+    if (localVisited.has(i) || visited.has(i)) continue;
+    if (quantized[i] !== colorIdx) continue;
+
+    localVisited.add(i);
+    visited.add(i);
+    pixels.push([x, y]);
+
+    stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+  }
+
+  return pixels;
+}
+
+// ============================================================================
+// 4. GENERAR SCANLINES PARA REGIÓN
+// ============================================================================
+
+function generateRegionScanlines(region, width, height, density) {
+  const step = Math.max(1, Math.round(3 / Math.max(0.1, density)));
+  const pixelSet = new Set(region.pixels.map(([x, y]) => `${x},${y}`));
+
+  // Bounding box
+  let minX = width, maxX = 0, minY = height, maxY = 0;
+  for (const [x, y] of region.pixels) {
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+
+  const stitches = [];
+
+  // Scanlines horizontales dentro del bounding box
+  for (let y = minY; y <= maxY; y += step) {
+    const xValues = [];
+
+    for (let x = minX; x <= maxX; x++) {
+      if (pixelSet.has(`${x},${y}`)) {
+        xValues.push(x);
+      }
+    }
+
+    // Extraer runs
+    for (let i = 0; i < xValues.length; i++) {
+      const startX = xValues[i];
+      let endX = startX;
+
+      // Encontrar el final de la run
+      while (i + 1 < xValues.length && xValues[i + 1] === xValues[i] + 1) {
+        i++;
+        endX = xValues[i];
+      }
+
+      // Añadir puntos a lo largo de la run
+      for (let x = startX; x <= endX; x += step) {
+        stitches.push({ x, y });
+      }
+    }
+  }
+
+  return stitches;
+}
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+function rgbToHex(color) {
+  const r = Math.round(color.r).toString(16).padStart(2, '0');
+  const g = Math.round(color.g).toString(16).padStart(2, '0');
+  const b = Math.round(color.b).toString(16).padStart(2, '0');
+  return `#${r}${g}${b}`;
 }
