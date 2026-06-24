@@ -9,22 +9,30 @@ export async function extractImagePixels(imageUrl) {
     img.crossOrigin = 'anonymous';
 
     img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const w = Math.min(img.width, 800); // Cap at 800px for performance
-      const h = Math.min(img.height, 800);
+      try {
+        const canvas = document.createElement('canvas');
+        const w = Math.min(img.width, 800); // Cap at 800px for performance
+        const h = Math.min(img.height, 800);
 
-      canvas.width = w;
-      canvas.height = h;
+        canvas.width = w;
+        canvas.height = h;
 
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, w, h);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Could not get canvas context');
+        
+        ctx.drawImage(img, 0, 0, w, h);
 
-      const imageData = ctx.getImageData(0, 0, w, h);
-      resolve({
-        pixels: Array.from(imageData.data),
-        width: w,
-        height: h
-      });
+        const imageData = ctx.getImageData(0, 0, w, h);
+        
+        // Mantener como Uint8ClampedArray (JSON.stringify lo convierte a array automáticamente)
+        resolve({
+          pixels: imageData.data, // Uint8ClampedArray → será array en JSON
+          width: w,
+          height: h
+        });
+      } catch (err) {
+        reject(err);
+      }
     };
 
     img.onerror = () => reject(new Error('Failed to load image'));

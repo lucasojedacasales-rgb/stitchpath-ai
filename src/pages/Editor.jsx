@@ -176,22 +176,40 @@ export default function Editor() {
       let pixelData;
       try {
        pixelData = await extractImagePixels(finalImageUrl);
+       console.log('[EDITOR] Pixels extracted:', {
+         width: pixelData.width,
+         height: pixelData.height,
+         bytesLength: pixelData.pixels?.length,
+         type: pixelData.pixels?.constructor?.name
+       });
       } catch (err) {
        console.error('Failed to extract pixels:', err);
        throw new Error('No se pudo cargar la imagen');
       }
 
+      // Validar pixels antes de enviar
+      if (!pixelData.pixels || pixelData.pixels.length < 4) {
+        throw new Error(`Invalid pixel data: length=${pixelData.pixels?.length}`);
+      }
+
       let res;
       try {
        res = await retryWithBackoff(async () => {
-         return await base44.functions.invoke('robustVectorization', {
-           pixels: pixelData.pixels,
+         const payload = {
+           pixels: pixelData.pixels, // Ya es array vía JSON.stringify
            width: pixelData.width,
            height: pixelData.height,
            width_mm: config.width_mm,
            height_mm: config.height_mm,
            color_count: config.color_count
+         };
+         console.log('[EDITOR] Sending to robustVectorization:', {
+           pixelsLen: payload.pixels.length,
+           w: payload.width,
+           h: payload.height,
+           colorCount: payload.color_count
          });
+         return await base44.functions.invoke('robustVectorization', payload);
        });
       } catch (err) {
        console.error('Vectorization backend failed:', err);
