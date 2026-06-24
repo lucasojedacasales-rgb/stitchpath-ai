@@ -2,36 +2,55 @@
 
 /**
  * Motor de Vectorización Ultra-Ligero para Deno
- * Redimensiona a 128px, scanlines horizontales, sin k-means/contornos/rotaciones
+ * Redimensiona a 128px, scanlines horizontales, sin k-means/contornos
  */
 
-export async function robustVectorization(imageData, options = {}) {
-  const {
-    colorCount = 6,
-    widthMM = 100,
-    heightMM = 100,
-    stitchDensity = 0.7
-  } = options;
-
+Deno.serve(async (req) => {
   try {
-    console.log(`[LITE] Starting: ${widthMM}x${heightMM}mm, colorCount=${colorCount}`);
+    if (req.method !== 'POST') {
+      return Response.json({ error: 'POST only' }, { status: 405 });
+    }
 
-    // 1. CARGAR y REDIMENSIONAR a 128px máximo
-    const { pixels: origPixels, width: origW, height: origH } = await loadImage(imageData);
-    
-    // Escalar a máximo 128px manteniendo aspect ratio
-    const scaled = scaleImage(origPixels, origW, origH, 128, 128);
-    const { pixels, width, height } = scaled;
+    const payload = await req.json();
+    const {
+      pixels,
+      width,
+      height,
+      width_mm = 100,
+      height_mm = 100,
+      color_count = 6,
+      stitch_density = 0.7
+    } = payload;
 
-    console.log(`[LITE] Scaled to ${width}x${height}px`);
+    console.log(`[LITE] Starting: ${width}x${height}px → ${width_mm}x${height_mm}mm`);
 
-    // 2. REDUCIR COLORES: truncar RGB a 3 bits + frecuencias
-    const { labels, palette } = quantizeToFrequency(pixels, width, height, colorCount);
-    
+    // Validar entrada mínima
+    if (!pixels || !width || !height || pixels.length < 4) {
+      return Response.json({ 
+        success: false, 
+        error: 'Invalid image data' 
+      });
+    }
+
+    // Convertir pixels a Uint8ClampedArray si es necesario
+    let pixelData = pixels;
+    if (!(pixelData instanceof Uint8ClampedArray) && Array.isArray(pixelData)) {
+      pixelData = new Uint8ClampedArray(pixelData);
+    }
+
+    // 1. ESCALAR a máximo 128px
+    const scaled = scaleImage(pixelData, width, height, 128, 128);
+    const { pixels: scaledPixels, width: scaledW, height: scaledH } = scaled;
+
+    console.log(`[LITE] Scaled to ${scaledW}x${scaledH}px`);
+
+    // 2. CUANTIZAR: truncar RGB a 3 bits
+    const { labels, palette } = quantizeToFrequency(scaledPixels, scaledW, scaledH, color_count);
+
     console.log(`[LITE] Palette: ${palette.length} colors`);
 
-    // 3. GENERAR PUNTADAS: scanlines horizontales simples
-    const regions = generateScanlineStitches(labels, palette, width, height, stitchDensity);
+    // 3. GENERAR PUNTADAS: scanlines horizontales
+    const regions = generateScanlineStitches(labels, palette, scaledW, scaledH, stitch_density);
 
     // 4. LIMITAR: máx 20 regiones, máx 10k puntadas
     const filtered = regions.slice(0, 20).map(r => ({
@@ -42,76 +61,40 @@ export async function robustVectorization(imageData, options = {}) {
     const totalStitches = filtered.reduce((s, r) => s + r.pointCount, 0);
 
     // 5. CONVERTIR a milímetros
-    const pxPerMM = widthMM / width;
+    const pxPerMM = width_mm / scaledW;
     const finalRegions = filtered.map(r => ({
       ...r,
       stitches: r.stitches.map(pt => ({
-        x: Math.max(0, Math.min(widthMM, pt.x * pxPerMM)),
-        y: Math.max(0, Math.min(heightMM, pt.y * pxPerMM))
+        x: Math.max(0, Math.min(width_mm, pt.x * pxPerMM)),
+        y: Math.max(0, Math.min(height_mm, pt.y * pxPerMM))
       }))
     }));
 
     console.log(`[LITE] SUCCESS: ${finalRegions.length} regions, ${totalStitches} stitches`);
 
-    return {
+    return Response.json({
       success: true,
-      regions: finalRegions,
-      totalStitches,
-      colorCount: palette.length,
-      width: widthMM,
-      height: heightMM
-    };
+      data: {
+        response: {
+          regions: finalRegions,
+          total_stitches: totalStitches,
+          color_count: palette.length,
+          width: width_mm,
+          height: height_mm
+        }
+      }
+    });
   } catch (err) {
     console.error('[LITE] Error:', err.message);
-    return {
+    return Response.json({
       success: false,
-      error: err.message,
-      regions: [],
-      totalStitches: 0,
-      colorCount: 0,
-      width: widthMM,
-      height: heightMM
-    };
+      error: err.message
+    }, { status: 500 });
   }
-}
+});
 
 // ============================================================================
-// PASO 1: CARGAR IMAGEN
-// ============================================================================
-
-async function loadImage(imageData) {
-  // Si ya son pixels
-  if (imageData?.pixels && imageData?.width && imageData?.height) {
-    return {
-      pixels: new Uint8ClampedArray(imageData.pixels),
-      width: imageData.width,
-      height: imageData.height
-    };
-  }
-
-  // File/Blob → bitmap → canvas
-  if (typeof createImageBitmap !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
-    const bitmap = await createImageBitmap(imageData);
-    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Canvas context failed');
-
-    ctx.drawImage(bitmap, 0, 0);
-    const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
-    bitmap.close();
-
-    return {
-      pixels: imgData.data,
-      width: bitmap.width,
-      height: bitmap.height
-    };
-  }
-
-  throw new Error('Image loading not supported');
-}
-
-// ============================================================================
-// ESCALAR IMAGEN a máximo 128px
+// ESCALAR IMAGEN
 // ============================================================================
 
 function scaleImage(pixels, srcW, srcH, maxW, maxH) {
@@ -149,13 +132,11 @@ function scaleImage(pixels, srcW, srcH, maxW, maxH) {
 }
 
 // ============================================================================
-// PASO 2: CUANTIZAR SIN K-MEANS (truncar a 3 bits + frecuencias)
+// CUANTIZAR: truncar RGB a 3 bits + frecuencias
 // ============================================================================
 
 function quantizeToFrequency(pixels, width, height, k) {
-  // Truncar RGB a 3 bits: (valor & 0xE0) = (valor >> 5) << 5
   const colorMap = new Map();
-  const pixelCount = (width * height);
 
   for (let i = 0; i < pixels.length; i += 4) {
     const r = pixels[i] & 0xE0;
@@ -166,16 +147,16 @@ function quantizeToFrequency(pixels, width, height, k) {
     colorMap.set(key, (colorMap.get(key) || 0) + 1);
   }
 
-  // Tomar los K colores más frecuentes
+  // K colores más frecuentes
   const palette = Array.from(colorMap.entries())
     .sort((a, b) => b[1] - a[1])
-    .slice(0, k)
+    .slice(0, Math.max(1, k))
     .map(([key]) => {
       const [r, g, b] = key.split(',').map(Number);
       return { r, g, b };
     });
 
-  // Asignar cada píxel al color más cercano de la paleta
+  // Asignar cada píxel
   const labels = new Uint8Array(width * height);
 
   for (let i = 0, idx = 0; i < pixels.length; i += 4, idx++) {
@@ -205,43 +186,34 @@ function quantizeToFrequency(pixels, width, height, k) {
 }
 
 // ============================================================================
-// PASO 3: GENERAR PUNTADAS (scanlines horizontales simples)
+// GENERAR PUNTADAS: scanlines horizontales
 // ============================================================================
 
 function generateScanlineStitches(labels, palette, width, height, stitchDensity) {
-  const SCANLINE_STEP = Math.max(1, Math.round(5 / stitchDensity)); // ~5px
-  const STITCH_STEP = SCANLINE_STEP;
+  const STEP = Math.max(1, Math.round(5 / stitchDensity));
   const regions = [];
 
-  // Para cada color
   for (let colorIdx = 0; colorIdx < palette.length; colorIdx++) {
     const stitches = [];
 
-    // Para cada scanline Y (saltando cada SCANLINE_STEP)
-    for (let y = 0; y < height; y += SCANLINE_STEP) {
+    for (let y = 0; y < height; y += STEP) {
       let inSegment = false;
-      let segmentStart = -1;
+      let segStart = -1;
 
-      // Recorrer X
       for (let x = 0; x < width; x++) {
-        const idx = y * width + x;
-        const currentColor = labels[idx];
-        const prevColor = x > 0 ? labels[idx - 1] : -1;
+        const current = labels[y * width + x];
+        const prev = x > 0 ? labels[y * width + x - 1] : -1;
 
-        // Inicio de segmento: color actual == nuestro color, anterior != nuestro color
-        if (currentColor === colorIdx && prevColor !== colorIdx) {
+        if (current === colorIdx && prev !== colorIdx) {
           inSegment = true;
-          segmentStart = x;
+          segStart = x;
         }
 
-        // Fin de segmento
-        if (inSegment && (currentColor !== colorIdx || x === width - 1)) {
-          const segmentEnd = currentColor === colorIdx ? x : x - 1;
+        if (inSegment && (current !== colorIdx || x === width - 1)) {
+          const segEnd = current === colorIdx ? x : x - 1;
 
-          // Generar puntos cada STITCH_STEP en este segmento
-          if (segmentEnd >= segmentStart) {
-            for (let sx = segmentStart; sx <= segmentEnd; sx += STITCH_STEP) {
-              // Verificar que el punto está en el color correcto
+          if (segEnd >= segStart) {
+            for (let sx = segStart; sx <= segEnd; sx += STEP) {
               if (labels[y * width + sx] === colorIdx) {
                 stitches.push({ x: sx, y });
               }
@@ -254,15 +226,12 @@ function generateScanlineStitches(labels, palette, width, height, stitchDensity)
     }
 
     if (stitches.length > 0) {
-      // Zigzag: alternar dirección X en cada scanline
-      const zigzagged = zigzagConnect(stitches, SCANLINE_STEP);
-      const type = classifyType(zigzagged.length);
-
+      const zigzagged = zigzagConnect(stitches, STEP);
       regions.push({
         id: `r${colorIdx}`,
         name: getColorName(palette[colorIdx], colorIdx),
-        color: palette[colorIdx],
-        type,
+        color: `#${palette[colorIdx].r.toString(16).padStart(2, '0')}${palette[colorIdx].g.toString(16).padStart(2, '0')}${palette[colorIdx].b.toString(16).padStart(2, '0')}`,
+        type: classifyType(zigzagged.length),
         stitches: zigzagged,
         pointCount: zigzagged.length
       });
@@ -272,19 +241,17 @@ function generateScanlineStitches(labels, palette, width, height, stitchDensity)
   return regions;
 }
 
-function zigzagConnect(stitches, scanlineStep) {
+function zigzagConnect(stitches, step) {
   if (stitches.length < 2) return stitches;
 
-  // Agrupar por Y
   const rows = new Map();
   for (const s of stitches) {
-    const yKey = Math.round(s.y / scanlineStep);
+    const yKey = Math.round(s.y / step);
     if (!rows.has(yKey)) rows.set(yKey, []);
     rows.get(yKey).push(s);
   }
 
-  // Ordenar cada fila por X, alternar dirección en zigzag
-  const sortedRows = Array.from(rows.entries())
+  const sorted = Array.from(rows.entries())
     .sort((a, b) => a[0] - b[0])
     .map(([_, row]) => {
       row.sort((a, b) => a.x - b.x);
@@ -292,28 +259,22 @@ function zigzagConnect(stitches, scanlineStep) {
     });
 
   const result = [];
-  for (let i = 0; i < sortedRows.length; i++) {
-    const row = sortedRows[i];
-    if (i % 2 === 1) row.reverse(); // Alternar dirección
+  for (let i = 0; i < sorted.length; i++) {
+    const row = sorted[i];
+    if (i % 2 === 1) row.reverse();
     result.push(...row);
   }
 
   return result;
 }
 
-// ============================================================================
-// CLASIFICAR TIPO DE PUNTADA
-// ============================================================================
-
-function classifyType(pointCount) {
-  if (pointCount < 100) return 'running_stitch';
-  if (pointCount < 1000) return 'satin';
+function classifyType(count) {
+  if (count < 100) return 'running_stitch';
+  if (count < 1000) return 'satin';
   return 'fill';
 }
 
 function getColorName(color, idx) {
   const names = ['negro', 'rojo', 'verde', 'azul', 'amarillo', 'rosa'];
-  return (names[idx] || `color${idx}`);
+  return names[idx] || `color${idx}`;
 }
-
-export default robustVectorization;
