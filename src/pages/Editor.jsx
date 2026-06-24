@@ -227,13 +227,27 @@ export default function Editor() {
         const rawData = res.data.data?.response || res.data.data;
         const { regions: rawRegions, total_stitches } = rawData;
 
-        // ── Filtrado permisivo: confía en path_points, no en área/perímetro ──────
-        const filtered = (rawRegions || []).filter(r => {
-          // Solo filtrar si NO tiene path_points válidos (es lo único realmente necesario)
-          if (!r.path_points || r.path_points.length < 3) return false;
-          // Opcional: filtrar regiones EXTREMADAMENTE pequeñas solo si area está disponible
-          if (r.area_mm2 !== undefined && r.area_mm2 < 0.5) return false;
-          return true;
+        // ── Normalizar regiones: mapear stitches → path_points ──────────────────
+        const normalized = (rawRegions || []).map(r => {
+         // Si viene de robustVectorization, tiene `stitches` en mm
+         // Convertir a path_points (normalizados 0-1)
+         const pathPoints = (r.stitches || []).map(s => [
+           s.x / (config.width_mm || 100),
+           s.y / (config.height_mm || 100)
+         ]);
+
+         return {
+           ...r,
+           path_points: r.path_points || pathPoints,
+           stitches: r.stitches || [],
+           pointCount: r.pointCount || (r.stitches?.length || 0)
+         };
+        });
+
+        // Filtrado permisivo: confía en regiones con puntadas
+        const filtered = normalized.filter(r => {
+         if (!r.stitches || r.stitches.length < 1) return false;
+         return true;
         });
 
         // ── Clasificación inteligente de tipo de puntada (geométrica) ────────
@@ -338,27 +352,28 @@ export default function Editor() {
          };
 
         const calculateStitchCount = (region) => {
+          // Usar pointCount directo del servidor si existe
+          if (region.pointCount && region.pointCount > 0) {
+            return region.pointCount;
+          }
+          
           const type = region.stitch_type;
           const area = region.area_mm2 || 0;
           const perim = region.perimeter_mm || 1;
           const density = region.density || 0.7;
           
           if (type === 'fill') {
-            // fill: area × density × 2.5 (zig-zag + conexiones + underlay)
             return Math.round(area * density * 2.5);
           } else if (type === 'satin') {
-            // satin: (perimeter / stitch_length) × (width / density)
             const width = Math.max(1, area / perim);
-            const stitchLength = 2.5; // 2.5mm stitch length for satin
+            const stitchLength = 2.5;
             return Math.round((perim / stitchLength) * (width / Math.max(0.4, density)));
           } else {
-            // running_stitch: perímetro / stitch_length
-            const stitchLength = 1.5; // 1.5mm stitch length for contours
+            const stitchLength = 1.5;
             return Math.round(perim / stitchLength);
           }
         };
 
-        // Color naming utilities
         const COLOR_NAMES = {
           '#000000': 'negro', '#1a1a1a': 'negro', '#ffffff': 'blanco', '#ffff00': 'amarillo',
           '#ff0000': 'rojo', '#00ff00': 'verde', '#0000ff': 'azul', '#ff69b4': 'rosa',
@@ -394,22 +409,28 @@ export default function Editor() {
 
         // ── GEOMETRIC PIPELINE: Close → Offset → Clip ────────────────────────
         console.log('Executing geometric pipeline on', filtered.length, 'regions...');
-        const pipelineResult = await executeGeometricPipeline(
-          filtered,
-          100, // Canvas width (normalized)
-          100, // Canvas height (normalized)
-          {
-            safetyMargin: 0.5,
-            pullCompensation: config.tension_comp || 0
+        let pipelinedRegions = filtered;
+        
+        try {
+          const pipelineResult = await executeGeometricPipeline(
+            filtered,
+            100, // Canvas width (normalized)
+            100, // Canvas height (normalized)
+            {
+              safetyMargin: 0.5,
+              pullCompensation: config.tension_comp || 0
+            }
+          );
+
+          if (pipelineResult.success) {
+            console.log('Pipeline executed:', exportPipelineReport(pipelineResult));
+            pipelinedRegions = pipelineResult.regions;
+          } else {
+            console.warn('Pipeline warning, using unprocessed regions:', pipelineResult.error);
           }
-        );
-
-        if (!pipelineResult.success) {
-          throw new Error('Pipeline failed: ' + pipelineResult.error);
+        } catch (pipelineErr) {
+          console.warn('Pipeline failed, using raw regions:', pipelineErr.message);
         }
-
-        console.log('Pipeline executed:', exportPipelineReport(pipelineResult));
-        let pipelinedRegions = pipelineResult.regions;
 
         // Clasificar tipos de puntada
         let processedRegions = pipelinedRegions.map((r, idx) => {
