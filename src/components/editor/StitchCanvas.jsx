@@ -1,6 +1,6 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { ZoomIn, ZoomOut, Maximize2, Download, Layers, AlignJustify } from 'lucide-react';
-import { drawTatamiRegion } from '@/lib/tatamiEngine';
+import { generateTatamiFill } from '@/lib/tatamiFill';
 
 // ── Contour detection helpers ─────────────────────────────────────────────────
 
@@ -24,82 +24,44 @@ function getDrawSize(imageEl, W, H) {
   return { drawW: iw * s, drawH: ih * s };
 }
 
-// ── Dense fill renderer — draws each stitch as a short oriented line ──────────
-// For regions with >1000 stitches, decimates points based on zoom level.
+// ── Tatami fill renderer ──────────────────────────────────────────────────────
+// Draws each stitch as a 2px oriented line using the tatamiFill engine.
+// stitchCache: Map<regionId, {stitches, drawW, drawH, angle, density}>
 
-function drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha) {
+function drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCache) {
   const color = region.color || '#ffffff';
-  const stitchCount = region.stitch_count || 0;
+  const angleDeg = region.angle || 0;
+  const densityMm = region.tatami_density || region.density_mm || 0.4;
 
-  // Convert normalized path_points to canvas coords for clip
-  const cpx = pts.map(p => [(p[0] - 0.5) * drawW, (p[1] - 0.5) * drawH]);
+  // Cache key: recompute only if drawSize or region params change
+  const cacheKey = region.id;
+  let cached = stitchCache.get(cacheKey);
+  if (!cached || cached.drawW !== drawW || cached.drawH !== drawH || cached.angleDeg !== angleDeg || cached.densityMm !== densityMm) {
+    // Convert normalized path_points → canvas px
+    const polygon = pts.map(p => [(p[0] - 0.5) * drawW, (p[1] - 0.5) * drawH]);
+    // pxPerMm: drawW spans 100mm by default
+    const pxPerMm = drawW / 100;
+    const { stitches, totalStitches } = generateTatamiFill(polygon, densityMm, 2.5, angleDeg, pxPerMm);
+    cached = { stitches, totalStitches, drawW, drawH, angleDeg, densityMm };
+    stitchCache.set(cacheKey, cached);
+    // Surface real stitch count back onto the region object for the panel
+    region._computed_stitches = totalStitches;
+  }
 
-  // Decimation: for dense regions, skip points proportionally to zoom
-  // At zoom=1 with >1000 stitches, show ~1 in N to keep <500 draw calls
-  const MAX_VISIBLE = 800;
-  const step = stitchCount > MAX_VISIBLE ? Math.ceil(stitchCount / MAX_VISIBLE) : 1;
+  const { stitches } = cached;
+  if (!stitches.length) return;
 
-  // Stitch half-length in canvas px (2px display = ~0.3mm)
-  const halfLen = Math.max(1, 1.5 / zoom);
-
-  ctx.globalAlpha = alpha * 0.9;
+  ctx.globalAlpha = alpha * 0.92;
   ctx.strokeStyle = color;
-  ctx.lineWidth = Math.max(0.5, 1.2 / zoom);
+  ctx.lineWidth = Math.max(0.8, 1.5 / zoom);
   ctx.lineCap = 'round';
 
-  // Angle for stitch orientation
-  const angleDeg = region.angle || 45;
-  const angle = (angleDeg * Math.PI) / 180;
-  const dx = Math.cos(angle) * halfLen;
-  const dy = Math.sin(angle) * halfLen;
-
-  // Use the path polygon to generate scanline fill rows for rendering
-  // (visual approximation from polygon — backend points not passed to canvas)
-  const minY = Math.min(...cpx.map(p => p[1]));
-  const maxY = Math.max(...cpx.map(p => p[1]));
-
-  // Density: map from tatami-style (finer at high zoom)
-  const density = region.density || 0.7;
-  const rowSpacing = Math.max(1.5, (5.0 / density) / Math.sqrt(zoom));
-
   ctx.beginPath();
-  let rowIdx = 0;
-  for (let y = minY + rowSpacing / 2; y <= maxY; y += rowSpacing) {
-    // Scanline intersection with clipped polygon
-    const xs = scanlineXs(cpx, y);
-    if (xs.length < 2) { rowIdx++; continue; }
-    xs.sort((a, b) => a - b);
-    const forward = rowIdx % 2 === 0;
-    const xL = xs[0], xR = xs[xs.length - 1];
-    const stitchGap = Math.max(3, rowSpacing * 1.2);
-    // Cyclic tatami offset
-    const offset = (rowIdx % 4) * stitchGap * 0.25;
-    let x = xL + offset;
-    let drawn = 0;
-    while (x < xR) {
-      if (drawn % step === 0) {
-        const cx = forward ? x : xR - (x - xL);
-        ctx.moveTo(cx - dx, y - dy);
-        ctx.lineTo(cx + dx, y + dy);
-      }
-      x += stitchGap;
-      drawn++;
-    }
-    rowIdx++;
+  for (const [x0, y0, x1, y1] of stitches) {
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
   }
   ctx.stroke();
-}
-
-function scanlineXs(poly, y) {
-  const xs = [];
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[i], b = poly[(i + 1) % poly.length];
-    if ((a[1] <= y && b[1] > y) || (b[1] <= y && a[1] > y)) {
-      const t = (y - a[1]) / (b[1] - a[1]);
-      xs.push(a[0] + t * (b[0] - a[0]));
-    }
-  }
-  return xs;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -121,7 +83,9 @@ export default function StitchCanvas({
   const [tooltip, setTooltip]         = useState(null);
   // Toggle: 'fill' = show full tatami fills | 'outline' = contours only
   const [viewMode, setViewMode]       = useState('fill');
-  const imageRef = useRef(null);
+  const imageRef     = useRef(null);
+  // Cache: Map<regionId, {stitches, drawW, drawH, angleDeg, densityMm}>
+  const stitchCache  = useRef(new Map());
 
   useEffect(() => {
     const obs = new ResizeObserver(() => resizeAll());
@@ -233,8 +197,8 @@ export default function StitchCanvas({
           ctx.lineWidth = 1.5 / zoom;
           ctx.stroke();
         } else {
-          // Full fill: optimized scanline stitch renderer
-          drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha);
+          // Full fill: tatami engine — real stitches, cached per region
+          drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCache.current);
         }
       } else if (effectiveType === 'satin') {
         drawSatinLines(ctx, pts, region, drawW, drawH, zoom, color, alpha);
@@ -506,7 +470,7 @@ export default function StitchCanvas({
                 tooltip.region.stitch_type === 'fill' ? 'badge-fill' :
                 tooltip.region.stitch_type === 'satin' ? 'badge-satin' : 'badge-run'
               }`}>{tooltip.region.stitch_type}</span>
-              <span>{tooltip.region.stitch_count || 0} ptos</span>
+              <span>{(tooltip.region._computed_stitches || tooltip.region.stitch_count || 0).toLocaleString()} ptos</span>
             </div>
           </div>
         )}
