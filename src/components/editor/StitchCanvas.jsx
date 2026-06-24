@@ -155,9 +155,11 @@ export default function StitchCanvas({
       const stitches = region.stitches || [];
       if (stitches.length < 2) continue;
 
-      const type = region.stitch_type || 'fill';
-      if (type === 'fill' && !showFill) continue;
-      if ((type === 'running_stitch' || type === 'satin') && !showContour) continue;
+      const type = region.stitch_type || region.type || 'fill';
+      const isFill = type === 'fill';
+      const isContour = type === 'running_stitch' || type === 'run' || type === 'satin';
+      if (isFill && !showFill) continue;
+      if (isContour && !showContour) continue;
 
       const color = region.color || '#ffffff';
       const isSelected = region.id === selectedRegionId;
@@ -170,7 +172,7 @@ export default function StitchCanvas({
       ctx.lineCap  = 'round';
       ctx.lineJoin = 'round';
 
-      if (type === 'running_stitch') {
+      if (type === 'running_stitch' || type === 'run') {
         ctx.lineWidth = Math.max(0.8, 1.2 * zoom);
         ctx.setLineDash([Math.max(2, 4 * zoom), Math.max(1, 2 * zoom)]);
         ctx.beginPath();
