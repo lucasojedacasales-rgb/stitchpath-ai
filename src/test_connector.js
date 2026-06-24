@@ -1,5 +1,6 @@
 /// <reference lib="deno" />
 /// <reference lib="dom" />
+/* global Deno */
 
 /**
  * Test Suite para el Conector HTTP de Base44
