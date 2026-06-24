@@ -250,6 +250,7 @@ function colorDistance(c1, c2) {
   const dr = c1.r - c2.r;
   const dg = c1.g - c2.g;
   const db = c1.b - c2.b;
+  // Distancia RGB ponderada perceptual exacta
   return (dr * dr * 0.299) + (dg * dg * 0.587) + (db * db * 0.114);
 }
 
@@ -441,27 +442,49 @@ function orderPointsAsPath(points) {
   if (points.length === 0) return [];
   if (points.length === 1) return points;
 
-  const ordered = [points[0]];
-  const remaining = points.slice(1);
+  // Encontrar punto inicial (top-left para consistencia)
+  let startIdx = 0;
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].y < points[startIdx].y || 
+        (points[i].y === points[startIdx].y && points[i].x < points[startIdx].x)) {
+      startIdx = i;
+    }
+  }
 
-  while (remaining.length > 0) {
+  const ordered = [points[startIdx]];
+  const remaining = new Set(points.map((p, i) => i).filter(i => i !== startIdx));
+
+  while (remaining.size > 0) {
     const last = ordered[ordered.length - 1];
-    let nearestIdx = 0;
+    let nearestIdx = -1;
     let nearestDist = Infinity;
 
-    for (let i = 0; i < remaining.length; i++) {
-      const dx = remaining[i].x - last.x;
-      const dy = remaining[i].y - last.y;
+    for (const idx of remaining) {
+      const dx = points[idx].x - last.x;
+      const dy = points[idx].y - last.y;
       const dist = dx * dx + dy * dy;
 
       if (dist < nearestDist) {
         nearestDist = dist;
-        nearestIdx = i;
+        nearestIdx = idx;
       }
     }
 
-    ordered.push(remaining[nearestIdx]);
-    remaining.splice(nearestIdx, 1);
+    if (nearestIdx >= 0) {
+      ordered.push(points[nearestIdx]);
+      remaining.delete(nearestIdx);
+    } else {
+      break;
+    }
+  }
+
+  // Cerrar path: conectar último con primero
+  if (ordered.length > 1) {
+    const first = ordered[0];
+    const last = ordered[ordered.length - 1];
+    if (first.x !== last.x || first.y !== last.y) {
+      ordered.push({ ...first });
+    }
   }
 
   return ordered;
@@ -565,25 +588,32 @@ function generateFillStitches(contour, region, mask, options) {
   const cosA = Math.cos(angleRad);
   const sinA = Math.sin(angleRad);
 
+  // 1. Rotar contorno al ángulo de fill
   let rMin = Infinity, rMax = -Infinity;
   const rotContour = contour.map(p => {
     const rx = p.x * cosA + p.y * sinA;
     const ry = -p.x * sinA + p.y * cosA;
     rMin = Math.min(rMin, ry);
     rMax = Math.max(rMax, ry);
-    return { rx, ry, ox: p.x, oy: p.y };
+    return { rx, ry };
   });
 
   const step = stitchPX;
+  const scanlines = [];
 
+  // 2. Generar scanlines paralelas al ángulo
   for (let r = rMin; r <= rMax; r += step) {
     const intersections = [];
 
+    // Encontrar intersecciones con contorno
     for (let i = 0; i < rotContour.length - 1; i++) {
       const p1 = rotContour[i];
       const p2 = rotContour[i + 1];
 
-      if ((p1.ry <= r && p2.ry > r) || (p2.ry <= r && p1.ry > r)) {
+      const minY = Math.min(p1.ry, p2.ry);
+      const maxY = Math.max(p1.ry, p2.ry);
+
+      if (r >= minY && r <= maxY) {
         if (Math.abs(p2.ry - p1.ry) > 1e-6) {
           const t = (r - p1.ry) / (p2.ry - p1.ry);
           const rx = p1.rx + t * (p2.rx - p1.rx);
@@ -592,16 +622,25 @@ function generateFillStitches(contour, region, mask, options) {
       }
     }
 
-    if (intersections.length < 2) continue;
-    intersections.sort((a, b) => a - b);
+    if (intersections.length >= 2) {
+      intersections.sort((a, b) => a - b);
+      scanlines.push({ r, intersections });
+    }
+  }
 
+  // 3. Generar puntadas entre intersecciones
+  for (const scanline of scanlines) {
+    const { r, intersections } = scanline;
+
+    // Procesar pares de intersecciones (entrada/salida)
     for (let i = 0; i < intersections.length - 1; i += 2) {
       const x1 = intersections[i];
       const x2 = intersections[i + 1];
       const lineLen = x2 - x1;
 
-      if (lineLen < step) continue;
+      if (lineLen < step * 0.5) continue;
 
+      // Generar puntos cada stitchPX
       const numPoints = Math.max(2, Math.floor(lineLen / step) + 1);
 
       for (let j = 0; j < numPoints; j++) {
@@ -609,9 +648,11 @@ function generateFillStitches(contour, region, mask, options) {
         const rx = x1 + t * lineLen;
         const ry = r;
 
+        // 4. Rotar de vuelta a coordenadas originales
         const ox = rx * cosA - ry * sinA;
         const oy = rx * sinA + ry * cosA;
 
+        // 5. Verificar point-in-polygon
         if (isPointInPolygon(ox, oy, contour)) {
           stitches.push({ x: ox, y: oy });
         }
@@ -619,27 +660,49 @@ function generateFillStitches(contour, region, mask, options) {
     }
   }
 
-  return zigzagConnect(stitches, step);
+  // 6. Conectar scanlines en zigzag
+  return zigzagConnectFillRows(stitches, step);
 }
 
-function zigzagConnect(stitches, step) {
+function zigzagConnectFillRows(stitches, step) {
   if (stitches.length < 2) return stitches;
 
+  // Agrupar puntadas por fila Y (con tolerancia)
+  const tolerance = step * 0.8;
   const rows = new Map();
 
   for (const s of stitches) {
-    const yKey = Math.round(s.y / (step * 2));
-    if (!rows.has(yKey)) rows.set(yKey, []);
-    rows.get(yKey).push(s);
+    let foundRow = false;
+
+    for (const [yKey, rowStitches] of rows) {
+      if (Math.abs(s.y - yKey) < tolerance) {
+        rowStitches.push(s);
+        foundRow = true;
+        break;
+      }
+    }
+
+    if (!foundRow) {
+      rows.set(s.y, [s]);
+    }
   }
 
-  const sortedRows = Array.from(rows.entries()).sort((a, b) => a[0] - b[0]);
-  const result = [];
+  // Ordenar filas por Y
+  const sortedRows = Array.from(rows.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([_, stitches]) => stitches);
 
+  // Alternar dirección en zigzag
+  const result = [];
   for (let i = 0; i < sortedRows.length; i++) {
-    const row = sortedRows[i][1];
+    const row = sortedRows[i];
     row.sort((a, b) => a.x - b.x);
-    if (i % 2 === 1) row.reverse();
+    
+    // Alternar dirección: par = izq→der, impar = der→izq
+    if (i % 2 === 1) {
+      row.reverse();
+    }
+
     result.push(...row);
   }
 
@@ -654,26 +717,39 @@ function generateSatinStitches(contour, stitchPX) {
   const stitches = [];
   if (contour.length < 3) return stitches;
 
+  // Calcular centro geométrico
   const center = {
     x: contour.reduce((s, p) => s + p.x, 0) / contour.length,
     y: contour.reduce((s, p) => s + p.y, 0) / contour.length
   };
 
+  // Offset interior (0.35mm típico)
   const offset = stitchPX * 0.5;
+
+  // Crear contorno interior (offset hacia centro)
   const innerContour = contour.map(p => {
     const dx = p.x - center.x;
     const dy = p.y - center.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < 1) return { x: p.x, y: p.y };
+    
+    if (dist < 1) {
+      return { x: p.x, y: p.y };
+    }
+
+    // Mover punto hacia centro por offset
     const factor = Math.max(0, (dist - offset) / dist);
-    return { x: center.x + dx * factor, y: center.y + dy * factor };
+    return {
+      x: center.x + dx * factor,
+      y: center.y + dy * factor
+    };
   });
 
+  // Resamplear ambos contornos a stitchPX (0.7mm)
   const outerResampled = resampleContour(contour, stitchPX);
   const innerResampled = resampleContour(innerContour, stitchPX);
 
+  // Alternar exterior → interior → exterior
   const count = Math.min(outerResampled.length, innerResampled.length);
-
   for (let i = 0; i < count; i++) {
     stitches.push(outerResampled[i]);
     stitches.push(innerResampled[i]);
