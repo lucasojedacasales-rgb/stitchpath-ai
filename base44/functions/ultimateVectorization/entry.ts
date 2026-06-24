@@ -69,17 +69,17 @@ Deno.serve(async (req) => {
       let stitches = [];
       const area = bbox.width * bbox.height;
 
-      if (area < 50) {
+      if (area < 30) {
         stitches = closedContour; // Solo contorno
-      } else if (area < 300) {
-        stitches = generateSatinFill(closedContour, bbox, stitch_density * 0.8);
+      } else if (area < 200) {
+        stitches = generateSatinFill(closedContour, bbox, stitch_density);
       } else {
         stitches = generateTatamiFill(closedContour, bbox, stitch_density);
       }
 
-      // Garantizar que tiene relleno
-      if (stitches.length === closedContour.length) {
-        stitches = [...closedContour, ...generateInteriorFill(closedContour, bbox, stitch_density)];
+      // Garantizar que tiene relleno denso
+      if (stitches.length < closedContour.length * 2) {
+        stitches = [...stitches, ...generateInteriorFill(closedContour, bbox, stitch_density * 1.2)];
       }
 
       if (stitches.length > 3) {
@@ -259,7 +259,7 @@ function closeContourPath(contour) {
 // ============================================================================
 
 function generateSatinFill(contour, bbox, density) {
-  const spacing = Math.max(1, Math.round(2.5 / Math.max(0.1, density)));
+  const spacing = Math.max(0.5, 1.5 / Math.max(0.1, density));
   const stitches = [];
 
   for (let y = Math.floor(bbox.y); y <= Math.ceil(bbox.y + bbox.height); y += spacing) {
@@ -283,11 +283,10 @@ function generateSatinFill(contour, bbox, density) {
         const isEven = Math.floor((y - bbox.y) / spacing) % 2 === 0;
         const x1 = intersections[i];
         const x2 = intersections[i + 1];
-
-        if (isEven) {
-          stitches.push({ x: x1, y }, { x: x2, y });
-        } else {
-          stitches.push({ x: x2, y }, { x: x1, y });
+        
+        const stepX = Math.max(0.5, 2 / Math.max(0.1, density));
+        for (let x = x1; x <= x2; x += stepX) {
+          stitches.push({ x, y });
         }
       }
     }
@@ -297,13 +296,13 @@ function generateSatinFill(contour, bbox, density) {
 }
 
 function generateTatamiFill(contour, bbox, density) {
-  const spacing = Math.max(1, Math.round(2 / Math.max(0.1, density)));
+  const spacing = Math.max(0.5, 1.2 / Math.max(0.1, density));
   const stitches = [];
 
   for (let y = Math.floor(bbox.y); y <= Math.ceil(bbox.y + bbox.height); y += spacing) {
     const pointsInLine = [];
 
-    for (let x = Math.floor(bbox.x); x <= Math.ceil(bbox.x + bbox.width); x += 1) {
+    for (let x = Math.floor(bbox.x); x <= Math.ceil(bbox.x + bbox.width); x += 0.25) {
       if (pointInPolygon(x, y, contour)) {
         pointsInLine.push(x);
       }
