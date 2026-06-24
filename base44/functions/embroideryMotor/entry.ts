@@ -88,7 +88,7 @@ Deno.serve(async (req) => {
         format: format_type,
         filename: `${project_name}.${format_type.toLowerCase()}`,
         size_bytes: binary.length,
-        blocks: optimizedBlocks.length,
+        blocks: optimizedBlocks,
         stitches: optimizedBlocks.reduce((s, b) => s + (b.stitches?.length || 0), 0),
         binary: Array.from(binary)
       }

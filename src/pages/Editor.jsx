@@ -176,7 +176,8 @@ export default function Editor() {
 
       // Convertir bloques a regiones para visualización
       const motorData = res.data.data;
-      const newRegions = (motorData.blocks || []).map((block, idx) => ({
+      const blocks = Array.isArray(motorData.blocks) ? motorData.blocks : [];
+      const newRegions = blocks.map((block, idx) => ({
         id: block.id || `block_${idx}`,
         color: block.color || '#000000',
         stitch_type: block.type || 'fill',
