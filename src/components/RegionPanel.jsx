@@ -15,7 +15,6 @@ const RegionPanel = ({
   regions = [], 
   selectedRegionId, 
   onSelectRegion, 
-  onUpdateRegion,
   onToggleVisibility,
   stats = {}
 }) => {
