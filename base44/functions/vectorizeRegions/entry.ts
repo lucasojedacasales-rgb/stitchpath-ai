@@ -6,12 +6,20 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { imageUrl, colorClusters = 8, edgeThreshold = 0.3, minRegionArea = 2 } = await req.json();
+    const { 
+      imageUrl, 
+      colorClusters = 8, 
+      edgeThreshold = 0.3, 
+      minRegionArea = 2,
+      tatamiDensity = 0.4,
+      tatamiStitchLength = 2.5,
+      tatamiAngle = 45
+    } = await req.json();
+    
     if (!imageUrl) return Response.json({ error: 'imageUrl required' }, { status: 400 });
 
     const startMs = Date.now();
 
-    // ── 1. Download image and decode to RGBA ──────────────────────────────────
     const imgResp = await fetch(imageUrl);
     if (!imgResp.ok) return Response.json({ error: 'Could not fetch image' }, { status: 400 });
     
@@ -42,7 +50,6 @@ Deno.serve(async (req) => {
 
     const mmPerPx = 100 / origW / scale;
 
-    // ── 2. Edge detection with adaptive thresholds ─────────────────────────────
     const gray = new Float32Array(W * H);
     for (let i = 0; i < W * H; i++) {
       const r = rgba[i*4], g = rgba[i*4+1], b = rgba[i*4+2];
@@ -60,7 +67,6 @@ Deno.serve(async (req) => {
     const lowT  = highT * 0.4;
     const edges = cannyNMS(mag, gx, gy, W, H, lowT, highT);
 
-    // ── 3. K-means++ clustering ─────────────────────────────────────────────────
     const k = Math.max(3, Math.min(colorClusters, 20));
     const samples = [];
     for (let i = 0; i < W * H; i++) {
@@ -104,30 +110,25 @@ Deno.serve(async (req) => {
       if (edges[i] > 0) labels[i] = -1;
     }
 
-    // ── 4. Flood fill regions ───────────────────────────────────────────────────
     const minPx = Math.max(2, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
     const regions = floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroids);
 
-    // ── 5. Extract contours with conservative RDP simplification ─────────────────
     const outputRegions = [];
 
     for (const reg of regions) {
       const contour = traceContour(reg.mask, W, H);
       if (contour.length < 3) continue;
 
-      // Filter only regions with significant interior (not just borders)
       const bbox = reg.bbox;
       const bboxW = bbox.maxX - bbox.minX;
       const bboxH = bbox.maxY - bbox.minY;
       const regionAspect = bboxW / Math.max(1, bboxH);
-      const isValidShape = regionAspect >= 0.2 && regionAspect <= 5.0; // reject very thin/elongated
+      const isValidShape = regionAspect >= 0.2 && regionAspect <= 5.0;
       if (!isValidShape) continue;
 
-      // Conservative RDP: keep more points for better interior representation
       let epsilon = 0.3 / mmPerPx;
       let simplified = rdp(contour, epsilon);
       
-      // Avoid over-simplification
       if (simplified.length < 10 && contour.length > 20) {
         epsilon = 0.1 / mmPerPx;
         simplified = rdp(contour, epsilon);
@@ -143,10 +144,30 @@ Deno.serve(async (req) => {
       const areaMm2 = reg.pixelCount * mmPerPx * mmPerPx;
       const perimeterMm = contourPerimeterMm(simplified, mmPerPx);
 
+      const isLargeRegion = areaMm2 > 25;
+      const isThinRegion = (bboxW < 15 || bboxH < 15) && perimeterMm > 20;
+      
+      let type;
+      let stitches = [];
+      
+      if (isLargeRegion && !isThinRegion) {
+        type = 'fill';
+        stitches = generateTatamiFill(polygon, tatamiDensity, tatamiStitchLength, tatamiAngle);
+      } else if (isThinRegion || (perimeterMm > 30 && areaMm2 < 50)) {
+        type = 'satin';
+        stitches = generateSatinStitches(polygon, 0.3, mmPerPx);
+      } else {
+        type = 'run';
+        stitches = polygon.map(p => [p[0], p[1]]);
+      }
+
       outputRegions.push({
         id: reg.id,
         color: reg.hex,
+        type: type,
         path_points: polygon,
+        stitches: stitches,
+        stitch_count: stitches.length,
         area_mm2: parseFloat(areaMm2.toFixed(2)),
         perimeter_mm: parseFloat(perimeterMm.toFixed(2)),
         centroid: [
@@ -170,7 +191,94 @@ Deno.serve(async (req) => {
   }
 });
 
-// ── HELPERS ───────────────────────────────────────────────────────────────────
+function generateTatamiFill(polygon, density = 0.4, stitchLength = 2.5, angleDeg = 45) {
+  if (!polygon || polygon.length < 3) return [];
+  
+  const angle = (angleDeg * Math.PI) / 180;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  
+  const rotate = (p) => [p[0] * cos + p[1] * sin, -p[0] * sin + p[1] * cos];
+  const unrotate = (p) => [p[0] * cos - p[1] * sin, p[0] * sin + p[1] * cos];
+  
+  const rotatedPolygon = polygon.map(rotate);
+  
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  
+  for (const p of rotatedPolygon) {
+    minX = Math.min(minX, p[0]);
+    maxX = Math.max(maxX, p[0]);
+    minY = Math.min(minY, p[1]);
+    maxY = Math.max(maxY, p[1]);
+  }
+  
+  const stitches = [];
+  const offsets = [0, 0.25, 0.5, 0.75];
+  let rowIndex = 0;
+  
+  for (let y = minY; y <= maxY; y += density) {
+    const intersections = [];
+    
+    for (let i = 0; i < rotatedPolygon.length; i++) {
+      const p1 = rotatedPolygon[i];
+      const p2 = rotatedPolygon[(i + 1) % rotatedPolygon.length];
+      
+      if ((p1[1] <= y && p2[1] > y) || (p2[1] <= y && p1[1] > y)) {
+        const t = (y - p1[1]) / (p2[1] - p1[1]);
+        const x = p1[0] + t * (p2[0] - p1[0]);
+        intersections.push(x);
+      }
+    }
+    
+    intersections.sort((a, b) => a - b);
+    
+    const offset = offsets[rowIndex % 4] * stitchLength;
+    const reverse = (rowIndex % 2 === 1);
+    
+    for (let i = 0; i < intersections.length - 1; i += 2) {
+      let xStart = intersections[i] + offset;
+      let xEnd = intersections[i + 1];
+      
+      if (xStart >= xEnd) continue;
+      
+      const segmentLength = xEnd - xStart;
+      const numStitches = Math.max(1, Math.floor(segmentLength / stitchLength));
+      
+      if (reverse) {
+        for (let j = numStitches; j >= 0; j--) {
+          const x = Math.min(xStart + j * stitchLength, xEnd);
+          stitches.push(unrotate([x, y]));
+        }
+      } else {
+        for (let j = 0; j <= numStitches; j++) {
+          const x = Math.min(xStart + j * stitchLength, xEnd);
+          stitches.push(unrotate([x, y]));
+        }
+      }
+    }
+    
+    rowIndex++;
+  }
+  
+  return stitches;
+}
+
+function generateSatinStitches(polygon, density = 0.3, mmPerPx) {
+  const stitches = [];
+  for (let i = 0; i < polygon.length; i++) {
+    const p1 = polygon[i];
+    const p2 = polygon[(i + 1) % polygon.length];
+    const dx = p2[0] - p1[0];
+    const dy = p2[1] - p1[1];
+    const len = Math.sqrt(dx*dx + dy*dy);
+    const steps = Math.max(1, Math.floor(len / density));
+    for (let j = 0; j <= steps; j++) {
+      const t = j / steps;
+      stitches.push([p1[0] + dx * t, p1[1] + dy * t]);
+    }
+  }
+  return stitches;
+}
 
 function gaussianBlur(gray, W, H) {
   const kernel = [1,4,6,4,1, 4,16,24,16,4, 6,24,36,24,6, 4,16,24,16,4, 1,4,6,4,1];
