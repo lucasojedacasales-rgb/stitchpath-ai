@@ -6,12 +6,16 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { regions, stitchParams = {}, sequencingMode = 'layerOrder' } = await req.json();
-    if (!regions || !Array.isArray(regions)) return Response.json({ error: 'regions array required' }, { status: 400 });
+    const { regions, stitchParams = {}, sequencingMode = 'layerOrder', format, width_mm, height_mm, machine_name, speed_rpm, cuts, project_name } = await req.json();
+    
+    if (!regions || !Array.isArray(regions)) {
+      return Response.json({ error: 'regions array required' }, { status: 400 });
+    }
 
+    // ── Parámetros de puntada ─────────────────────────────────────────────
     const sp = {
-      tatamiDensityMm: 0.4,    // direct mm row spacing; overrides fillDensity
-      fillAngle: null,          // null = auto PCA, number = fixed degrees
+      tatamiDensityMm: 0.4,
+      fillAngle: null,
       fillDensity: 1.0,
       satinWidth: 3.0,
       runningStitchLength: 2.5,
@@ -20,12 +24,11 @@ Deno.serve(async (req) => {
       underlayDensity: 0.5,
       underlayAngle: -45,
       ...stitchParams,
-      // support flat snake_case keys from editor config
       tatamiDensityMm: stitchParams?.tatami_density || stitchParams?.tatamiDensityMm || 0.4,
       fillAngle: stitchParams?.fill_angle !== undefined ? stitchParams.fill_angle : (stitchParams?.fillAngle !== undefined ? stitchParams.fillAngle : null),
     };
 
-    // ── Classify and generate stitch paths per region ────────────────────────
+    // ── Generar puntadas por región ────────────────────────────────────────
     const stitchPaths = [];
 
     for (const region of regions) {
@@ -35,7 +38,7 @@ Deno.serve(async (req) => {
       const area = region.area || 0;
       const compactness = region.compactness || 0;
 
-      // Determine stitch type from geometry if not pre-assigned
+      // Determinar tipo de puntada automáticamente si no está asignado
       let type = region.stitch_type;
       if (!type) {
         if (area > 300 || compactness < 15) type = 'fill';
@@ -47,20 +50,20 @@ Deno.serve(async (req) => {
       let jumps = 0;
 
       if (type === 'fill') {
-        // Use sp.fillAngle if set (not null), else region.angle, else PCA dominant angle
         const polyAngleDeg = sp.fillAngle !== null && sp.fillAngle !== undefined
           ? sp.fillAngle
           : (region.angle !== undefined ? region.angle : dominantAngleDeg(poly));
         const perpAngle = polyAngleDeg + 90;
 
-        // Optional underlay first (perpendicular, sparser)
+        // Underlay primero (perpendicular, más espaciado)
         if (sp.underlay) {
-          const underlaySpacingMm = sp.tatamiDensityMm * 2; // underlay is 2× sparser
-          const underlayPts = generateFillLines(poly, perpAngle, underlaySpacingMm, sp.pullCompensation);
-          points.push(...underlayPts.points);
-          jumps += underlayPts.jumps;
-          if (underlayPts.points.length > 0) jumps++;
+          const underlaySpacingMm = sp.tatamiDensityMm * 2;
+          const underlayResult = generateFillLines(poly, perpAngle, underlaySpacingMm, sp.pullCompensation);
+          points.push(...underlayResult.points);
+          jumps += underlayResult.jumps;
+          if (underlayResult.points.length > 0) jumps++;
         }
+
         const fillResult = generateFillLines(poly, polyAngleDeg, sp.tatamiDensityMm, sp.pullCompensation);
         points.push(...fillResult.points);
         jumps += fillResult.jumps;
@@ -80,7 +83,6 @@ Deno.serve(async (req) => {
       }
 
       const stitchCount = points.length;
-      // ~800 stitches/min machine speed, 1 stitch ≈ avg 2mm thread
       const estimatedTimeSec = parseFloat(((stitchCount / 800) * 60).toFixed(1));
 
       stitchPaths.push({
@@ -95,18 +97,31 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ── Sequencing ────────────────────────────────────────────────────────────
+    // ── Secuenciación ────────────────────────────────────────────────────────
     const sequenced = sequencePaths(stitchPaths, sequencingMode);
 
-    // ── Total stats ───────────────────────────────────────────────────────────
+    // ── Estadísticas ─────────────────────────────────────────────────────────
     const totalStitches = sequenced.reduce((s, p) => s + p.stitchCount, 0);
-    const totalJumps    = sequenced.reduce((s, p) => s + p.jumps, 0);
-    const totalColors   = new Set(sequenced.map(p => p.color)).size;
+    const totalJumps = sequenced.reduce((s, p) => s + p.jumps, 0);
+    const totalColors = new Set(sequenced.map(p => p.color)).size;
     const estimatedTimeMin = parseFloat((sequenced.reduce((s, p) => s + p.estimatedTimeSec, 0) / 60).toFixed(1));
-    // avg stitch length ~2mm → total thread in meters
     const threadLengthMeters = parseFloat(((totalStitches * 2) / 1000).toFixed(1));
 
-    // Strip internal sequencing fields
+    // ── Generar archivo de bordado si se solicita formato ──────────────────
+    let fileData = null;
+    if (format) {
+      const stitchData = convertToStitchFormat(sequenced, width_mm || 100, height_mm || 100);
+      const fileBuffer = generateEmbroideryFile(stitchData, format, width_mm, height_mm, machine_name, speed_rpm, regions);
+      const base64 = arrayBufferToBase64(fileBuffer);
+      
+      fileData = {
+        file_base64: base64,
+        file_name: `${sanitizeFileName(project_name) || 'design'}.${format.toLowerCase()}`,
+        format: format.toUpperCase(),
+      };
+    }
+
+    // Strip internal fields
     const outputPaths = sequenced.map(({ layerOrder, ...rest }) => rest);
 
     return Response.json({
@@ -118,33 +133,31 @@ Deno.serve(async (req) => {
         estimatedTimeMin,
         threadLengthMeters,
       },
+      ...(fileData && { file: fileData }),
     });
 
   } catch (error) {
+    console.error('Embroidery generation error:', error);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
 
-// ── TATAMI FILL ───────────────────────────────────────────────────────────────
-// Dense tatami fill with serpentine rows, cyclic 25% offset, and row connection.
+// ═══════════════════════════════════════════════════════════════════════════
+// GENERADORES DE PUNTADAS
+// ═══════════════════════════════════════════════════════════════════════════
 
+// ── TATAMI FILL ─────────────────────────────────────────────────────────────
 function generateFillLines(poly, angleDeg, spacingMm, pullComp) {
   const expanded = expandPolygon(poly, pullComp);
   const angle = angleDeg * Math.PI / 180;
-
-  // spacingMm is the direct row spacing in mm (e.g. 0.4)
   const rowSpacing = Math.max(0.15, spacingMm || 0.4);
-  // Stitch pitch along each row — same as row spacing for uniform tatami density
   const stitchPitch = rowSpacing;
-  // Cyclic tatami offsets: 0%, 25%, 50%, 75%
   const OFFSETS = [0, 0.25, 0.5, 0.75];
-  // Max allowed stitch length before inserting extra point
   const MAX_STITCH = 2.5;
 
   const cos = Math.cos(-angle), sin = Math.sin(-angle);
   const cosR = Math.cos(angle), sinR = Math.sin(angle);
 
-  // Rotate polygon into fill-angle space
   const rotated = expanded.map(([x, y]) => [x * cos - y * sin, x * sin + y * cos]);
   const minY = Math.min(...rotated.map(p => p[1]));
   const maxY = Math.max(...rotated.map(p => p[1]));
@@ -160,7 +173,6 @@ function generateFillLines(poly, angleDeg, spacingMm, pullComp) {
 
     const cycleOffset = OFFSETS[rowIdx % 4] * stitchPitch;
     const forward = rowIdx % 2 === 0;
-
     const rowPoints = [];
 
     for (let i = 0; i < xs.length - 1; i += 2) {
@@ -168,31 +180,24 @@ function generateFillLines(poly, angleDeg, spacingMm, pullComp) {
       const segLen = xR - xL;
       if (segLen < 0.1) continue;
 
-      // Always include polygon entry point
       rowPoints.push(forward ? [xL, y] : [xR, y]);
 
-      // Generate interior stitches with cyclic offset
       const firstX = xL + ((cycleOffset % stitchPitch + stitchPitch) % stitchPitch);
       for (let x = firstX; x < xR - 0.05; x += stitchPitch) {
-        if (x > xL + 0.05) {
-          rowPoints.push([x, y]);
-        }
+        if (x > xL + 0.05) rowPoints.push([x, y]);
       }
 
-      // Always include exit point
       const exitPt = forward ? [xR, y] : [xL, y];
       const lastAdded = rowPoints[rowPoints.length - 1];
-      if (Math.hypot(exitPt[0] - lastAdded[0]) > 0.05) {
+      if (Math.hypot(exitPt[0] - lastAdded[0], exitPt[1] - lastAdded[1]) > 0.05) {
         rowPoints.push(exitPt);
       }
     }
 
     if (rowPoints.length === 0) { rowIdx++; continue; }
 
-    // Apply serpentine: if backward row, reverse the point order
     const orderedPts = forward ? rowPoints : rowPoints.slice().reverse();
 
-    // Check if we need a jump to reach this row
     if (allPoints.length > 0) {
       const last = allPoints[allPoints.length - 1];
       const first = orderedPts[0];
@@ -200,7 +205,6 @@ function generateFillLines(poly, angleDeg, spacingMm, pullComp) {
       if (jumpDist > 5.0) jumps++;
     }
 
-    // Subdivide any segment longer than MAX_STITCH
     for (let j = 0; j < orderedPts.length; j++) {
       if (j > 0) {
         const prev = orderedPts[j - 1];
@@ -220,7 +224,6 @@ function generateFillLines(poly, angleDeg, spacingMm, pullComp) {
     rowIdx++;
   }
 
-  // Rotate all points back to world space
   const finalPoints = allPoints.map(([x, y]) => [
     parseFloat((x * cosR - y * sinR).toFixed(3)),
     parseFloat((x * sinR + y * cosR).toFixed(3)),
@@ -241,42 +244,35 @@ function scanLineIntersect(poly, y) {
   return xs;
 }
 
-// ── SATIN ─────────────────────────────────────────────────────────────────────
-
+// ── SATIN ───────────────────────────────────────────────────────────────────
 function generateSatinStitches(poly, satinWidth, pullComp) {
   const expanded = expandPolygon(poly, pullComp);
   const cx = expanded.reduce((s, p) => s + p[0], 0) / expanded.length;
   const cy = expanded.reduce((s, p) => s + p[1], 0) / expanded.length;
 
-  // Approximate medial axis: sample along centroid-to-edge midpoints
   const points = [];
   let jumps = 0;
 
-  // Compute bounding axis from dominant angle (use polygon PCA approximation)
   const angle = dominantAngle(expanded);
   const axisDir = [Math.cos(angle), Math.sin(angle)];
   const perpDir = [-Math.sin(angle), Math.cos(angle)];
 
-  // Project vertices onto axis to find extent
   const projAxis = expanded.map(p => (p[0] - cx) * axisDir[0] + (p[1] - cy) * axisDir[1]);
   const tMin = Math.min(...projAxis), tMax = Math.max(...projAxis);
 
-  const stitchSpacing = 0.25; // mm between satin columns
+  const stitchSpacing = 0.25;
   let stitchIdx = 0;
 
   for (let t = tMin; t <= tMax; t += stitchSpacing) {
     const mx = cx + t * axisDir[0];
     const my = cy + t * axisDir[1];
 
-    // Find intersections of perpendicular line through (mx,my) with polygon
     const intersections = linePolyIntersectPerp(expanded, mx, my, perpDir);
     if (intersections.length < 2) continue;
     intersections.sort((a, b) => a.t - b.t);
 
     const p0 = intersections[0], p1 = intersections[intersections.length - 1];
     const len = Math.abs(p1.t - p0.t);
-
-    // Split long stitches at satinWidth
     const segments = Math.ceil(len / satinWidth);
     const step = (p1.t - p0.t) / segments;
 
@@ -285,7 +281,7 @@ function generateSatinStitches(poly, satinWidth, pullComp) {
       const tb = p0.t + (s + 1) * step;
       const forward = stitchIdx % 2 === 0;
       const startT = forward ? ta : tb;
-      const endT   = forward ? tb : ta;
+      const endT = forward ? tb : ta;
       points.push([
         parseFloat((mx + startT * perpDir[0]).toFixed(3)),
         parseFloat((my + startT * perpDir[1]).toFixed(3)),
@@ -305,7 +301,6 @@ function linePolyIntersectPerp(poly, mx, my, perpDir) {
   const results = [];
   for (let i = 0; i < poly.length; i++) {
     const a = poly[i], b = poly[(i + 1) % poly.length];
-    // Parametric intersection of segment a→b with line through (mx,my) in perpDir direction
     const dx = b[0] - a[0], dy = b[1] - a[1];
     const denom = perpDir[0] * dy - perpDir[1] * dx;
     if (Math.abs(denom) < 1e-10) continue;
@@ -327,8 +322,7 @@ function dominantAngle(poly) {
   return 0.5 * Math.atan2(2 * cxy, cxx - cyy);
 }
 
-// ── RUNNING STITCH ────────────────────────────────────────────────────────────
-
+// ── RUNNING STITCH ──────────────────────────────────────────────────────────
 function generateRunningStitch(poly, stitchLength, offsetMm) {
   const offsetPoly = offsetMm !== 0 ? expandPolygon(poly, offsetMm) : poly;
   const points = [];
@@ -338,6 +332,7 @@ function generateRunningStitch(poly, stitchLength, offsetMm) {
   for (let i = 0; i < offsetPoly.length; i++) {
     const a = offsetPoly[i], b = offsetPoly[(i + 1) % offsetPoly.length];
     const segLen = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (segLen < 1e-10) continue;
     const dx = (b[0] - a[0]) / segLen, dy = (b[1] - a[1]) / segLen;
     let d = stitchLength - dist;
     while (d < segLen) {
@@ -350,13 +345,11 @@ function generateRunningStitch(poly, stitchLength, offsetMm) {
     dist = segLen - (d - stitchLength);
   }
 
-  // Close path
   points.push([parseFloat(offsetPoly[0][0].toFixed(3)), parseFloat(offsetPoly[0][1].toFixed(3))]);
   return { points, jumps: 0 };
 }
 
-// ── SEQUENCING ────────────────────────────────────────────────────────────────
-
+// ── SEQUENCING ───────────────────────────────────────────────────────────────
 function sequencePaths(paths, mode) {
   if (mode === 'layerOrder') {
     return [...paths].sort((a, b) => (a.layerOrder || 999) - (b.layerOrder || 999));
@@ -368,14 +361,12 @@ function sequencePaths(paths, mode) {
       if (!byColor[p.color]) byColor[p.color] = [];
       byColor[p.color].push(p);
     }
-    // Within each color group, sort by layer order
     return Object.values(byColor)
       .map(group => group.sort((a, b) => (a.layerOrder || 999) - (b.layerOrder || 999)))
       .flat();
   }
 
   if (mode === 'minTravel') {
-    // Greedy nearest-neighbor TSP approximation using centroid of first point
     const remaining = [...paths];
     const result = [];
     let current = remaining.splice(0, 1)[0];
@@ -399,7 +390,259 @@ function sequencePaths(paths, mode) {
   return paths;
 }
 
-// ── GEOMETRY HELPERS ──────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// CONVERSIÓN A FORMATOS DE ARCHIVO
+// ═══════════════════════════════════════════════════════════════════════════
+
+function convertToStitchFormat(sequencedPaths, width_mm, height_mm) {
+  const stitches = [];
+  const scale = 10;
+
+  for (const path of sequencedPaths) {
+    if (path.points.length === 0) continue;
+
+    stitches.push({ type: 'color_change', color: hexToRgb(path.color || '#000000') });
+
+    for (const [x, y] of path.points) {
+      stitches.push({
+        type: 'stitch',
+        x: Math.round(x * scale),
+        y: Math.round(y * scale)
+      });
+    }
+
+    stitches.push({ type: 'trim' });
+  }
+
+  stitches.push({ type: 'end' });
+  return stitches;
+}
+
+function generateEmbroideryFile(stitchData, format, width_mm, height_mm, machine_name, speed_rpm, regions) {
+  switch (format.toUpperCase()) {
+    case 'DST':
+      return generateDST(stitchData, width_mm, height_mm, machine_name, speed_rpm);
+    case 'PES':
+      return generatePES(stitchData, width_mm, height_mm, machine_name, regions);
+    case 'JEF':
+      return generateJEF(stitchData, width_mm, height_mm, machine_name, regions);
+    case 'DSB':
+      return generateDSB(stitchData, width_mm, height_mm, machine_name);
+    default:
+      return generateDST(stitchData, width_mm, height_mm, machine_name, speed_rpm);
+  }
+}
+
+// ── DST GENERATOR ───────────────────────────────────────────────────────────
+function generateDST(stitches, width_mm, height_mm, machine, speed) {
+  const header = new Uint8Array(512);
+  const enc = new TextEncoder();
+
+  const stitchCount = stitches.filter(s => s.type === 'stitch').length;
+  const colorChanges = stitches.filter(s => s.type === 'color_change').length;
+
+  const headerLines = [
+    `LA:${(machine || 'StitchFlow').padEnd(16, ' ')}`,
+    `ST:${stitchCount.toString().padEnd(7, ' ')}`,
+    `CO:${colorChanges.toString().padEnd(3, ' ')}`,
+    `+X:${Math.round((width_mm || 100) * 10).toString().padEnd(5, ' ')}`,
+    `-X:0    `,
+    `+Y:${Math.round((height_mm || 100) * 10).toString().padEnd(5, ' ')}`,
+    `-Y:0    `,
+    `AX:+0   `,
+    `AY:+0   `,
+    `MX:+0   `,
+    `MY:+0   `,
+    `PD:******`,
+    `\x1a`
+  ];
+
+  const headerStr = headerLines.join('\r') + ' '.repeat(512);
+  const headerBytes = enc.encode(headerStr.slice(0, 512));
+  header.set(headerBytes);
+
+  const dataBytes = [];
+  let cx = 0, cy = 0;
+
+  for (const s of stitches) {
+    if (s.type === 'stitch') {
+      let dx = s.x - cx;
+      let dy = s.y - cy;
+
+      while (Math.abs(dx) > 121 || Math.abs(dy) > 121) {
+        const stepX = Math.sign(dx) * Math.min(Math.abs(dx), 121);
+        const stepY = Math.sign(dy) * Math.min(Math.abs(dy), 121);
+        const [b1, b2, b3] = encodeDSTStitch(stepX, stepY, 0x80);
+        dataBytes.push(b1, b2, b3);
+        cx += stepX;
+        cy += stepY;
+        dx = s.x - cx;
+        dy = s.y - cy;
+      }
+
+      const [b1, b2, b3] = encodeDSTStitch(dx, dy, 0);
+      dataBytes.push(b1, b2, b3);
+      cx = s.x;
+      cy = s.y;
+    } else if (s.type === 'color_change') {
+      dataBytes.push(0xC3, 0xC3, 0xC3);
+    } else if (s.type === 'trim') {
+      dataBytes.push(0xC3, 0xC3, 0xC3);
+    } else if (s.type === 'end') {
+      dataBytes.push(0xF3, 0xF3, 0xF3);
+    }
+  }
+
+  const result = new Uint8Array(512 + dataBytes.length);
+  result.set(header);
+  result.set(new Uint8Array(dataBytes), 512);
+  return result.buffer;
+}
+
+function encodeDSTStitch(dx, dy, flag) {
+  let b1 = 0, b2 = 0, b3 = flag & 0x03;
+
+  if (dx > 40) { b3 |= 0x04; dx -= 81; }
+  if (dx < -40) { b3 |= 0x08; dx += 81; }
+  if (dx < 0) { dx = -dx; b1 |= 0x80; }
+
+  if (dy > 40) { b3 |= 0x20; dy -= 81; }
+  if (dy < -40) { b3 |= 0x40; dy += 81; }
+  if (dy < 0) { dy = -dy; b2 |= 0x80; }
+
+  b1 |= (dx & 0x7F);
+  b2 |= (dy & 0x7F);
+
+  return [b1, b2, b3];
+}
+
+// ── PES GENERATOR ───────────────────────────────────────────────────────────
+function generatePES(stitches, width_mm, height_mm, machine, regions) {
+  const enc = new TextEncoder();
+  const pecData = generatePECData(stitches, width_mm, height_mm);
+  
+  const header = new Uint8Array(8);
+  header.set(enc.encode('#PES0001'));
+  
+  const totalLength = header.length + pecData.length;
+  const result = new Uint8Array(totalLength);
+  result.set(header);
+  result.set(pecData, header.length);
+  
+  return result.buffer;
+}
+
+function generatePECData(stitches, width_mm, height_mm) {
+  const header = new Uint8Array(512);
+  const enc = new TextEncoder();
+  
+  header.set(enc.encode('LA:'), 0);
+  header.set(enc.encode('StitchFlow'.padEnd(16, ' ')), 3);
+  
+  const view = new DataView(header.buffer);
+  view.setInt16(19, 0, true);
+  view.setInt16(21, 0, true);
+  view.setInt16(23, Math.round(width_mm * 10), true);
+  view.setInt16(25, Math.round(height_mm * 10), true);
+  
+  const stitchBytes = [];
+  let lastX = 0, lastY = 0;
+  
+  for (const s of stitches) {
+    if (s.type === 'stitch') {
+      const dx = s.x - lastX;
+      const dy = s.y - lastY;
+      
+      if (Math.abs(dx) <= 63 && Math.abs(dy) <= 63) {
+        stitchBytes.push((dx + 63) & 0x7F, (dy + 63) & 0x7F);
+      } else {
+        stitchBytes.push(0x80, 0x01,
+          (dx >> 8) & 0xFF, dx & 0xFF,
+          (dy >> 8) & 0xFF, dy & 0xFF);
+      }
+      lastX = s.x;
+      lastY = s.y;
+    } else if (s.type === 'color_change') {
+      stitchBytes.push(0xFE, 0xB0);
+    } else if (s.type === 'end') {
+      stitchBytes.push(0xFF);
+    }
+  }
+  
+  const result = new Uint8Array(512 + stitchBytes.length);
+  result.set(header);
+  result.set(new Uint8Array(stitchBytes), 512);
+  return result;
+}
+
+// ── JEF GENERATOR ───────────────────────────────────────────────────────────
+function generateJEF(stitches, width_mm, height_mm, machine, regions) {
+  const enc = new TextEncoder();
+  const stitchBytes = [];
+  let lastX = 0, lastY = 0;
+  
+  const header = new Uint8Array(80);
+  header.set(enc.encode('JEF'), 0);
+  
+  const view = new DataView(header.buffer);
+  view.setInt32(4, stitches.filter(s => s.type === 'stitch').length, true);
+  view.setInt32(8, stitches.filter(s => s.type === 'color_change').length, true);
+  view.setInt32(12, Math.round(width_mm * 10), true);
+  view.setInt32(16, Math.round(height_mm * 10), true);
+  
+  for (const s of stitches) {
+    if (s.type === 'stitch') {
+      const dx = s.x - lastX;
+      const dy = s.y - lastY;
+      stitchBytes.push(dx & 0xFF, dy & 0xFF);
+      lastX = s.x;
+      lastY = s.y;
+    } else if (s.type === 'color_change') {
+      stitchBytes.push(0x80, 0x01);
+    } else if (s.type === 'end') {
+      stitchBytes.push(0x80, 0x10);
+    }
+  }
+  
+  const result = new Uint8Array(80 + stitchBytes.length);
+  result.set(header);
+  result.set(new Uint8Array(stitchBytes), 80);
+  return result.buffer;
+}
+
+// ── DSB GENERATOR ───────────────────────────────────────────────────────────
+function generateDSB(stitches, width_mm, height_mm, machine) {
+  const enc = new TextEncoder();
+  const stitchBytes = [];
+  let lastX = 0, lastY = 0;
+  
+  const header = new Uint8Array(512);
+  header.set(enc.encode('DSB'), 0);
+  header.set(enc.encode((machine || 'StitchFlow').padEnd(16, ' ')), 3);
+  
+  for (const s of stitches) {
+    if (s.type === 'stitch') {
+      const dx = s.x - lastX;
+      const dy = s.y - lastY;
+      stitchBytes.push((dx >> 8) & 0xFF, dx & 0xFF, (dy >> 8) & 0xFF, dy & 0xFF, 0x00);
+      lastX = s.x;
+      lastY = s.y;
+    } else if (s.type === 'color_change') {
+      stitchBytes.push(0x00, 0x00, 0x00, 0x00, 0x01);
+    } else if (s.type === 'end') {
+      stitchBytes.push(0x00, 0x00, 0x00, 0x00, 0xFF);
+    }
+  }
+  
+  const result = new Uint8Array(512 + stitchBytes.length);
+  result.set(header);
+  result.set(new Uint8Array(stitchBytes), 512);
+  return result.buffer;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UTILIDADES
+// ═══════════════════════════════════════════════════════════════════════════
 
 function dominantAngleDeg(poly) {
   if (!poly || poly.length < 2) return 45;
@@ -422,4 +665,35 @@ function expandPolygon(poly, amount) {
     const len = Math.hypot(dx, dy) || 1;
     return [x + (dx / len) * amount, y + (dy / len) * amount];
   });
+}
+
+function hexToRgb(hex) {
+  if (!hex || typeof hex !== 'string') return { r: 0, g: 0, b: 0 };
+  const clean = hex.replace('#', '');
+  if (clean.length !== 6) return { r: 0, g: 0, b: 0 };
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  return {
+    r: isNaN(r) ? 0 : r,
+    g: isNaN(g) ? 0 : g,
+    b: isNaN(b) ? 0 : b
+  };
+}
+
+function sanitizeFileName(name) {
+  if (!name) return null;
+  return name.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 50);
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const len = bytes.length;
+  const chunkSize = 65536;
+  for (let i = 0; i < len; i += chunkSize) {
+    const chunk = bytes.slice(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
 }
