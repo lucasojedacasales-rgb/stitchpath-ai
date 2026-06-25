@@ -166,9 +166,7 @@ Deno.serve(async (req) => {
       
       if (isLargeRegion && !isThinRegion) {
         type = 'fill';
-                const regionIndex = outputRegions.length;
-        const baseAngles = [45, 135, 30, 120, 60, 150, 15, 105, 75, 165];
-        const regionAngle = baseAngles[regionIndex % baseAngles.length];
+                const regionAngle = computeOptimalFillAngle(reg.mask, W, H);
         stitches = generateTatamiFill(polygon, tatamiDensity, tatamiStitchLength, regionAngle);
         
         // Contorno: Satin si es borde externo, Run si es interno
@@ -647,5 +645,50 @@ function nearestIdx(rgb, palette) {
   return best;
 }
 function rgbToHex([r,g,b]) {
-  return '#'+[r,g,b].map(v=>Math.round(v).toString(16).padStart(2,'0')).join('');
+ /**
+ * Calcula el angulo optimo de relleno para una region usando momentos de inercia.
+ * El angulo de relleno es PERPENDICULAR al eje principal de la forma.
+ */
+function computeOptimalFillAngle(mask, W, H) {
+  // 1. Recolectar todos los pixeles de la region
+  const pixels = [];
+  for (let i = 0; i < mask.length; i++) {
+    if (mask[i]) {
+      pixels.push({ x: i % W, y: Math.floor(i / W) });
+    }
+  }
+  
+  if (pixels.length < 2) return 45; // default
+  
+  // 2. Calcular centroide
+  let cx = 0, cy = 0;
+  for (const p of pixels) { cx += p.x; cy += p.y; }
+  cx /= pixels.length;
+  cy /= pixels.length;
+  
+  // 3. Calcular momentos de inercia (covarianza)
+  let mu20 = 0, mu02 = 0, mu11 = 0;
+  for (const p of pixels) {
+    const dx = p.x - cx;
+    const dy = p.y - cy;
+    mu20 += dx * dx;
+    mu02 += dy * dy;
+    mu11 += dx * dy;
+  }
+  
+  // 4. Calcular angulo del eje principal
+  const theta = 0.5 * Math.atan2(2 * mu11, mu20 - mu02);
+  
+  // 5. El angulo de relleno es PERPENDICULAR al eje principal
+  let fillAngle = (theta * 180 / Math.PI) + 90;
+  
+  // 6. Normalizar a 0-180
+  fillAngle = fillAngle % 180;
+  if (fillAngle < 0) fillAngle += 180;
+  
+  // 7. Snap a angulos estandar (multiples de 15)
+  const snapped = Math.round(fillAngle / 15) * 15;
+  
+  return snapped;
+} return '#'+[r,g,b].map(v=>Math.round(v).toString(16).padStart(2,'0')).join('');
 }
