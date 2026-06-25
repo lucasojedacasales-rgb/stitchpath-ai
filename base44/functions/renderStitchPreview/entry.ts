@@ -1,269 +1,525 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
+// ============================================================
+// RENDER STITCH PREVIEW - CON MEJORAS DE CONTORNO
+// ============================================================
 
-Deno.serve(async (req) => {
-  try {
-    const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+interface StitchPoint {
+  x: number;
+  y: number;
+}
 
-    const { stitchPaths, renderParams = {} } = await req.json();
-    if (!stitchPaths || !Array.isArray(stitchPaths)) {
-      return Response.json({ error: 'stitchPaths array required' }, { status: 400 });
-    }
+interface Region {
+  id: string;
+  color: string;
+  type: 'fill' | 'satin' | 'run' | 'border';
+  path_points: number[][];
+  stitches: number[][];
+  contour_stitches: number[][];
+  is_external_border: boolean;
+  stitch_count: number;
+}
 
-    const startMs = Date.now();
+interface DesignData {
+  regions: Region[];
+  metadata: any;
+}
 
-    const {
-      width = 800,
-      height = 800,
-      fabricTexture = 'cotton',
-      threadThickness = 0.3,
-      lighting = 'studio',
-      showBackside = false,
-    } = renderParams;
+// ============================================================
+// CONFIGURACIÓN VISUAL
+// ============================================================
 
-    const W = Math.min(width, 1200);
-    const H = Math.min(height, 1200);
+const CONFIG = {
+  // Fondo
+  backgroundColor: '#1a1a2e',
+  gridColor: '#2a2a4e',
+  
+  // Contornos
+  externalBorder: {
+    color: '#ffffff',
+    width: 3,
+    shadowColor: 'rgba(255,255,255,0.3)',
+    shadowBlur: 4,
+    style: 'solid'
+  },
+  internalBorder: {
+    color: '#666666',
+    width: 1,
+    dash: [4, 4],
+    style: 'dashed'
+  },
+  
+  // Rellenos
+  tatami: {
+    strokeWidth: 0.8,
+    opacity: 0.9
+  },
+  
+  // Satin
+  satin: {
+    strokeWidth: 1.5,
+    opacity: 1.0
+  },
+  
+  // Zoom y pan
+  minZoom: 0.1,
+  maxZoom: 10,
+  zoomStep: 0.1
+};
 
-    // ── Compute bounding box of all stitch points ─────────────────────────────
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const path of stitchPaths) {
-      for (const [x, y] of path.points || []) {
-        if (x < minX) minX = x; if (x > maxX) maxX = x;
-        if (y < minY) minY = y; if (y > maxY) maxY = y;
-      }
-    }
-    if (!isFinite(minX)) { minX = -50; maxX = 50; minY = -50; maxY = 50; }
-    const rangeX = maxX - minX || 1, rangeY = maxY - minY || 1;
-    const padding = 0.1;
-    const scale = Math.min(W, H) * (1 - padding * 2) / Math.max(rangeX, rangeY);
-    const offX = W / 2 - ((minX + maxX) / 2) * scale;
-    const offY = H / 2 - ((minY + maxY) / 2) * scale;
-    const toCanvas = ([x, y]) => [x * scale + offX, y * scale + offY];
+// ============================================================
+// CLASE PRINCIPAL DEL RENDERER
+// ============================================================
 
-    // ── Build SVG (rendered as PNG via sharp) ─────────────────────────────────
-    // SVG supports all required visual effects natively without WebGL/canvas
-    const threadPx = Math.max(0.5, threadThickness * scale * 0.01);
-
-    // Fabric background color per texture
-    const fabricColors = {
-      cotton: '#f5f0e8',
-      denim:  '#3a5276',
-      satin:  '#e8e0d0',
-      terry:  '#d4cfc8',
-    };
-    const fabricBg = fabricColors[fabricTexture] || '#f5f0e8';
-
-    // Lighting parameters
-    const lightingConfigs = {
-      studio:   { ambient: 0.7, diffuse: 0.8, specular: 0.4, shadowBlur: 2 },
-      flat:     { ambient: 1.0, diffuse: 0.2, specular: 0.0, shadowBlur: 0 },
-      dramatic: { ambient: 0.3, diffuse: 1.2, specular: 0.9, shadowBlur: 4 },
-    };
-    const lc = lightingConfigs[lighting] || lightingConfigs.studio;
-
-    // Pre-collect SVG paths per color group for layering
-    const colorGroups = {};
-    for (const path of stitchPaths) {
-      const color = path.color || '#ffffff';
-      if (!colorGroups[color]) colorGroups[color] = [];
-      colorGroups[color].push(path);
-    }
-
-    // Build SVG defs: filters per texture + thread gradient
-    const rng = lcg(42); // deterministic pseudo-random
-
-    const svgDefs = buildDefs(fabricTexture, lc, threadPx, rng);
-
-    // Build SVG stitch elements
-    let stitchSvg = '';
-    for (const path of stitchPaths) {
-      const color = path.color || '#ffffff';
-      const pts = path.points || [];
-      if (pts.length < 2) continue;
-
-      const isBackside = showBackside;
-      const opacity = isBackside ? 0.4 : 1.0;
-
-      // Build polyline segments with per-segment lighting gradient
-      for (let i = 0; i < pts.length - 1; i++) {
-        const [x0, y0] = toCanvas(pts[i]);
-        const [x1, y1] = toCanvas(pts[i + 1]);
-        const dx = x1 - x0, dy = y1 - y0;
-        const len = Math.hypot(dx, dy);
-        if (len < 0.3) continue;
-
-        // Fuzz: small random offset per stitch
-        const fuzz = (rng() - 0.5) * threadPx * 0.3;
-        const nx = -dy / len, ny = dx / len; // normal
-
-        const fx0 = x0 + nx * fuzz, fy0 = y0 + ny * fuzz;
-        const fx1 = x1 + nx * fuzz, fy1 = y1 + ny * fuzz;
-
-        // Lighting: angle to "light source" at top-left (studio) or top (dramatic)
-        const lightAngle = lighting === 'dramatic' ? Math.PI / 4 : Math.PI / 6;
-        const cosA = Math.cos(lightAngle), sinA = Math.sin(lightAngle);
-        const dotLight = (dx / len) * cosA + (dy / len) * sinA;
-        const brightness = Math.max(0.4, Math.min(1.0, lc.ambient + lc.diffuse * Math.abs(dotLight)));
-
-        // Specular highlight for satin fabric
-        let specular = 0;
-        if (fabricTexture === 'satin') {
-          specular = Math.pow(Math.max(0, dotLight), 8) * lc.specular;
-        }
-
-        const threadColor = adjustBrightness(color, brightness + specular);
-        const shadowColor = adjustBrightness(color, brightness * 0.4);
-
-        // Shadow line (offset down-right slightly)
-        if (lc.shadowBlur > 0) {
-          stitchSvg += `<line x1="${(fx0 + 1).toFixed(1)}" y1="${(fy0 + 1).toFixed(1)}" x2="${(fx1 + 1).toFixed(1)}" y2="${(fy1 + 1).toFixed(1)}" stroke="${shadowColor}" stroke-width="${(threadPx * 1.4).toFixed(2)}" stroke-opacity="${(opacity * 0.3).toFixed(2)}" stroke-linecap="round"/>`;
-        }
-
-        // Main thread line
-        const strokeW = fabricTexture === 'terry' ? threadPx * 1.4 : threadPx;
-        stitchSvg += `<line x1="${fx0.toFixed(1)}" y1="${fy0.toFixed(1)}" x2="${fx1.toFixed(1)}" y2="${fy1.toFixed(1)}" stroke="${threadColor}" stroke-width="${strokeW.toFixed(2)}" stroke-opacity="${opacity.toFixed(2)}" stroke-linecap="round"`;
-
-        // Texture-specific effects
-        if (fabricTexture === 'satin') {
-          stitchSvg += ` filter="url(#satin-gloss)"`;
-        } else if (fabricTexture === 'terry') {
-          stitchSvg += ` filter="url(#terry-blur)"`;
-        }
-        stitchSvg += '/>';
-
-        // Center highlight (simulates thread roundness)
-        const highlightColor = adjustBrightness(color, Math.min(1.0, brightness * 1.4 + specular));
-        stitchSvg += `<line x1="${fx0.toFixed(1)}" y1="${fy0.toFixed(1)}" x2="${fx1.toFixed(1)}" y2="${fy1.toFixed(1)}" stroke="${highlightColor}" stroke-width="${(strokeW * 0.35).toFixed(2)}" stroke-opacity="${(opacity * 0.6).toFixed(2)}" stroke-linecap="round"/>`;
-      }
-
-      // Loose thread at end of color (color changes)
-      if (path.jumps > 0 && pts.length > 2) {
-        const lastPt = toCanvas(pts[pts.length - 1]);
-        const prevPt = toCanvas(pts[pts.length - 2]);
-        const dx = lastPt[0] - prevPt[0], dy = lastPt[1] - prevPt[1];
-        const len = Math.hypot(dx, dy) || 1;
-        const tailLen = threadPx * 6;
-        const tx = lastPt[0] + (dx / len) * tailLen + (rng() - 0.5) * tailLen;
-        const ty = lastPt[1] + (dy / len) * tailLen + (rng() - 0.5) * tailLen;
-        stitchSvg += `<line x1="${lastPt[0].toFixed(1)}" y1="${lastPt[1].toFixed(1)}" x2="${tx.toFixed(1)}" y2="${ty.toFixed(1)}" stroke="${color}" stroke-width="${(threadPx * 0.6).toFixed(2)}" stroke-opacity="0.5" stroke-linecap="round"/>`;
-      }
-    }
-
-    // Cotton fabric puckering: subtle displacement filter around dense stitch areas
-    const cottonEffect = fabricTexture === 'cotton' ? `filter="url(#cotton-pucker)"` : '';
-
-    // Vignette overlay
-    const vignette = `<radialGradient id="vignette" cx="50%" cy="50%" r="70%">
-      <stop offset="70%" stop-color="transparent"/>
-      <stop offset="100%" stop-color="rgba(0,0,0,0.35)"/>
-    </radialGradient>
-    <rect width="${W}" height="${H}" fill="url(#vignette)" pointer-events="none"/>`;
-
-    const svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
-  <defs>
-    ${svgDefs}
-    <radialGradient id="vignette" cx="50%" cy="50%" r="70%">
-      <stop offset="70%" stop-color="transparent"/>
-      <stop offset="100%" stop-color="rgba(0,0,0,0.35)"/>
-    </radialGradient>
-  </defs>
-
-  <!-- Fabric base -->
-  <rect width="${W}" height="${H}" fill="${fabricBg}"/>
-  <rect width="${W}" height="${H}" fill="url(#fabric-noise)" opacity="0.18"/>
-
-  <!-- Stitches -->
-  <g ${cottonEffect}>
-    ${stitchSvg}
-  </g>
-
-  <!-- Vignette -->
-  <rect width="${W}" height="${H}" fill="url(#vignette)" pointer-events="none"/>
-</svg>`;
-
-    // ── Return SVG as base64 data URI (browsers render SVG natively) ─────────
-    const base64 = btoa(unescape(encodeURIComponent(svg)));
-
-    return Response.json({
-      imageBase64: `data:image/svg+xml;base64,${base64}`,
-      renderingTimeMs: Date.now() - startMs,
-      dimensions: { width: W, height: H },
+class StitchCanvasRenderer {
+  private canvas: HTMLCanvasElement;
+  private ctx: CanvasRenderingContext2D;
+  private designData: DesignData | null = null;
+  private zoom: number = 1;
+  private panX: number = 0;
+  private panY: number = 0;
+  private showFill: boolean = true;
+  private showContours: boolean = true;
+  private showExternalBorder: boolean = true;
+  private selectedRegion: string | null = null;
+  
+  // Cache de renderizado
+  private fillCache: Map<string, ImageData> = new Map();
+  private contourCache: Map<string, ImageData> = new Map();
+  
+  constructor(canvasId: string) {
+    this.canvas = document.getElementById(canvasId) as HTMLCanvasElement;
+    this.ctx = this.canvas.getContext('2d')!;
+    this.setupEventListeners();
+    this.resize();
+  }
+  
+  // ============================================================
+  // SETUP Y EVENTOS
+  // ============================================================
+  
+  private setupEventListeners() {
+    // Zoom con rueda del mouse
+    this.canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -CONFIG.zoomStep : CONFIG.zoomStep;
+      this.zoom = Math.max(CONFIG.minZoom, Math.min(CONFIG.maxZoom, this.zoom + delta));
+      this.render();
     });
-
-  } catch (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    
+    // Pan con drag
+    let isDragging = false;
+    let lastX = 0, lastY = 0;
+    
+    this.canvas.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+    });
+    
+    this.canvas.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      this.panX += e.clientX - lastX;
+      this.panY += e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      this.render();
+    });
+    
+    this.canvas.addEventListener('mouseup', () => isDragging = false);
+    this.canvas.addEventListener('mouseleave', () => isDragging = false);
   }
-});
-
-// ── SVG Defs builder ──────────────────────────────────────────────────────────
-
-function buildDefs(fabricTexture, lc, threadPx, rng) {
-  // Fabric noise texture via feTurbulence
-  const noiseFreq = fabricTexture === 'denim' ? '0.04 0.02' :
-                    fabricTexture === 'terry'  ? '0.08 0.08' : '0.06 0.06';
-
-  let defs = `
-  <filter id="fabric-noise-filter" x="0%" y="0%" width="100%" height="100%">
-    <feTurbulence type="fractalNoise" baseFrequency="${noiseFreq}" numOctaves="4" seed="7" result="noise"/>
-    <feColorMatrix type="saturate" values="0" in="noise" result="grayNoise"/>
-    <feBlend in="SourceGraphic" in2="grayNoise" mode="multiply"/>
-  </filter>
-  <pattern id="fabric-noise" x="0" y="0" width="200" height="200" patternUnits="userSpaceOnUse">
-    <rect width="200" height="200" fill="white"/>
-    <rect width="200" height="200" filter="url(#fabric-noise-filter)" fill="rgba(0,0,0,0.1)"/>
-  </pattern>`;
-
-  if (fabricTexture === 'satin') {
-    defs += `
-  <filter id="satin-gloss">
-    <feGaussianBlur stdDeviation="0.3" result="blur"/>
-    <feSpecularLighting in="blur" surfaceScale="2" specularConstant="0.8" specularExponent="20" result="specular" lighting-color="white">
-      <fePointLight x="200" y="100" z="200"/>
-    </feSpecularLighting>
-    <feComposite in="SourceGraphic" in2="specular" operator="arithmetic" k1="0" k2="1" k3="0.4" k4="0"/>
-  </filter>`;
+  
+  private resize() {
+    const parent = this.canvas.parentElement!;
+    this.canvas.width = parent.clientWidth;
+    this.canvas.height = parent.clientHeight;
+    this.render();
   }
-
-  if (fabricTexture === 'terry') {
-    defs += `
-  <filter id="terry-blur">
-    <feTurbulence type="turbulence" baseFrequency="0.9" numOctaves="2" seed="3" result="noise"/>
-    <feDisplacementMap in="SourceGraphic" in2="noise" scale="${threadPx * 0.8}" xChannelSelector="R" yChannelSelector="G"/>
-  </filter>`;
+  
+  // ============================================================
+  // CARGA DE DATOS
+  // ============================================================
+  
+  public loadDesign(data: DesignData) {
+    this.designData = data;
+    this.fillCache.clear();
+    this.contourCache.clear();
+    this.autoFit();
+    this.render();
   }
-
-  if (fabricTexture === 'cotton') {
-    defs += `
-  <filter id="cotton-pucker">
-    <feTurbulence type="turbulence" baseFrequency="0.02" numOctaves="3" seed="12" result="noise"/>
-    <feDisplacementMap in="SourceGraphic" in2="noise" scale="${threadPx * 0.5}" xChannelSelector="R" yChannelSelector="G"/>
-  </filter>`;
+  
+  public setVisibility(showFill: boolean, showContours: boolean, showExternal: boolean = true) {
+    this.showFill = showFill;
+    this.showContours = showContours;
+    this.showExternalBorder = showExternal;
+    this.render();
   }
-
-  if (lc.shadowBlur > 0) {
-    defs += `
-  <filter id="shadow-blur">
-    <feGaussianBlur stdDeviation="${lc.shadowBlur}"/>
-  </filter>`;
+  
+  public selectRegion(regionId: string | null) {
+    this.selectedRegion = regionId;
+    this.render();
   }
-
-  return defs;
+  
+  // ============================================================
+  // AJUSTE AUTOMÁTICO DE VISTA
+  // ============================================================
+  
+  private autoFit() {
+    if (!this.designData || this.designData.regions.length === 0) return;
+    
+    // Calcular bounding box de todo el diseño
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    
+    for (const region of this.designData.regions) {
+      for (const pt of region.path_points) {
+        minX = Math.min(minX, pt[0]);
+        maxX = Math.max(maxX, pt[0]);
+        minY = Math.min(minY, pt[1]);
+        maxY = Math.max(maxY, pt[1]);
+      }
+    }
+    
+    const designW = maxX - minX;
+    const designH = maxY - minY;
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    
+    // Calcular zoom para que el diseño ocupe el 90% del canvas
+    const zoomX = (canvasW * 0.9) / designW;
+    const zoomY = (canvasH * 0.9) / designH;
+    this.zoom = Math.min(zoomX, zoomY);
+    
+    // Centrar
+    this.panX = canvasW / 2 - (minX + designW / 2) * this.zoom;
+    this.panY = canvasH / 2 - (minY + designH / 2) * this.zoom;
+  }
+  
+  // ============================================================
+  // RENDER PRINCIPAL
+  // ============================================================
+  
+  public render() {
+    const ctx = this.ctx;
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    
+    // Limpiar fondo
+    ctx.fillStyle = CONFIG.backgroundColor;
+    ctx.fillRect(0, 0, w, h);
+    
+    // Dibujar grid
+    this.drawGrid();
+    
+    if (!this.designData) return;
+    
+    ctx.save();
+    
+    // Aplicar transformación de zoom y pan
+    ctx.translate(this.panX, this.panY);
+    ctx.scale(this.zoom, this.zoom);
+    
+    // 1. Dibujar rellenos (Tatami) - capa inferior
+    if (this.showFill) {
+      this.drawFills();
+    }
+    
+    // 2. Dibujar contornos - capa superior
+    if (this.showContours) {
+      this.drawContours();
+    }
+    
+    // 3. Dibujar borde externo del diseño - capa más alta
+    if (this.showExternalBorder) {
+      this.drawExternalBorder();
+    }
+    
+    // 4. Dibujar puntadas seleccionadas (highlight)
+    if (this.selectedRegion) {
+      this.drawSelectedRegion();
+    }
+    
+    ctx.restore();
+    
+    // Dibujar UI overlay (zoom, info)
+    this.drawOverlay();
+  }
+  
+  // ============================================================
+  // DIBUJAR GRID
+  // ============================================================
+  
+  private drawGrid() {
+    const ctx = this.ctx;
+    const gridSize = 10 * this.zoom; // 10mm grid
+    
+    ctx.strokeStyle = CONFIG.gridColor;
+    ctx.lineWidth = 0.5;
+    
+    const offsetX = this.panX % gridSize;
+    const offsetY = this.panY % gridSize;
+    
+    for (let x = offsetX; x < this.canvas.width; x += gridSize) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, this.canvas.height);
+      ctx.stroke();
+    }
+    
+    for (let y = offsetY; y < this.canvas.height; y += gridSize) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(this.canvas.width, y);
+      ctx.stroke();
+    }
+  }
+  
+  // ============================================================
+  // DIBUJAR RELLENOS (TATAMI)
+  // ============================================================
+  
+  private drawFills() {
+    const ctx = this.ctx;
+    
+    for (const region of this.designData!.regions) {
+      if (region.type !== 'fill') continue;
+      
+      // Si hay cache, usarlo
+      const cacheKey = `${region.id}_${this.zoom}`;
+      // Nota: En producción implementar cache real con offscreen canvas
+      
+      ctx.strokeStyle = region.color;
+      ctx.lineWidth = CONFIG.tatami.strokeWidth / this.zoom; // Mantener grosor constante en pantalla
+      ctx.globalAlpha = CONFIG.tatami.opacity;
+      
+      // Dibujar puntadas Tatami como líneas cortas
+      this.drawStitchLines(region.stitches, region.color);
+      
+      ctx.globalAlpha = 1.0;
+    }
+  }
+  
+  // ============================================================
+  // DIBUJAR CONTORNOS
+  // ============================================================
+  
+  private drawContours() {
+    const ctx = this.ctx;
+    
+    for (const region of this.designData!.regions) {
+      // Saltar el borde externo especial (se dibuja aparte)
+      if (region.id === 'design_border') continue;
+      
+      const isExternal = region.is_external_border;
+      const style = isExternal ? CONFIG.externalBorder : CONFIG.internalBorder;
+      
+      ctx.strokeStyle = style.color;
+      ctx.lineWidth = style.width / this.zoom;
+      ctx.setLineDash(style.style === 'dashed' ? style.dash : []);
+      
+      // Sombra para bordes externos
+      if (isExternal) {
+        ctx.shadowColor = (style as any).shadowColor;
+        ctx.shadowBlur = (style as any).shadowBlur;
+      }
+      
+      // Dibujar contorno como path
+      if (region.path_points.length > 0) {
+        ctx.beginPath();
+        ctx.moveTo(region.path_points[0][0], region.path_points[0][1]);
+        
+        for (let i = 1; i < region.path_points.length; i++) {
+          ctx.lineTo(region.path_points[i][0], region.path_points[i][1]);
+        }
+        
+        ctx.closePath();
+        ctx.stroke();
+      }
+      
+      // Resetear sombra
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.setLineDash([]);
+      
+      // Dibujar puntadas de contorno (satin o run)
+      if (region.contour_stitches && region.contour_stitches.length > 0) {
+        this.drawContourStitches(region.contour_stitches, region.color, isExternal);
+      }
+    }
+  }
+  
+  // ============================================================
+  // DIBUJAR BORDE EXTERNO DEL DISEÑO
+  // ============================================================
+  
+  private drawExternalBorder() {
+    const borderRegion = this.designData!.regions.find(r => r.id === 'design_border');
+    if (!borderRegion) return;
+    
+    const ctx = this.ctx;
+    const style = CONFIG.externalBorder;
+    
+    ctx.strokeStyle = style.color;
+    ctx.lineWidth = style.width / this.zoom;
+    ctx.shadowColor = style.shadowColor;
+    ctx.shadowBlur = style.shadowBlur;
+    
+    if (borderRegion.path_points.length > 0) {
+      ctx.beginPath();
+      ctx.moveTo(borderRegion.path_points[0][0], borderRegion.path_points[0][1]);
+      
+      for (let i = 1; i < borderRegion.path_points.length; i++) {
+        ctx.lineTo(borderRegion.path_points[i][0], borderRegion.path_points[i][1]);
+      }
+      
+      ctx.closePath();
+      ctx.stroke();
+    }
+    
+    // Resetear
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+  }
+  
+  // ============================================================
+  // DIBUJAR PUNTADAS DE CONTORNO (SATIN/RUN)
+  // ============================================================
+  
+  private drawContourStitches(stitches: number[][], color: string, isExternal: boolean) {
+    const ctx = this.ctx;
+    
+    if (stitches.length < 2) return;
+    
+    ctx.strokeStyle = color;
+    ctx.lineWidth = isExternal ? 1.2 / this.zoom : 0.6 / this.zoom;
+    ctx.globalAlpha = 0.8;
+    
+    // Para Satin: dibujar zigzag
+    // Para Run: dibujar línea suave
+    ctx.beginPath();
+    ctx.moveTo(stitches[0][0], stitches[0][1]);
+    
+    for (let i = 1; i < stitches.length; i++) {
+      ctx.lineTo(stitches[i][0], stitches[i][1]);
+    }
+    
+    ctx.stroke();
+    ctx.globalAlpha = 1.0;
+  }
+  
+  // ============================================================
+  // DIBUJAR LÍNEAS DE PUNTADAS (TATAMI)
+  // ============================================================
+  
+  private drawStitchLines(stitches: number[][], color: string) {
+    const ctx = this.ctx;
+    
+    if (stitches.length < 2) return;
+    
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 0.5 / this.zoom; // Muy fino para puntadas individuales
+    
+    // Agrupar puntadas consecutivas en líneas
+    ctx.beginPath();
+    
+    for (let i = 0; i < stitches.length - 1; i++) {
+      const p1 = stitches[i];
+      const p2 = stitches[i + 1];
+      
+      // Si la distancia es muy grande, es un jump stitch (no dibujar línea)
+      const dist = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+      
+      if (dist < 5) { // 5mm threshold para jump stitches
+        ctx.moveTo(p1[0], p1[1]);
+        ctx.lineTo(p2[0], p2[1]);
+      }
+    }
+    
+    ctx.stroke();
+  }
+  
+  // ============================================================
+  // REGIÓN SELECCIONADA (HIGHLIGHT)
+  // ============================================================
+  
+  private drawSelectedRegion() {
+    const region = this.designData!.regions.find(r => r.id === this.selectedRegion);
+    if (!region) return;
+    
+    const ctx = this.ctx;
+    
+    // Dibujar bounding box
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    
+    for (const pt of region.path_points) {
+      minX = Math.min(minX, pt[0]);
+      maxX = Math.max(maxX, pt[0]);
+      minY = Math.min(minY, pt[1]);
+      maxY = Math.max(maxY, pt[1]);
+    }
+    
+    ctx.strokeStyle = '#00ff00';
+    ctx.lineWidth = 2 / this.zoom;
+    ctx.setLineDash([5, 5]);
+    
+    ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+    ctx.setLineDash([]);
+  }
+  
+  // ============================================================
+  // OVERLAY DE UI
+  // ============================================================
+  
+  private drawOverlay() {
+    const ctx = this.ctx;
+    
+    // Info de zoom
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(10, 10, 120, 30);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '12px monospace';
+    ctx.fillText(`Zoom: ${(this.zoom * 100).toFixed(0)}%`, 20, 30);
+    
+    // Conteo de puntadas
+    if (this.designData) {
+      const totalStitches = this.designData.regions.reduce((sum, r) => sum + r.stitch_count, 0);
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(10, 45, 180, 30);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(`Puntadas: ${totalStitches.toLocaleString()}`, 20, 65);
+    }
+  }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ============================================================
+// EXPORT PARA USO EN REACT/VUE
+// ============================================================
 
-function adjustBrightness(hex, factor) {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  const clamp = v => Math.max(0, Math.min(255, Math.round(v * factor)));
-  return `#${clamp(r).toString(16).padStart(2,'0')}${clamp(g).toString(16).padStart(2,'0')}${clamp(b).toString(16).padStart(2,'0')}`;
+export function createStitchRenderer(canvasId: string): StitchCanvasRenderer {
+  return new StitchCanvasRenderer(canvasId);
 }
 
-// Simple LCG pseudo-random (deterministic, no Math.random for reproducibility)
-function lcg(seed) {
-  let s = seed;
-  return () => { s = (s * 1664525 + 1013904223) & 0xffffffff; return (s >>> 0) / 0xffffffff; };
+// Hook para React
+export function useStitchRenderer(canvasId: string) {
+  const rendererRef = React.useRef<StitchCanvasRenderer | null>(null);
+  
+  React.useEffect(() => {
+    rendererRef.current = new StitchCanvasRenderer(canvasId);
+    
+    return () => {
+      // Cleanup si es necesario
+    };
+  }, [canvasId]);
+  
+  return rendererRef;
+}
+
+// ============================================================
+// INICIALIZACIÓN (si se usa standalone)
+// ============================================================
+
+// @ts-ignore
+if (typeof window !== 'undefined') {
+  // @ts-ignore
+  window.StitchCanvasRenderer = StitchCanvasRenderer;
 }
