@@ -254,53 +254,74 @@ for (let i = 0; i < W * H; i++) {
       const isExternalBorder = isRegionOnDesignBorder(reg, designContour, W, H);
 
       // Clasificación simple
-      const isLarge = areaMm2 > 20;
+  
 
-// Calcular aspect ratio real con momentos de inercia
-const regionAngle = computeOptimalFillAngle(reg.mask, W, H);
-const radians = regionAngle * Math.PI / 180;
-const cos = Math.cos(radians), sin = Math.sin(radians);
+// ═══════════════════════════════════════════════════════════════════════
+// CLASIFICACIÓN POR MOMENTOS DE INERCIA
+// ═══════════════════════════════════════════════════════════════════════
 
+// 1. Calcular momentos de inercia centrados
 let mu20 = 0, mu02 = 0, mu11 = 0;
 const cx = reg.centroid[0], cy = reg.centroid[1];
 for (const px of reg.pixels) {
-  const px_x = px % W, px_y = Math.floor(px / W);
-  const dx = px_x - cx, dy = px_y - cy;
-  const dxr = dx * cos + dy * sin;
-  const dyr = -dx * sin + dy * cos;
-  mu20 += dxr * dxr;
-  mu02 += dyr * dyr;
-  mu11 += dxr * dyr;
+  const px_x = px % W;
+  const px_y = Math.floor(px / W);
+  const dx = px_x - cx;
+  const dy = px_y - cy;
+  mu20 += dx * dx;
+  mu02 += dy * dy;
+  mu11 += dx * dy;
 }
 
-const lambda1 = (mu20 + mu02 + Math.sqrt((mu20 - mu02)**2 + 4*mu11**2)) / 2;
-const lambda2 = (mu20 + mu02 - Math.sqrt((mu20 - mu02)**2 + 4*mu11**2)) / 2;
-const aspectRatio = lambda2 > 0.001 ? Math.sqrt(lambda1 / lambda2) : 1;
+// 2. Autovalores (ejes principales de inercia)
+const trace = mu20 + mu02;
+const det = mu20 * mu02 - mu11 * mu11;
+const discriminant = Math.sqrt(Math.max(0, trace * trace - 4 * det));
+const lambda1 = (trace + discriminant) / 2;
+const lambda2 = (trace - discriminant) / 2;
 
-const isThin = aspectRatio > 3 || ((bboxW < 8 || bboxH < 8) && perimeterMm > 10);
-const isContour = perimeterMm > 0 && (areaMm2 / (perimeterMm * perimeterMm)) < 0.05;
-      
-      let type = 'fill';
+// 3. Relación de aspecto de inercia (siempre >= 1)
+const inertiaRatio = lambda2 > 0.001 ? Math.sqrt(lambda1 / lambda2) : 1;
+
+// 4. Métricas adicionales para clasificación
+const bboxWmm = bboxW * mmPerPx;
+const bboxHmm = bboxH * mmPerPx;
+const bboxAspect = Math.max(bboxWmm, bboxHmm) / Math.max(0.1, Math.min(bboxWmm, bboxHmm));
+
+// 5. Clasificación final
+let type = 'fill';
+
+if (areaMm2 < 5 || reg.pixelCount < 30) {
+  // Regiones muy pequeñas: contorno simple
+  type = 'running_stitch';
+} else if (inertiaRatio > 8 || (inertiaRatio > 4 && bboxAspect > 3)) {
+  // Formas muy alargadas: satin
+  type = 'satin';
+} else if (areaMm2 > 20) {
+  // Regiones grandes y compactas: fill
+  type = 'fill';
+} else {
+  // Regiones medianas compactas: fill también
+  type = 'fill';
+}
       let stitches = [];
       let contourStitches = [];
 
-      if (isThin) {
-        type = 'satin';
-        stitches: generateRunContour(designPolygon, 0.5, mmPerPx),
+      if (type === 'running_stitch') {
+        stitches = generateRunContour(polygon, 0.5, mmPerPx);
         contourStitches = stitches;
-      } else if (isLarge) {
+      } else if (type === 'satin') {
+        stitches = generateSatinStitches(polygon, 0.3, mmPerPx);
+        contourStitches = stitches;
+      } else if (type === 'fill') {
         const regionAngle = computeOptimalFillAngle(reg.mask, W, H);
-       stitches = generateTatamiFill(polygon, tatamiDensity, tatamiStitchLength, regionAngle, areaMm2);
+        stitches = generateTatamiFill(polygon, tatamiDensity, tatamiStitchLength, regionAngle, areaMm2);
         if (isExternalBorder) {
           contourStitches = generateSatinContour(polygon, contourSatinWidth, mmPerPx);
         } else {
           contourStitches = generateRunContour(polygon, 0.5, mmPerPx);
         }
-      } else {
-        stitches = polygon.map(p => [p[0], p[1]]);
-        contourStitches = stitches;
       }
-
       outputRegions.push({
         id: reg.id,
         color: reg.hex,
@@ -931,15 +952,11 @@ function generateTatamiFill(polygon, density = 0.4, stitchLength = 2.5, angleDeg
   area = Math.abs(area) / 2;
   
   // Densidad adaptativa: regiones grandes = menos densa
- const adaptiveDensity = area > 200 
-  ? density * 1.5      // regiones grandes: filas más separadas
+const adaptiveDensity = area > 200 
+  ? density * 1.5
   : area > 50 
-    ? density * 1.2    // medianas
-    : density;          // pequeñas: densidad normal
-    ? density * 1.5      // regiones grandes: filas más separadas
-    : area > 100 
-      ? density * 1.2    // medianas
-      : density;          // pequeñas: densidad normal
+    ? density * 1.2
+    : density;
   
   
  
