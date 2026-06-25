@@ -326,11 +326,26 @@ function isRegionOnDesignBorder(region, designContour, W, H) {
 }
 
 /**
- * Genera contorno con puntada Satin (zigzag denso)
+ * Genera contorno con puntada Satin (zigzag denso y suave)
+ * Mejorado: densidad adaptativa, ancho proporcional y transiciones suaves
  */
 function generateSatinContour(polygon, width, mmPerPx) {
   const stitches = [];
-  const halfWidth = width / 2;
+  const baseHalfWidth = width / 2;
+  
+  // 1. Calcular longitud total del contorno para densidad adaptativa
+  let totalLength = 0;
+  for (let i = 0; i < polygon.length; i++) {
+    const p1 = polygon[i];
+    const p2 = polygon[(i + 1) % polygon.length];
+    totalLength += Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+  }
+  
+  // 2. Densidad: más puntadas en contornos cortos, menos en largos
+  const density = Math.max(0.15, Math.min(0.4, totalLength / 200));
+  
+  // 3. Generar zigzag con transiciones suaves entre segmentos
+  let previousSide = 1; // Mantener consistencia de dirección
   
   for (let i = 0; i < polygon.length; i++) {
     const p1 = polygon[i];
@@ -338,52 +353,69 @@ function generateSatinContour(polygon, width, mmPerPx) {
     
     const dx = p2[0] - p1[0];
     const dy = p2[1] - p1[1];
-    const len = Math.sqrt(dx*dx + dy*dy);
+    const segLen = Math.hypot(dx, dy);
     
-    // Vector perpendicular
-    const perpX = -dy / len * halfWidth;
-    const perpY = dx / len * halfWidth;
+    if (segLen < 0.01) continue; // Saltar segmentos muy cortos
     
-    const steps = Math.max(3, Math.floor(len / 0.3)); // densidad satin
+    // Vector perpendicular normalizado
+    const perpX = -dy / segLen;
+    const perpY = dx / segLen;
+    
+    // Ancho adaptativo: más ancho en rectas, más estrecho en curvas cerradas
+    const curvature = estimateCurvature(polygon, i);
+    const adaptiveWidth = baseHalfWidth * (0.6 + 0.4 * (1 - curvature));
+    
+    // Pasos: densidad proporcional a la longitud
+    const steps = Math.max(4, Math.floor(segLen / density));
     
     for (let j = 0; j <= steps; j++) {
       const t = j / steps;
       const baseX = p1[0] + dx * t;
       const baseY = p1[1] + dy * t;
       
-      // Zigzag: alternar entre +perpendicular y -perpendicular
+      // Zigzag suave: interpolar el lado para evitar saltos bruscos
       const side = (j % 2 === 0) ? 1 : -1;
+      const smoothSide = side * previousSide;
+      
       stitches.push([
-        baseX + perpX * side,
-        baseY + perpY * side
+        baseX + perpX * adaptiveWidth * smoothSide,
+        baseY + perpY * adaptiveWidth * smoothSide
       ]);
     }
+    
+    // Alternar el lado para el siguiente segmento (continuidad del zigzag)
+    previousSide *= -1;
   }
   
   return stitches;
 }
 
 /**
- * Genera contorno simple tipo Run
+ * Estima la curvatura local del contorno (0 = recto, 1 = curva cerrada)
  */
-function generateRunContour(polygon, spacing, mmPerPx) {
-  const stitches = [];
-  for (let i = 0; i < polygon.length; i++) {
-    const p1 = polygon[i];
-    const p2 = polygon[(i + 1) % polygon.length];
-    const dx = p2[0] - p1[0];
-    const dy = p2[1] - p1[1];
-    const len = Math.sqrt(dx*dx + dy*dy);
-    const steps = Math.max(1, Math.floor(len / spacing));
-    
-    for (let j = 0; j <= steps; j++) {
-      const t = j / steps;
-      stitches.push([p1[0] + dx * t, p1[1] + dy * t]);
-    }
-  }
-  return stitches;
+function estimateCurvature(polygon, idx) {
+  const n = polygon.length;
+  const prev = polygon[(idx - 1 + n) % n];
+  const curr = polygon[idx];
+  const next = polygon[(idx + 1) % n];
+  
+  // Vector anterior
+  const dx1 = curr[0] - prev[0];
+  const dy1 = curr[1] - prev[1];
+  const len1 = Math.hypot(dx1, dy1);
+  
+  // Vector siguiente
+  const dx2 = next[0] - curr[0];
+  const dy2 = next[1] - curr[1];
+  const len2 = Math.hypot(dx2, dy2);
+  
+  if (len1 < 0.001 || len2 < 0.001) return 0;
+  
+  // Producto cruzado para detectar curvatura
+  const cross = Math.abs(dx1 * dy2 - dy1 * dx2) / (len1 * len2);
+  
+  return Math.min(1, cross); // Normalizar a 0-1
 }
-
 // ═══════════════════════════════════════════════════════════════════════════
 // FUNCIONES TATAMI (sin cambios)
 // ═══════════════════════════════════════════════════════════════════════════
