@@ -291,7 +291,7 @@ const bboxAspect = Math.max(bboxWmm, bboxHmm) / Math.max(0.1, Math.min(bboxWmm, 
 // 5. Clasificación final
 let type = 'fill';
 
-if (areaMm2 < 15 || reg.pixelCount < 80) {
+if (areaMm2 < 10 || reg.pixelCount < 60) {
   // Regiones muy pequeñas: contorno simple
   type = 'running_stitch';
 } else if (inertiaRatio > 8 || (inertiaRatio > 4 && bboxAspect > 3)) {
