@@ -166,7 +166,10 @@ Deno.serve(async (req) => {
       
       if (isLargeRegion && !isThinRegion) {
         type = 'fill';
-        stitches = generateTatamiFill(polygon, tatamiDensity, tatamiStitchLength, tatamiAngle);
+                const regionIndex = outputRegions.length;
+        const baseAngles = [45, 135, 30, 120, 60, 150, 15, 105, 75, 165];
+        const regionAngle = baseAngles[regionIndex % baseAngles.length];
+        stitches = generateTatamiFill(polygon, tatamiDensity, tatamiStitchLength, regionAngle);
         
         // Contorno: Satin si es borde externo, Run si es interno
         if (isExternalBorder) {
