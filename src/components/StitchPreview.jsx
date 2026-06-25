@@ -1,5 +1,5 @@
 // ============================================
-// StitchPreview.jsx - Vista Previa de Puntadas Interactiva
+// StitchPreview.jsx - Vista Previa de Puntadas
 // ============================================
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
