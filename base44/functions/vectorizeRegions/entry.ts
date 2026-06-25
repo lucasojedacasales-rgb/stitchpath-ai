@@ -391,25 +391,25 @@ function deltaE2000(lab1, lab2) {
 }
 
 /**
- * Merge post-flood: agrupa regiones del mismo HEX exacto
- * Esto elimina regiones fragmentadas del mismo color
+ * Merge post-flood: agrupa regiones del mismo colorIdx (cluster K-means)
+ * Esto garantiza mergear todas las regiones que K-means asignó al mismo color
  */
 function mergeRegionsByColorAggressive(regions) {
   if (regions.length <= 1) return regions;
   
-  // PASO 1: Agrupar por color HEX exacto
+  // PASO 1: Agrupar por colorIdx (índice del cluster K-means)
   const colorGroups = new Map();
   
   for (let i = 0; i < regions.length; i++) {
-    const hex = regions[i].hex;
-    if (!colorGroups.has(hex)) colorGroups.set(hex, []);
-    colorGroups.get(hex).push(i);
+    const colorIdx = regions[i].colorIdx;
+    if (!colorGroups.has(colorIdx)) colorGroups.set(colorIdx, []);
+    colorGroups.get(colorIdx).push(i);
   }
   
-  // PASO 2: Mergear regiones del mismo HEX
+  // PASO 2: Mergear regiones del mismo colorIdx
   const merged = [];
   
-  for (const [hex, indices] of colorGroups) {
+  for (const [colorIdx, indices] of colorGroups) {
     if (indices.length === 1) {
       merged.push(regions[indices[0]]);
       continue;
@@ -444,7 +444,6 @@ function mergeRegionsByColorAggressive(regions) {
       mergedReg.pixels.push(...reg.pixels);
       mergedReg.pixelCount += reg.pixelCount;
       
-      // Actualizar bbox
       mergedReg.bbox.minX = Math.min(mergedReg.bbox.minX, reg.bbox.minX);
       mergedReg.bbox.maxX = Math.max(mergedReg.bbox.maxX, reg.bbox.maxX);
       mergedReg.bbox.minY = Math.min(mergedReg.bbox.minY, reg.bbox.minY);
