@@ -160,11 +160,42 @@ Deno.serve(async (req) => {
     // ═══════════════════════════════════════════════════════════════════════
     mergeColorsAggressive(labels, W, H, centroidsLab, centroidsRgb, mergeColorThreshold);
 
-    // Marcar bordes como sin región
-    for (let i = 0; i < W * H; i++) {
-      if (edges[i] > 0) labels[i] = -1;
+   // Asignar bordes al color del vecino más cercano (no borde)
+for (let i = 0; i < W * H; i++) {
+  if (edges[i] > 0 && labels[i] !== -1) {
+    const x = i % W;
+    const y = Math.floor(i / W);
+    
+    // Buscar en vecinos el color más común
+    const neighborColors = [];
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+        const ni = ny * W + nx;
+        if (labels[ni] !== -1 && edges[ni] === 0) {
+          neighborColors.push(labels[ni]);
+        }
+      }
     }
-
+    
+    if (neighborColors.length > 0) {
+      // Elegir el color más común entre vecinos
+      const colorCounts = {};
+      let bestColor = neighborColors[0];
+      let bestCount = 0;
+      for (const c of neighborColors) {
+        colorCounts[c] = (colorCounts[c] || 0) + 1;
+        if (colorCounts[c] > bestCount) {
+          bestCount = colorCounts[c];
+          bestColor = c;
+        }
+      }
+      labels[i] = bestColor;
+    }
+  }
+}
     // ═══════════════════════════════════════════════════════════════════════
     // 5. FLOOD FILL CON FILTRO DE ÁREA
     // ═══════════════════════════════════════════════════════════════════════
