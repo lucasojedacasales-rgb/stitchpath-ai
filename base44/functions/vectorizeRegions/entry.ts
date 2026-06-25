@@ -8,14 +8,17 @@ Deno.serve(async (req) => {
 
     const { 
       imageUrl, 
-      colorClusters = 8, 
-      edgeThreshold = 0.3, 
-      minRegionArea = 2,
+      colorClusters = 6,
+      edgeThreshold = 0.25,
+      minRegionArea = 3,
       tatamiDensity = 0.4,
       tatamiStitchLength = 2.5,
       tatamiAngle = 45,
       contourSatinWidth = 0.8,
-      rdpEpsilon = 0.2
+      rdpEpsilon = 0.15,
+      posterizeLevels = 8,
+      enableRegionMerge = true,
+      mergeColorThreshold = 12
     } = await req.json();
     
     if (!imageUrl) return Response.json({ error: 'imageUrl required' }, { status: 400 });
@@ -52,7 +55,12 @@ Deno.serve(async (req) => {
 
     const mmPerPx = 100 / origW / scale;
 
-    // ── 2. Edge detection with adaptive thresholds ─────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // NUEVO: Pre-procesamiento - Posterización para reducir gradientes
+    // ═══════════════════════════════════════════════════════════════════════
+    posterizeImage(rgba, W, H, posterizeLevels);
+
+    // ── Edge detection con umbrales adaptativos ─────────────────────────────
     const gray = new Float32Array(W * H);
     for (let i = 0; i < W * H; i++) {
       const r = rgba[i*4], g = rgba[i*4+1], b = rgba[i*4+2];
@@ -63,15 +71,18 @@ Deno.serve(async (req) => {
     const { gx, gy, mag } = sobelGradients(blurred, W, H);
 
     let sum = 0, sum2 = 0;
-    for (let i = 0; i < mag.length; i++) { sum += mag[i]; sum2 += mag[i]*mag[i]; }
+    for (let i = 0; i < mag.length; i++) { 
+      sum += mag[i]; 
+      sum2 += mag[i] * mag[i]; 
+    }
     const mean = sum / mag.length;
     const stddev = Math.sqrt(sum2 / mag.length - mean * mean);
     const highT = edgeThreshold * (mean + 2 * stddev);
     const lowT  = highT * 0.4;
     const edges = cannyNMS(mag, gx, gy, W, H, lowT, highT);
 
-    // ── 3. K-means++ clustering en espacio LAB ─────────────────────────────────
-    const k = Math.max(3, Math.min(colorClusters, 20));
+    // ── K-means++ clustering en espacio LAB ───────────────────────────────
+    const k = Math.max(3, Math.min(colorClusters, 16));
     const samples = [];
     for (let i = 0; i < W * H; i++) {
       if (rgba[i*4+3] < 128) continue;
@@ -89,12 +100,13 @@ Deno.serve(async (req) => {
     const seed = nonEdge.length > 0 ? nonEdge : samples;
     if (seed.length === 0) return Response.json({ error: 'No foreground pixels' }, { status: 400 });
     
-    // Centroides en LAB para clustering
     let centroidsLab = [seed[Math.floor(Math.random() * seed.length)].lab];
     let centroidsRgb = [seed[Math.floor(Math.random() * seed.length)].rgb];
     
     while (centroidsLab.length < k) {
-      const dists = samples.map(s => Math.min(...centroidsLab.map(c => distSqLab(s.lab, c))));
+      const dists = samples.map(s => 
+        Math.min(...centroidsLab.map(c => distSqLab(s.lab, c)))
+      );
       const total = dists.reduce((a, b) => a + b, 0);
       let r = Math.random() * total;
       for (let i = 0; i < dists.length; i++) {
@@ -118,7 +130,10 @@ Deno.serve(async (req) => {
         const ci = nearestIdxLab(s.lab, centroidsLab);
         labels[s.idx] = ci;
         if (!s.isEdge) {
-          sums[ci][0] += s.rgb[0]; sums[ci][1] += s.rgb[1]; sums[ci][2] += s.rgb[2]; sums[ci][3]++;
+          sums[ci][0] += s.rgb[0]; 
+          sums[ci][1] += s.rgb[1]; 
+          sums[ci][2] += s.rgb[2]; 
+          sums[ci][3]++;
         }
       }
       for (let ci = 0; ci < k; ci++) {
@@ -130,40 +145,57 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── NUEVO: Merge de regiones adyacentes con colores similares ───────────
+    if (enableRegionMerge) {
+      mergeAdjacentRegions(labels, W, H, centroidsLab, centroidsRgb, mergeColorThreshold);
+    }
+
     for (let i = 0; i < W * H; i++) {
       if (edges[i] > 0) labels[i] = -1;
     }
 
-    // ── 4. Flood fill regions ───────────────────────────────────────────────────
-    const minPx = Math.max(2, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
-    const regions = floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroidsRgb);
+    // ── Flood fill regions ─────────────────────────────────────────────────
+    const minPx = Math.max(3, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
+    let regions = floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroidsRgb);
 
-    // ── 5. Detectar contorno externo del diseño completo ────────────────────────
+    // ── NUEVO: Merge post-flood de regiones del mismo color ─────────────────
+    if (enableRegionMerge) {
+      regions = mergeRegionsByColor(regions, mergeColorThreshold);
+    }
+
+    // ── Detectar contorno externo del diseño completo ─────────────────────
     const designContour = traceDesignContour(labels, W, H);
 
-    // ── 6. Procesar cada región ─────────────────────────────────────────────────
+    // ── Procesar cada región ──────────────────────────────────────────────
     const outputRegions = [];
 
     for (const reg of regions) {
-      const contour = traceContour(reg.mask, W, H);
+      let contour = traceContour(reg.mask, W, H);
       if (contour.length < 3) continue;
+
+      // NUEVO: Suavizado con media móvil antes de simplificación
+      contour = smoothContour(contour, 3);
 
       const bbox = reg.bbox;
       const bboxW = bbox.maxX - bbox.minX;
       const bboxH = bbox.maxY - bbox.minY;
       const regionAspect = bboxW / Math.max(1, bboxH);
-      const isValidShape = regionAspect >= 0.2 && regionAspect <= 5.0;
+      const isValidShape = regionAspect >= 0.15 && regionAspect <= 6.0;
       if (!isValidShape) continue;
 
-      let epsilon = rdpEpsilon / mmPerPx;
-      let simplified = rdp(contour, epsilon);
+      // NUEVO: RDP adaptativo basado en tamaño de región
+      const regionSize = Math.sqrt(bboxW * bboxW + bboxH * bboxH);
+      const adaptiveEpsilon = Math.max(0.5, rdpEpsilon * (regionSize / 100));
+      let simplified = rdp(contour, adaptiveEpsilon / mmPerPx);
       
-      if (simplified.length < 10 && contour.length > 20) {
-        epsilon = (rdpEpsilon * 0.5) / mmPerPx;
-        simplified = rdp(contour, epsilon);
+      if (simplified.length < 8 && contour.length > 30) {
+        simplified = rdp(contour, (adaptiveEpsilon * 0.3) / mmPerPx);
       }
 
       if (simplified.length < 4) continue;
+
+      // NUEVO: Forzar cierre de polígono
+      simplified = closePolygon(simplified, 1.5);
 
       const polygon = simplified.map(([x, y]) => [
         parseFloat(((x - W/2) * mmPerPx).toFixed(4)),
@@ -175,8 +207,8 @@ Deno.serve(async (req) => {
 
       const isExternalBorder = isRegionOnDesignBorder(reg, designContour, W, H);
 
-      const isLargeRegion = areaMm2 > 25;
-      const isThinRegion = (bboxW < 15 || bboxH < 15) && perimeterMm > 20;
+      const isLargeRegion = areaMm2 > 20;
+      const isThinRegion = (bboxW < 12 || bboxH < 12) && perimeterMm > 15;
       
       let type;
       let stitches = [];
@@ -192,7 +224,7 @@ Deno.serve(async (req) => {
         } else {
           contourStitches = generateRunContour(polygon, 0.5, mmPerPx);
         }
-      } else if (isThinRegion || (perimeterMm > 30 && areaMm2 < 50)) {
+      } else if (isThinRegion || (perimeterMm > 25 && areaMm2 < 40)) {
         type = 'satin';
         stitches = generateSatinStitches(polygon, 0.3, mmPerPx);
         contourStitches = stitches;
@@ -221,6 +253,10 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ── NUEVO: Ordenar regiones por proximidad ────────────────────────────
+    optimizeRegionOrder(outputRegions);
+
+    // ── Contorno del diseño completo ──────────────────────────────────────
     if (designContour && designContour.length > 3) {
       const designPolygon = designContour.map(([x, y]) => [
         parseFloat(((x - W/2) * mmPerPx).toFixed(4)),
@@ -257,7 +293,191 @@ Deno.serve(async (req) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// NUEVAS FUNCIONES DE CONTORNO
+// NUEVAS FUNCIONES CRÍTICAS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function posterizeImage(rgba, W, H, levels) {
+  const step = 255 / (levels - 1);
+  for (let i = 0; i < W * H * 4; i += 4) {
+    if (rgba[i + 3] < 128) continue;
+    rgba[i]     = Math.round(rgba[i]     / step) * step;
+    rgba[i + 1] = Math.round(rgba[i + 1] / step) * step;
+    rgba[i + 2] = Math.round(rgba[i + 2] / step) * step;
+  }
+}
+
+function mergeAdjacentRegions(labels, W, H, centroidsLab, centroidsRgb, threshold) {
+  const visited = new Uint8Array(W * H);
+  const merges = new Map();
+  
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const idx = y * W + x;
+      const label = labels[idx];
+      if (label === -1 || visited[idx]) continue;
+      
+      const neighbors = [
+        { nidx: idx - 1, valid: x > 0 },
+        { nidx: idx + 1, valid: x < W - 1 },
+        { nidx: idx - W, valid: y > 0 },
+        { nidx: idx + W, valid: y < H - 1 }
+      ];
+      
+      for (const { nidx, valid } of neighbors) {
+        if (!valid) continue;
+        const nlabel = labels[nidx];
+        if (nlabel === -1 || nlabel === label) continue;
+        
+        const colorDist = Math.sqrt(distSqLab(centroidsLab[label], centroidsLab[nlabel]));
+        if (colorDist < threshold) {
+          const target = Math.min(label, nlabel);
+          const source = Math.max(label, nlabel);
+          merges.set(source, target);
+        }
+      }
+    }
+  }
+  
+  for (let i = 0; i < W * H; i++) {
+    if (labels[i] === -1) continue;
+    let current = labels[i];
+    while (merges.has(current)) {
+      current = merges.get(current);
+    }
+    labels[i] = current;
+  }
+}
+
+function mergeRegionsByColor(regions, threshold) {
+  const merged = [];
+  const mergedIds = new Set();
+  
+  for (let i = 0; i < regions.length; i++) {
+    if (mergedIds.has(i)) continue;
+    const regA = regions[i];
+    let mergedReg = { ...regA };
+    
+    for (let j = i + 1; j < regions.length; j++) {
+      if (mergedIds.has(j)) continue;
+      const regB = regions[j];
+      
+      if (regA.colorIdx === regB.colorIdx) {
+        const dist = colorDistanceHex(regA.hex, regB.hex);
+        if (dist < threshold) {
+          for (let m = 0; m < regA.mask.length; m++) {
+            mergedReg.mask[m] = mergedReg.mask[m] || regB.mask[m];
+          }
+          mergedReg.pixels = [...mergedReg.pixels, ...regB.pixels];
+          mergedReg.pixelCount += regB.pixelCount;
+          mergedReg.centroid[0] = (mergedReg.centroid[0] * (mergedReg.pixelCount - regB.pixelCount) + 
+                                   regB.centroid[0] * regB.pixelCount) / mergedReg.pixelCount;
+          mergedReg.centroid[1] = (mergedReg.centroid[1] * (mergedReg.pixelCount - regB.pixelCount) + 
+                                   regB.centroid[1] * regB.pixelCount) / mergedReg.pixelCount;
+          mergedReg.bbox.minX = Math.min(mergedReg.bbox.minX, regB.bbox.minX);
+          mergedReg.bbox.maxX = Math.max(mergedReg.bbox.maxX, regB.bbox.maxX);
+          mergedReg.bbox.minY = Math.min(mergedReg.bbox.minY, regB.bbox.minY);
+          mergedReg.bbox.maxY = Math.max(mergedReg.bbox.maxY, regB.bbox.maxY);
+          
+          mergedIds.add(j);
+        }
+      }
+    }
+    
+    merged.push(mergedReg);
+  }
+  
+  return merged;
+}
+
+function smoothContour(contour, windowSize = 3) {
+  if (contour.length < windowSize * 2) return contour;
+  
+  const smoothed = [];
+  const n = contour.length;
+  
+  for (let i = 0; i < n; i++) {
+    let sx = 0, sy = 0, weightSum = 0;
+    
+    for (let j = -windowSize; j <= windowSize; j++) {
+      const idx = (i + j + n) % n;
+      const weight = windowSize + 1 - Math.abs(j);
+      sx += contour[idx][0] * weight;
+      sy += contour[idx][1] * weight;
+      weightSum += weight;
+    }
+    
+    smoothed.push([sx / weightSum, sy / weightSum]);
+  }
+  
+  return smoothed;
+}
+
+function closePolygon(polygon, threshold) {
+  if (polygon.length < 3) return polygon;
+  
+  const first = polygon[0];
+  const last = polygon[polygon.length - 1];
+  const dist = Math.hypot(last[0] - first[0], last[1] - first[1]);
+  
+  if (dist > threshold) {
+    return [...polygon, [first[0], first[1]]];
+  } else if (dist > 0.01) {
+    const closed = [...polygon];
+    closed[closed.length - 1] = [first[0], first[1]];
+    return closed;
+  }
+  
+  return polygon;
+}
+
+function optimizeRegionOrder(regions) {
+  if (regions.length <= 2) return;
+  
+  const ordered = [regions[0]];
+  const remaining = new Set(regions.slice(1).map((_, i) => i + 1));
+  
+  while (remaining.size > 0) {
+    const last = ordered[ordered.length - 1];
+    let nearestIdx = -1;
+    let nearestDist = Infinity;
+    
+    for (const idx of remaining) {
+      const dist = Math.hypot(
+        regions[idx].centroid[0] - last.centroid[0],
+        regions[idx].centroid[1] - last.centroid[1]
+      );
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearestIdx = idx;
+      }
+    }
+    
+    ordered.push(regions[nearestIdx]);
+    remaining.delete(nearestIdx);
+  }
+  
+  for (let i = 0; i < ordered.length; i++) {
+    regions[i] = ordered[i];
+  }
+}
+
+function colorDistanceHex(hexA, hexB) {
+  const rgbA = hexToRgb(hexA);
+  const rgbB = hexToRgb(hexB);
+  const labA = rgbToLab(rgbA[0], rgbA[1], rgbA[2]);
+  const labB = rgbToLab(rgbB[0], rgbB[1], rgbB[2]);
+  return Math.sqrt(distSqLab(labA, labB));
+}
+
+function hexToRgb(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return [r, g, b];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FUNCIONES DE CONTORNO MEJORADAS
 // ═══════════════════════════════════════════════════════════════════════════
 
 function traceDesignContour(labels, W, H) {
@@ -311,7 +531,9 @@ function traceDesignContour(labels, W, H) {
   }
   
   if (borderPixels.length === 0) return [];
-  return rdp(borderPixels, 1.0);
+  
+  const smoothed = smoothContour(borderPixels, 2);
+  return rdp(smoothed, 1.0);
 }
 
 function isRegionOnDesignBorder(region, designContour, W, H) {
@@ -328,6 +550,10 @@ function isRegionOnDesignBorder(region, designContour, W, H) {
   return touchesLeft || touchesRight || touchesTop || touchesBottom;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// GENERACIÓN DE PUNTADAS MEJORADA
+// ═══════════════════════════════════════════════════════════════════════════
+
 function generateSatinContour(polygon, width, mmPerPx) {
   const stitches = [];
   const baseHalfWidth = width / 2;
@@ -340,11 +566,44 @@ function generateSatinContour(polygon, width, mmPerPx) {
   }
   
   const density = Math.max(0.15, Math.min(0.4, totalLength / 200));
-  let previousSide = 1;
   
-  for (let i = 0; i < polygon.length; i++) {
+  const normals = [];
+  const n = polygon.length;
+  
+  for (let i = 0; i < n; i++) {
+    const prev = polygon[(i - 1 + n) % n];
+    const curr = polygon[i];
+    const next = polygon[(i + 1) % n];
+    
+    const dx1 = curr[0] - prev[0];
+    const dy1 = curr[1] - prev[1];
+    const len1 = Math.hypot(dx1, dy1);
+    
+    const dx2 = next[0] - curr[0];
+    const dy2 = next[1] - curr[1];
+    const len2 = Math.hypot(dx2, dy2);
+    
+    let nx = 0, ny = 0;
+    if (len1 > 0.001) {
+      nx += (-dy1 / len1);
+      ny += (dx1 / len1);
+    }
+    if (len2 > 0.001) {
+      nx += (-dy2 / len2);
+      ny += (dx2 / len2);
+    }
+    
+    const nLen = Math.hypot(nx, ny);
+    if (nLen > 0.001) {
+      normals.push([nx / nLen, ny / nLen]);
+    } else {
+      normals.push([0, 1]);
+    }
+  }
+  
+  for (let i = 0; i < n; i++) {
     const p1 = polygon[i];
-    const p2 = polygon[(i + 1) % polygon.length];
+    const p2 = polygon[(i + 1) % n];
     
     const dx = p2[0] - p1[0];
     const dy = p2[1] - p1[1];
@@ -352,29 +611,31 @@ function generateSatinContour(polygon, width, mmPerPx) {
     
     if (segLen < 0.01) continue;
     
-    const perpX = -dy / segLen;
-    const perpY = dx / segLen;
-    
     const curvature = estimateCurvature(polygon, i);
-    const adaptiveWidth = baseHalfWidth * (0.6 + 0.4 * (1 - curvature));
+    const adaptiveWidth = baseHalfWidth * (0.5 + 0.5 * (1 - curvature));
     
-    const steps = Math.max(4, Math.floor(segLen / density));
+    const steps = Math.max(3, Math.floor(segLen / density));
     
     for (let j = 0; j <= steps; j++) {
       const t = j / steps;
       const baseX = p1[0] + dx * t;
       const baseY = p1[1] + dy * t;
       
+      const n1 = normals[i];
+      const n2 = normals[(i + 1) % n];
+      const nx = n1[0] * (1 - t) + n2[0] * t;
+      const ny = n1[1] * (1 - t) + n2[1] * t;
+      const nLen = Math.hypot(nx, ny);
+      const nnx = nLen > 0 ? nx / nLen : 0;
+      const nny = nLen > 0 ? ny / nLen : 1;
+      
       const side = (j % 2 === 0) ? 1 : -1;
-      const smoothSide = side * previousSide;
       
       stitches.push([
-        baseX + perpX * adaptiveWidth * smoothSide,
-        baseY + perpY * adaptiveWidth * smoothSide
+        baseX + nnx * adaptiveWidth * side,
+        baseY + nny * adaptiveWidth * side
       ]);
     }
-    
-    previousSide *= -1;
   }
   
   return stitches;
@@ -396,9 +657,10 @@ function estimateCurvature(polygon, idx) {
   
   if (len1 < 0.001 || len2 < 0.001) return 0;
   
+  const dot = (dx1 * dx2 + dy1 * dy2) / (len1 * len2);
   const cross = Math.abs(dx1 * dy2 - dy1 * dx2) / (len1 * len2);
   
-  return Math.min(1, cross);
+  return Math.min(1, cross / (1 + Math.abs(dot)));
 }
 
 function generateRunContour(polygon, spacing, mmPerPx) {
@@ -420,7 +682,7 @@ function generateRunContour(polygon, spacing, mmPerPx) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FUNCIONES TATAMI
+// TATAMI FILL MEJORADO
 // ═══════════════════════════════════════════════════════════════════════════
 
 function generateTatamiFill(polygon, density = 0.4, stitchLength = 2.5, angleDeg = 45) {
@@ -464,17 +726,26 @@ function generateTatamiFill(polygon, density = 0.4, stitchLength = 2.5, angleDeg
     
     intersections.sort((a, b) => a - b);
     
+    const filtered = [];
+    for (let i = 0; i < intersections.length; i++) {
+      if (i === 0 || Math.abs(intersections[i] - intersections[i-1]) > 0.5) {
+        filtered.push(intersections[i]);
+      }
+    }
+    
     const offset = offsets[rowIndex % 4] * stitchLength;
     const reverse = (rowIndex % 2 === 1);
     
-    for (let i = 0; i < intersections.length - 1; i += 2) {
-      let xStart = intersections[i] + offset;
-      let xEnd = intersections[i + 1];
+    for (let i = 0; i < filtered.length - 1; i += 2) {
+      let xStart = filtered[i] + offset;
+      let xEnd = filtered[i + 1];
       
       if (xStart >= xEnd) continue;
       
       const segmentLength = xEnd - xStart;
       const numStitches = Math.max(1, Math.floor(segmentLength / stitchLength));
+      
+      if (segmentLength < stitchLength * 0.5) continue;
       
       if (reverse) {
         for (let j = numStitches; j >= 0; j--) {
@@ -513,7 +784,7 @@ function generateSatinStitches(polygon, density = 0.3, mmPerPx) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HELPERS ORIGINALES
+// HELPERS (ORIGINALES + MEJORADOS)
 // ═══════════════════════════════════════════════════════════════════════════
 
 function gaussianBlur(gray, W, H) {
