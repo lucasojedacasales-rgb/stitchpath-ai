@@ -42,8 +42,9 @@ function App() {
     loadExampleData();
   }, []);
 
-  const loadExampleData = () => {
-    // Datos de ejemplo - REEMPLAZA con tus datos reales
+    const loadExampleData = () => {
+    const engine = new StitchFlowEngine();
+    
     const exampleRegions = [
       {
         id: 'region-1',
@@ -103,6 +104,18 @@ function App() {
       }
     ];
     
+    // Calcular puntadas para cada región
+    const regionsWithCount = exampleRegions.map(r => {
+      const stitches = engine.processRegion(r);
+      return { 
+        ...r, 
+        stitchCount: stitches.totalStitches,
+        stitches: stitches // Guardar para referencia
+      };
+    });
+    
+    setRegions(regionsWithCount);
+  };
     setRegions(exampleRegions);
   };
 
