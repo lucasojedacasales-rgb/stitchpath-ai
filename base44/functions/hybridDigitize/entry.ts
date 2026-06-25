@@ -77,7 +77,8 @@ Responde SOLO JSON:
 
       const finalRegions = clientRegions.slice(0, 40).map((r, i) => {
         const label = labelMap[i] || {};
-        const stitch_type = label.stitch_type || (r.coverage > 0.05 ? 'fill' : r.coverage > 0.01 ? 'satin' : 'running_stitch');
+       // Usar type del vectorizador si existe, sino fallback a reglas simples
+const stitch_type = label.stitch_type || r.type || (r.coverage > 0.05 ? 'fill' : r.coverage > 0.01 ? 'satin' : 'running_stitch');
         const stitch_count = Math.round((r.area_px || r.pixelCount || 100) * (label.density || 0.7) * 0.4);
         return {
           id: `r${i + 1}`,
