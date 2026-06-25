@@ -1,5 +1,6 @@
 // ============================================
 // StitchPreview.jsx - Vista Previa de Puntadas
+// CORREGIDO: Auto-escala y renderizado de puntadas
 // ============================================
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
@@ -20,6 +21,7 @@ const StitchPreview = ({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [hoveredRegion, setHoveredRegion] = useState(null);
+  const [autoScale, setAutoScale] = useState(1);
   
   const engine = useRef(new StitchFlowEngine());
   const stitchCache = useRef(new Map());
@@ -55,24 +57,58 @@ const StitchPreview = ({
     return result;
   };
 
-  // Renderizar una puntada
+  // Calcular auto-escala basada en el diseño
+  const calculateAutoScale = useCallback(() => {
+    if (regions.length === 0) return 1;
+    
+    let allBounds = null;
+    regions.forEach(r => {
+      const stitches = getStitches(r);
+      if (stitches?.bounds) {
+        const b = stitches.bounds;
+        if (!allBounds) allBounds = { ...b };
+        else {
+          allBounds.minX = Math.min(allBounds.minX, b.minX);
+          allBounds.minY = Math.min(allBounds.minY, b.minY);
+          allBounds.maxX = Math.max(allBounds.maxX, b.maxX);
+          allBounds.maxY = Math.max(allBounds.maxY, b.maxY);
+        }
+      }
+    });
+    
+    if (!allBounds) return 1;
+    
+    const designWidth = allBounds.maxX - allBounds.minX;
+    const designHeight = allBounds.maxY - allBounds.minY;
+    const padding = 60;
+    
+    const scaleX = (width - padding * 2) / (designWidth || 1);
+    const scaleY = (height - padding * 2) / (designHeight || 1);
+    
+    return Math.min(scaleX, scaleY, 3); // Máximo 3x zoom
+  }, [regions, width, height]);
+
+  // Renderizar una puntada individual
   const renderStitch = (ctx, stitch, color, scale = 1, isSelected = false) => {
     const baseWidth = (stitch.width || 0.7) * scale;
     
     if (stitch.type === 'running') {
+      // Running stitch: punto circular
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(stitch.x, stitch.y, baseWidth / 2, 0, Math.PI * 2);
       ctx.fill();
       
+      // Brillo
       ctx.fillStyle = lightenColor(color, 40);
       ctx.beginPath();
       ctx.arc(stitch.x - baseWidth/6, stitch.y - baseWidth/6, baseWidth/4, 0, Math.PI * 2);
       ctx.fill();
       
     } else if (stitch.type === 'underlay') {
+      // Underlay: línea tenue
       ctx.strokeStyle = color;
-      ctx.globalAlpha = 0.25;
+      ctx.globalAlpha = 0.2;
       ctx.lineWidth = baseWidth * 0.5;
       ctx.lineCap = 'round';
       ctx.beginPath();
@@ -82,9 +118,11 @@ const StitchPreview = ({
       ctx.globalAlpha = 1;
       
     } else {
-      // Sombra
-      ctx.strokeStyle = darkenColor(color, 30);
-      ctx.globalAlpha = 0.3;
+      // Fill/Satin: línea de hilo con efecto 3D
+      
+      // 1. Sombra
+      ctx.strokeStyle = darkenColor(color, 40);
+      ctx.globalAlpha = 0.4;
       ctx.lineWidth = baseWidth;
       ctx.lineCap = 'round';
       ctx.beginPath();
@@ -92,8 +130,8 @@ const StitchPreview = ({
       ctx.lineTo(stitch.x2 + 0.5, stitch.y2 + 0.5);
       ctx.stroke();
       
-      // Hilo principal
-      ctx.globalAlpha = isSelected ? 1 : 0.85;
+      // 2. Hilo principal
+      ctx.globalAlpha = isSelected ? 1 : 0.9;
       ctx.strokeStyle = color;
       ctx.lineWidth = baseWidth;
       ctx.beginPath();
@@ -101,10 +139,10 @@ const StitchPreview = ({
       ctx.lineTo(stitch.x2, stitch.y2);
       ctx.stroke();
       
-      // Brillo del hilo
-      ctx.globalAlpha = 0.5;
-      ctx.strokeStyle = lightenColor(color, 35);
-      ctx.lineWidth = baseWidth * 0.25;
+      // 3. Brillo del hilo (efecto de luz)
+      ctx.globalAlpha = 0.6;
+      ctx.strokeStyle = lightenColor(color, 40);
+      ctx.lineWidth = baseWidth * 0.3;
       ctx.beginPath();
       ctx.moveTo(stitch.x1, stitch.y1);
       ctx.lineTo(stitch.x2, stitch.y2);
@@ -122,35 +160,45 @@ const StitchPreview = ({
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
     
+    // Setup canvas para alta resolución
     canvas.width = width * dpr;
     canvas.height = height * dpr;
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
     ctx.scale(dpr, dpr);
     
+    // Limpiar
     ctx.clearRect(0, 0, width, height);
+    
+    // Fondo
     ctx.fillStyle = backgroundColor;
     ctx.fillRect(0, 0, width, height);
     
     // Grid
     if (showGrid) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.strokeStyle = 'rgba(255,255,255,0.05)';
       ctx.lineWidth = 0.5;
-      for (let i = 0; i < width; i += 20) {
+      const gridSize = 20;
+      for (let i = 0; i < width; i += gridSize) {
         ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, height); ctx.stroke();
       }
-      for (let i = 0; i < height; i += 20) {
+      for (let i = 0; i < height; i += gridSize) {
         ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(width, i); ctx.stroke();
       }
     }
     
+    // Guardar contexto para transformaciones
     ctx.save();
+    
+    // Aplicar zoom y pan del usuario
     ctx.translate(width/2 + pan.x, height/2 + pan.y);
     ctx.scale(zoom, zoom);
     ctx.translate(-width/2, -height/2);
     
-    // Calcular centro del diseño
+    // Auto-centrar y auto-escalar el diseño
+    const scale = calculateAutoScale();
     let allBounds = null;
+    
     regions.forEach(r => {
       const stitches = getStitches(r);
       if (stitches?.bounds) {
@@ -168,10 +216,12 @@ const StitchPreview = ({
     if (allBounds) {
       const centerX = (allBounds.minX + allBounds.maxX) / 2;
       const centerY = (allBounds.minY + allBounds.maxY) / 2;
-      ctx.translate(width/2 - centerX, height/2 - centerY);
+      ctx.translate(width/2, height/2);
+      ctx.scale(scale, scale);
+      ctx.translate(-centerX, -centerY);
     }
     
-    // Renderizar regiones (no seleccionadas primero)
+    // Renderizar regiones (primero las no seleccionadas)
     const sortedRegions = [...regions].sort((a, b) => {
       if (a.id === selectedRegionId) return 1;
       if (b.id === selectedRegionId) return -1;
@@ -187,65 +237,108 @@ const StitchPreview = ({
       
       if (!stitches) return;
       
-      // Underlay primero
+      // Dibujar underlay primero (capa base)
       if (stitches.underlay?.length > 0) {
         stitches.underlay.forEach(stitch => {
-          renderStitch(ctx, stitch, region.color, isSelected ? 1.2 : 1);
+          renderStitch(ctx, stitch, region.color, 1);
         });
       }
       
-      // Puntadas principales
+      // Dibujar puntadas principales
       if (stitches.fill?.length > 0) {
         stitches.fill.forEach(stitch => {
-          renderStitch(ctx, stitch, region.color, isSelected ? 1.3 : (isHovered ? 1.1 : 1), isSelected);
+          const scale = isSelected ? 1.3 : (isHovered ? 1.1 : 1);
+          renderStitch(ctx, stitch, region.color, scale, isSelected);
         });
       }
       
       // Highlight de región seleccionada
       if (isSelected && stitches.bounds) {
         ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 2 / zoom;
-        ctx.setLineDash([8 / zoom, 4 / zoom]);
+        ctx.lineWidth = 1.5 / (zoom * scale);
+        ctx.setLineDash([6, 4]);
         ctx.strokeRect(
-          stitches.bounds.minX - 8, 
-          stitches.bounds.minY - 8,
-          stitches.bounds.maxX - stitches.bounds.minX + 16,
-          stitches.bounds.maxY - stitches.bounds.minY + 16
+          stitches.bounds.minX - 6, 
+          stitches.bounds.minY - 6,
+          stitches.bounds.maxX - stitches.bounds.minX + 12,
+          stitches.bounds.maxY - stitches.bounds.minY + 12
         );
         ctx.setLineDash([]);
+        
+        // Label
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillRect(stitches.bounds.minX - 6, stitches.bounds.minY - 26, 100, 18);
+        ctx.fillStyle = '#fff';
+        ctx.font = `bold ${10 / (zoom * scale)}px sans-serif`;
+        ctx.fillText(`Región ${region.id}`, stitches.bounds.minX, stitches.bounds.minY - 14);
       }
     });
     
     ctx.restore();
     
-    // Info overlay
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(10, 10, 180, 60);
+    // Info overlay (no se escala)
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(10, 10, 190, 70);
     ctx.fillStyle = '#fff';
     ctx.font = '12px sans-serif';
     ctx.fillText(`Zoom: ${Math.round(zoom * 100)}%`, 20, 30);
-    ctx.fillText(`Regiones: ${regions.length}`, 20, 45);
+    ctx.fillText(`Auto-escala: ${scale.toFixed(2)}x`, 20, 45);
+    ctx.fillText(`Regiones: ${regions.length}`, 20, 60);
     const totalStitches = regions.reduce((sum, r) => sum + (getStitches(r)?.totalStitches || 0), 0);
-    ctx.fillText(`Puntadas: ${totalStitches.toLocaleString()}`, 20, 60);
+    ctx.fillText(`Puntadas: ${totalStitches.toLocaleString()}`, 20, 75);
     
-  }, [regions, zoom, pan, selectedRegionId, hoveredRegion]);
+  }, [regions, zoom, pan, selectedRegionId, hoveredRegion, calculateAutoScale]);
 
   // Event handlers
   const getCanvasCoords = (e) => {
     const rect = canvasRef.current.getBoundingClientRect();
     return {
-      x: (e.clientX - rect.left) * (window.devicePixelRatio || 1),
-      y: (e.clientY - rect.top) * (window.devicePixelRatio || 1)
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
     };
   };
 
   const screenToWorld = (screenX, screenY) => {
+    const scale = calculateAutoScale();
     const centerX = width / 2;
     const centerY = height / 2;
-    return {
-      x: (screenX - centerX - pan.x) / zoom + centerX,
-      y: (screenY - centerY - pan.y) / zoom + centerY
-    };
+    
+    // Revertir transformaciones
+    let x = screenX - centerX - pan.x;
+    let y = screenY - centerY - pan.y;
+    x /= zoom;
+    y /= zoom;
+    x += centerX;
+    y += centerY;
+    
+    // Revertir auto-escala
+    let allBounds = null;
+    regions.forEach(r => {
+      const stitches = getStitches(r);
+      if (stitches?.bounds) {
+        const b = stitches.bounds;
+        if (!allBounds) allBounds = { ...b };
+        else {
+          allBounds.minX = Math.min(allBounds.minX, b.minX);
+          allBounds.minY = Math.min(allBounds.minY, b.minY);
+          allBounds.maxX = Math.max(allBounds.maxX, b.maxX);
+          allBounds.maxY = Math.max(allBounds.maxY, b.maxY);
+        }
+      }
+    });
+    
+    if (allBounds) {
+      const designCenterX = (allBounds.minX + allBounds.maxX) / 2;
+      const designCenterY = (allBounds.minY + allBounds.maxY) / 2;
+      x -= centerX;
+      y -= centerY;
+      x /= scale;
+      y /= scale;
+      x += designCenterX;
+      y += designCenterY;
+    }
+    
+    return { x, y };
   };
 
   const handleClick = (e) => {
@@ -285,6 +378,7 @@ const StitchPreview = ({
       return;
     }
     
+    // Hover detection
     const worldPos = screenToWorld(x, y);
     let foundHover = null;
     
@@ -315,7 +409,7 @@ const StitchPreview = ({
   const handleWheel = (e) => {
     e.preventDefault();
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    setZoom(z => Math.max(0.3, Math.min(8, z * delta)));
+    setZoom(z => Math.max(0.2, Math.min(10, z * delta)));
   };
 
   useEffect(() => {
@@ -330,14 +424,15 @@ const StitchPreview = ({
     background: 'rgba(255,255,255,0.15)',
     border: 'none',
     color: '#fff',
-    width: 28,
-    height: 28,
-    borderRadius: 4,
+    width: 32,
+    height: 32,
+    borderRadius: 6,
     cursor: 'pointer',
     fontSize: 16,
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center'
+    justifyContent: 'center',
+    transition: 'all 0.2s'
   };
 
   return (
@@ -349,7 +444,8 @@ const StitchPreview = ({
           height: `${height}px`,
           borderRadius: '12px',
           cursor: isDragging ? 'grabbing' : (hoveredRegion ? 'pointer' : 'crosshair'),
-          boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+          boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+          display: 'block'
         }}
         onClick={handleClick}
         onWheel={handleWheel}
@@ -363,35 +459,31 @@ const StitchPreview = ({
       <div style={{
         position: 'absolute',
         bottom: 16,
-        right: 16,
+        left: '50%',
+        transform: 'translateX(-50%)',
         display: 'flex',
-        gap: 4,
+        gap: 6,
         background: 'rgba(0,0,0,0.7)',
-        padding: '4px',
-        borderRadius: '8px'
+        padding: '6px',
+        borderRadius: '10px',
+        backdropFilter: 'blur(10px)'
       }}>
-        <button onClick={() => setZoom(z => Math.max(0.3, z * 0.8))} style={zoomButtonStyle}>−</button>
-        <span style={{ color: '#fff', padding: '4px 8px', fontSize: 12, minWidth: 50, textAlign: 'center' }}>
+        <button onClick={() => setZoom(z => Math.max(0.2, z * 0.8))} style={zoomButtonStyle}>−</button>
+        <span style={{ 
+          color: '#fff', 
+          padding: '4px 12px', 
+          fontSize: 13, 
+          minWidth: 60, 
+          textAlign: 'center',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontWeight: 500
+        }}>
           {Math.round(zoom * 100)}%
         </span>
-        <button onClick={() => setZoom(z => Math.min(8, z * 1.25))} style={zoomButtonStyle}>+</button>
+        <button onClick={() => setZoom(z => Math.min(10, z * 1.25))} style={zoomButtonStyle}>+</button>
         <button onClick={() => { setZoom(1); setPan({x:0, y:0}); }} style={zoomButtonStyle} title="Reset">⟲</button>
-      </div>
-      
-      {/* Leyenda */}
-      <div style={{
-        position: 'absolute',
-        top: 16,
-        right: 16,
-        background: 'rgba(0,0,0,0.6)',
-        padding: '8px 12px',
-        borderRadius: '8px',
-        color: '#fff',
-        fontSize: 11
-      }}>
-        <div>🖱️ Click: seleccionar región</div>
-        <div>🖱️ Drag: mover vista</div>
-        <div>📜 Scroll: zoom</div>
       </div>
     </div>
   );
