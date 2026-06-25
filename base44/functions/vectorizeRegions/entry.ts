@@ -877,7 +877,11 @@ function generateTatamiFill(polygon, density = 0.4, stitchLength = 2.5, angleDeg
   area = Math.abs(area) / 2;
   
   // Densidad adaptativa: regiones grandes = menos densa
-  const adaptiveDensity = area > 500 
+ const adaptiveDensity = area > 200 
+  ? density * 1.5      // regiones grandes: filas más separadas
+  : area > 50 
+    ? density * 1.2    // medianas
+    : density;          // pequeñas: densidad normal
     ? density * 1.5      // regiones grandes: filas más separadas
     : area > 100 
       ? density * 1.2    // medianas
