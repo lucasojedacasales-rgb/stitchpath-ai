@@ -286,7 +286,7 @@ const isContour = perimeterMm > 0 && (areaMm2 / (perimeterMm * perimeterMm)) < 0
 
       if (isThin) {
         type = 'satin';
-        stitches = generateSatinStitches(polygon, 0.3, mmPerPx);
+        stitches: generateRunContour(designPolygon, 0.5, mmPerPx),
         contourStitches = stitches;
       } else if (isLarge) {
         const regionAngle = computeOptimalFillAngle(reg.mask, W, H);
