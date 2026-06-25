@@ -14,8 +14,8 @@ Deno.serve(async (req) => {
       tatamiDensity = 0.4,
       tatamiStitchLength = 2.5,
       tatamiAngle = 45,
-      contourSatinWidth = 0.8,    // ← NUEVO: ancho del satin en mm
-      rdpEpsilon = 0.2            // ← NUEVO: más conservador para curvas suaves
+      contourSatinWidth = 0.8,
+      rdpEpsilon = 0.2
     } = await req.json();
     
     if (!imageUrl) return Response.json({ error: 'imageUrl required' }, { status: 400 });
@@ -70,35 +70,52 @@ Deno.serve(async (req) => {
     const lowT  = highT * 0.4;
     const edges = cannyNMS(mag, gx, gy, W, H, lowT, highT);
 
-    // ── 3. K-means++ clustering ─────────────────────────────────────────────────
+    // ── 3. K-means++ clustering en espacio LAB ─────────────────────────────────
     const k = Math.max(3, Math.min(colorClusters, 20));
     const samples = [];
     for (let i = 0; i < W * H; i++) {
       if (rgba[i*4+3] < 128) continue;
-      samples.push({ idx: i, rgb: [rgba[i*4], rgba[i*4+1], rgba[i*4+2]], isEdge: edges[i] > 0 });
+      const r = rgba[i*4], g = rgba[i*4+1], b = rgba[i*4+2];
+      const lab = rgbToLab(r, g, b);
+      samples.push({ 
+        idx: i, 
+        rgb: [r, g, b], 
+        lab: lab,
+        isEdge: edges[i] > 0 
+      });
     }
 
     const nonEdge = samples.filter(s => !s.isEdge);
     const seed = nonEdge.length > 0 ? nonEdge : samples;
     if (seed.length === 0) return Response.json({ error: 'No foreground pixels' }, { status: 400 });
     
-    const centroids = [seed[Math.floor(Math.random() * seed.length)].rgb];
-    while (centroids.length < k) {
-      const dists = samples.map(s => Math.min(...centroids.map(c => distSq(s.rgb, c))));
+    // Centroides en LAB para clustering
+    let centroidsLab = [seed[Math.floor(Math.random() * seed.length)].lab];
+    let centroidsRgb = [seed[Math.floor(Math.random() * seed.length)].rgb];
+    
+    while (centroidsLab.length < k) {
+      const dists = samples.map(s => Math.min(...centroidsLab.map(c => distSqLab(s.lab, c))));
       const total = dists.reduce((a, b) => a + b, 0);
       let r = Math.random() * total;
       for (let i = 0; i < dists.length; i++) {
         r -= dists[i];
-        if (r <= 0) { centroids.push([...samples[i].rgb]); break; }
+        if (r <= 0) { 
+          centroidsLab.push([...samples[i].lab]); 
+          centroidsRgb.push([...samples[i].rgb]);
+          break; 
+        }
       }
-      if (centroids.length < k) centroids.push([...seed[seed.length - 1].rgb]);
+      if (centroidsLab.length < k) {
+        centroidsLab.push([...seed[seed.length - 1].lab]);
+        centroidsRgb.push([...seed[seed.length - 1].rgb]);
+      }
     }
 
     const labels = new Int32Array(W * H).fill(-1);
     for (let iter = 0; iter < 20; iter++) {
-      const sums = centroids.map(() => [0, 0, 0, 0]);
+      const sums = centroidsLab.map(() => [0, 0, 0, 0]);
       for (const s of samples) {
-        const ci = nearestIdx(s.rgb, centroids);
+        const ci = nearestIdxLab(s.lab, centroidsLab);
         labels[s.idx] = ci;
         if (!s.isEdge) {
           sums[ci][0] += s.rgb[0]; sums[ci][1] += s.rgb[1]; sums[ci][2] += s.rgb[2]; sums[ci][3]++;
@@ -106,7 +123,10 @@ Deno.serve(async (req) => {
       }
       for (let ci = 0; ci < k; ci++) {
         const cnt = sums[ci][3];
-        if (cnt > 0) centroids[ci] = [sums[ci][0]/cnt, sums[ci][1]/cnt, sums[ci][2]/cnt];
+        if (cnt > 0) {
+          centroidsRgb[ci] = [sums[ci][0]/cnt, sums[ci][1]/cnt, sums[ci][2]/cnt];
+          centroidsLab[ci] = rgbToLab(sums[ci][0]/cnt, sums[ci][1]/cnt, sums[ci][2]/cnt);
+        }
       }
     }
 
@@ -116,7 +136,7 @@ Deno.serve(async (req) => {
 
     // ── 4. Flood fill regions ───────────────────────────────────────────────────
     const minPx = Math.max(2, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
-    const regions = floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroids);
+    const regions = floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroidsRgb);
 
     // ── 5. Detectar contorno externo del diseño completo ────────────────────────
     const designContour = traceDesignContour(labels, W, H);
@@ -135,7 +155,6 @@ Deno.serve(async (req) => {
       const isValidShape = regionAspect >= 0.2 && regionAspect <= 5.0;
       if (!isValidShape) continue;
 
-      // RDP más conservador para mantener curvas suaves
       let epsilon = rdpEpsilon / mmPerPx;
       let simplified = rdp(contour, epsilon);
       
@@ -154,7 +173,6 @@ Deno.serve(async (req) => {
       const areaMm2 = reg.pixelCount * mmPerPx * mmPerPx;
       const perimeterMm = contourPerimeterMm(simplified, mmPerPx);
 
-      // ── Determinar si esta región está en el borde externo del diseño ──
       const isExternalBorder = isRegionOnDesignBorder(reg, designContour, W, H);
 
       const isLargeRegion = areaMm2 > 25;
@@ -162,14 +180,13 @@ Deno.serve(async (req) => {
       
       let type;
       let stitches = [];
-      let contourStitches = []; // ← NUEVO: puntadas de contorno separadas
+      let contourStitches = [];
       
       if (isLargeRegion && !isThinRegion) {
         type = 'fill';
-                const regionAngle = computeOptimalFillAngle(reg.mask, W, H);
+        const regionAngle = computeOptimalFillAngle(reg.mask, W, H);
         stitches = generateTatamiFill(polygon, tatamiDensity, tatamiStitchLength, regionAngle);
         
-        // Contorno: Satin si es borde externo, Run si es interno
         if (isExternalBorder) {
           contourStitches = generateSatinContour(polygon, contourSatinWidth, mmPerPx);
         } else {
@@ -178,7 +195,7 @@ Deno.serve(async (req) => {
       } else if (isThinRegion || (perimeterMm > 30 && areaMm2 < 50)) {
         type = 'satin';
         stitches = generateSatinStitches(polygon, 0.3, mmPerPx);
-        contourStitches = stitches; // El satin ya es el contorno
+        contourStitches = stitches;
       } else {
         type = 'run';
         stitches = polygon.map(p => [p[0], p[1]]);
@@ -191,8 +208,8 @@ Deno.serve(async (req) => {
         type: type,
         path_points: polygon,
         stitches: stitches,
-        contour_stitches: contourStitches, // ← NUEVO
-        is_external_border: isExternalBorder, // ← NUEVO
+        contour_stitches: contourStitches,
+        is_external_border: isExternalBorder,
         stitch_count: stitches.length,
         area_mm2: parseFloat(areaMm2.toFixed(2)),
         perimeter_mm: parseFloat(perimeterMm.toFixed(2)),
@@ -204,7 +221,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ── NUEVO: Agregar contorno externo del diseño como región especial ──
     if (designContour && designContour.length > 3) {
       const designPolygon = designContour.map(([x, y]) => [
         parseFloat(((x - W/2) * mmPerPx).toFixed(4)),
@@ -244,21 +260,16 @@ Deno.serve(async (req) => {
 // NUEVAS FUNCIONES DE CONTORNO
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Detecta el contorno externo del diseño completo (silueta)
- */
 function traceDesignContour(labels, W, H) {
   const visited = new Uint8Array(W * H);
   const contour = [];
   
-  // Encontrar el primer píxel del diseño (no -1)
   let start = -1;
   for (let i = 0; i < W * H; i++) {
     if (labels[i] !== -1) { start = i; break; }
   }
   if (start === -1) return [];
   
-  // BFS para encontrar todos los píxeles del diseño
   const stack = [start];
   const designPixels = new Set();
   
@@ -282,7 +293,6 @@ function traceDesignContour(labels, W, H) {
     }
   }
   
-  // Encontrar píxeles de borde (adyacentes a -1 o fuera del diseño)
   const borderPixels = [];
   for (const idx of designPixels) {
     const x = idx % W, y = Math.floor(idx / W);
@@ -300,23 +310,16 @@ function traceDesignContour(labels, W, H) {
     if (isBorder) borderPixels.push([x, y]);
   }
   
-  // Ordenar borderPixels para formar un contorno continuo
   if (borderPixels.length === 0) return [];
-  
-  // Simplificar con RDP suave
   return rdp(borderPixels, 1.0);
 }
 
-/**
- * Verifica si una región está en el borde externo del diseño
- */
 function isRegionOnDesignBorder(region, designContour, W, H) {
   if (!designContour || designContour.length === 0) return false;
   
   const { bbox } = region;
-  const margin = 5; // píxeles de margen
+  const margin = 5;
   
-  // Si la región toca los bordes del diseño
   const touchesLeft = bbox.minX <= margin;
   const touchesRight = bbox.maxX >= W - margin;
   const touchesTop = bbox.minY <= margin;
@@ -325,15 +328,10 @@ function isRegionOnDesignBorder(region, designContour, W, H) {
   return touchesLeft || touchesRight || touchesTop || touchesBottom;
 }
 
-/**
- * Genera contorno con puntada Satin (zigzag denso y suave)
- * Mejorado: densidad adaptativa, ancho proporcional y transiciones suaves
- */
 function generateSatinContour(polygon, width, mmPerPx) {
   const stitches = [];
   const baseHalfWidth = width / 2;
   
-  // 1. Calcular longitud total del contorno para densidad adaptativa
   let totalLength = 0;
   for (let i = 0; i < polygon.length; i++) {
     const p1 = polygon[i];
@@ -341,11 +339,8 @@ function generateSatinContour(polygon, width, mmPerPx) {
     totalLength += Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
   }
   
-  // 2. Densidad: más puntadas en contornos cortos, menos en largos
   const density = Math.max(0.15, Math.min(0.4, totalLength / 200));
-  
-  // 3. Generar zigzag con transiciones suaves entre segmentos
-  let previousSide = 1; // Mantener consistencia de dirección
+  let previousSide = 1;
   
   for (let i = 0; i < polygon.length; i++) {
     const p1 = polygon[i];
@@ -355,17 +350,14 @@ function generateSatinContour(polygon, width, mmPerPx) {
     const dy = p2[1] - p1[1];
     const segLen = Math.hypot(dx, dy);
     
-    if (segLen < 0.01) continue; // Saltar segmentos muy cortos
+    if (segLen < 0.01) continue;
     
-    // Vector perpendicular normalizado
     const perpX = -dy / segLen;
     const perpY = dx / segLen;
     
-    // Ancho adaptativo: más ancho en rectas, más estrecho en curvas cerradas
     const curvature = estimateCurvature(polygon, i);
     const adaptiveWidth = baseHalfWidth * (0.6 + 0.4 * (1 - curvature));
     
-    // Pasos: densidad proporcional a la longitud
     const steps = Math.max(4, Math.floor(segLen / density));
     
     for (let j = 0; j <= steps; j++) {
@@ -373,7 +365,6 @@ function generateSatinContour(polygon, width, mmPerPx) {
       const baseX = p1[0] + dx * t;
       const baseY = p1[1] + dy * t;
       
-      // Zigzag suave: interpolar el lado para evitar saltos bruscos
       const side = (j % 2 === 0) ? 1 : -1;
       const smoothSide = side * previousSide;
       
@@ -383,41 +374,53 @@ function generateSatinContour(polygon, width, mmPerPx) {
       ]);
     }
     
-    // Alternar el lado para el siguiente segmento (continuidad del zigzag)
     previousSide *= -1;
   }
   
   return stitches;
 }
 
-/**
- * Estima la curvatura local del contorno (0 = recto, 1 = curva cerrada)
- */
 function estimateCurvature(polygon, idx) {
   const n = polygon.length;
   const prev = polygon[(idx - 1 + n) % n];
   const curr = polygon[idx];
   const next = polygon[(idx + 1) % n];
   
-  // Vector anterior
   const dx1 = curr[0] - prev[0];
   const dy1 = curr[1] - prev[1];
   const len1 = Math.hypot(dx1, dy1);
   
-  // Vector siguiente
   const dx2 = next[0] - curr[0];
   const dy2 = next[1] - curr[1];
   const len2 = Math.hypot(dx2, dy2);
   
   if (len1 < 0.001 || len2 < 0.001) return 0;
   
-  // Producto cruzado para detectar curvatura
   const cross = Math.abs(dx1 * dy2 - dy1 * dx2) / (len1 * len2);
   
-  return Math.min(1, cross); // Normalizar a 0-1
+  return Math.min(1, cross);
 }
+
+function generateRunContour(polygon, spacing, mmPerPx) {
+  const stitches = [];
+  for (let i = 0; i < polygon.length; i++) {
+    const p1 = polygon[i];
+    const p2 = polygon[(i + 1) % polygon.length];
+    const dx = p2[0] - p1[0];
+    const dy = p2[1] - p1[1];
+    const len = Math.sqrt(dx*dx + dy*dy);
+    const steps = Math.max(1, Math.floor(len / spacing));
+    
+    for (let j = 0; j <= steps; j++) {
+      const t = j / steps;
+      stitches.push([p1[0] + dx * t, p1[1] + dy * t]);
+    }
+  }
+  return stitches;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
-// FUNCIONES TATAMI (sin cambios)
+// FUNCIONES TATAMI
 // ═══════════════════════════════════════════════════════════════════════════
 
 function generateTatamiFill(polygon, density = 0.4, stitchLength = 2.5, angleDeg = 45) {
@@ -676,13 +679,12 @@ function nearestIdx(rgb, palette) {
   for (let i=0;i<palette.length;i++){const d=distSq(rgb,palette[i]);if(d<bestD){bestD=d;best=i;}}
   return best;
 }
+
 function rgbToHex([r,g,b]) {
- /**
- * Calcula el angulo optimo de relleno para una region usando momentos de inercia.
- * El angulo de relleno es PERPENDICULAR al eje principal de la forma.
- */
+  return '#'+[r,g,b].map(v=>Math.round(v).toString(16).padStart(2,'0')).join('');
+}
+
 function computeOptimalFillAngle(mask, W, H) {
-  // 1. Recolectar todos los pixeles de la region
   const pixels = [];
   for (let i = 0; i < mask.length; i++) {
     if (mask[i]) {
@@ -690,15 +692,13 @@ function computeOptimalFillAngle(mask, W, H) {
     }
   }
   
-  if (pixels.length < 2) return 45; // default
+  if (pixels.length < 2) return 45;
   
-  // 2. Calcular centroide
   let cx = 0, cy = 0;
   for (const p of pixels) { cx += p.x; cy += p.y; }
   cx /= pixels.length;
   cy /= pixels.length;
   
-  // 3. Calcular momentos de inercia (covarianza)
   let mu20 = 0, mu02 = 0, mu11 = 0;
   for (const p of pixels) {
     const dx = p.x - cx;
@@ -708,19 +708,50 @@ function computeOptimalFillAngle(mask, W, H) {
     mu11 += dx * dy;
   }
   
-  // 4. Calcular angulo del eje principal
   const theta = 0.5 * Math.atan2(2 * mu11, mu20 - mu02);
   
-  // 5. El angulo de relleno es PERPENDICULAR al eje principal
   let fillAngle = (theta * 180 / Math.PI) + 90;
   
-  // 6. Normalizar a 0-180
   fillAngle = fillAngle % 180;
   if (fillAngle < 0) fillAngle += 180;
   
-  // 7. Snap a angulos estandar (multiples de 15)
   const snapped = Math.round(fillAngle / 15) * 15;
   
   return snapped;
-} return '#'+[r,g,b].map(v=>Math.round(v).toString(16).padStart(2,'0')).join('');
+}
+
+function rgbToLab(r, g, b) {
+  let rNorm = r / 255;
+  let gNorm = g / 255;
+  let bNorm = b / 255;
+
+  rNorm = rNorm > 0.04045 ? Math.pow((rNorm + 0.055) / 1.055, 2.4) : rNorm / 12.92;
+  gNorm = gNorm > 0.04045 ? Math.pow((gNorm + 0.055) / 1.055, 2.4) : gNorm / 12.92;
+  bNorm = bNorm > 0.04045 ? Math.pow((bNorm + 0.055) / 1.055, 2.4) : bNorm / 12.92;
+
+  let x = (rNorm * 0.4124564 + gNorm * 0.3575761 + bNorm * 0.1804375) / 0.95047;
+  let y = (rNorm * 0.2126729 + gNorm * 0.7151522 + bNorm * 0.0721750) / 1.00000;
+  let z = (rNorm * 0.0193339 + gNorm * 0.1191920 + bNorm * 0.9503041) / 1.08883;
+
+  x = x > 0.008856 ? Math.pow(x, 1/3) : (7.787 * x + 16/116);
+  y = y > 0.008856 ? Math.pow(y, 1/3) : (7.787 * y + 16/116);
+  z = z > 0.008856 ? Math.pow(z, 1/3) : (7.787 * z + 16/116);
+
+  return [(116 * y) - 16, 500 * (x - y), 200 * (y - z)];
+}
+
+function distSqLab(a, b) {
+  const dL = (a[0]-b[0]) * 1.5;
+  const da = a[1]-b[1];
+  const db = a[2]-b[2];
+  return dL*dL + da*da + db*db;
+}
+
+function nearestIdxLab(lab, palette) {
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < palette.length; i++) {
+    const d = distSqLab(lab, palette[i]);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
 }
