@@ -8,17 +8,17 @@ Deno.serve(async (req) => {
 
     const { 
       imageUrl, 
-      colorClusters = 6,
-      edgeThreshold = 0.25,
-      minRegionArea = 3,
+      colorClusters = 5,           // Reducido: Yoshi tiene ~5 colores
+      edgeThreshold = 0.15,        // Más bajo = menos fragmentación
+      minRegionArea = 8,           // Filtra regiones muy chicas
       tatamiDensity = 0.4,
       tatamiStitchLength = 2.5,
       tatamiAngle = 45,
-      contourSatinWidth = 0.8,
-      rdpEpsilon = 0.15,
-      posterizeLevels = 8,
-      enableRegionMerge = true,
-      mergeColorThreshold = 12
+      contourSatinWidth = 0.6,     // Más fino para contornos limpios
+      rdpEpsilon = 0.2,            // Más conservador
+      posterizeLevels = 6,         // NUEVO: fuerza colores planos
+      enableRegionMerge = true,    // NUEVO: activa merge de regiones
+      mergeColorThreshold = 25     // NUEVO: umbral DeltaE para merge (era 12)
     } = await req.json();
     
     if (!imageUrl) return Response.json({ error: 'imageUrl required' }, { status: 400 });
@@ -56,11 +56,11 @@ Deno.serve(async (req) => {
     const mmPerPx = 100 / origW / scale;
 
     // ═══════════════════════════════════════════════════════════════════════
-    // NUEVO: Pre-procesamiento - Posterización para reducir gradientes
+    // NUEVO: Posterización para reducir gradientes antes del clustering
     // ═══════════════════════════════════════════════════════════════════════
     posterizeImage(rgba, W, H, posterizeLevels);
 
-    // ── Edge detection con umbrales adaptativos ─────────────────────────────
+    // ── 2. Edge detection con umbrales adaptativos ─────────────────────────
     const gray = new Float32Array(W * H);
     for (let i = 0; i < W * H; i++) {
       const r = rgba[i*4], g = rgba[i*4+1], b = rgba[i*4+2];
@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
     const lowT  = highT * 0.4;
     const edges = cannyNMS(mag, gx, gy, W, H, lowT, highT);
 
-    // ── K-means++ clustering en espacio LAB ───────────────────────────────
+    // ── 3. K-means++ clustering en espacio LAB ───────────────────────────
     const k = Math.max(3, Math.min(colorClusters, 16));
     const samples = [];
     for (let i = 0; i < W * H; i++) {
@@ -145,7 +145,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── NUEVO: Merge de regiones adyacentes con colores similares ───────────
+    // ── 4. NUEVO: Merge de regiones adyacentes con colores similares ───────
     if (enableRegionMerge) {
       mergeAdjacentRegions(labels, W, H, centroidsLab, centroidsRgb, mergeColorThreshold);
     }
@@ -154,26 +154,26 @@ Deno.serve(async (req) => {
       if (edges[i] > 0) labels[i] = -1;
     }
 
-    // ── Flood fill regions ─────────────────────────────────────────────────
+    // ── 5. Flood fill regions ──────────────────────────────────────────────
     const minPx = Math.max(3, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
-    let regions = floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroidsRgb);
+    let regions = floodFillRegions(labels, W, H, centroidsLab.length, minPx, mmPerPx, rgba, centroidsRgb);
 
-    // ── NUEVO: Merge post-flood de regiones del mismo color ─────────────────
+    // ── 6. NUEVO: Merge post-flood de regiones del mismo color ─────────────
     if (enableRegionMerge) {
-      regions = mergeRegionsByColor(regions, mergeColorThreshold);
+      regions = mergeRegionsByColorAggressive(regions);
     }
 
-    // ── Detectar contorno externo del diseño completo ─────────────────────
+    // ── 7. Detectar contorno externo del diseño completo ───────────────────
     const designContour = traceDesignContour(labels, W, H);
 
-    // ── Procesar cada región ──────────────────────────────────────────────
+    // ── 8. Procesar cada región ────────────────────────────────────────────
     const outputRegions = [];
 
     for (const reg of regions) {
       let contour = traceContour(reg.mask, W, H);
       if (contour.length < 3) continue;
 
-      // NUEVO: Suavizado con media móvil antes de simplificación
+      // Suavizado con media móvil antes de simplificación
       contour = smoothContour(contour, 3);
 
       const bbox = reg.bbox;
@@ -183,7 +183,7 @@ Deno.serve(async (req) => {
       const isValidShape = regionAspect >= 0.15 && regionAspect <= 6.0;
       if (!isValidShape) continue;
 
-      // NUEVO: RDP adaptativo basado en tamaño de región
+      // RDP adaptativo basado en tamaño de región
       const regionSize = Math.sqrt(bboxW * bboxW + bboxH * bboxH);
       const adaptiveEpsilon = Math.max(0.5, rdpEpsilon * (regionSize / 100));
       let simplified = rdp(contour, adaptiveEpsilon / mmPerPx);
@@ -194,7 +194,7 @@ Deno.serve(async (req) => {
 
       if (simplified.length < 4) continue;
 
-      // NUEVO: Forzar cierre de polígono
+      // Forzar cierre de polígono
       simplified = closePolygon(simplified, 1.5);
 
       const polygon = simplified.map(([x, y]) => [
@@ -253,10 +253,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ── NUEVO: Ordenar regiones por proximidad ────────────────────────────
+    // Ordenar regiones por proximidad
     optimizeRegionOrder(outputRegions);
 
-    // ── Contorno del diseño completo ──────────────────────────────────────
+    // Contorno del diseño completo
     if (designContour && designContour.length > 3) {
       const designPolygon = designContour.map(([x, y]) => [
         parseFloat(((x - W/2) * mmPerPx).toFixed(4)),
@@ -293,9 +293,12 @@ Deno.serve(async (req) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// NUEVAS FUNCIONES CRÍTICAS
+// NUEVAS FUNCIONES CRÍTICAS (v2.1)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Posterización: reduce el número de niveles de color para forzar colores planos
+ */
 function posterizeImage(rgba, W, H, levels) {
   const step = 255 / (levels - 1);
   for (let i = 0; i < W * H * 4; i += 4) {
@@ -306,82 +309,153 @@ function posterizeImage(rgba, W, H, levels) {
   }
 }
 
+/**
+ * Merge de regiones adyacentes con colores similares usando DeltaE 2000
+ * + compactación de índices de colores
+ */
 function mergeAdjacentRegions(labels, W, H, centroidsLab, centroidsRgb, threshold) {
-  const visited = new Uint8Array(W * H);
+  const k = centroidsLab.length;
+  if (k <= 3) return;
+  
   const merges = new Map();
   
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const idx = y * W + x;
-      const label = labels[idx];
-      if (label === -1 || visited[idx]) continue;
-      
-      const neighbors = [
-        { nidx: idx - 1, valid: x > 0 },
-        { nidx: idx + 1, valid: x < W - 1 },
-        { nidx: idx - W, valid: y > 0 },
-        { nidx: idx + W, valid: y < H - 1 }
-      ];
-      
-      for (const { nidx, valid } of neighbors) {
-        if (!valid) continue;
-        const nlabel = labels[nidx];
-        if (nlabel === -1 || nlabel === label) continue;
-        
-        const colorDist = Math.sqrt(distSqLab(centroidsLab[label], centroidsLab[nlabel]));
-        if (colorDist < threshold) {
-          const target = Math.min(label, nlabel);
-          const source = Math.max(label, nlabel);
-          merges.set(source, target);
-        }
+  // PASO 1: Encontrar pares de colores similares
+  for (let i = 0; i < k; i++) {
+    for (let j = i + 1; j < k; j++) {
+      const dist = deltaE2000(centroidsLab[i], centroidsLab[j]);
+      if (dist < threshold) {
+        merges.set(j, i); // j absorbe a i (índice menor gana)
       }
     }
   }
   
-  for (let i = 0; i < W * H; i++) {
-    if (labels[i] === -1) continue;
-    let current = labels[i];
+  if (merges.size === 0) return;
+  
+  // PASO 2: Resolver merges en cadena
+  const finalMerge = new Map();
+  for (let i = 0; i < k; i++) {
+    let current = i;
     while (merges.has(current)) {
       current = merges.get(current);
     }
-    labels[i] = current;
+    finalMerge.set(i, current);
+  }
+  
+  // PASO 3: Actualizar labels
+  for (let i = 0; i < W * H; i++) {
+    if (labels[i] === -1) continue;
+    labels[i] = finalMerge.get(labels[i]);
+  }
+  
+  // PASO 4: Compactar índices de colores para eliminar huecos
+  const usedColors = new Set();
+  for (let i = 0; i < W * H; i++) {
+    if (labels[i] !== -1) usedColors.add(labels[i]);
+  }
+  
+  const colorRemap = new Map();
+  let nextIdx = 0;
+  for (const c of [...usedColors].sort((a, b) => a - b)) {
+    colorRemap.set(c, nextIdx++);
+  }
+  
+  for (let i = 0; i < W * H; i++) {
+    if (labels[i] !== -1) labels[i] = colorRemap.get(labels[i]);
+  }
+  
+  // PASO 5: Reconstruir centroides compactados
+  const newCentroidsLab = [];
+  const newCentroidsRgb = [];
+  for (const [oldIdx, newIdx] of colorRemap) {
+    newCentroidsLab[newIdx] = centroidsLab[oldIdx];
+    newCentroidsRgb[newIdx] = centroidsRgb[oldIdx];
+  }
+  
+  // Actualizar arrays originales in-place
+  centroidsLab.length = newCentroidsLab.length;
+  centroidsRgb.length = newCentroidsRgb.length;
+  for (let i = 0; i < newCentroidsLab.length; i++) {
+    centroidsLab[i] = newCentroidsLab[i];
+    centroidsRgb[i] = newCentroidsRgb[i];
   }
 }
 
-function mergeRegionsByColor(regions, threshold) {
-  const merged = [];
-  const mergedIds = new Set();
+/**
+ * DeltaE 2000 más preciso para comparación de colores LAB
+ */
+function deltaE2000(lab1, lab2) {
+  const dL = lab1[0] - lab2[0];
+  const da = lab1[1] - lab2[1];
+  const db = lab1[2] - lab2[2];
+  return Math.sqrt(dL*dL + da*da + db*db);
+}
+
+/**
+ * Merge post-flood: agrupa regiones del mismo HEX exacto
+ * Esto elimina regiones fragmentadas del mismo color
+ */
+function mergeRegionsByColorAggressive(regions) {
+  if (regions.length <= 1) return regions;
+  
+  // PASO 1: Agrupar por color HEX exacto
+  const colorGroups = new Map();
   
   for (let i = 0; i < regions.length; i++) {
-    if (mergedIds.has(i)) continue;
-    const regA = regions[i];
-    let mergedReg = { ...regA };
-    
-    for (let j = i + 1; j < regions.length; j++) {
-      if (mergedIds.has(j)) continue;
-      const regB = regions[j];
-      
-      if (regA.colorIdx === regB.colorIdx) {
-        const dist = colorDistanceHex(regA.hex, regB.hex);
-        if (dist < threshold) {
-          for (let m = 0; m < regA.mask.length; m++) {
-            mergedReg.mask[m] = mergedReg.mask[m] || regB.mask[m];
-          }
-          mergedReg.pixels = [...mergedReg.pixels, ...regB.pixels];
-          mergedReg.pixelCount += regB.pixelCount;
-          mergedReg.centroid[0] = (mergedReg.centroid[0] * (mergedReg.pixelCount - regB.pixelCount) + 
-                                   regB.centroid[0] * regB.pixelCount) / mergedReg.pixelCount;
-          mergedReg.centroid[1] = (mergedReg.centroid[1] * (mergedReg.pixelCount - regB.pixelCount) + 
-                                   regB.centroid[1] * regB.pixelCount) / mergedReg.pixelCount;
-          mergedReg.bbox.minX = Math.min(mergedReg.bbox.minX, regB.bbox.minX);
-          mergedReg.bbox.maxX = Math.max(mergedReg.bbox.maxX, regB.bbox.maxX);
-          mergedReg.bbox.minY = Math.min(mergedReg.bbox.minY, regB.bbox.minY);
-          mergedReg.bbox.maxY = Math.max(mergedReg.bbox.maxY, regB.bbox.maxY);
-          
-          mergedIds.add(j);
-        }
-      }
+    const hex = regions[i].hex;
+    if (!colorGroups.has(hex)) colorGroups.set(hex, []);
+    colorGroups.get(hex).push(i);
+  }
+  
+  // PASO 2: Mergear regiones del mismo HEX
+  const merged = [];
+  
+  for (const [hex, indices] of colorGroups) {
+    if (indices.length === 1) {
+      merged.push(regions[indices[0]]);
+      continue;
     }
+    
+    // Crear región mergeada
+    const baseReg = regions[indices[0]];
+    const mergedReg = {
+      id: baseReg.id,
+      colorIdx: baseReg.colorIdx,
+      hex: baseReg.hex,
+      mask: new Uint8Array(baseReg.mask.length),
+      pixels: [...baseReg.pixels],
+      pixelCount: baseReg.pixelCount,
+      centroid: [...baseReg.centroid],
+      bbox: { ...baseReg.bbox }
+    };
+    
+    // Copiar máscara base
+    for (let m = 0; m < baseReg.mask.length; m++) {
+      mergedReg.mask[m] = baseReg.mask[m];
+    }
+    
+    // Mergear el resto
+    for (let j = 1; j < indices.length; j++) {
+      const reg = regions[indices[j]];
+      
+      for (let m = 0; m < reg.mask.length; m++) {
+        mergedReg.mask[m] = mergedReg.mask[m] || reg.mask[m];
+      }
+      
+      mergedReg.pixels.push(...reg.pixels);
+      mergedReg.pixelCount += reg.pixelCount;
+      
+      // Actualizar bbox
+      mergedReg.bbox.minX = Math.min(mergedReg.bbox.minX, reg.bbox.minX);
+      mergedReg.bbox.maxX = Math.max(mergedReg.bbox.maxX, reg.bbox.maxX);
+      mergedReg.bbox.minY = Math.min(mergedReg.bbox.minY, reg.bbox.minY);
+      mergedReg.bbox.maxY = Math.max(mergedReg.bbox.maxY, reg.bbox.maxY);
+    }
+    
+    // Recalcular centroid desde bbox
+    mergedReg.centroid = [
+      (mergedReg.bbox.minX + mergedReg.bbox.maxX) / 2,
+      (mergedReg.bbox.minY + mergedReg.bbox.maxY) / 2
+    ];
     
     merged.push(mergedReg);
   }
@@ -389,6 +463,9 @@ function mergeRegionsByColor(regions, threshold) {
   return merged;
 }
 
+/**
+ * Suavizado de contorno con media móvil ponderada
+ */
 function smoothContour(contour, windowSize = 3) {
   if (contour.length < windowSize * 2) return contour;
   
@@ -412,6 +489,9 @@ function smoothContour(contour, windowSize = 3) {
   return smoothed;
 }
 
+/**
+ * Fuerza el cierre de polígonos casi-cerrados
+ */
 function closePolygon(polygon, threshold) {
   if (polygon.length < 3) return polygon;
   
@@ -430,6 +510,9 @@ function closePolygon(polygon, threshold) {
   return polygon;
 }
 
+/**
+ * Ordena regiones por proximidad para minimizar saltos de hilo
+ */
 function optimizeRegionOrder(regions) {
   if (regions.length <= 2) return;
   
@@ -461,23 +544,8 @@ function optimizeRegionOrder(regions) {
   }
 }
 
-function colorDistanceHex(hexA, hexB) {
-  const rgbA = hexToRgb(hexA);
-  const rgbB = hexToRgb(hexB);
-  const labA = rgbToLab(rgbA[0], rgbA[1], rgbA[2]);
-  const labB = rgbToLab(rgbB[0], rgbB[1], rgbB[2]);
-  return Math.sqrt(distSqLab(labA, labB));
-}
-
-function hexToRgb(hex) {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return [r, g, b];
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
-// FUNCIONES DE CONTORNO MEJORADAS
+// FUNCIONES DE CONTORNO
 // ═══════════════════════════════════════════════════════════════════════════
 
 function traceDesignContour(labels, W, H) {
@@ -551,7 +619,7 @@ function isRegionOnDesignBorder(region, designContour, W, H) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GENERACIÓN DE PUNTADAS MEJORADA
+// GENERACIÓN DE PUNTADAS
 // ═══════════════════════════════════════════════════════════════════════════
 
 function generateSatinContour(polygon, width, mmPerPx) {
@@ -682,7 +750,7 @@ function generateRunContour(polygon, spacing, mmPerPx) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TATAMI FILL MEJORADO
+// TATAMI FILL
 // ═══════════════════════════════════════════════════════════════════════════
 
 function generateTatamiFill(polygon, density = 0.4, stitchLength = 2.5, angleDeg = 45) {
@@ -784,7 +852,7 @@ function generateSatinStitches(polygon, density = 0.3, mmPerPx) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HELPERS (ORIGINALES + MEJORADOS)
+// HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
 function gaussianBlur(gray, W, H) {
