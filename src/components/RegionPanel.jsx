@@ -1,7 +1,3 @@
-// ============================================
-// RegionPanel.jsx - Panel de Regiones
-// ============================================
-
 import React, { useState, useMemo } from 'react';
 
 const STITCH_TYPE_CONFIG = {
@@ -58,7 +54,6 @@ const RegionPanel = ({
       borderRadius: 12,
       overflow: 'hidden'
     }}>
-      {/* Header */}
       <div style={{ padding: '16px', borderBottom: '1px solid #2a2a3e' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
           <span style={{ fontSize: 20 }}>🧵</span>
@@ -67,7 +62,6 @@ const RegionPanel = ({
           </h3>
         </div>
         
-        {/* Filtros */}
         <div style={{ display: 'flex', gap: 4 }}>
           {[
             { key: 'all', label: 'Todas', icon: '🔍' },
@@ -85,8 +79,7 @@ const RegionPanel = ({
                 background: filter === f.key ? '#6366f1' : 'transparent',
                 color: filter === f.key ? '#fff' : '#9ca3af',
                 fontSize: 12,
-                cursor: 'pointer',
-                transition: 'all 0.2s'
+                cursor: 'pointer'
               }}
             >
               {f.icon} {f.label}
@@ -95,7 +88,6 @@ const RegionPanel = ({
         </div>
       </div>
 
-      {/* Stats */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: '1fr 1fr 1fr',
@@ -108,15 +100,10 @@ const RegionPanel = ({
         <StatBox label="Tamaño" value={stats.size || '—'} />
       </div>
 
-      {/* Lista de regiones */}
-      <div style={{
-        flex: 1,
-        overflowY: 'auto',
-        padding: '8px'
-      }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
         {filteredRegions.length === 0 && (
           <div style={{ textAlign: 'center', color: '#6b7280', padding: 40 }}>
-            No hay regiones {filter !== 'all' ? `de tipo "${filter}"` : ''}
+            No hay regiones
           </div>
         )}
         
@@ -137,13 +124,9 @@ const RegionPanel = ({
                 background: isSelected ? 'rgba(99,102,241,0.15)' : 'transparent',
                 border: `1px solid ${isSelected ? '#6366f1' : 'transparent'}`,
                 cursor: 'pointer',
-                transition: 'all 0.15s',
                 opacity: region.hidden ? 0.4 : 1
               }}
-              onMouseEnter={e => e.currentTarget.style.background = isSelected ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.05)'}
-              onMouseLeave={e => e.currentTarget.style.background = isSelected ? 'rgba(99,102,241,0.15)' : 'transparent'}
             >
-              {/* Color swatch */}
               <div style={{
                 width: 16,
                 height: 16,
@@ -153,20 +136,9 @@ const RegionPanel = ({
                 flexShrink: 0
               }} />
               
-              {/* Info */}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  marginBottom: 2
-                }}>
-                  <span style={{
-                    color: '#fff',
-                    fontSize: 13,
-                    fontWeight: 500,
-                    fontFamily: 'monospace'
-                  }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                  <span style={{ color: '#fff', fontSize: 13, fontWeight: 500, fontFamily: 'monospace' }}>
                     {region.color || '—'}
                   </span>
                   <span style={{ color: '#6b7280', fontSize: 11 }}>
@@ -182,17 +154,11 @@ const RegionPanel = ({
                 </div>
               </div>
               
-              {/* Badges y acciones */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 {getStitchBadge(region.stitchType)}
-                
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleVisibility?.(region.id);
-                  }}
-                  style={iconButtonStyle}
-                  title={region.hidden ? 'Mostrar' : 'Ocultar'}
+                  onClick={(e) => { e.stopPropagation(); onToggleVisibility?.(region.id); }}
+                  style={{ background: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer', padding: '4px', fontSize: 14 }}
                 >
                   {region.hidden ? '👁‍🗨' : '👁'}
                 </button>
@@ -202,25 +168,18 @@ const RegionPanel = ({
         })}
       </div>
 
-      {/* Footer */}
       <div style={{ padding: '12px 16px', borderTop: '1px solid #2a2a3e' }}>
-        <button
-          style={{
-            width: '100%',
-            padding: '12px',
-            borderRadius: 8,
-            border: 'none',
-            background: '#6366f1',
-            color: '#fff',
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 8
-          }}
-        >
+        <button style={{
+          width: '100%',
+          padding: '12px',
+          borderRadius: 8,
+          border: 'none',
+          background: '#6366f1',
+          color: '#fff',
+          fontSize: 14,
+          fontWeight: 600,
+          cursor: 'pointer'
+        }}>
           ✓ Confirmar y exportar
         </button>
       </div>
@@ -238,16 +197,5 @@ const StatBox = ({ label, value }) => (
     </div>
   </div>
 );
-
-const iconButtonStyle = {
-  background: 'transparent',
-  border: 'none',
-  color: '#9ca3af',
-  cursor: 'pointer',
-  padding: '4px',
-  borderRadius: 4,
-  fontSize: 14,
-  lineHeight: 1
-};
 
 export default RegionPanel;
