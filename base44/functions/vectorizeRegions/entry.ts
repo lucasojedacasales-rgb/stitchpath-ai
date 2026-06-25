@@ -255,7 +255,30 @@ for (let i = 0; i < W * H; i++) {
 
       // Clasificación simple
       const isLarge = areaMm2 > 20;
-      const isThin = (bboxW < 8 || bboxH < 8) && perimeterMm > 10;
+
+// Calcular aspect ratio real con momentos de inercia
+const regionAngle = computeOptimalFillAngle(reg.mask, W, H);
+const radians = regionAngle * Math.PI / 180;
+const cos = Math.cos(radians), sin = Math.sin(radians);
+
+let mu20 = 0, mu02 = 0, mu11 = 0;
+const cx = reg.centroid[0], cy = reg.centroid[1];
+for (const px of reg.pixels) {
+  const px_x = px % W, px_y = Math.floor(px / W);
+  const dx = px_x - cx, dy = px_y - cy;
+  const dxr = dx * cos + dy * sin;
+  const dyr = -dx * sin + dy * cos;
+  mu20 += dxr * dxr;
+  mu02 += dyr * dyr;
+  mu11 += dxr * dyr;
+}
+
+const lambda1 = (mu20 + mu02 + Math.sqrt((mu20 - mu02)**2 + 4*mu11**2)) / 2;
+const lambda2 = (mu20 + mu02 - Math.sqrt((mu20 - mu02)**2 + 4*mu11**2)) / 2;
+const aspectRatio = lambda2 > 0.001 ? Math.sqrt(lambda1 / lambda2) : 1;
+
+const isThin = aspectRatio > 3 || ((bboxW < 8 || bboxH < 8) && perimeterMm > 10);
+const isContour = perimeterMm > 0 && (areaMm2 / (perimeterMm * perimeterMm)) < 0.05;
       
       let type = 'fill';
       let stitches = [];
