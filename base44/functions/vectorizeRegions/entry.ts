@@ -325,21 +325,57 @@ function mergeColorsAggressive(labels, W, H, centroidsLab, centroidsRgb, thresho
   const k = centroidsLab.length;
   if (k <= 3) return;
 
-  // Encontrar pares similares
+  // ═══ NUEVO: Contar píxeles por color ═══
+  const colorCounts = new Array(k).fill(0);
+  for (let i = 0; i < W * H; i++) {
+    if (labels[i] !== -1) colorCounts[labels[i]]++;
+  }
+  const totalPixels = colorCounts.reduce((a, b) => a + b, 0);
+  const minAreaThreshold = totalPixels * 0.02; // 2% del área total
+
+  // ═══ NUEVO: Forzar merge de colores pequeños ═══
+  const forcedMerges = new Map();
+  for (let i = 0; i < k; i++) {
+    if (colorCounts[i] < minAreaThreshold) {
+      let nearest = -1;
+      let nearestDist = Infinity;
+      for (let j = 0; j < k; j++) {
+        if (i === j || colorCounts[j] < minAreaThreshold) continue;
+        const dist = deltaE2000(centroidsLab[i], centroidsLab[j]);
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearest = j;
+        }
+      }
+      if (nearest !== -1) forcedMerges.set(i, nearest);
+    }
+  }
+
+  // Encontrar pares similares (con threshold adaptativo)
   const merges = new Map();
   
   for (let i = 0; i < k; i++) {
     for (let j = i + 1; j < k; j++) {
       const dist = deltaE2000(centroidsLab[i], centroidsLab[j]);
-      if (dist < threshold) {
+      // Más permisivo con colores pequeños, más estricto con grandes
+      const effectiveThreshold = (colorCounts[i] + colorCounts[j] < minAreaThreshold * 2) 
+        ? threshold * 1.5 
+        : threshold * 0.7;
+      
+      if (dist < effectiveThreshold) {
         merges.set(j, i);
       }
     }
   }
   
+  // Combinar merges forzados con merges por similitud
+  for (const [smallColor, targetColor] of forcedMerges) {
+    merges.set(smallColor, targetColor);
+  }
+  
   if (merges.size === 0) return;
 
-  // Resolver transitividad
+  // Resolver transitividad (código original, sin cambios)
   const finalMerge = new Map();
   for (let i = 0; i < k; i++) {
     let current = i;
@@ -349,10 +385,14 @@ function mergeColorsAggressive(labels, W, H, centroidsLab, centroidsRgb, thresho
     finalMerge.set(i, current);
   }
 
-  // Actualizar labels
+  // Actualizar labels (sin cambios)
   for (let i = 0; i < W * H; i++) {
     if (labels[i] !== -1) labels[i] = finalMerge.get(labels[i]);
   }
+
+  // Compactar índices (sin cambios)
+  compactColorIndices(labels, W, H, centroidsLab, centroidsRgb);
+}
 
   // Compactar índices
   compactColorIndices(labels, W, H, centroidsLab, centroidsRgb);
