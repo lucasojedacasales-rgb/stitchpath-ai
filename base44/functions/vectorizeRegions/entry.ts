@@ -236,8 +236,7 @@ Deno.serve(async (req) => {
         contourStitches = stitches;
       } else if (isLarge) {
         const regionAngle = computeOptimalFillAngle(reg.mask, W, H);
-        stitches = generateTatamiFill(polygon, tatamiDensity, tatamiStitchLength, regionAngle);
-        
+       stitches = generateTatamiFill(polygon, tatamiDensity, tatamiStitchLength, regionAngle, areaMm2);
         if (isExternalBorder) {
           contourStitches = generateSatinContour(polygon, contourSatinWidth, mmPerPx);
         } else {
@@ -867,7 +866,26 @@ function generateRunContour(polygon, spacing, mmPerPx) {
 
 function generateTatamiFill(polygon, density = 0.4, stitchLength = 2.5, angleDeg = 45) {
   if (!polygon || polygon.length < 3) return [];
-  const angle = (angleDeg * Math.PI) / 180;
+  
+  // ═══ NUEVO: Calcular área para densidad adaptativa ═══
+  let area = 0;
+  for (let i = 0; i < polygon.length; i++) {
+    const j = (i + 1) % polygon.length;
+    area += polygon[i][0] * polygon[j][1];
+    area -= polygon[j][0] * polygon[i][1];
+  }
+  area = Math.abs(area) / 2;
+  
+  // Densidad adaptativa: regiones grandes = menos densa
+  const adaptiveDensity = area > 500 
+    ? density * 1.5      // regiones grandes: filas más separadas
+    : area > 100 
+      ? density * 1.2    // medianas
+      : density;          // pequeñas: densidad normal
+  
+  
+ 
+
   const cos = Math.cos(angle), sin = Math.sin(angle);
   const rotate = (p) => [p[0] * cos + p[1] * sin, -p[0] * sin + p[1] * cos];
   const unrotate = (p) => [p[0] * cos - p[1] * sin, p[0] * sin + p[1] * cos];
@@ -880,7 +898,7 @@ function generateTatamiFill(polygon, density = 0.4, stitchLength = 2.5, angleDeg
   const stitches = [];
   const offsets = [0, 0.25, 0.5, 0.75];
   let rowIndex = 0;
-  for (let y = minY; y <= maxY; y += density) {
+  for (let y = minY; y <= maxY; y += adaptiveDensity) {
     const intersections = [];
     for (let i = 0; i < rotatedPolygon.length; i++) {
       const p1 = rotatedPolygon[i], p2 = rotatedPolygon[(i + 1) % rotatedPolygon.length];
