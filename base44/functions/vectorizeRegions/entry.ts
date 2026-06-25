@@ -18,7 +18,7 @@ Deno.serve(async (req) => {
       rdpEpsilon = 0.2,            // Más conservador
       posterizeLevels = 6,         // NUEVO: fuerza colores planos
       enableRegionMerge = true,    // NUEVO: activa merge de regiones
-      mergeColorThreshold = 25     // NUEVO: umbral DeltaE para merge (era 12)
+      mergeColorThreshold = 40     // NUEVO: umbral DeltaE para merge (era 12)
     } = await req.json();
     
     if (!imageUrl) return Response.json({ error: 'imageUrl required' }, { status: 400 });
@@ -311,31 +311,34 @@ function posterizeImage(rgba, W, H, levels) {
 
 /**
  * Merge de regiones adyacentes con colores similares usando DeltaE 2000
- * + compactación de índices de colores
+ * + compactación de índices de colores para evitar huecos
  */
 function mergeAdjacentRegions(labels, W, H, centroidsLab, centroidsRgb, threshold) {
   const k = centroidsLab.length;
   if (k <= 3) return;
   
+  // PASO 1: Encontrar pares de colores similares
   const merges = new Map();
   
-  // PASO 1: Encontrar pares de colores similares
   for (let i = 0; i < k; i++) {
     for (let j = i + 1; j < k; j++) {
       const dist = deltaE2000(centroidsLab[i], centroidsLab[j]);
       if (dist < threshold) {
-        merges.set(j, i); // j absorbe a i (índice menor gana)
+        // El índice menor absorbe al mayor
+        merges.set(j, i);
       }
     }
   }
   
   if (merges.size === 0) return;
   
-  // PASO 2: Resolver merges en cadena
+  // PASO 2: Resolver merges en cadena (transitividad)
   const finalMerge = new Map();
   for (let i = 0; i < k; i++) {
     let current = i;
-    while (merges.has(current)) {
+    const visited = new Set();
+    while (merges.has(current) && !visited.has(current)) {
+      visited.add(current);
       current = merges.get(current);
     }
     finalMerge.set(i, current);
