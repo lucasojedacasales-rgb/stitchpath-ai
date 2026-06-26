@@ -452,8 +452,8 @@ function convertToStitchFormat(sequencedPaths, width_mm, height_mm) {
 
   // Color change solo si es diferente al anterior
   const prevPath = i > 0 ? sequencedPaths[i - 1] : null;
-  const needsColorChange = !prevPath || prevPath.color !== path.color;
-  
+ const needsColorChange = !prevPath || 
+  (prevPath.color || '').toLowerCase().trim() !== (path.color || '').toLowerCase().trim();
   if (needsColorChange) {
     stitches.push({ type: 'color_change', color: hexToRgb(path.color || '#000000') });
   } else {
