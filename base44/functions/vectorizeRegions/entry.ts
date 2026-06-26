@@ -8,17 +8,17 @@ Deno.serve(async (req) => {
 
     const { 
       imageUrl, 
-      colorClusters = 6,
-      edgeThreshold = 0.18,
-      minRegionArea = 15,
-      tatamiDensity = 0.4,
-      tatamiStitchLength = 2.5,
-      tatamiAngle = 45,
-      contourSatinWidth = 0.6,
-      rdpEpsilon = 0.25,
-      posterizeLevels = 5,
-      mergeColorThreshold = 70,
-      maxRegions = 300
+      colorClusters = 12,
+    edgeThreshold = 0.18,
+    minRegionArea = 8,
+    tatamiDensity = 0.4,
+    tatamiStitchLength = 2.5,
+    tatamiAngle = 45,
+    contourSatinWidth = 0.6,
+    rdpEpsilon = 0.25,
+    posterizeLevels = 5,
+    mergeColorThreshold = 85,
+    maxRegions = 400
     } = await req.json();
     
     if (!imageUrl) return Response.json({ error: 'imageUrl required' }, { status: 400 });
