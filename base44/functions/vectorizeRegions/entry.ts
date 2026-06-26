@@ -56,7 +56,8 @@ Deno.serve(async (req) => {
 
     const mmPerPx = 100 / origW / scale;
 
-    posterizeImage(rgba, W, H, posterizeLevels);
+    // === PASO 1: POSTERIZE ELIMINADO ===
+    // posterizeImage(rgba, W, H, posterizeLevels);
 
     const gray = new Float32Array(W * H);
     for (let i = 0; i < W * H; i++) {
@@ -141,7 +142,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    mergeColorsAggressive(labels, W, H, centroidsLab, centroidsRgb, mergeColorThreshold);
+    // === PASO 2: MERGE DE COLORES CORREGIDO ===
+    mergeColorsConservative(labels, W, H, centroidsLab, centroidsRgb, mergeColorThreshold);
 
     for (let i = 0; i < W * H; i++) {
       if (edges[i] > 0 && labels[i] !== -1) {
@@ -180,8 +182,13 @@ Deno.serve(async (req) => {
     const minPx = Math.max(5, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
     let regions = floodFillRegions(labels, W, H, centroidsLab.length, minPx, mmPerPx, rgba, centroidsRgb);
 
+    // === PASO 3: MERGE POR PROXIMIDAD EN LUGAR DE SMALLEST ===
     if (regions.length > maxRegions) {
-      regions = mergeSmallestRegions(regions, maxRegions);
+      regions = mergeRegionsByProximity(regions, 20); // 20px de distancia máxima
+      // Si aún hay muchas, mergear las más pequeñas del mismo color que se tocan
+      if (regions.length > maxRegions * 1.2) {
+        regions = mergeSmallestSameColor(regions, maxRegions);
+      }
     }
 
     const designContour = traceDesignContour(labels, W, H);
@@ -219,6 +226,7 @@ Deno.serve(async (req) => {
 
       const isExternalBorder = isRegionOnDesignBorder(reg, designContour, W, H);
 
+      // === CÁLCULO DE MOMENTOS Y MÉTRICAS ===
       let mu20 = 0, mu02 = 0, mu11 = 0;
       const cx = reg.centroid[0], cy = reg.centroid[1];
       for (const px of reg.pixels) {
@@ -243,14 +251,30 @@ Deno.serve(async (req) => {
       const bboxHmm = bboxH * mmPerPx;
       const bboxAspect = Math.max(bboxWmm, bboxHmm) / Math.max(0.1, Math.min(bboxWmm, bboxHmm));
 
+      // === COMPACIDAD: 1 = círculo, 0 = línea ===
+      const perimeterPx = contourPerimeterPx(contour);
+      const compacidad = perimeterPx > 0 ? (4 * Math.PI * reg.pixelCount) / (perimeterPx * perimeterPx) : 0;
+
+      // === ÁREA RELATIVA AL DISEÑO ===
+      const designAreaMm2 = W * H * mmPerPx * mmPerPx;
+      const areaRelativa = areaMm2 / designAreaMm2;
+
+      // === PASO 4: CLASIFICACIÓN MEJORADA ===
       let type = 'fill';
 
-      if (areaMm2 < 8 || reg.pixelCount < 50) {
-        type = 'running_stitch';
-      } else if (areaMm2 < 60 || inertiaRatio > 2.5 || bboxAspect > 1.8) {
-        type = 'satin';
+      if (compacidad < 0.2 && areaMm2 < 15) {
+        type = 'running_stitch'; // Línea muy delgada y pequeña
+      } else if ((compacidad < 0.45 && bboxAspect > 2.2) || (areaMm2 < 35 && inertiaRatio > 2.2 && bboxAspect > 1.6)) {
+        type = 'satin'; // Forma alargada mediana, o borde delgado
+      } else if (areaMm2 > 3) {
+        type = 'fill'; // Zona compacta o grande
       } else {
-        type = 'fill';
+        type = 'running_stitch'; // Demasiado pequeño para otra cosa
+      }
+
+      // Override: si es borde externo del diseño y es fill, convertir a satin
+      if (isExternalBorder && type === 'fill' && areaMm2 < 80) {
+        type = 'satin';
       }
       
       let stitches = [];
@@ -288,6 +312,12 @@ Deno.serve(async (req) => {
           parseFloat(((reg.centroid[1] - H/2) * mmPerPx).toFixed(4)),
         ],
         coverage: areaMm2 / (100 * 100),
+        // === PASO 5: MÉTRICAS GEOMÉTRICAS AÑADIDAS ===
+        inertia_ratio: parseFloat(inertiaRatio.toFixed(2)),
+        bbox_aspect: parseFloat(bboxAspect.toFixed(2)),
+        compacidad: parseFloat(compacidad.toFixed(3)),
+        area_relativa: parseFloat(areaRelativa.toFixed(4)),
+        fill_angle: type === 'fill' ? computeOptimalFillAngle(reg.mask, W, H) : undefined,
       });
     }
 
@@ -312,6 +342,10 @@ Deno.serve(async (req) => {
         perimeter_mm: contourPerimeterMm(designContour, mmPerPx),
         centroid: [0, 0],
         coverage: 0,
+        inertia_ratio: 1,
+        bbox_aspect: 1,
+        compacidad: 1,
+        area_relativa: 0,
       });
     }
 
@@ -329,6 +363,7 @@ Deno.serve(async (req) => {
   }
 });
 
+// === POSTERIZE COMENTADO (opcional, se puede reactivar) ===
 function posterizeImage(rgba, W, H, levels) {
   const step = 255 / (levels - 1);
   for (let i = 0; i < W * H * 4; i += 4) {
@@ -339,7 +374,8 @@ function posterizeImage(rgba, W, H, levels) {
   }
 }
 
-function mergeColorsAggressive(labels, W, H, centroidsLab, centroidsRgb, mergeColorThreshold) {
+// === PASO 2: MERGE DE COLORES CONSERVADOR ===
+function mergeColorsConservative(labels, W, H, centroidsLab, centroidsRgb, mergeColorThreshold) {
   const k = centroidsLab.length;
   if (k <= 3) return;
 
@@ -348,7 +384,7 @@ function mergeColorsAggressive(labels, W, H, centroidsLab, centroidsRgb, mergeCo
     if (labels[i] !== -1) colorCounts[labels[i]]++;
   }
   const totalPixels = colorCounts.reduce((a, b) => a + b, 0);
-  const minAreaThreshold = totalPixels * 0.02;
+  const minAreaThreshold = totalPixels * 0.015; // 1.5% del total (antes 2%)
 
   const forcedMerges = new Map();
   for (let i = 0; i < k; i++) {
@@ -372,11 +408,14 @@ function mergeColorsAggressive(labels, W, H, centroidsLab, centroidsRgb, mergeCo
   for (let i = 0; i < k; i++) {
     for (let j = i + 1; j < k; j++) {
       const dist = deltaE2000(centroidsLab[i], centroidsLab[j]);
-      const effectiveThreshold = (colorCounts[i] + colorCounts[j] < minAreaThreshold * 2) 
-        ? mergeColorThreshold * 1.5 
-        : mergeColorThreshold * 0.7;
       
-      if (dist < effectiveThreshold) {
+      // Solo mergear si:
+      // - Ambas áreas son pequeñas (< 5% c/u), o
+      // - Son casi idénticas (dist < threshold * 0.4)
+      const bothSmall = colorCounts[i] < totalPixels * 0.05 && colorCounts[j] < totalPixels * 0.05;
+      const verySimilar = dist < mergeColorThreshold * 0.4;
+      
+      if (bothSmall || verySimilar) {
         merges.set(j, i);
       }
     }
@@ -435,6 +474,7 @@ function compactColorIndices(labels, W, H, centroidsLab, centroidsRgb) {
   }
 }
 
+// === MERGE POR PROXIMIDAD (mismo color, se tocan o están cerca) ===
 function mergeRegionsByProximity(regions, maxDistance) {
   if (regions.length <= 1) return regions;
 
@@ -498,13 +538,8 @@ function mergeRegionsByProximity(regions, maxDistance) {
   return merged;
 }
 
-function areRegionsTouching(r1, r2) {
-  const overlapX = !(r1.bbox.maxX < r2.bbox.minX - 1 || r2.bbox.maxX < r1.bbox.minX - 1);
-  const overlapY = !(r1.bbox.maxY < r2.bbox.minY - 1 || r2.bbox.maxY < r1.bbox.minY - 1);
-  return overlapX && overlapY;
-}
-
-function mergeSmallestRegions(regions, targetCount) {
+// === MERGE DE REGIONES PEQUEÑAS DEL MISMO COLOR QUE SE TOCAN ===
+function mergeSmallestSameColor(regions, targetCount) {
   while (regions.length > targetCount) {
     let smallestIdx = 0;
     let smallestArea = Infinity;
@@ -521,9 +556,11 @@ function mergeSmallestRegions(regions, targetCount) {
     let nearestIdx = -1;
     let nearestDist = Infinity;
 
+    // Primero: buscar del MISMO color que se toca
     for (let i = 0; i < regions.length; i++) {
       if (i === smallestIdx) continue;
       if (regions[i].hex !== small.hex) continue;
+      if (!areRegionsTouching(regions[i], small)) continue;
       
       const dist = Math.hypot(
         regions[i].centroid[0] - small.centroid[0],
@@ -536,9 +573,27 @@ function mergeSmallestRegions(regions, targetCount) {
       }
     }
 
+    // Si no hay del mismo color que toque, buscar el más cercano del mismo color
     if (nearestIdx === -1) {
       for (let i = 0; i < regions.length; i++) {
         if (i === smallestIdx) continue;
+        if (regions[i].hex !== small.hex) continue;
+        const dist = Math.hypot(
+          regions[i].centroid[0] - small.centroid[0],
+          regions[i].centroid[1] - small.centroid[1]
+        );
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearestIdx = i;
+        }
+      }
+    }
+
+    // Último recurso: cualquier color que se toque
+    if (nearestIdx === -1) {
+      for (let i = 0; i < regions.length; i++) {
+        if (i === smallestIdx) continue;
+        if (!areRegionsTouching(regions[i], small)) continue;
         const dist = Math.hypot(
           regions[i].centroid[0] - small.centroid[0],
           regions[i].centroid[1] - small.centroid[1]
@@ -569,6 +624,12 @@ function mergeSmallestRegions(regions, targetCount) {
   }
 
   return regions;
+}
+
+function areRegionsTouching(r1, r2) {
+  const overlapX = !(r1.bbox.maxX < r2.bbox.minX - 1 || r2.bbox.maxX < r1.bbox.minX - 1);
+  const overlapY = !(r1.bbox.maxY < r2.bbox.minY - 1 || r2.bbox.maxY < r1.bbox.minY - 1);
+  return overlapX && overlapY;
 }
 
 function floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroids) {
@@ -770,6 +831,16 @@ function contourPerimeterMm(pts, mmPerPx) {
     p += Math.hypot(b[0]-a[0], b[1]-a[1]);
   }
   return p * mmPerPx;
+}
+
+// === NUEVO: Perímetro en píxeles para compacidad ===
+function contourPerimeterPx(pts) {
+  let p = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i+1) % pts.length];
+    p += Math.hypot(b[0]-a[0], b[1]-a[1]);
+  }
+  return p;
 }
 
 function optimizeRegionOrder(regions) {
