@@ -6,8 +6,13 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { regions, stitchParams = {}, sequencingMode = 'optimize', format, width_mm, height_mm, machine_name, speed_rpm, cuts, project_name } = await req.json();
-    
+    const { 
+      regions, 
+      stitchParams = {}, 
+      sequencingMode = 'optimize',
+      useVectorizerStitches = true,  // NUEVO: usar stitches del vectorizador
+    } = await req.json();
+
     if (!regions || !Array.isArray(regions)) {
       return Response.json({ error: 'regions array required' }, { status: 400 });
     }
@@ -23,221 +28,248 @@ Deno.serve(async (req) => {
       underlay: true,
       underlayDensity: 0.5,
       underlayAngle: -45,
+      underlayStitchLength: 3.0,
+      trimThreshold: 5.0,           // NUEVO: distancia para trim
+      maxStitchLength: 12.0,        // NUEVO: máxima longitud de puntada
       ...stitchParams,
-      tatamiDensityMm: stitchParams?.tatami_density || stitchParams?.tatamiDensityMm || 0.4,
-      fillAngle: stitchParams?.fill_angle !== undefined ? stitchParams.fill_angle : (stitchParams?.fillAngle !== undefined ? stitchParams.fillAngle : null),
     };
 
     // ── Generar puntadas por región ────────────────────────────────────────
     const stitchPaths = [];
 
     for (const region of regions) {
-      // === PASO 1: Leer datos del vectorizador correctamente ===
       const poly = region.path_points || region.polygon;
       if (!poly || poly.length < 3) continue;
 
       const area = region.area_mm2 || region.area || 0;
-      const compacidad = region.compacidad !== undefined ? region.compacidad : (region.compactness || 0.5);
-      const perimeter = region.perimeter_mm || region.perimeter || 0;
-      
-      // === PASO 2: Priorizar tipo del vectorizador ===
-      const stitchTypeFromVectorizer = region.stitch_type || region.type;
-      let type = stitchTypeFromVectorizer;
-      
-      if (!type) {
-        // Fallback solo si no viene del vectorizador
-        if (compacidad > 0.55 && area > 40) type = 'fill';
-        else if (compacidad < 0.5 && area > 8) type = 'satin';
-        else type = 'running_stitch';
-      }
+      const type = region.stitch_type || region.type || 'fill';
+      const color = region.color || '#000000';
+      const layerOrder = region.layer_order || region.layerOrder || 999;
 
-      // === PASO 3: Usar ángulo del vectorizador ===
-      const fillAngleFromVectorizer = region.fill_angle !== undefined ? region.fill_angle : region.angle;
-      
-      let points = [];
-      let jumps = 0;
+      // === PASO 1: Intentar usar stitches del vectorizador ===
+      let mainPoints = [];
+      let contourPoints = [];
+      let usedVectorizer = false;
 
-      if (type === 'fill') {
-        const polyAngleDeg = sp.fillAngle !== null && sp.fillAngle !== undefined
-          ? sp.fillAngle
-          : (fillAngleFromVectorizer !== undefined ? fillAngleFromVectorizer : dominantAngleDeg(poly));
-        const perpAngle = polyAngleDeg + 90;
-
-        // Underlay primero (perpendicular, más espaciado)
-        if (sp.underlay) {
-          const underlaySpacingMm = sp.tatamiDensityMm * 2;
-          const underlayResult = generateFillLines(poly, perpAngle, underlaySpacingMm, sp.pullCompensation);
-          points.push(...underlayResult.points);
-          jumps += underlayResult.jumps;
-          if (underlayResult.points.length > 0) jumps++;
-        }
-
-        const fillResult = generateFillLines(poly, polyAngleDeg, sp.tatamiDensityMm, sp.pullCompensation);
-        points.push(...fillResult.points);
-        jumps += fillResult.jumps;
-
-      } else if (type === 'satin') {
-        const satinResult = generateSatinStitches(poly, sp.satinWidth, sp.pullCompensation);
-        points = satinResult.points;
-        jumps = satinResult.jumps;
-
+      if (useVectorizerStitches && region.stitches && region.stitches.length > 0) {
+        // Usar stitches del vectorizador directamente
+        mainPoints = region.stitches.map(p => [p[0], p[1]]);
+        usedVectorizer = true;
+        console.log(`Region ${region.id}: usando ${mainPoints.length} stitches del vectorizador`);
       } else {
-        // running_stitch
-        const isInner = region.isEdgeRegion === false && area < 50;
-        const offset = isInner ? -0.3 : 0.5;
-        const runResult = generateRunningStitch(poly, sp.runningStitchLength, offset);
-        points = runResult.points;
-        jumps = runResult.jumps;
+        // Regenerar desde path_points
+        mainPoints = generateStitchesForType(poly, type, sp, region);
       }
 
-      const stitchCount = points.length;
-      const estimatedTimeSec = parseFloat(((stitchCount / 800) * 60).toFixed(1));
+      // Contour stitches (si existen del vectorizador, usarlos)
+      if (region.contour_stitches && region.contour_stitches.length > 0) {
+        contourPoints = region.contour_stitches.map(p => [p[0], p[1]]);
+      } else if (type === 'fill' || type === 'satin') {
+        contourPoints = generateContour(poly, type, sp);
+      }
 
-      stitchPaths.push({
-        regionId: region.id,
-        type,
-        color: region.color,
-        layerOrder: region.layer_order || region.layerOrder || 999,
-        points,
-        stitchCount,
-        jumps,
-        estimatedTimeSec,
-      });
+      // === PASO 2: Agregar underlay si está configurado ===
+      let underlayPoints = [];
+      if (sp.underlay && (type === 'fill' || type === 'satin') && area > 20) {
+        underlayPoints = generateUnderlay(poly, type, sp, region);
+      }
+
+      // === PASO 3: Crear StitchPaths ===
+
+      // Underlay primero (si existe)
+      if (underlayPoints.length > 0) {
+        stitchPaths.push({
+          regionId: `${region.id}_underlay`,
+          type: type === 'satin' ? 'satin' : 'fill',
+          color,
+          layerOrder: layerOrder - 0.5,  // underlay antes del main
+          points: underlayPoints,
+          isUnderlay: true,
+        });
+      }
+
+      // Main stitches
+      if (mainPoints.length > 0) {
+        stitchPaths.push({
+          regionId: region.id,
+          type,
+          color,
+          layerOrder,
+          points: mainPoints,
+          isUnderlay: false,
+        });
+      }
+
+      // Contour stitches (después del fill)
+      if (contourPoints.length > 0) {
+        stitchPaths.push({
+          regionId: `${region.id}_contour`,
+          type: type === 'satin' ? 'satin' : 'running_stitch',
+          color,
+          layerOrder: layerOrder + 0.5,  // contour después del main
+          points: contourPoints,
+          isUnderlay: false,
+        });
+      }
     }
 
-    // ── Secuenciación ────────────────────────────────────────────────────────
-    const sequenced = sequencePaths(stitchPaths, sequencingMode);
+    // ── Secuenciación optimizada ──────────────────────────────────────────
+    const sequenced = sequencePathsOptimized(stitchPaths, sequencingMode, sp.trimThreshold);
 
     // ── Estadísticas ─────────────────────────────────────────────────────────
-    const totalStitches = sequenced.reduce((s, p) => s + p.stitchCount, 0);
-    const totalJumps = sequenced.reduce((s, p) => s + p.jumps, 0);
+    const totalStitches = sequenced.reduce((s, p) => s + p.points.length, 0);
     const totalColors = new Set(sequenced.map(p => p.color)).size;
-    const estimatedTimeMin = parseFloat((sequenced.reduce((s, p) => s + p.estimatedTimeSec, 0) / 60).toFixed(1));
-    const threadLengthMeters = parseFloat(((totalStitches * 2) / 1000).toFixed(1));
+    const estimatedTimeMin = parseFloat((totalStitches / 800).toFixed(1));
+    const threadLengthMeters = parseFloat(((totalStitches * 2.5) / 1000).toFixed(1));
 
-    // ── Generar archivo de bordado si se solicita formato ──────────────────
-    let fileData = null;
-    if (format) {
-      const stitchData = convertToStitchFormat(sequenced, width_mm || 100, height_mm || 100);
-      const fileBuffer = generateEmbroideryFile(stitchData, format, width_mm, height_mm, machine_name, speed_rpm, regions);
-      const base64 = arrayBufferToBase64(fileBuffer);
-      
-      fileData = {
-        file_base64: base64,
-        file_name: `${sanitizeFileName(project_name) || 'design'}.${format.toLowerCase()}`,
-        format: format.toUpperCase(),
-      };
+    // Contar trims
+    let trimCount = 0;
+    for (let i = 1; i < sequenced.length; i++) {
+      const prev = sequenced[i-1];
+      const curr = sequenced[i];
+      if (prev.color === curr.color) {
+        const lastPt = prev.points[prev.points.length - 1];
+        const firstPt = curr.points[0];
+        const dist = Math.hypot(firstPt[0] - lastPt[0], firstPt[1] - lastPt[1]);
+        if (dist > sp.trimThreshold) trimCount++;
+      }
     }
 
-    // Strip internal fields
-    const outputPaths = sequenced.map(({ layerOrder, ...rest }) => rest);
-
     return Response.json({
-      stitchPaths: outputPaths,
-      totalStats: {
+      success: true,
+      stitchPaths: sequenced,
+      stats: {
         totalStitches,
-        totalJumps,
+        totalPaths: sequenced.length,
         totalColors,
         estimatedTimeMin,
         threadLengthMeters,
-      },
-      ...(fileData && { file: fileData }),
+        trimCount,
+      }
     });
 
   } catch (error) {
-    console.error('Embroidery generation error:', error);
-    return Response.json({ error: error.message }, { status: 500 });
+    console.error('Stitch generation error:', error);
+    return Response.json({ error: error.message, stack: error.stack }, { status: 500 });
   }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GENERADORES DE PUNTADAS
+// GENERADORES DE PUNTADAS POR TIPO
 // ═══════════════════════════════════════════════════════════════════════════
 
-// ── TATAMI FILL ─────────────────────────────────────────────────────────────
-function generateFillLines(poly, angleDeg, spacingMm, pullComp) {
-  const expanded = expandPolygonByNormals(poly, pullComp);
-  const angle = angleDeg * Math.PI / 180;
-  const rowSpacing = Math.max(0.15, spacingMm || 0.4);
-  const stitchPitch = rowSpacing;
-  const OFFSETS = [0, 0.25, 0.5, 0.75];
-  const MAX_STITCH = 2.5;
+function generateStitchesForType(poly, type, sp, region) {
+  switch (type) {
+    case 'fill':
+      const angle = sp.fillAngle !== null ? sp.fillAngle : 
+                    (region.fill_angle !== undefined ? region.fill_angle : 
+                     dominantAngleDeg(poly));
+      return generateTatamiFill(poly, sp.tatamiDensityMm, sp.maxStitchLength, angle, sp.pullCompensation);
 
+    case 'satin':
+      return generateSatinZigZag(poly, sp.satinWidth, sp.pullCompensation);
+
+    case 'running_stitch':
+      return generateRunningStitch(poly, sp.runningStitchLength, 0);
+
+    default:
+      return generateRunningStitch(poly, sp.runningStitchLength, 0);
+  }
+}
+
+function generateContour(poly, type, sp) {
+  if (type === 'satin') {
+    return generateSatinContour(poly, sp.satinWidth * 0.3, sp.pullCompensation);
+  }
+  return generateRunningStitch(poly, sp.runningStitchLength, 0.5);
+}
+
+function generateUnderlay(poly, type, sp, region) {
+  if (type === 'fill') {
+    // Underlay de fill: ángulo perpendicular, más espaciado
+    const mainAngle = sp.fillAngle !== null ? sp.fillAngle : 
+                      (region.fill_angle !== undefined ? region.fill_angle : 45);
+    const underlayAngle = mainAngle + 90;
+    return generateTatamiFill(poly, sp.tatamiDensityMm * 2, sp.underlayStitchLength, underlayAngle, sp.pullCompensation * 0.5);
+  } else if (type === 'satin') {
+    // Underlay de satin: zig-zag centrado, más espaciado
+    return generateSatinZigZag(poly, sp.satinWidth * 0.5, sp.pullCompensation * 0.3);
+  }
+  return [];
+}
+
+// ── TATAMI FILL MEJORADO ──────────────────────────────────────────────────
+function generateTatamiFill(poly, densityMm, stitchLength, angleDeg, pullComp) {
+  if (!poly || poly.length < 3) return [];
+
+  // Expandir polígono para compensación de pull
+  const expanded = pullComp > 0 ? expandPolygonByNormals(poly, pullComp) : poly;
+
+  const angle = angleDeg * Math.PI / 180;
   const cos = Math.cos(-angle), sin = Math.sin(-angle);
   const cosR = Math.cos(angle), sinR = Math.sin(angle);
 
+  // Rotar polígono alineado con el ángulo de fill
   const rotated = expanded.map(([x, y]) => [x * cos - y * sin, x * sin + y * cos]);
+
   const minY = Math.min(...rotated.map(p => p[1]));
   const maxY = Math.max(...rotated.map(p => p[1]));
+  const rowSpacing = Math.max(0.15, densityMm);
 
   const allPoints = [];
-  let jumps = 0;
+  const OFFSETS = [0, 0.25, 0.5, 0.75];
   let rowIdx = 0;
 
   for (let y = minY + rowSpacing / 2; y <= maxY; y += rowSpacing) {
-    const xs = scanLineIntersect(rotated, y);
-    if (xs.length < 2) { rowIdx++; continue; }
-    xs.sort((a, b) => a - b);
+    const intersections = scanLineIntersect(rotated, y);
+    if (intersections.length < 2) { rowIdx++; continue; }
+    intersections.sort((a, b) => a - b);
 
-    const cycleOffset = OFFSETS[rowIdx % 4] * stitchPitch;
+    const cycleOffset = OFFSETS[rowIdx % 4] * stitchLength;
     const forward = rowIdx % 2 === 0;
     const rowPoints = [];
 
-    for (let i = 0; i < xs.length - 1; i += 2) {
-      const xL = xs[i], xR = xs[i + 1];
+    for (let i = 0; i < intersections.length - 1; i += 2) {
+      const xL = intersections[i], xR = intersections[i + 1];
       const segLen = xR - xL;
       if (segLen < 0.1) continue;
 
-      rowPoints.push(forward ? [xL, y] : [xR, y]);
+      // Puntos de inicio y fin del segmento
+      const startX = xL + cycleOffset;
+      const endX = xR;
 
-      const firstX = xL + ((cycleOffset % stitchPitch + stitchPitch) % stitchPitch);
-      for (let x = firstX; x < xR - 0.05; x += stitchPitch) {
-        if (x > xL + 0.05) rowPoints.push([x, y]);
-      }
+      if (startX >= endX) continue;
 
-      const exitPt = forward ? [xR, y] : [xL, y];
-      const lastAdded = rowPoints[rowPoints.length - 1];
-      if (Math.hypot(exitPt[0] - lastAdded[0], exitPt[1] - lastAdded[1]) > 0.05) {
-        rowPoints.push(exitPt);
-      }
-    }
+      // Generar puntadas a lo largo del segmento
+      const numStitches = Math.max(1, Math.floor((endX - startX) / stitchLength));
 
-    if (rowPoints.length === 0) { rowIdx++; continue; }
-
-    const orderedPts = forward ? rowPoints : rowPoints.slice().reverse();
-
-    if (allPoints.length > 0) {
-      const last = allPoints[allPoints.length - 1];
-      const first = orderedPts[0];
-      const jumpDist = Math.hypot(first[0] - last[0], first[1] - last[1]);
-      if (jumpDist > 5.0) jumps++;
-    }
-
-    for (let j = 0; j < orderedPts.length; j++) {
-      if (j > 0) {
-        const prev = orderedPts[j - 1];
-        const curr = orderedPts[j];
-        const segLen = Math.hypot(curr[0] - prev[0], curr[1] - prev[1]);
-        if (segLen > MAX_STITCH) {
-          const steps = Math.ceil(segLen / MAX_STITCH);
-          for (let s = 1; s < steps; s++) {
-            const t = s / steps;
-            allPoints.push([prev[0] + t * (curr[0] - prev[0]), prev[1] + t * (curr[1] - prev[1])]);
-          }
+      if (forward) {
+        for (let j = 0; j <= numStitches; j++) {
+          const x = Math.min(startX + j * stitchLength, endX);
+          rowPoints.push([x, y]);
+        }
+      } else {
+        for (let j = numStitches; j >= 0; j--) {
+          const x = Math.min(startX + j * stitchLength, endX);
+          rowPoints.push([x, y]);
         }
       }
-      allPoints.push(orderedPts[j]);
+    }
+
+    if (rowPoints.length > 0) {
+      // Desrotar puntos
+      for (const [x, y] of rowPoints) {
+        allPoints.push([
+          parseFloat((x * cosR - y * sinR).toFixed(3)),
+          parseFloat((x * sinR + y * cosR).toFixed(3)),
+        ]);
+      }
     }
 
     rowIdx++;
   }
 
-  const finalPoints = allPoints.map(([x, y]) => [
-    parseFloat((x * cosR - y * sinR).toFixed(3)),
-    parseFloat((x * sinR + y * cosR).toFixed(3)),
-  ]);
-
-  return { points: finalPoints, jumps };
+  return allPoints;
 }
 
 function scanLineIntersect(poly, y) {
@@ -252,44 +284,48 @@ function scanLineIntersect(poly, y) {
   return xs;
 }
 
-// ── SATIN ───────────────────────────────────────────────────────────────────
-function generateSatinStitches(poly, satinWidth, pullComp) {
-  const expanded = expandPolygonByNormals(poly, pullComp);
+// ── SATIN ZIG-ZAG MEJORADO ────────────────────────────────────────────────
+function generateSatinZigZag(poly, width, pullComp) {
+  const expanded = pullComp > 0 ? expandPolygonByNormals(poly, pullComp) : poly;
+
+  // Calcular eje principal del polígono
+  const axisAngle = dominantAngle(expanded);
+  const axisDir = [Math.cos(axisAngle), Math.sin(axisAngle)];
+  const perpDir = [-Math.sin(axisAngle), Math.cos(axisAngle)];
+
   const cx = expanded.reduce((s, p) => s + p[0], 0) / expanded.length;
   const cy = expanded.reduce((s, p) => s + p[1], 0) / expanded.length;
 
-  const points = [];
-  let jumps = 0;
-
-  const angle = dominantAngle(expanded);
-  const axisDir = [Math.cos(angle), Math.sin(angle)];
-  const perpDir = [-Math.sin(angle), Math.cos(angle)];
-
+  // Proyectar vértices en el eje principal
   const projAxis = expanded.map(p => (p[0] - cx) * axisDir[0] + (p[1] - cy) * axisDir[1]);
   const tMin = Math.min(...projAxis), tMax = Math.max(...projAxis);
 
-  const stitchSpacing = 0.25;
+  const stitchSpacing = Math.max(0.2, width * 0.15);
+  const points = [];
   let stitchIdx = 0;
 
   for (let t = tMin; t <= tMax; t += stitchSpacing) {
     const mx = cx + t * axisDir[0];
     const my = cy + t * axisDir[1];
 
+    // Encontrar intersecciones con el polígono en dirección perpendicular
     const intersections = linePolyIntersectPerp(expanded, mx, my, perpDir);
     if (intersections.length < 2) continue;
     intersections.sort((a, b) => a.t - b.t);
 
     const p0 = intersections[0], p1 = intersections[intersections.length - 1];
     const len = Math.abs(p1.t - p0.t);
-    const segments = Math.ceil(len / satinWidth);
+    const segments = Math.max(1, Math.ceil(len / width));
     const step = (p1.t - p0.t) / segments;
 
     for (let s = 0; s < segments; s++) {
       const ta = p0.t + s * step;
       const tb = p0.t + (s + 1) * step;
       const forward = stitchIdx % 2 === 0;
+
       const startT = forward ? ta : tb;
       const endT = forward ? tb : ta;
+
       points.push([
         parseFloat((mx + startT * perpDir[0]).toFixed(3)),
         parseFloat((my + startT * perpDir[1]).toFixed(3)),
@@ -298,11 +334,12 @@ function generateSatinStitches(poly, satinWidth, pullComp) {
         parseFloat((mx + endT * perpDir[0]).toFixed(3)),
         parseFloat((my + endT * perpDir[1]).toFixed(3)),
       ]);
+
       stitchIdx++;
     }
   }
 
-  return { points, jumps };
+  return points;
 }
 
 function linePolyIntersectPerp(poly, mx, my, perpDir) {
@@ -319,6 +356,213 @@ function linePolyIntersectPerp(poly, mx, my, perpDir) {
   return results;
 }
 
+// ── RUNNING STITCH ─────────────────────────────────────────────────────────
+function generateRunningStitch(poly, stitchLength, offsetMm) {
+  const offsetPoly = offsetMm !== 0 ? expandPolygonByNormals(poly, offsetMm) : poly;
+  const points = [];
+  let dist = 0;
+
+  points.push([parseFloat(offsetPoly[0][0].toFixed(3)), parseFloat(offsetPoly[0][1].toFixed(3))]);
+
+  for (let i = 0; i < offsetPoly.length; i++) {
+    const a = offsetPoly[i], b = offsetPoly[(i + 1) % offsetPoly.length];
+    const segLen = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (segLen < 1e-10) continue;
+
+    const dx = (b[0] - a[0]) / segLen, dy = (b[1] - a[1]) / segLen;
+    let d = stitchLength - dist;
+
+    while (d < segLen) {
+      points.push([
+        parseFloat((a[0] + dx * d).toFixed(3)),
+        parseFloat((a[1] + dy * d).toFixed(3)),
+      ]);
+      d += stitchLength;
+    }
+    dist = segLen - (d - stitchLength);
+  }
+
+  // Cerrar el polígono
+  points.push([parseFloat(offsetPoly[0][0].toFixed(3)), parseFloat(offsetPoly[0][1].toFixed(3))]);
+  return points;
+}
+
+// ── SATIN CONTOUR ──────────────────────────────────────────────────────────
+function generateSatinContour(poly, width, pullComp) {
+  const expanded = pullComp > 0 ? expandPolygonByNormals(poly, pullComp) : poly;
+  const stitches = [];
+  const baseHalfWidth = width / 2;
+  const n = expanded.length;
+
+  // Calcular normales
+  const normals = [];
+  for (let i = 0; i < n; i++) {
+    const prev = expanded[(i - 1 + n) % n];
+    const curr = expanded[i];
+    const next = expanded[(i + 1) % n];
+
+    const dx1 = curr[0] - prev[0], dy1 = curr[1] - prev[1];
+    const len1 = Math.hypot(dx1, dy1);
+    const dx2 = next[0] - curr[0], dy2 = next[1] - curr[1];
+    const len2 = Math.hypot(dx2, dy2);
+
+    let nx = 0, ny = 0;
+    if (len1 > 0.001) { nx += (-dy1 / len1); ny += (dx1 / len1); }
+    if (len2 > 0.001) { nx += (-dy2 / len2); ny += (dx2 / len2); }
+
+    const nLen = Math.hypot(nx, ny);
+    if (nLen > 0.001) normals.push([nx / nLen, ny / nLen]);
+    else normals.push([0, 1]);
+  }
+
+  // Generar zig-zag a lo largo del contorno
+  for (let i = 0; i < n; i++) {
+    const p1 = expanded[i], p2 = expanded[(i + 1) % n];
+    const dx = p2[0] - p1[0], dy = p2[1] - p1[1];
+    const segLen = Math.hypot(dx, dy);
+    if (segLen < 0.01) continue;
+
+    const density = Math.max(0.15, Math.min(0.4, segLen / 50));
+    const steps = Math.max(3, Math.floor(segLen / density));
+
+    for (let j = 0; j <= steps; j++) {
+      const t = j / steps;
+      const baseX = p1[0] + dx * t, baseY = p1[1] + dy * t;
+      const n1 = normals[i], n2 = normals[(i + 1) % n];
+      const nx = n1[0] * (1 - t) + n2[0] * t;
+      const ny = n1[1] * (1 - t) + n2[1] * t;
+      const nLen = Math.hypot(nx, ny);
+      const nnx = nLen > 0 ? nx / nLen : 0;
+      const nny = nLen > 0 ? ny / nLen : 1;
+      const side = (j % 2 === 0) ? 1 : -1;
+
+      stitches.push([
+        baseX + nnx * baseHalfWidth * side,
+        baseY + nny * baseHalfWidth * side,
+      ]);
+    }
+  }
+
+  return stitches;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SECUENCIACIÓN OPTIMIZADA
+// ═══════════════════════════════════════════════════════════════════════════
+
+function sequencePathsOptimized(paths, mode, trimThreshold) {
+  if (paths.length <= 1) return paths;
+
+  // Paso 1: Ordenar por layerOrder
+  const sorted = [...paths].sort((a, b) => (a.layerOrder || 999) - (b.layerOrder || 999));
+
+  if (mode === 'layerOrder') {
+    return sorted;
+  }
+
+  // Paso 2: Agrupar por color
+  const byColor = {};
+  for (const p of sorted) {
+    const normalizedColor = (p.color || '').toLowerCase().trim();
+    if (!byColor[normalizedColor]) byColor[normalizedColor] = [];
+    byColor[normalizedColor].push(p);
+  }
+
+  // Paso 3: Ordenar colores por cantidad de puntadas (más grandes primero)
+  const colorKeys = Object.keys(byColor);
+  colorKeys.sort((a, b) => {
+    const stitchesA = byColor[a].reduce((s, p) => s + p.points.length, 0);
+    const stitchesB = byColor[b].reduce((s, p) => s + p.points.length, 0);
+    return stitchesB - stitchesA;
+  });
+
+  const result = [];
+
+  for (const color of colorKeys) {
+    const group = byColor[color];
+
+    // Paso 4: TSP aproximado (nearest neighbor con 2-opt)
+    const ordered = tspNearestNeighbor(group);
+
+    result.push(...ordered);
+  }
+
+  return result;
+}
+
+function tspNearestNeighbor(paths) {
+  if (paths.length <= 1) return paths;
+
+  const remaining = [...paths];
+  const result = [remaining.shift()];
+
+  while (remaining.length > 0) {
+    const last = result[result.length - 1];
+    const lastPt = last.points[last.points.length - 1] || [0, 0];
+
+    let bestIdx = 0;
+    let bestScore = Infinity;
+
+    for (let i = 0; i < remaining.length; i++) {
+      const path = remaining[i];
+      const firstPt = path.points[0] || [0, 0];
+      const dist = Math.hypot(firstPt[0] - lastPt[0], firstPt[1] - lastPt[1]);
+
+      // Score: distancia - bonus por cercanía
+      const bonus = dist < 5 ? 100 : 0;
+      const score = dist - bonus;
+
+      if (score < bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+
+    result.push(remaining.splice(bestIdx, 1)[0]);
+  }
+
+  // 2-opt improvement (simplificado)
+  return twoOptImprove(result);
+}
+
+function twoOptImprove(paths) {
+  if (paths.length < 4) return paths;
+
+  let improved = true;
+  let iterations = 0;
+  const maxIterations = 50;
+
+  while (improved && iterations < maxIterations) {
+    improved = false;
+    iterations++;
+
+    for (let i = 1; i < paths.length - 2; i++) {
+      for (let j = i + 1; j < paths.length - 1; j++) {
+        const a = paths[i - 1].points[paths[i - 1].points.length - 1];
+        const b = paths[i].points[0];
+        const c = paths[j].points[paths[j].points.length - 1];
+        const d = paths[j + 1].points[0];
+
+        const currentDist = Math.hypot(b[0] - a[0], b[1] - a[1]) + Math.hypot(d[0] - c[0], d[1] - c[1]);
+        const newDist = Math.hypot(c[0] - a[0], c[1] - a[1]) + Math.hypot(d[0] - b[0], d[1] - b[1]);
+
+        if (newDist < currentDist * 0.9) {
+          // Reverse segment [i..j]
+          const segment = paths.slice(i, j + 1).reverse();
+          paths.splice(i, j - i + 1, ...segment);
+          improved = true;
+        }
+      }
+    }
+  }
+
+  return paths;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UTILIDADES GEOMÉTRICAS
+// ═══════════════════════════════════════════════════════════════════════════
+
 function dominantAngle(poly) {
   const cx = poly.reduce((s, p) => s + p[0], 0) / poly.length;
   const cy = poly.reduce((s, p) => s + p[1], 0) / poly.length;
@@ -330,500 +574,34 @@ function dominantAngle(poly) {
   return 0.5 * Math.atan2(2 * cxy, cxx - cyy);
 }
 
-// ── RUNNING STITCH ──────────────────────────────────────────────────────────
-function generateRunningStitch(poly, stitchLength, offsetMm) {
-  const offsetPoly = offsetMm !== 0 ? expandPolygonByNormals(poly, offsetMm) : poly;
-  const points = [];
-  let dist = 0;
-  points.push([parseFloat(offsetPoly[0][0].toFixed(3)), parseFloat(offsetPoly[0][1].toFixed(3))]);
-
-  for (let i = 0; i < offsetPoly.length; i++) {
-    const a = offsetPoly[i], b = offsetPoly[(i + 1) % offsetPoly.length];
-    const segLen = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    if (segLen < 1e-10) continue;
-    const dx = (b[0] - a[0]) / segLen, dy = (b[1] - a[1]) / segLen;
-    let d = stitchLength - dist;
-    while (d < segLen) {
-      points.push([
-        parseFloat((a[0] + dx * d).toFixed(3)),
-        parseFloat((a[1] + dy * d).toFixed(3)),
-      ]);
-      d += stitchLength;
-    }
-    dist = segLen - (d - stitchLength);
-  }
-
-  points.push([parseFloat(offsetPoly[0][0].toFixed(3)), parseFloat(offsetPoly[0][1].toFixed(3))]);
-  return { points, jumps: 0 };
-}
-
-// ── SEQUENCING ───────────────────────────────────────────────────────────────
-function sequencePaths(paths, mode) {
-  if (mode === 'layerOrder') {
-    return [...paths].sort((a, b) => (a.layerOrder || 999) - (b.layerOrder || 999));
-  }
-
-  if (mode === 'colorGroup' || mode === 'optimize') {
-    // Agrupar por color
-    const byColor = {};
-    for (const p of paths) {
-      const normalizedColor = (p.color || '').toLowerCase().trim();
-      if (!byColor[normalizedColor]) byColor[normalizedColor] = [];
-      byColor[normalizedColor].push(p);
-    }
-
-    const result = [];
-    const colorKeys = Object.keys(byColor);
-
-    // Ordenar colores por cantidad de puntadas (más grandes primero)
-    colorKeys.sort((a, b) => {
-      const stitchesA = byColor[a].reduce((s, p) => s + p.stitchCount, 0);
-      const stitchesB = byColor[b].reduce((s, p) => s + p.stitchCount, 0);
-      return stitchesB - stitchesA;
-    });
-
-    for (const color of colorKeys) {
-      const group = byColor[color];
-      
-      // Ordenar regiones del mismo color por vecino más cercano
-      const ordered = [group[0]];
-      const remaining = new Set(group.slice(1));
-      
-      while (remaining.size > 0) {
-        const last = ordered[ordered.length - 1];
-        const lastPt = last.points[last.points.length - 1] || [0, 0];
-        
-        let bestIdx = null;
-        let bestDist = Infinity;
-        
-        for (const path of remaining) {
-          const firstPt = path.points[0] || [0, 0];
-          const dist = Math.hypot(firstPt[0] - lastPt[0], firstPt[1] - lastPt[1]);
-          
-          // Bonus si la distancia es pequeña (menos de 5mm = conectable sin jump)
-          const bonus = dist < 5 ? 1000 : 0;
-          const score = dist - bonus;
-          
-          if (score < bestDist) {
-            bestDist = score;
-            bestIdx = path;
-          }
-        }
-        
-        ordered.push(bestIdx);
-        remaining.delete(bestIdx);
-      }
-      
-      result.push(...ordered);
-    }
-    
-    return result;
-  }
-
-  if (mode === 'minTravel') {
-    const remaining = [...paths];
-    const result = [];
-    let current = remaining.splice(0, 1)[0];
-    result.push(current);
-
-    while (remaining.length > 0) {
-      const lastPt = current.points[current.points.length - 1] || [0, 0];
-      let bestIdx = 0;
-      let bestDist = Infinity;
-      
-      for (let i = 0; i < remaining.length; i++) {
-        const firstPt = remaining[i].points[0] || [0, 0];
-        const dist = Math.hypot(firstPt[0] - lastPt[0], firstPt[1] - lastPt[1]);
-        if (dist < bestDist) { bestDist = dist; bestIdx = i; }
-      }
-      
-      current = remaining.splice(bestIdx, 1)[0];
-      result.push(current);
-    }
-    return result;
-  }
-
-  return paths;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// CONVERSIÓN A FORMATOS DE ARCHIVO
-// ═══════════════════════════════════════════════════════════════════════════
-
-function convertToStitchFormat(sequencedPaths, width_mm, height_mm) {
-  const stitches = [];
-  const scale = 10;
-
-  for (let i = 0; i < sequencedPaths.length; i++) {
-    const path = sequencedPaths[i];
-    if (path.points.length === 0) continue;
-
-    // Color change solo si es diferente al anterior
-    const prevPath = i > 0 ? sequencedPaths[i - 1] : null;
-    const needsColorChange = !prevPath || 
-      (prevPath.color || '').toLowerCase().trim() !== (path.color || '').toLowerCase().trim();
-    
-    if (needsColorChange) {
-      stitches.push({ type: 'color_change', color: hexToRgb(path.color || '#000000') });
-    } else {
-      // Mismo color: verificar si hay que hacer jump o se puede conectar
-      const lastPt = stitches[stitches.length - 1];
-      const firstPt = path.points[0];
-      const jumpDist = Math.hypot(firstPt[0] - lastPt.x / scale, firstPt[1] - lastPt.y / scale);
-      
-      if (jumpDist > 5.0) {
-        // Distancia grande: trim y jump
-        stitches.push({ type: 'trim' });
-      }
-      // Si está cerca, no hacemos nada (se conecta automáticamente)
-    }
-
-    for (const [x, y] of path.points) {
-      stitches.push({ type: 'stitch', x: Math.round(x * scale), y: Math.round(y * scale) });
-    }
-
-    // Trim solo al final de todo o si el siguiente es color diferente
-    const nextPath = i < sequencedPaths.length - 1 ? sequencedPaths[i + 1] : null;
-    if (!nextPath || nextPath.color !== path.color) {
-      stitches.push({ type: 'trim' });
-    }
-  }
-
-  stitches.push({ type: 'end' });
-  return stitches;
-}
-
-function generateEmbroideryFile(stitchData, format, width_mm, height_mm, machine_name, speed_rpm, regions) {
-  switch (format.toUpperCase()) {
-    case 'DST':
-      return generateDST(stitchData, width_mm, height_mm, machine_name, speed_rpm);
-    case 'PES':
-      return generatePES(stitchData, width_mm, height_mm, machine_name, regions);
-    case 'JEF':
-      return generateJEF(stitchData, width_mm, height_mm, machine_name, regions);
-    case 'DSB':
-      return generateDSB(stitchData, width_mm, height_mm, machine_name);
-    default:
-      return generateDST(stitchData, width_mm, height_mm, machine_name, speed_rpm);
-  }
-}
-
-// ── DST GENERATOR ───────────────────────────────────────────────────────────
-function generateDST(stitches, width_mm, height_mm, machine, speed) {
-  const header = new Uint8Array(512);
-  const enc = new TextEncoder();
-
-  const stitchCount = stitches.filter(s => s.type === 'stitch').length;
-  const colorChanges = stitches.filter(s => s.type === 'color_change').length;
-
-  const headerLines = [
-    `LA:${(machine || 'StitchFlow').padEnd(16, ' ')}`,
-    `ST:${stitchCount.toString().padEnd(7, ' ')}`,
-    `CO:${colorChanges.toString().padEnd(3, ' ')}`,
-    `+X:${Math.round((width_mm || 100) * 10).toString().padEnd(5, ' ')}`,
-    `-X:0    `,
-    `+Y:${Math.round((height_mm || 100) * 10).toString().padEnd(5, ' ')}`,
-    `-Y:0    `,
-    `AX:+0   `,
-    `AY:+0   `,
-    `MX:+0   `,
-    `MY:+0   `,
-    `PD:******`,
-    `\x1a`
-  ];
-
-  const headerStr = headerLines.join('\r') + ' '.repeat(512);
-  const headerBytes = enc.encode(headerStr.slice(0, 512));
-  header.set(headerBytes);
-
-  const dataBytes = [];
-  let cx = 0, cy = 0;
-
-  for (const s of stitches) {
-    if (s.type === 'stitch') {
-      let dx = s.x - cx;
-      let dy = s.y - cy;
-
-      while (Math.abs(dx) > 121 || Math.abs(dy) > 121) {
-        const stepX = Math.sign(dx) * Math.min(Math.abs(dx), 121);
-        const stepY = Math.sign(dy) * Math.min(Math.abs(dy), 121);
-        const [b1, b2, b3] = encodeDSTStitch(stepX, stepY, 0x80);
-        dataBytes.push(b1, b2, b3);
-        cx += stepX;
-        cy += stepY;
-        dx = s.x - cx;
-        dy = s.y - cy;
-      }
-
-      const [b1, b2, b3] = encodeDSTStitch(dx, dy, 0);
-      dataBytes.push(b1, b2, b3);
-      cx = s.x;
-      cy = s.y;
-    } else if (s.type === 'color_change') {
-      dataBytes.push(0xC3, 0xC3, 0xC3);
-    } else if (s.type === 'trim') {
-      // === PASO 5: Trim separado de color_change ===
-      dataBytes.push(0xC0, 0xC0, 0xC0);
-    } else if (s.type === 'end') {
-      dataBytes.push(0xF3, 0xF3, 0xF3);
-    }
-  }
-
-  const result = new Uint8Array(512 + dataBytes.length);
-  result.set(header);
-  result.set(new Uint8Array(dataBytes), 512);
-  return result.buffer;
-}
-
-function encodeDSTStitch(dx, dy, flag) {
-  let b1 = 0, b2 = 0, b3 = flag & 0x03;
-
-  if (dx > 40) { b3 |= 0x04; dx -= 81; }
-  if (dx < -40) { b3 |= 0x08; dx += 81; }
-  if (dx < 0) { dx = -dx; b1 |= 0x80; }
-
-  if (dy > 40) { b3 |= 0x20; dy -= 81; }
-  if (dy < -40) { b3 |= 0x40; dy += 81; }
-  if (dy < 0) { dy = -dy; b2 |= 0x80; }
-
-  b1 |= (dx & 0x7F);
-  b2 |= (dy & 0x7F);
-
-  return [b1, b2, b3];
-}
-
-// ── PES GENERATOR ───────────────────────────────────────────────────────────
-function generatePES(stitches, width_mm, height_mm, machine, regions) {
-  const enc = new TextEncoder();
-  const pecData = generatePECData(stitches, width_mm, height_mm);
-  
-  const header = new Uint8Array(8);
-  header.set(enc.encode('#PES0001'));
-  
-  const totalLength = header.length + pecData.length;
-  const result = new Uint8Array(totalLength);
-  result.set(header);
-  result.set(pecData, header.length);
-  
-  return result.buffer;
-}
-
-function generatePECData(stitches, width_mm, height_mm) {
-  const header = new Uint8Array(512);
-  const enc = new TextEncoder();
-  
-  header.set(enc.encode('LA:'), 0);
-  header.set(enc.encode('StitchFlow'.padEnd(16, ' ')), 3);
-  
-  const view = new DataView(header.buffer);
-  view.setInt16(19, 0, true);
-  view.setInt16(21, 0, true);
-  view.setInt16(23, Math.round(width_mm * 10), true);
-  view.setInt16(25, Math.round(height_mm * 10), true);
-  
-  const stitchBytes = [];
-  let lastX = 0, lastY = 0;
-  
-  for (const s of stitches) {
-    if (s.type === 'stitch') {
-      const dx = s.x - lastX;
-      const dy = s.y - lastY;
-      
-      if (Math.abs(dx) <= 63 && Math.abs(dy) <= 63) {
-        stitchBytes.push((dx + 63) & 0x7F, (dy + 63) & 0x7F);
-      } else {
-        stitchBytes.push(0x80, 0x01,
-          (dx >> 8) & 0xFF, dx & 0xFF,
-          (dy >> 8) & 0xFF, dy & 0xFF);
-      }
-      lastX = s.x;
-      lastY = s.y;
-    } else if (s.type === 'color_change') {
-      stitchBytes.push(0xFE, 0xB0);
-    } else if (s.type === 'end') {
-      stitchBytes.push(0xFF);
-    }
-  }
-  
-  const result = new Uint8Array(512 + stitchBytes.length);
-  result.set(header);
-  result.set(new Uint8Array(stitchBytes), 512);
-  return result;
-}
-
-// ── JEF GENERATOR ───────────────────────────────────────────────────────────
-function generateJEF(stitches, width_mm, height_mm, machine, regions) {
-  const enc = new TextEncoder();
-  const stitchBytes = [];
-  let lastX = 0, lastY = 0;
-  
-  const header = new Uint8Array(80);
-  header.set(enc.encode('JEF'), 0);
-  
-  const view = new DataView(header.buffer);
-  view.setInt32(4, stitches.filter(s => s.type === 'stitch').length, true);
-  view.setInt32(8, stitches.filter(s => s.type === 'color_change').length, true);
-  view.setInt32(12, Math.round(width_mm * 10), true);
-  view.setInt32(16, Math.round(height_mm * 10), true);
-  
-  for (const s of stitches) {
-    if (s.type === 'stitch') {
-      const dx = s.x - lastX;
-      const dy = s.y - lastY;
-      stitchBytes.push(dx & 0xFF, dy & 0xFF);
-      lastX = s.x;
-      lastY = s.y;
-    } else if (s.type === 'color_change') {
-      stitchBytes.push(0x80, 0x01);
-    } else if (s.type === 'end') {
-      stitchBytes.push(0x80, 0x10);
-    }
-  }
-  
-  const result = new Uint8Array(80 + stitchBytes.length);
-  result.set(header);
-  result.set(new Uint8Array(stitchBytes), 80);
-  return result.buffer;
-}
-
-// ── DSB GENERATOR ───────────────────────────────────────────────────────────
-function generateDSB(stitches, width_mm, height_mm, machine) {
-  const enc = new TextEncoder();
-  const stitchBytes = [];
-  let lastX = 0, lastY = 0;
-  
-  const header = new Uint8Array(512);
-  header.set(enc.encode('DSB'), 0);
-  header.set(enc.encode((machine || 'StitchFlow').padEnd(16, ' ')), 3);
-  
-  for (const s of stitches) {
-    if (s.type === 'stitch') {
-      const dx = s.x - lastX;
-      const dy = s.y - lastY;
-      stitchBytes.push((dx >> 8) & 0xFF, dx & 0xFF, (dy >> 8) & 0xFF, dy & 0xFF, 0x00);
-      lastX = s.x;
-      lastY = s.y;
-    } else if (s.type === 'color_change') {
-      stitchBytes.push(0x00, 0x00, 0x00, 0x00, 0x01);
-    } else if (s.type === 'end') {
-      stitchBytes.push(0x00, 0x00, 0x00, 0x00, 0xFF);
-    }
-  }
-  
-  const result = new Uint8Array(512 + stitchBytes.length);
-  result.set(header);
-  result.set(new Uint8Array(stitchBytes), 512);
-  return result.buffer;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// UTILIDADES MEJORADAS
-// ═══════════════════════════════════════════════════════════════════════════
-
 function dominantAngleDeg(poly) {
-  if (!poly || poly.length < 2) return 45;
-  const cx = poly.reduce((s, p) => s + p[0], 0) / poly.length;
-  const cy = poly.reduce((s, p) => s + p[1], 0) / poly.length;
-  let cxx = 0, cxy = 0, cyy = 0;
-  for (const [x, y] of poly) {
-    const dx = x - cx, dy = y - cy;
-    cxx += dx * dx; cxy += dx * dy; cyy += dy * dy;
-  }
-  return parseFloat((0.5 * Math.atan2(2 * cxy, cxx - cyy) * 180 / Math.PI).toFixed(1));
+  return parseFloat((dominantAngle(poly) * 180 / Math.PI).toFixed(1));
 }
 
-// === PASO 4: expandPolygon mejorado con offset por normales ===
 function expandPolygonByNormals(poly, amount) {
   if (!amount || amount === 0) return poly;
-  
   const n = poly.length;
   if (n < 3) return poly;
-  
+
   const normals = [];
   for (let i = 0; i < n; i++) {
     const prev = poly[(i - 1 + n) % n];
     const curr = poly[i];
     const next = poly[(i + 1) % n];
-    
-    // Vector de entrada
+
     const dx1 = curr[0] - prev[0], dy1 = curr[1] - prev[1];
     const len1 = Math.hypot(dx1, dy1);
-    
-    // Vector de salida
     const dx2 = next[0] - curr[0], dy2 = next[1] - curr[1];
     const len2 = Math.hypot(dx2, dy2);
-    
-    // Normal promedio (bisectriz)
+
     let nx = 0, ny = 0;
-    if (len1 > 0.001) {
-      nx += (-dy1 / len1);
-      ny += (dx1 / len1);
-    }
-    if (len2 > 0.001) {
-      nx += (-dy2 / len2);
-      ny += (dx2 / len2);
-    }
-    
+    if (len1 > 0.001) { nx += (-dy1 / len1); ny += (dx1 / len1); }
+    if (len2 > 0.001) { nx += (-dy2 / len2); ny += (dx2 / len2); }
+
     const nLen = Math.hypot(nx, ny);
-    if (nLen > 0.001) {
-      normals.push([nx / nLen, ny / nLen]);
-    } else {
-      normals.push([0, 1]);
-    }
+    if (nLen > 0.001) normals.push([nx / nLen, ny / nLen]);
+    else normals.push([0, 1]);
   }
-  
-  // Offset por normales
-  const expanded = [];
-  for (let i = 0; i < n; i++) {
-    const [nx, ny] = normals[i];
-    expanded.push([
-      poly[i][0] + nx * amount,
-      poly[i][1] + ny * amount
-    ]);
-  }
-  
-  return expanded;
-}
 
-// Mantener expandPolygon original como fallback
-function expandPolygon(poly, amount) {
-  if (!amount || amount === 0) return poly;
-  const cx = poly.reduce((s, p) => s + p[0], 0) / poly.length;
-  const cy = poly.reduce((s, p) => s + p[1], 0) / poly.length;
-  return poly.map(([x, y]) => {
-    const dx = x - cx, dy = y - cy;
-    const len = Math.hypot(dx, dy) || 1;
-    return [x + (dx / len) * amount, y + (dy / len) * amount];
-  });
-}
-
-function hexToRgb(hex) {
-  if (!hex || typeof hex !== 'string') return { r: 0, g: 0, b: 0 };
-  const clean = hex.replace('#', '');
-  if (clean.length !== 6) return { r: 0, g: 0, b: 0 };
-  const r = parseInt(clean.slice(0, 2), 16);
-  const g = parseInt(clean.slice(2, 4), 16);
-  const b = parseInt(clean.slice(4, 6), 16);
-  return {
-    r: isNaN(r) ? 0 : r,
-    g: isNaN(g) ? 0 : g,
-    b: isNaN(b) ? 0 : b
-  };
-}
-
-function sanitizeFileName(name) {
-  if (!name) return null;
-  return name.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 50);
-}
-
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  const len = bytes.length;
-  const chunkSize = 65536;
-  for (let i = 0; i < len; i += chunkSize) {
-    const chunk = bytes.slice(i, i + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-  return btoa(binary);
+  return poly.map((p, i) => [p[0] + normals[i][0] * amount, p[1] + normals[i][1] * amount]);
 }
