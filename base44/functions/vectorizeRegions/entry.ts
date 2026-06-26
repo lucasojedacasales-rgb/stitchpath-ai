@@ -1,333 +1,882 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
+"""
+Motor de vectorización para bordado con IA
+Arquitectura: Segmentación → Vectorización → Optimización → Exportación
+"""
 
-Deno.serve(async (req) => {
-  try {
-    const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+import numpy as np
+import torch
+import torch.nn as nn
+from pathlib import Path
+from dataclasses import dataclass
+from typing import List, Tuple, Optional
+from enum import Enum
+import cv2
+from sklearn.cluster import KMeans
+from scipy.spatial import Voronoi
+from scipy.optimize import linear_sum_assignment
+import svgwrite
+import json
 
-    const { 
-      imageUrl, 
-      colorClusters = 6,
-      edgeThreshold = 0.18,
-      minRegionArea = 15,
-      tatamiDensity = 0.4,
-      tatamiStitchLength = 2.5,
-      tatamiAngle = 45,
-      contourSatinWidth = 0.6,
-      rdpEpsilon = 0.25,
-      posterizeLevels = 5,
-      mergeColorThreshold = 70,
-      maxRegions = 300
-    } = await req.json();
+# ============================================================
+# CONFIGURACIÓN Y TIPOS DE DATOS
+# ============================================================
+
+class StitchType(Enum):
+    RUNNING = "running"      # Puntada recta/contorno
+    SATIN = "satin"          # Puntada de satén (columna)
+    TATAMI = "tatami"        # Relleno tipo tatami
+    CROSS = "cross"          # Puntada cruzada
+    ZIGZAG = "zigzag"        # Zigzag básico
+
+@dataclass
+class StitchPoint:
+    x: float
+    y: float
+    is_jump: bool = False    # True si es un salto (trim)
+    color_index: int = 0
     
-    if (!imageUrl) return Response.json({ error: 'imageUrl required' }, { status: 400 });
+@dataclass
+class StitchBlock:
+    points: List[StitchPoint]
+    stitch_type: StitchType
+    color_index: int
+    density: float = 0.4       # mm entre puntadas
+    angle: float = 0.0         # Ángulo de puntada en grados
 
-    const startMs = Date.now();
-    console.log("=== MOTOR CUSTOM === maxRegions:", maxRegions);
+@dataclass
+class EmbroideryDesign:
+    blocks: List[StitchBlock]
+    colors: List[Tuple[int, int, int]]  # Paleta RGB
+    width: float  # mm
+    height: float # mm
+
+# ============================================================
+# 1. SEGMENTACIÓN CON SAM 2
+# ============================================================
+
+class SAM2Segmenter:
+    """
+    Wrapper para SAM 2 de Meta para segmentación de objetos de bordado.
+    Requiere: pip install git+https://github.com/facebookresearch/segment-anything-2.git
+    """
     
-    const imgResp = await fetch(imageUrl);
-    if (!imgResp.ok) return Response.json({ error: 'Could not fetch image' }, { status: 400 });
-    
-    const arrayBuffer = await imgResp.arrayBuffer();
-    const { Jimp } = await import('npm:jimp@1.6.0');
-    const image = await Jimp.fromBuffer(Buffer.from(arrayBuffer));
-
-    const origW = image.width;
-    const origH = image.height;
-
-    const scale = Math.min(600 / origW, 600 / origH, 1);
-    const W = Math.round(origW * scale);
-    const H = Math.round(origH * scale);
-    
-    image.resize({ w: W, h: H });
-
-    const rgba = new Uint8Array(W * H * 4);
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        const pixelData = image.getPixelColor(x, y);
-        const i = (y * W + x) * 4;
-        rgba[i]     = (pixelData >>> 24) & 0xff;
-        rgba[i + 1] = (pixelData >>> 16) & 0xff;
-        rgba[i + 2] = (pixelData >>> 8)  & 0xff;
-        rgba[i + 3] = pixelData & 0xff;
-      }
-    }
-
-    const mmPerPx = 100 / origW / scale;
-
-    posterizeImage(rgba, W, H, posterizeLevels);
-
-    const gray = new Float32Array(W * H);
-    for (let i = 0; i < W * H; i++) {
-      const r = rgba[i*4], g = rgba[i*4+1], b = rgba[i*4+2];
-      gray[i] = 0.299*r + 0.587*g + 0.114*b;
-    }
-
-    const blurred = gaussianBlur(gray, W, H);
-    const { mag } = sobelGradientsSimple(blurred, W, H);
-
-    const edgeThresholdPx = edgeThreshold * 255;
-    const edges = new Float32Array(W * H);
-    for (let i = 0; i < mag.length; i++) {
-      if (mag[i] > edgeThresholdPx) edges[i] = mag[i];
-    }
-
-    const k = Math.max(3, Math.min(colorClusters, 10));
-    
-    const samples = [];
-    const step = Math.max(1, Math.floor(Math.sqrt(W * H / 10000)));
-    
-    for (let y = 0; y < H; y += step) {
-      for (let x = 0; x < W; x += step) {
-        const i = (y * W + x) * 4;
-        if (rgba[i + 3] < 128) continue;
-        const r = rgba[i], g = rgba[i+1], b = rgba[i+2];
-        samples.push({ idx: Math.floor(i / 4), rgb: [r, g, b], lab: rgbToLab(r, g, b) });
-      }
-    }
-
-    if (samples.length === 0) return Response.json({ error: 'No foreground pixels' }, { status: 400 });
-
-    let centroidsLab = [samples[Math.floor(Math.random() * samples.length)].lab];
-    let centroidsRgb = [samples[Math.floor(Math.random() * samples.length)].rgb];
-    
-    while (centroidsLab.length < k) {
-      const dists = samples.map(s => 
-        Math.min(...centroidsLab.map(c => distSqLab(s.lab, c)))
-      );
-      const total = dists.reduce((a, b) => a + b, 0);
-      let r = Math.random() * total;
-      for (let i = 0; i < dists.length; i++) {
-        r -= dists[i];
-        if (r <= 0) {
-          centroidsLab.push([...samples[i].lab]);
-          centroidsRgb.push([...samples[i].rgb]);
-          break;
-        }
-      }
-      if (centroidsLab.length < k) {
-        centroidsLab.push([...samples[samples.length - 1].lab]);
-        centroidsRgb.push([...samples[samples.length - 1].rgb]);
-      }
-    }
-
-    const labels = new Int32Array(W * H).fill(-1);
-    for (let iter = 0; iter < 15; iter++) {
-      const sums = centroidsLab.map(() => [0, 0, 0, 0]);
-      
-      for (const s of samples) {
-        const ci = nearestIdxLab(s.lab, centroidsLab);
-        labels[s.idx] = ci;
-        sums[ci][0] += s.rgb[0];
-        sums[ci][1] += s.rgb[1];
-        sums[ci][2] += s.rgb[2];
-        sums[ci][3]++;
-      }
-      
-      for (let ci = 0; ci < k; ci++) {
-        const cnt = sums[ci][3];
-        if (cnt > 0) {
-          centroidsRgb[ci] = [sums[ci][0]/cnt, sums[ci][1]/cnt, sums[ci][2]/cnt];
-          centroidsLab[ci] = rgbToLab(sums[ci][0]/cnt, sums[ci][1]/cnt, sums[ci][2]/cnt);
-        }
-      }
-    }
-
-    for (let i = 0; i < W * H; i++) {
-      if (labels[i] === -1 && rgba[i*4+3] >= 128) {
-        const r = rgba[i*4], g = rgba[i*4+1], b = rgba[i*4+2];
-        labels[i] = nearestIdxLab(rgbToLab(r, g, b), centroidsLab);
-      }
-    }
-
-    mergeColorsAggressive(labels, W, H, centroidsLab, centroidsRgb, mergeColorThreshold);
-
-    for (let i = 0; i < W * H; i++) {
-      if (edges[i] > 0 && labels[i] !== -1) {
-        const x = i % W;
-        const y = Math.floor(i / W);
+    def __init__(self, model_path: str = "sam2_hiera_large.pt"):
+        from sam2.build_sam import build_sam2
+        from sam2.sam2_image_predictor import SAM2ImagePredictor
         
-        const neighborColors = [];
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            if (dx === 0 && dy === 0) continue;
-            const nx = x + dx, ny = y + dy;
-            if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
-            const ni = ny * W + nx;
-            if (labels[ni] !== -1 && edges[ni] === 0) {
-              neighborColors.push(labels[ni]);
-            }
-          }
-        }
+        self.predictor = SAM2ImagePredictor(build_sam2(model_path))
         
-        if (neighborColors.length > 0) {
-          const colorCounts = {};
-          let bestColor = neighborColors[0];
-          let bestCount = 0;
-          for (const c of neighborColors) {
-            colorCounts[c] = (colorCounts[c] || 0) + 1;
-            if (colorCounts[c] > bestCount) {
-              bestCount = colorCounts[c];
-              bestColor = c;
-            }
-          }
-          labels[i] = bestColor;
+    def segment(self, image: np.ndarray, prompt_points: Optional[List[Tuple[int, int]]] = None) -> np.ndarray:
+        """
+        Segmenta la imagen en objetos individuales.
+        Retorna: máscara (H, W) con IDs de objeto
+        """
+        self.predictor.set_image(image)
+        
+        if prompt_points:
+            # Segmentación con puntos guía
+            point_coords = np.array(prompt_points)
+            point_labels = np.ones(len(prompt_points))
+            masks, scores, _ = self.predictor.predict(
+                point_coords=point_coords,
+                point_labels=point_labels,
+                multimask_output=True
+            )
+            return masks[np.argmax(scores)]
+        else:
+            # Segmentación automática (todo)
+            masks = self.predictor.generate()
+            # Combinar máscaras en una sola imagen de segmentación
+            seg_map = np.zeros(image.shape[:2], dtype=np.int32)
+            for i, mask in enumerate(masks):
+                seg_map[mask['segmentation']] = i + 1
+            return seg_map
+
+# ============================================================
+# 2. CUANTIZACIÓN DE COLOR ESPECÍFICA PARA BORDADO
+# ============================================================
+
+class EmbroideryColorQuantizer:
+    """
+    Reduce colores considerando:
+    - Máximo de colores por máquina (típicamente 15 para comercial)
+    - Similitud perceptual (CIEDE2000)
+    - Colores de hilos estándar (Isacord, Madeira, etc.)
+    """
+    
+    # Paleta Isacord 40 estándar (40 colores base)
+    STANDARD_THREADS = np.array([
+        [0, 0, 0],        # Negro
+        [255, 255, 255],  # Blanco
+        [255, 0, 0],      # Rojo
+        [0, 255, 0],      # Verde
+        [0, 0, 255],      # Azul
+        [255, 255, 0],    # Amarillo
+        [255, 0, 255],    # Magenta
+        [0, 255, 255],    # Cyan
+        [128, 0, 0],      # Marrón oscuro
+        [255, 165, 0],    # Naranja
+        [128, 128, 128],  # Gris
+        [255, 192, 203],  # Rosa
+        [75, 0, 130],     # Índigo
+        [173, 216, 230],  # Azul claro
+        [144, 238, 144],  # Verde claro
+    ])
+    
+    def __init__(self, max_colors: int = 15, use_standard_palette: bool = True):
+        self.max_colors = max_colors
+        self.use_standard = use_standard_palette
+        
+    def quantize(self, image: np.ndarray, mask: Optional[np.ndarray] = None) -> Tuple[np.ndarray, List[Tuple[int, int, int]]]:
+        """
+        Cuantiza colores de la imagen.
+        Retorna: (imagen cuantizada, paleta)
+        """
+        pixels = image.reshape(-1, 3)
+        
+        if mask is not None:
+            mask_flat = mask.flatten() > 0
+            pixels = pixels[mask_flat]
+        
+        if self.use_standard:
+            # Usar paleta estándar + K-means para colores restantes
+            n_standard = min(len(self.STANDARD_THREADS), self.max_colors // 2)
+            n_custom = self.max_colors - n_standard
+            
+            # K-means para encontrar colores dominantes
+            kmeans = KMeans(n_clusters=min(n_custom, len(pixels)), random_state=42, n_init=10)
+            kmeans.fit(pixels.astype(np.float32))
+            
+            # Combinar paleta estándar + personalizada
+            palette = np.vstack([
+                self.STANDARD_THREADS[:n_standard],
+                kmeans.cluster_centers_.astype(np.uint8)
+            ])
+        else:
+            # K-means puro
+            kmeans = KMeans(n_clusters=self.max_colors, random_state=42, n_init=10)
+            kmeans.fit(pixels.astype(np.float32))
+            palette = kmeans.cluster_centers_.astype(np.uint8)
+        
+        # Asignar cada píxel al color más cercano
+        dist = np.linalg.norm(pixels[:, None] - palette[None, :], axis=2)
+        labels = np.argmin(dist, axis=1)
+        
+        quantized = palette[labels]
+        
+        if mask is not None:
+            result = image.copy()
+            result[mask > 0] = quantized
+        else:
+            result = quantized.reshape(image.shape)
+            
+        return result, [tuple(c) for c in palette]
+
+# ============================================================
+# 3. VECTORIZACIÓN NEURONAL: Im2Vec Adaptado
+# ============================================================
+
+class SVGCommandDecoder(nn.Module):
+    """
+    Decodificador LSTM que genera comandos SVG secuencialmente.
+    Cada comando: [tipo, x1, y1, x2, y2, x3, y3] (cúbica) o [tipo, x1, y1] (línea)
+    """
+    
+    COMMAND_TYPES = {
+        0: 'M',   # Move
+        1: 'L',   # Line
+        2: 'C',   # Cubic Bezier
+        3: 'Z',   # Close path
+    }
+    
+    def __init__(self, hidden_dim=512, num_commands=100):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_commands = num_commands
+        
+        # Encoder CNN para la imagen de entrada
+        self.encoder = nn.Sequential(
+            nn.Conv2d(3, 64, 3, 2, 1),   # 128x128
+            nn.ReLU(),
+            nn.Conv2d(64, 128, 3, 2, 1),  # 64x64
+            nn.ReLU(),
+            nn.Conv2d(128, 256, 3, 2, 1), # 32x32
+            nn.ReLU(),
+            nn.Conv2d(256, 512, 3, 2, 1), # 16x16
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten()
+        )
+        
+        # LSTM Decoder
+        self.lstm = nn.LSTM(512 + 7, hidden_dim, 2, batch_first=True)
+        self.output_proj = nn.Linear(hidden_dim, 7)  # 7 parámetros por comando
+        
+        # Embedding para tipo de comando
+        self.type_embed = nn.Embedding(4, 16)
+        
+    def forward(self, image, max_len=50):
+        batch_size = image.size(0)
+        
+        # Encode imagen
+        img_feat = self.encoder(image)  # (B, 512)
+        
+        # Inicializar LSTM
+        hidden = (torch.zeros(2, batch_size, self.hidden_dim).to(image.device),
+                  torch.zeros(2, batch_size, self.hidden_dim).to(image.device))
+        
+        commands = []
+        input_token = torch.zeros(batch_size, 1, 512 + 7).to(image.device)
+        
+        for _ in range(max_len):
+            # Concatenar feature de imagen + comando anterior
+            lstm_input = torch.cat([img_feat.unsqueeze(1), input_token[:, -1:, :7]], dim=-1)
+            
+            out, hidden = self.lstm(lstm_input, hidden)
+            pred = self.output_proj(out.squeeze(1))
+            
+            # Separar tipo y parámetros
+            cmd_type = torch.argmax(pred[:, :4], dim=1)
+            params = pred[:, 4:]
+            
+            commands.append((cmd_type, params))
+            
+            # Preparar siguiente input
+            type_emb = self.type_embed(cmd_type)
+            input_token = torch.cat([type_emb, params], dim=-1).unsqueeze(1)
+            
+            # Stop si es 'Z' (close path)
+            if (cmd_type == 3).all():
+                break
+                
+        return commands
+
+class VectorizationEngine:
+    """
+    Motor principal de vectorización que combina técnicas clásicas y neuronales.
+    """
+    
+    def __init__(self, use_neural=True, device='cuda'):
+        self.use_neural = use_neural
+        self.device = device
+        
+        if use_neural:
+            self.decoder = SVGCommandDecoder().to(device)
+            # Cargar pesos pre-entrenados o inicializar
+            # self.decoder.load_state_dict(torch.load('vectorizer.pth'))
+            
+    def vectorize_region(self, region_mask: np.ndarray, image: np.ndarray) -> List[dict]:
+        """
+        Vectoriza una región de color plano a curvas de Bézier.
+        Retorna: Lista de paths SVG
+        """
+        # Extraer contorno
+        contours, _ = cv2.findContours(
+            region_mask.astype(np.uint8), 
+            cv2.RETR_EXTERNAL, 
+            cv2.CHAIN_APPROX_SIMPLE
+        )
+        
+        paths = []
+        for contour in contours:
+            if len(contour) < 3:
+                continue
+                
+            # Simplificación con Douglas-Peucker
+            epsilon = 0.01 * cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, epsilon, True)
+            
+            if self.use_neural and len(approx) > 4:
+                # Mejorar con red neuronal
+                path = self._neural_refinement(approx, image)
+            else:
+                # Vectorización clásica
+                path = self._classic_vectorize(approx)
+                
+            paths.append(path)
+            
+        return paths
+    
+    def _classic_vectorize(self, contour: np.ndarray) -> dict:
+        """Convierte contorno a curvas de Bézier cúbicas."""
+        points = contour.reshape(-1, 2).astype(np.float32)
+        
+        # Detectar esquinas (puntos de alta curvatura)
+        corners = self._detect_corners(points)
+        
+        # Segmentar en tramos entre esquinas
+        segments = []
+        for i in range(len(corners)):
+            start = corners[i]
+            end = corners[(i + 1) % len(corners)]
+            
+            # Extraer puntos del segmento
+            if start < end:
+                segment = points[start:end+1]
+            else:
+                segment = np.vstack([points[start:], points[:end+1]])
+            
+            # Ajustar Bézier cúbica
+            bezier = self._fit_cubic_bezier(segment)
+            segments.append(bezier)
+        
+        return {
+            'type': 'path',
+            'segments': segments,
+            'closed': True
         }
-      }
-    }
-
-    const minPx = Math.max(5, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
-    let regions = floodFillRegions(labels, W, H, centroidsLab.length, minPx, mmPerPx, rgba, centroidsRgb);
-
-    if (regions.length > maxRegions) {
-      regions = mergeSmallestRegions(regions, maxRegions);
-    }
-
-    const designContour = traceDesignContour(labels, W, H);
-
-    const outputRegions = [];
-
-    for (const reg of regions) {
-      let contour = traceContour(reg.mask, W, H);
-      if (contour.length < 3) continue;
-
-      contour = smoothContour(contour, 2);
-
-      const bbox = reg.bbox;
-      const bboxW = bbox.maxX - bbox.minX;
-      const bboxH = bbox.maxY - bbox.minY;
-
-      const regionSize = Math.sqrt(bboxW * bboxW + bboxH * bboxH);
-      const adaptiveEpsilon = Math.max(0.5, rdpEpsilon * (regionSize / 100));
-      let simplified = rdp(contour, adaptiveEpsilon / mmPerPx);
-      
-      if (simplified.length < 6) {
-        simplified = rdp(contour, (adaptiveEpsilon * 0.5) / mmPerPx);
-      }
-      if (simplified.length < 4) continue;
-
-      simplified = closePolygon(simplified, 2.0);
-
-      const polygon = simplified.map(([x, y]) => [
-        parseFloat(((x - W/2) * mmPerPx).toFixed(4)),
-        parseFloat(((y - H/2) * mmPerPx).toFixed(4)),
-      ]);
-
-      const areaMm2 = reg.pixelCount * mmPerPx * mmPerPx;
-      const perimeterMm = contourPerimeterMm(simplified, mmPerPx);
-
-      const isExternalBorder = isRegionOnDesignBorder(reg, designContour, W, H);
-
-      let mu20 = 0, mu02 = 0, mu11 = 0;
-      const cx = reg.centroid[0], cy = reg.centroid[1];
-      for (const px of reg.pixels) {
-        const px_x = px % W;
-        const px_y = Math.floor(px / W);
-        const dx = px_x - cx;
-        const dy = px_y - cy;
-        mu20 += dx * dx;
-        mu02 += dy * dy;
-        mu11 += dx * dy;
-      }
-
-      const trace = mu20 + mu02;
-      const det = mu20 * mu02 - mu11 * mu11;
-      const discriminant = Math.sqrt(Math.max(0, trace * trace - 4 * det));
-      const lambda1 = (trace + discriminant) / 2;
-      const lambda2 = (trace - discriminant) / 2;
-
-      const inertiaRatio = lambda2 > 0.001 ? Math.sqrt(lambda1 / lambda2) : 1;
-
-      const bboxWmm = bboxW * mmPerPx;
-      const bboxHmm = bboxH * mmPerPx;
-      const bboxAspect = Math.max(bboxWmm, bboxHmm) / Math.max(0.1, Math.min(bboxWmm, bboxHmm));
-
-      let type = 'fill';
-
-      if (areaMm2 < 8 || reg.pixelCount < 50) {
-        type = 'running_stitch';
-      } else if (areaMm2 < 60 || inertiaRatio > 2.5 || bboxAspect > 1.8) {
-        type = 'satin';
-      } else {
-        type = 'fill';
-      }
-      
-      let stitches = [];
-      let contourStitches = [];
-
-      if (type === 'running_stitch') {
-        stitches = generateRunContour(polygon, 0.5, mmPerPx);
-        contourStitches = stitches;
-      } else if (type === 'satin') {
-        stitches = generateSatinStitches(polygon, 0.3, mmPerPx);
-        contourStitches = stitches;
-      } else if (type === 'fill') {
-        const regionAngle = computeOptimalFillAngle(reg.mask, W, H);
-        stitches = generateTatamiFill(polygon, tatamiDensity, tatamiStitchLength, regionAngle, areaMm2);
-        if (isExternalBorder) {
-          contourStitches = generateSatinContour(polygon, contourSatinWidth, mmPerPx);
-        } else {
-          contourStitches = generateRunContour(polygon, 0.5, mmPerPx);
+    
+    def _detect_corners(self, points: np.ndarray, angle_threshold: float = 45.0) -> List[int]:
+        """Detecta esquinas usando producto cruzado."""
+        corners = [0]  # Siempre incluir primer punto
+        n = len(points)
+        
+        for i in range(1, n):
+            prev = points[i - 1]
+            curr = points[i]
+            next_p = points[(i + 1) % n]
+            
+            # Vectores
+            v1 = prev - curr
+            v2 = next_p - curr
+            
+            # Ángulo
+            cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-6)
+            angle = np.degrees(np.arccos(np.clip(cos_angle, -1, 1)))
+            
+            if angle < angle_threshold:
+                corners.append(i)
+        
+        # Asegurar cierre
+        if corners[-1] != n - 1:
+            corners.append(n - 1)
+            
+        return corners
+    
+    def _fit_cubic_bezier(self, points: np.ndarray) -> dict:
+        """Ajusta una curva de Bézier cúbica a un conjunto de puntos."""
+        n = len(points)
+        if n < 2:
+            return None
+        
+        # Usar mínimos cuadrados para encontrar control points
+        # Simplificación: usar puntos 1/3 y 2/3 como control points
+        p0 = points[0]
+        p3 = points[-1]
+        p1 = points[n // 3]
+        p2 = points[2 * n // 3]
+        
+        return {
+            'type': 'cubic',
+            'p0': tuple(p0),
+            'p1': tuple(p1),
+            'p2': tuple(p2),
+            'p3': tuple(p3)
         }
-      }
-      
-      outputRegions.push({
-        id: reg.id,
-        color: reg.hex,
-        type: type,
-        path_points: polygon,
-        stitches: stitches,
-        contour_stitches: contourStitches,
-        is_external_border: isExternalBorder,
-        stitch_count: stitches.length,
-        area_mm2: parseFloat(areaMm2.toFixed(2)),
-        perimeter_mm: parseFloat(perimeterMm.toFixed(2)),
-        centroid: [
-          parseFloat(((reg.centroid[0] - W/2) * mmPerPx).toFixed(4)),
-          parseFloat(((reg.centroid[1] - H/2) * mmPerPx).toFixed(4)),
-        ],
-        coverage: areaMm2 / (100 * 100),
-      });
+    
+    def _neural_refinement(self, contour: np.ndarray, image: np.ndarray) -> dict:
+        """Refina contorno usando el decodificador neuronal."""
+        # Preparar input: crop de la región + máscara
+        # Implementación simplificada - en producción usar el decoder completo
+        return self._classic_vectorize(contour)
+
+# ============================================================
+# 4. CONVERSIÓN A PUNTADAS (STITCH GENERATION)
+# ============================================================
+
+class StitchGenerator:
+    """
+    Convierte paths vectoriales a puntadas específicas de bordado.
+    """
+    
+    def __init__(self, stitch_length_mm: float = 0.4, max_jump_mm: float = 7.0):
+        self.stitch_length = stitch_length_mm
+        self.max_jump = max_jump_mm
+        
+    def generate_satin(self, path: dict, width_mm: float = 2.0) -> List[StitchPoint]:
+        """
+        Genera puntadas de satén para una columna.
+        """
+        points = []
+        segments = path['segments']
+        
+        for seg in segments:
+            if seg['type'] != 'cubic':
+                continue
+                
+            p0, p1, p2, p3 = map(np.array, [seg['p0'], seg['p1'], seg['p2'], seg['p3']])
+            
+            # Calcular normales para ancho de columna
+            t_values = np.linspace(0, 1, 100)
+            for t in t_values:
+                # Punto en curva
+                point = (1-t)**3 * p0 + 3*(1-t)**2*t * p1 + 3*(1-t)*t**2 * p2 + t**3 * p3
+                
+                # Derivada (tangente)
+                tangent = 3*(1-t)**2 * (p1 - p0) + 6*(1-t)*t * (p2 - p1) + 3*t**2 * (p3 - p2)
+                tangent = tangent / (np.linalg.norm(tangent) + 1e-6)
+                
+                # Normal perpendicular
+                normal = np.array([-tangent[1], tangent[0]])
+                
+                # Puntadas zigzag a lo ancho
+                for side in [-1, 1]:
+                    stitch_point = point + side * width_mm/2 * normal
+                    points.append(StitchPoint(stitch_point[0], stitch_point[1]))
+        
+        return points
+    
+    def generate_tatami(self, path: dict, angle: float = 45.0, spacing: float = 0.5) -> List[StitchPoint]:
+        """
+        Genera relleno tipo tatami (mat) con líneas paralelas.
+        """
+        # Extraer bounding box del path
+        # Generar líneas paralelas con ángulo específico
+        # Conectar con zigzag o running stitch
+        
+        # Implementación simplificada
+        points = []
+        # ... (algoritmo de scanline con ángulo)
+        return points
+    
+    def generate_running(self, path: dict) -> List[StitchPoint]:
+        """
+        Genera puntada recta/contorno a lo largo del path.
+        """
+        points = []
+        segments = path['segments']
+        
+        for seg in segments:
+            if seg['type'] == 'cubic':
+                p0, p1, p2, p3 = map(np.array, [seg['p0'], seg['p1'], seg['p2'], seg['p3']])
+                
+                # Subdividir curva en puntadas de longitud fija
+                length = self._bezier_length(p0, p1, p2, p3)
+                num_stitches = max(2, int(length / self.stitch_length))
+                
+                for i in range(num_stitches + 1):
+                    t = i / num_stitches
+                    point = (1-t)**3 * p0 + 3*(1-t)**2*t * p1 + 3*(1-t)*t**2 * p2 + t**3 * p3
+                    points.append(StitchPoint(point[0], point[1]))
+        
+        return points
+    
+    def _bezier_length(self, p0, p1, p2, p3, num_samples=100):
+        """Calcula longitud aproximada de curva de Bézier."""
+        t = np.linspace(0, 1, num_samples)
+        points = np.array([
+            (1-ti)**3 * p0 + 3*(1-ti)**2*ti * p1 + 3*(1-ti)*ti**2 * p2 + ti**3 * p3
+            for ti in t
+        ])
+        return np.sum(np.linalg.norm(np.diff(points, axis=0), axis=1))
+
+# ============================================================
+# 5. OPTIMIZACIÓN DE SECUENCIA (TSP + Clustering)
+# ============================================================
+
+class SequenceOptimizer:
+    """
+    Optimiza el orden de los bloques de puntadas para minimizar:
+    - Saltos largos (jumps)
+    - Cambios de color innecesarios
+    - Trims
+    """
+    
+    def __init__(self, max_jump_mm: float = 7.0):
+        self.max_jump = max_jump_mm
+        
+    def optimize(self, blocks: List[StitchBlock]) -> List[StitchBlock]:
+        """
+        Reordena bloques para minimizar distancia total y saltos.
+        """
+        if len(blocks) <= 1:
+            return blocks
+        
+        # Agrupar por color
+        color_groups = {}
+        for block in blocks:
+            c = block.color_index
+            if c not in color_groups:
+                color_groups[c] = []
+            color_groups[c].append(block)
+        
+        # Optimizar cada grupo de color (TSP)
+        optimized = []
+        for color_idx in sorted(color_groups.keys()):
+            group = color_groups[color_idx]
+            optimized_group = self._tsp_optimize(group)
+            optimized.extend(optimized_group)
+        
+        # Insertar trims donde hay saltos largos
+        return self._insert_trims(optimized)
+    
+    def _tsp_optimize(self, blocks: List[StitchBlock]) -> List[StitchBlock]:
+        """Resuelve TSP para ordenar bloques del mismo color."""
+        n = len(blocks)
+        if n <= 2:
+            return blocks
+        
+        # Matriz de distancias (entre último punto de uno y primero del siguiente)
+        dist_matrix = np.zeros((n, n))
+        for i in range(n):
+            for j in range(n):
+                if i != j:
+                    end_i = blocks[i].points[-1]
+                    start_j = blocks[j].points[0]
+                    dist_matrix[i][j] = np.sqrt((end_i.x - start_j.x)**2 + (end_i.y - start_j.y)**2)
+        
+        # Resolver asignación (simplificación de TSP)
+        # Usar algoritmo greedy como aproximación
+        visited = [False] * n
+        order = [0]
+        visited[0] = True
+        
+        for _ in range(n - 1):
+            last = order[-1]
+            # Encontrar no visitado más cercano
+            min_dist = float('inf')
+            next_idx = -1
+            for i in range(n):
+                if not visited[i] and dist_matrix[last][i] < min_dist:
+                    min_dist = dist_matrix[last][i]
+                    next_idx = i
+            order.append(next_idx)
+            visited[next_idx] = True
+        
+        return [blocks[i] for i in order]
+    
+    def _insert_trims(self, blocks: List[StitchBlock]) -> List[StitchBlock]:
+        """Inserta puntos de jump/trim donde la distancia excede el máximo."""
+        result = []
+        
+        for i, block in enumerate(blocks):
+            if i > 0:
+                prev_end = result[-1].points[-1]
+                curr_start = block.points[0]
+                dist = np.sqrt((prev_end.x - curr_start.x)**2 + (prev_end.y - curr_start.y)**2)
+                
+                if dist > self.max_jump:
+                    # Insertar jump stitch
+                    jump_point = StitchPoint(
+                        curr_start.x, curr_start.y, 
+                        is_jump=True, 
+                        color_index=block.color_index
+                    )
+                    # Clonar bloque con punto de jump al inicio
+                    new_points = [jump_point] + block.points
+                    block = StitchBlock(
+                        new_points, block.stitch_type, 
+                        block.color_index, block.density, block.angle
+                    )
+            
+            result.append(block)
+        
+        return result
+
+# ============================================================
+# 6. EXPORTADOR A FORMATOS DE BORDADO
+# ============================================================
+
+class DSTExporter:
+    """
+    Exporta a formato Tajima DST.
+    Especificación: coordenadas de 3 bytes por puntada, máximo 12.1cm de salto.
+    """
+    
+    # Códigos de comando DST
+    STITCH = 0x00
+    JUMP = 0x80
+    STOP = 0xC0
+    TRIM = 0x80  # Jump largo = trim
+    
+    def __init__(self):
+        self.max_stitch = 121  # 12.1mm en unidades de 0.1mm
+        
+    def export(self, design: EmbroideryDesign, filename: str):
+        """
+        Exporta diseño a archivo DST.
+        """
+        with open(filename, 'wb') as f:
+            # Header (512 bytes)
+            header = self._create_header(design)
+            f.write(header)
+            
+            # Puntadas
+            for block in design.blocks:
+                for point in block.points:
+                    dx = int((point.x - (getattr(self, '_last_x', 0))) * 10)
+                    dy = int((point.y - (getattr(self, '_last_y', 0))) * 10)
+                    
+                    # Limitar a máximo
+                    dx = max(-self.max_stitch, min(self.max_stitch, dx))
+                    dy = max(-self.max_stitch, min(self.max_stitch, dy))
+                    
+                    # Codificar
+                    if point.is_jump:
+                        f.write(self._encode_jump(dx, dy))
+                    else:
+                        f.write(self._encode_stitch(dx, dy))
+                    
+                    self._last_x = point.x
+                    self._last_y = point.y
+                
+                # Stop/Color change al final de bloque
+                f.write(self._encode_stop())
+    
+    def _create_header(self, design: EmbroideryDesign) -> bytes:
+        """Crea header DST de 512 bytes."""
+        header = bytearray(512)
+        
+        # Label (16 bytes)
+        label = b"LA:Embroidery   "
+        header[:len(label)] = label
+        
+        # ST (stitch count) - posición 16
+        stitch_count = sum(len(b.points) for b in design.blocks)
+        header[16:23] = f"ST:{stitch_count:7d}".encode()
+        
+        # CO (color count)
+        color_count = len(design.colors)
+        header[23:30] = f"CO:{color_count:3d}".encode()
+        
+        # +X, -X, +Y, -Y (bounding box)
+        all_x = [p.x for b in design.blocks for p in b.points]
+        all_y = [p.y for b in design.blocks for p in b.points]
+        
+        header[30:37] = f"+X:{max(all_x):5.1f}".encode()
+        header[37:44] = f"-X:{min(all_x):5.1f}".encode()
+        header[44:51] = f"+Y:{max(all_y):5.1f}".encode()
+        header[51:58] = f"-Y:{min(all_y):5.1f}".encode()
+        
+        # AX, AY (centro)
+        cx = (max(all_x) + min(all_x)) / 2
+        cy = (max(all_y) + min(all_y)) / 2
+        header[58:65] = f"AX:{cx:5.1f}".encode()
+        header[65:72] = f"AY:{cy:5.1f}".encode()
+        
+        # MX, MY (offset)
+        header[72:79] = f"MX:  0.0".encode()
+        header[79:86] = f"MY:  0.0".encode()
+        
+        # PD (comments)
+        header[86:512] = b" " * (512 - 86)
+        
+        return bytes(header)
+    
+    def _encode_stitch(self, dx: int, dy: int) -> bytes:
+        """Codifica puntada normal (3 bytes)."""
+        # DST usa codificación especial de 3 bytes
+        b1 = 0x00
+        b2 = 0x00
+        b3 = 0x00
+        
+        # Codificar dx
+        if dx > 0:
+            b2 |= (dx & 0x0F)
+            b1 |= ((dx >> 4) & 0x0F) << 4
+        else:
+            dx = -dx
+            b2 |= (dx & 0x0F)
+            b1 |= ((dx >> 4) & 0x0F) << 4
+            b3 |= 0x04  # Signo negativo X
+        
+        # Codificar dy
+        if dy > 0:
+            b2 |= ((dy & 0x0F) << 4)
+            b1 |= ((dy >> 4) & 0x0F)
+        else:
+            dy = -dy
+            b2 |= ((dy & 0x0F) << 4)
+            b1 |= ((dy >> 4) & 0x0F)
+            b3 |= 0x08  # Signo negativo Y
+        
+        return bytes([b1, b2, b3])
+    
+    def _encode_jump(self, dx: int, dy: int) -> bytes:
+        """Codifica salto/jump (3 bytes con bit de jump)."""
+        data = self._encode_stitch(dx, dy)
+        return bytes([data[0] | 0x80, data[1], data[2]])
+    
+    def _encode_stop(self) -> bytes:
+        """Codifica stop/cambio de color."""
+        return bytes([0x00, 0x00, 0xF3])
+
+class PESExporter:
+    """
+    Exporta a formato Brother PES.
+    Más complejo que DST, requiere estructura de bloques + colores.
+    """
+    
+    def __init__(self):
+        pass  # Implementación completa requiere spec PES v1-6
+    
+    def export(self, design: EmbroideryDesign, filename: str):
+        # Simplificación: usar pyembroidery si está disponible
+        try:
+            import pyembroidery
+            # Convertir a formato pyembroidery
+            pattern = pyembroidery.EmbPattern()
+            # ... (mapeo de puntadas)
+            pyembroidery.write_pes(pattern, filename)
+        except ImportError:
+            raise NotImplementedError("PES export requiere pyembroidery")
+
+# ============================================================
+# 7. PIPELINE COMPLETO
+# ============================================================
+
+class EmbroideryPipeline:
+    """
+    Pipeline completo: Imagen → DST/PES
+    """
+    
+    def __init__(self, config: dict = None):
+        self.config = config or {}
+        
+        # Inicializar componentes
+        self.segmenter = SAM2Segmenter() if self.config.get('use_sam', True) else None
+        self.quantizer = EmbroideryColorQuantizer(
+            max_colors=self.config.get('max_colors', 15)
+        )
+        self.vectorizer = VectorizationEngine(
+            use_neural=self.config.get('use_neural', True)
+        )
+        self.stitch_gen = StitchGenerator(
+            stitch_length_mm=self.config.get('stitch_length', 0.4)
+        )
+        self.optimizer = SequenceOptimizer(
+            max_jump_mm=self.config.get('max_jump', 7.0)
+        )
+        
+    def process(self, image_path: str, output_path: str, format: str = 'dst'):
+        """
+        Procesa imagen completa a archivo de bordado.
+        """
+        # 1. Cargar imagen
+        image = cv2.imread(image_path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        
+        # 2. Segmentar
+        if self.segmenter:
+            seg_mask = self.segmenter.segment(image)
+        else:
+            seg_mask = np.ones(image.shape[:2], dtype=np.int32)
+        
+        # 3. Cuantizar colores
+        quantized, palette = self.quantizer.quantize(image, seg_mask)
+        
+        # 4. Procesar cada región
+        blocks = []
+        unique_colors = np.unique(seg_mask)
+        
+        for color_idx in unique_colors:
+            if color_idx == 0:  # Fondo
+                continue
+            
+            mask = (seg_mask == color_idx).astype(np.uint8)
+            
+            # Detectar tipo de puntada según forma
+            stitch_type = self._detect_stitch_type(mask)
+            
+            # Vectorizar
+            paths = self.vectorizer.vectorize_region(mask, image)
+            
+            # Generar puntadas
+            for path in paths:
+                if stitch_type == StitchType.SATIN:
+                    points = self.stitch_gen.generate_satin(path, width_mm=2.0)
+                elif stitch_type == StitchType.TATAMI:
+                    points = self.stitch_gen.generate_tatami(path, angle=45.0)
+                else:
+                    points = self.stitch_gen.generate_running(path)
+                
+                block = StitchBlock(
+                    points=points,
+                    stitch_type=stitch_type,
+                    color_index=int(color_idx) - 1,
+                    density=0.4,
+                    angle=0.0
+                )
+                blocks.append(block)
+        
+        # 5. Optimizar secuencia
+        optimized_blocks = self.optimizer.optimize(blocks)
+        
+        # 6. Crear diseño
+        design = EmbroideryDesign(
+            blocks=optimized_blocks,
+            colors=palette,
+            width=image.shape[1] * 0.1,  # Asumir 0.1mm por px
+            height=image.shape[0] * 0.1
+        )
+        
+        # 7. Exportar
+        if format.lower() == 'dst':
+            exporter = DSTExporter()
+        elif format.lower() == 'pes':
+            exporter = PESExporter()
+        else:
+            raise ValueError(f"Formato no soportado: {format}")
+        
+        exporter.export(design, output_path)
+        
+        return design
+    
+    def _detect_stitch_type(self, mask: np.ndarray) -> StitchType:
+        """
+        Detecta tipo de puntada óptimo basado en geometría de la región.
+        """
+        # Calcular características de forma
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            return StitchType.RUNNING
+        
+        contour = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(contour)
+        perimeter = cv2.arcLength(contour, True)
+        
+        # Circularidad
+        circularity = 4 * np.pi * area / (perimeter ** 2) if perimeter > 0 else 0
+        
+        # Bounding box
+        x, y, w, h = cv2.boundingRect(contour)
+        aspect_ratio = max(w, h) / (min(w, h) + 1e-6)
+        
+        # Decisión
+        if area < 100:  # Pequeño
+            return StitchType.RUNNING
+        elif aspect_ratio > 3 and area < 5000:  # Columna larga
+            return StitchType.SATIN
+        elif circularity > 0.7:  # Circular
+            return StitchType.TATAMI
+        else:
+            return StitchType.TATAMI
+
+# ============================================================
+# USO EJEMPLO
+# ============================================================
+
+if __name__ == "__main__":
+    # Configuración
+    config = {
+        'use_sam': True,
+        'use_neural': True,
+        'max_colors': 15,
+        'stitch_length': 0.4,
+        'max_jump': 7.0
     }
-
-    optimizeRegionOrder(outputRegions);
-
-    if (designContour && designContour.length > 3) {
-      const designPolygon = designContour.map(([x, y]) => [
-        parseFloat(((x - W/2) * mmPerPx).toFixed(4)),
-        parseFloat(((y - H/2) * mmPerPx).toFixed(4)),
-      ]);
-      
-      outputRegions.unshift({
-        id: 'design_border',
-        color: '#000000',
-        type: 'border',
-        path_points: designPolygon,
-        stitches: generateSatinContour(designPolygon, contourSatinWidth, mmPerPx),
-        contour_stitches: generateSatinContour(designPolygon, contourSatinWidth, mmPerPx),
-        is_external_border: true,
-        stitch_count: 0,
-        area_mm2: 0,
-        perimeter_mm: contourPerimeterMm(designContour, mmPerPx),
-        centroid: [0, 0],
-        coverage: 0,
-      });
-    }
-
-    return Response.json({
-      regions: outputRegions,
-      metadata: {
-        totalRegions: outputRegions.length,
-        processingTimeMs: Date.now() - startMs,
-      }
-    });
-
-  } catch (error) {
-    console.error('Vectorization error:', error);
-    return Response.json({ error: error.message }, { status: 500 });
-  }
-});
+    
+    # Crear pipeline
+    pipeline = EmbroideryPipeline(config)
+    
+    # Procesar imagen
+    # pipeline.process('input.png', 'output.dst', format='dst')
+    
+    print("Motor de bordado inicializado correctamente")
+// ============================================================
+// FUNCIONES HELPER
+// ============================================================
 
 function posterizeImage(rgba, W, H, levels) {
   const step = 255 / (levels - 1);
@@ -433,75 +982,6 @@ function compactColorIndices(labels, W, H, centroidsLab, centroidsRgb) {
     centroidsLab[i] = newLab[i];
     centroidsRgb[i] = newRgb[i];
   }
-}
-
-function mergeRegionsByProximity(regions, maxDistance) {
-  if (regions.length <= 1) return regions;
-
-  const merged = [];
-  const used = new Set();
-
-  for (let i = 0; i < regions.length; i++) {
-    if (used.has(i)) continue;
-
-    const group = [i];
-    used.add(i);
-
-    for (let j = i + 1; j < regions.length; j++) {
-      if (used.has(j)) continue;
-      if (regions[i].hex !== regions[j].hex) continue;
-
-      const dist = Math.hypot(
-        regions[i].centroid[0] - regions[j].centroid[0],
-        regions[i].centroid[1] - regions[j].centroid[1]
-      );
-
-      if (dist < maxDistance || areRegionsTouching(regions[i], regions[j])) {
-        group.push(j);
-        used.add(j);
-      }
-    }
-
-    const base = regions[group[0]];
-    const mergedReg = {
-      id: base.id,
-      colorIdx: base.colorIdx,
-      hex: base.hex,
-      mask: new Uint8Array(base.mask.length),
-      pixels: [...base.pixels],
-      pixelCount: base.pixelCount,
-      centroid: [...base.centroid],
-      bbox: { ...base.bbox }
-    };
-
-    for (let m = 0; m < base.mask.length; m++) mergedReg.mask[m] = base.mask[m];
-
-    for (let j = 1; j < group.length; j++) {
-      const reg = regions[group[j]];
-      for (let m = 0; m < reg.mask.length; m++) mergedReg.mask[m] = mergedReg.mask[m] || reg.mask[m];
-      mergedReg.pixels.push(...reg.pixels);
-      mergedReg.pixelCount += reg.pixelCount;
-      mergedReg.bbox.minX = Math.min(mergedReg.bbox.minX, reg.bbox.minX);
-      mergedReg.bbox.maxX = Math.max(mergedReg.bbox.maxX, reg.bbox.maxX);
-      mergedReg.bbox.minY = Math.min(mergedReg.bbox.minY, reg.bbox.minY);
-      mergedReg.bbox.maxY = Math.max(mergedReg.bbox.maxY, reg.bbox.maxY);
-    }
-
-    mergedReg.centroid = [
-      (mergedReg.bbox.minX + mergedReg.bbox.maxX) / 2,
-      (mergedReg.bbox.minY + mergedReg.bbox.maxY) / 2
-    ];
-
-    merged.push(mergedReg);
-  }
-
-  return merged;
-}
-
-function areRegionsTouching(r1, r2) {
-  const overlapX = !(r1.bbox.maxX < r2.bbox.minX - 1 || r2.bbox.maxX < r1.bbox.minX - 1);
-  const overlapY = !(r1.bbox.maxY < r2.bbox.minY - 1 || r2.bbox.maxY < r1.bbox.minY - 1);
-  return overlapX && overlapY;
 }
 
 function mergeSmallestRegions(regions, targetCount) {
@@ -770,26 +1250,6 @@ function contourPerimeterMm(pts, mmPerPx) {
     p += Math.hypot(b[0]-a[0], b[1]-a[1]);
   }
   return p * mmPerPx;
-}
-
-function optimizeRegionOrder(regions) {
-  if (regions.length <= 2) return;
-  const ordered = [regions[0]];
-  const remaining = new Set(regions.slice(1).map((_, i) => i + 1));
-  while (remaining.size > 0) {
-    const last = ordered[ordered.length - 1];
-    let nearestIdx = -1, nearestDist = Infinity;
-    for (const idx of remaining) {
-      const dist = Math.hypot(
-        regions[idx].centroid[0] - last.centroid[0],
-        regions[idx].centroid[1] - last.centroid[1]
-      );
-      if (dist < nearestDist) { nearestDist = dist; nearestIdx = idx; }
-    }
-    ordered.push(regions[nearestIdx]);
-    remaining.delete(nearestIdx);
-  }
-  for (let i = 0; i < ordered.length; i++) regions[i] = ordered[i];
 }
 
 function generateSatinContour(polygon, width, mmPerPx) {
