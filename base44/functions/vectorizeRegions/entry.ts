@@ -18,13 +18,14 @@ Deno.serve(async (req) => {
       rdpEpsilon = 0.25,
       posterizeLevels = 5,
       mergeColorThreshold = 70,
-      maxRegions = 300  // ═══ CAMBIO 1: Aumentar límite de regiones ═══
+      maxRegions = 300
     } = await req.json();
     
     if (!imageUrl) return Response.json({ error: 'imageUrl required' }, { status: 400 });
 
     const startMs = Date.now();
-  console.log("=== MOTOR CUSTOM === maxRegions:", maxRegions);
+    console.log("=== MOTOR CUSTOM === maxRegions:", maxRegions);
+    
     const imgResp = await fetch(imageUrl);
     if (!imgResp.ok) return Response.json({ error: 'Could not fetch image' }, { status: 400 });
     
@@ -35,7 +36,6 @@ Deno.serve(async (req) => {
     const origW = image.width;
     const origH = image.height;
 
-    // Resolución moderada para balance calidad/velocidad
     const scale = Math.min(600 / origW, 600 / origH, 1);
     const W = Math.round(origW * scale);
     const H = Math.round(origH * scale);
@@ -56,14 +56,8 @@ Deno.serve(async (req) => {
 
     const mmPerPx = 100 / origW / scale;
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 1. POSTERIZACIÓN FUERTE PARA COLORES PLANOS
-    // ═══════════════════════════════════════════════════════════════════════
     posterizeImage(rgba, W, H, posterizeLevels);
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 2. DETECCIÓN DE BORDES SIMPLIFICADA
-    // ═══════════════════════════════════════════════════════════════════════
     const gray = new Float32Array(W * H);
     for (let i = 0; i < W * H; i++) {
       const r = rgba[i*4], g = rgba[i*4+1], b = rgba[i*4+2];
@@ -73,19 +67,14 @@ Deno.serve(async (req) => {
     const blurred = gaussianBlur(gray, W, H);
     const { mag } = sobelGradientsSimple(blurred, W, H);
 
-    // Umbral fijo más alto para menos ruido
     const edgeThresholdPx = edgeThreshold * 255;
     const edges = new Float32Array(W * H);
     for (let i = 0; i < mag.length; i++) {
       if (mag[i] > edgeThresholdPx) edges[i] = mag[i];
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 3. K-MEANS CON PALETA REDUCIDA Y MERGE INMEDIATO
-    // ═══════════════════════════════════════════════════════════════════════
     const k = Math.max(3, Math.min(colorClusters, 10));
     
-    // Muestrear píxeles para clustering (más rápido)
     const samples = [];
     const step = Math.max(1, Math.floor(Math.sqrt(W * H / 10000)));
     
@@ -100,7 +89,6 @@ Deno.serve(async (req) => {
 
     if (samples.length === 0) return Response.json({ error: 'No foreground pixels' }, { status: 400 });
 
-    // K-means++ inicialización
     let centroidsLab = [samples[Math.floor(Math.random() * samples.length)].lab];
     let centroidsRgb = [samples[Math.floor(Math.random() * samples.length)].rgb];
     
@@ -124,7 +112,6 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Iteraciones cortas
     const labels = new Int32Array(W * H).fill(-1);
     for (let iter = 0; iter < 15; iter++) {
       const sums = centroidsLab.map(() => [0, 0, 0, 0]);
@@ -147,7 +134,6 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Asignar labels a todos los píxeles
     for (let i = 0; i < W * H; i++) {
       if (labels[i] === -1 && rgba[i*4+3] >= 128) {
         const r = rgba[i*4], g = rgba[i*4+1], b = rgba[i*4+2];
@@ -155,83 +141,63 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 4. MERGE AGRESIVO DE COLORES SIMILARES
-    // ═══════════════════════════════════════════════════════════════════════
     mergeColorsAggressive(labels, W, H, centroidsLab, centroidsRgb, mergeColorThreshold);
 
-   // Asignar bordes al color del vecino más cercano (no borde)
-for (let i = 0; i < W * H; i++) {
-  if (edges[i] > 0 && labels[i] !== -1) {
-    const x = i % W;
-    const y = Math.floor(i / W);
-    
-    // Buscar en vecinos el color más común
-    const neighborColors = [];
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        if (dx === 0 && dy === 0) continue;
-        const nx = x + dx, ny = y + dy;
-        if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
-        const ni = ny * W + nx;
-        if (labels[ni] !== -1 && edges[ni] === 0) {
-          neighborColors.push(labels[ni]);
+    for (let i = 0; i < W * H; i++) {
+      if (edges[i] > 0 && labels[i] !== -1) {
+        const x = i % W;
+        const y = Math.floor(i / W);
+        
+        const neighborColors = [];
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+            const ni = ny * W + nx;
+            if (labels[ni] !== -1 && edges[ni] === 0) {
+              neighborColors.push(labels[ni]);
+            }
+          }
+        }
+        
+        if (neighborColors.length > 0) {
+          const colorCounts = {};
+          let bestColor = neighborColors[0];
+          let bestCount = 0;
+          for (const c of neighborColors) {
+            colorCounts[c] = (colorCounts[c] || 0) + 1;
+            if (colorCounts[c] > bestCount) {
+              bestCount = colorCounts[c];
+              bestColor = c;
+            }
+          }
+          labels[i] = bestColor;
         }
       }
     }
-    
-    if (neighborColors.length > 0) {
-      // Elegir el color más común entre vecinos
-      const colorCounts = {};
-      let bestColor = neighborColors[0];
-      let bestCount = 0;
-      for (const c of neighborColors) {
-        colorCounts[c] = (colorCounts[c] || 0) + 1;
-        if (colorCounts[c] > bestCount) {
-          bestCount = colorCounts[c];
-          bestColor = c;
-        }
-      }
-      labels[i] = bestColor;
-    }
-  }
-}
-    // ═══════════════════════════════════════════════════════════════════════
-    // 5. FLOOD FILL CON FILTRO DE ÁREA
-    // ═══════════════════════════════════════════════════════════════════════
+
     const minPx = Math.max(5, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
     let regions = floodFillRegions(labels, W, H, centroidsLab.length, minPx, mmPerPx, rgba, centroidsRgb);
 
-    // ═══ CAMBIO 2: Desactivar merge por proximidad para más regiones ═══
-    // regions = mergeRegionsByProximity(regions, 30);
-
-    // Limitar número máximo de regiones
     if (regions.length > maxRegions) {
       regions = mergeSmallestRegions(regions, maxRegions);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 6. CONTORNO EXTERNO DEL DISEÑO
-    // ═══════════════════════════════════════════════════════════════════════
     const designContour = traceDesignContour(labels, W, H);
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // 7. PROCESAR REGIONES
-    // ═══════════════════════════════════════════════════════════════════════
     const outputRegions = [];
 
     for (const reg of regions) {
       let contour = traceContour(reg.mask, W, H);
       if (contour.length < 3) continue;
 
-      // Suavizado ligero
       contour = smoothContour(contour, 2);
 
       const bbox = reg.bbox;
       const bboxW = bbox.maxX - bbox.minX;
       const bboxH = bbox.maxY - bbox.minY;
 
-      // RDP simplificado
       const regionSize = Math.sqrt(bboxW * bboxW + bboxH * bboxH);
       const adaptiveEpsilon = Math.max(0.5, rdpEpsilon * (regionSize / 100));
       let simplified = rdp(contour, adaptiveEpsilon / mmPerPx);
@@ -253,56 +219,40 @@ for (let i = 0; i < W * H; i++) {
 
       const isExternalBorder = isRegionOnDesignBorder(reg, designContour, W, H);
 
-      // Clasificación simple
-  
+      let mu20 = 0, mu02 = 0, mu11 = 0;
+      const cx = reg.centroid[0], cy = reg.centroid[1];
+      for (const px of reg.pixels) {
+        const px_x = px % W;
+        const px_y = Math.floor(px / W);
+        const dx = px_x - cx;
+        const dy = px_y - cy;
+        mu20 += dx * dx;
+        mu02 += dy * dy;
+        mu11 += dx * dy;
+      }
 
-// ═══════════════════════════════════════════════════════════════════════
-// CLASIFICACIÓN POR MOMENTOS DE INERCIA
-// ═══════════════════════════════════════════════════════════════════════
+      const trace = mu20 + mu02;
+      const det = mu20 * mu02 - mu11 * mu11;
+      const discriminant = Math.sqrt(Math.max(0, trace * trace - 4 * det));
+      const lambda1 = (trace + discriminant) / 2;
+      const lambda2 = (trace - discriminant) / 2;
 
-// 1. Calcular momentos de inercia centrados
-let mu20 = 0, mu02 = 0, mu11 = 0;
-const cx = reg.centroid[0], cy = reg.centroid[1];
-for (const px of reg.pixels) {
-  const px_x = px % W;
-  const px_y = Math.floor(px / W);
-  const dx = px_x - cx;
-  const dy = px_y - cy;
-  mu20 += dx * dx;
-  mu02 += dy * dy;
-  mu11 += dx * dy;
-}
+      const inertiaRatio = lambda2 > 0.001 ? Math.sqrt(lambda1 / lambda2) : 1;
 
-// 2. Autovalores (ejes principales de inercia)
-const trace = mu20 + mu02;
-const det = mu20 * mu02 - mu11 * mu11;
-const discriminant = Math.sqrt(Math.max(0, trace * trace - 4 * det));
-const lambda1 = (trace + discriminant) / 2;
-const lambda2 = (trace - discriminant) / 2;
+      const bboxWmm = bboxW * mmPerPx;
+      const bboxHmm = bboxH * mmPerPx;
+      const bboxAspect = Math.max(bboxWmm, bboxHmm) / Math.max(0.1, Math.min(bboxWmm, bboxHmm));
 
-// 3. Relación de aspecto de inercia (siempre >= 1)
-const inertiaRatio = lambda2 > 0.001 ? Math.sqrt(lambda1 / lambda2) : 1;
-
-// 4. Métricas adicionales para clasificación
-const bboxWmm = bboxW * mmPerPx;
-const bboxHmm = bboxH * mmPerPx;
-const bboxAspect = Math.max(bboxWmm, bboxHmm) / Math.max(0.1, Math.min(bboxWmm, bboxHmm));
-
-      // ═══ CAMBIO 4: Clasificación contorno-céntrica (estilo StitchFlow) ═══
       let type = 'fill';
 
-      // Regiones muy pequeñas: running stitch (detalles finos)
       if (areaMm2 < 8 || reg.pixelCount < 50) {
         type = 'running_stitch';
-      } 
-      // Regiones medianas y alargadas: satin (contornos y bordes)
-      else if (areaMm2 < 60 || inertiaRatio > 2.5 || bboxAspect > 1.8) {
+      } else if (areaMm2 < 60 || inertiaRatio > 2.5 || bboxAspect > 1.8) {
         type = 'satin';
-      } 
-      // Solo regiones realmente grandes: fill
-      else {
+      } else {
         type = 'fill';
       }
+      
       let stitches = [];
       let contourStitches = [];
 
@@ -321,6 +271,7 @@ const bboxAspect = Math.max(bboxWmm, bboxHmm) / Math.max(0.1, Math.min(bboxWmm, 
           contourStitches = generateRunContour(polygon, 0.5, mmPerPx);
         }
       }
+      
       outputRegions.push({
         id: reg.id,
         color: reg.hex,
@@ -340,10 +291,8 @@ const bboxAspect = Math.max(bboxWmm, bboxHmm) / Math.max(0.1, Math.min(bboxWmm, 
       });
     }
 
-    // Ordenar por proximidad
     optimizeRegionOrder(outputRegions);
 
-    // Contorno del diseño completo
     if (designContour && designContour.length > 3) {
       const designPolygon = designContour.map(([x, y]) => [
         parseFloat(((x - W/2) * mmPerPx).toFixed(4)),
@@ -380,10 +329,6 @@ const bboxAspect = Math.max(bboxWmm, bboxHmm) / Math.max(0.1, Math.min(bboxWmm, 
   }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// FUNCIONES CLAVE OPTIMIZADAS
-// ═══════════════════════════════════════════════════════════════════════════
-
 function posterizeImage(rgba, W, H, levels) {
   const step = 255 / (levels - 1);
   for (let i = 0; i < W * H * 4; i += 4) {
@@ -394,20 +339,17 @@ function posterizeImage(rgba, W, H, levels) {
   }
 }
 
-    // ═══ CAMBIO 3: Desactivar merge agresivo de colores ═══
-    // mergeColorsAggressive(labels, W, H, centroidsLab, centroidsRgb, mergeColorThreshold);
+function mergeColorsAggressive(labels, W, H, centroidsLab, centroidsRgb, mergeColorThreshold) {
   const k = centroidsLab.length;
   if (k <= 3) return;
 
-  // ═══ NUEVO: Contar píxeles por color ═══
   const colorCounts = new Array(k).fill(0);
   for (let i = 0; i < W * H; i++) {
     if (labels[i] !== -1) colorCounts[labels[i]]++;
   }
   const totalPixels = colorCounts.reduce((a, b) => a + b, 0);
-  const minAreaThreshold = totalPixels * 0.02; // 2% del área total
+  const minAreaThreshold = totalPixels * 0.02;
 
-  // ═══ NUEVO: Forzar merge de colores pequeños ═══
   const forcedMerges = new Map();
   for (let i = 0; i < k; i++) {
     if (colorCounts[i] < minAreaThreshold) {
@@ -425,16 +367,14 @@ function posterizeImage(rgba, W, H, levels) {
     }
   }
 
-  // Encontrar pares similares (con threshold adaptativo)
   const merges = new Map();
   
   for (let i = 0; i < k; i++) {
     for (let j = i + 1; j < k; j++) {
       const dist = deltaE2000(centroidsLab[i], centroidsLab[j]);
-      // Más permisivo con colores pequeños, más estricto con grandes
       const effectiveThreshold = (colorCounts[i] + colorCounts[j] < minAreaThreshold * 2) 
-        ? threshold * 1.5 
-        : threshold * 0.7;
+        ? mergeColorThreshold * 1.5 
+        : mergeColorThreshold * 0.7;
       
       if (dist < effectiveThreshold) {
         merges.set(j, i);
@@ -442,14 +382,12 @@ function posterizeImage(rgba, W, H, levels) {
     }
   }
   
-  // Combinar merges forzados con merges por similitud
   for (const [smallColor, targetColor] of forcedMerges) {
     merges.set(smallColor, targetColor);
   }
   
   if (merges.size === 0) return;
 
-  // Resolver transitividad (código original, sin cambios)
   const finalMerge = new Map();
   for (let i = 0; i < k; i++) {
     let current = i;
@@ -459,16 +397,10 @@ function posterizeImage(rgba, W, H, levels) {
     finalMerge.set(i, current);
   }
 
-  // Actualizar labels (sin cambios)
   for (let i = 0; i < W * H; i++) {
     if (labels[i] !== -1) labels[i] = finalMerge.get(labels[i]);
   }
 
-  // Compactar índices (sin cambios)
-  compactColorIndices(labels, W, H, centroidsLab, centroidsRgb);
-}
-
-  // Compactar índices
   compactColorIndices(labels, W, H, centroidsLab, centroidsRgb);
 }
 
@@ -530,7 +462,6 @@ function mergeRegionsByProximity(regions, maxDistance) {
       }
     }
 
-    // Crear región mergeada
     const base = regions[group[0]];
     const mergedReg = {
       id: base.id,
@@ -575,7 +506,6 @@ function areRegionsTouching(r1, r2) {
 
 function mergeSmallestRegions(regions, targetCount) {
   while (regions.length > targetCount) {
-    // Encontrar la región más pequeña
     let smallestIdx = 0;
     let smallestArea = Infinity;
     
@@ -587,7 +517,6 @@ function mergeSmallestRegions(regions, targetCount) {
       }
     }
 
-    // Encontrar la región más cercana del mismo color
     const small = regions[smallestIdx];
     let nearestIdx = -1;
     let nearestDist = Infinity;
@@ -608,7 +537,6 @@ function mergeSmallestRegions(regions, targetCount) {
     }
 
     if (nearestIdx === -1) {
-      // Si no hay del mismo color, mergear con cualquiera cercana
       for (let i = 0; i < regions.length; i++) {
         if (i === smallestIdx) continue;
         const dist = Math.hypot(
@@ -624,7 +552,6 @@ function mergeSmallestRegions(regions, targetCount) {
 
     if (nearestIdx === -1) break;
 
-    // Mergear
     const target = regions[nearestIdx];
     for (let m = 0; m < small.mask.length; m++) target.mask[m] = target.mask[m] || small.mask[m];
     target.pixels.push(...small.pixels);
@@ -696,10 +623,6 @@ function floodFillRegions(labels, W, H, k, minPx, mmPerPx, rgba, centroids) {
 
   return regions;
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// FUNCIONES DE CONTORNO Y GEOMETRÍA
-// ═══════════════════════════════════════════════════════════════════════════
 
 function smoothContour(contour, windowSize) {
   if (contour.length < windowSize * 2) return contour;
@@ -869,10 +792,6 @@ function optimizeRegionOrder(regions) {
   for (let i = 0; i < ordered.length; i++) regions[i] = ordered[i];
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// GENERACIÓN DE PUNTADAS
-// ═══════════════════════════════════════════════════════════════════════════
-
 function generateSatinContour(polygon, width, mmPerPx) {
   const stitches = [];
   const baseHalfWidth = width / 2;
@@ -939,10 +858,9 @@ function generateRunContour(polygon, spacing, mmPerPx) {
   return stitches;
 }
 
-function generateTatamiFill(polygon, density = 0.4, stitchLength = 2.5, angleDeg = 45) {
+function generateTatamiFill(polygon, density = 0.4, stitchLength = 2.5, angleDeg = 45, areaMm2 = 0) {
   if (!polygon || polygon.length < 3) return [];
   
-  // ═══ NUEVO: Calcular área para densidad adaptativa ═══
   let area = 0;
   for (let i = 0; i < polygon.length; i++) {
     const j = (i + 1) % polygon.length;
@@ -951,16 +869,13 @@ function generateTatamiFill(polygon, density = 0.4, stitchLength = 2.5, angleDeg
   }
   area = Math.abs(area) / 2;
   
-  // Densidad adaptativa: regiones grandes = menos densa
-const adaptiveDensity = area > 200 
-  ? density * 1.5
-  : area > 50 
-    ? density * 1.2
-    : density;
+  const adaptiveDensity = area > 200 
+    ? density * 1.5
+    : area > 50 
+      ? density * 1.2
+      : density;
   
-  
- 
-
+  const angle = angleDeg * Math.PI / 180;
   const cos = Math.cos(angle), sin = Math.sin(angle);
   const rotate = (p) => [p[0] * cos + p[1] * sin, -p[0] * sin + p[1] * cos];
   const unrotate = (p) => [p[0] * cos - p[1] * sin, p[0] * sin + p[1] * cos];
@@ -1028,10 +943,6 @@ function generateSatinStitches(polygon, density = 0.3, mmPerPx) {
   }
   return stitches;
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// UTILIDADES
-// ═══════════════════════════════════════════════════════════════════════════
 
 function gaussianBlur(gray, W, H) {
   const kernel = [1,4,6,4,1, 4,16,24,16,4, 6,24,36,24,6, 4,16,24,16,4, 1,4,6,4,1];
