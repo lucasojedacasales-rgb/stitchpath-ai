@@ -33,27 +33,35 @@ Deno.serve(async (req) => {
     if (traced_contours && traced_contours.regions && traced_contours.regions.length > 0) {
       const clientRegions = traced_contours.regions;
 
-      const regionDescriptions = clientRegions.slice(0, 40).map((r, i) => {
+      // === NUEVO: Usar métricas geométricas del vectorizador para clasificación ===
+      const regionDescriptions = clientRegions.slice(0, 150).map((r, i) => {
         const bbox = r.bbox;
         const cx = ((bbox.minX + bbox.maxX) / 2 / (traced_contours.analysisW || 512)).toFixed(3);
         const cy = ((bbox.minY + bbox.maxY) / 2 / (traced_contours.analysisH || 512)).toFixed(3);
         const areaPct = (r.coverage * 100).toFixed(1);
-        return `Región ${i}: color=${r.hex} centro=(${cx},${cy}) cobertura=${areaPct}%`;
+        // Usar métricas del vectorizador si existen
+        const compacidad = r.compacidad !== undefined ? r.compacidad.toFixed(2) : 'N/A';
+        const inertia = r.inertia_ratio !== undefined ? r.inertia_ratio.toFixed(2) : 'N/A';
+        const aspect = r.bbox_aspect !== undefined ? r.bbox_aspect.toFixed(2) : 'N/A';
+        const tipoVec = r.type || 'N/A';
+        return `Región ${i}: color=${r.hex} centro=(${cx},${cy}) cobertura=${areaPct}% tipo_vectorizador=${tipoVec} compacidad=${compacidad} inertia=${inertia} aspect=${aspect}`;
       }).join('\n');
 
       const labelPrompt = `Eres un experto digitalizador de bordados. Analiza la imagen.
 
-Tengo ${Math.min(clientRegions.length, 40)} regiones detectadas píxel a píxel:
+Tengo ${Math.min(clientRegions.length, 150)} regiones detectadas píxel a píxel:
 ${regionDescriptions}
 
 Para CADA región asigna (en orden 0, 1, 2...):
 - name: nombre descriptivo (ej: "cuerpo_principal", "ojo_izquierdo")
-- stitch_type: "fill" zonas grandes, "satin" bordes medianos, "running_stitch" detalles finos
-- density: 0.4-0.9
-- angle: 0-180 (ángulo puntadas)
+- stitch_type: respeta el tipo del vectorizador si existe, sino usa: "fill" zonas compactas grandes, "satin" bordes medianos/alargados, "running_stitch" detalles finos
+- density: 0.4-0.9 (fill=0.6-0.8, satin=0.5-0.7, running=0.3-0.5)
+- angle: 0-180 (ángulo puntadas). Si el vectorizador envió fill_angle, úsalo como base
 - layer_order: 1=primero (fills grandes antes que contornos)
 - underlay: true para fill/satin grandes, false para detalles
 - pull_compensation: 0.1-0.2
+
+IMPORTANTE: No cambies el stitch_type del vectorizador a menos que sea claramente incorrecto.
 
 Responde SOLO JSON:
 {"labels":[{"index":0,"name":"...","stitch_type":"fill","density":0.7,"angle":45,"layer_order":1,"underlay":true,"pull_compensation":0.15}],"estimated_time_min":12}`;
@@ -75,26 +83,43 @@ Responde SOLO JSON:
       const labelMap = {};
       for (const l of labels) labelMap[l.index] = l;
 
-      const finalRegions = clientRegions.slice(0, 40).map((r, i) => {
+      const finalRegions = clientRegions.slice(0, 150).map((r, i) => {
         const label = labelMap[i] || {};
-       // Usar type del vectorizador si existe, sino fallback a reglas simples
-const stitch_type = label.stitch_type || r.type || (r.coverage > 0.05 ? 'fill' : r.coverage > 0.01 ? 'satin' : 'running_stitch');
-        const stitch_count = Math.round((r.area_px || r.pixelCount || 100) * (label.density || 0.7) * 0.4);
+        
+        // === PRIORIDAD: vectorizador > Claude > reglas geométricas ===
+        const stitch_type = r.type || label.stitch_type || clasificarPorGeometria(r);
+        
+        const density = label.density || (stitch_type === 'fill' ? 0.7 : stitch_type === 'satin' ? 0.55 : 0.4);
+        
+        // Ángulo: fill_angle del vectorizador > angle de Claude > cálculo por índice
+        const angle = r.fill_angle !== undefined ? r.fill_angle : 
+                      label.angle !== undefined ? label.angle : 
+                      (i * 17 % 180);
+        
+        const stitch_count = calcularStitchCount(r, stitch_type, density, w, h);
+
         return {
           id: `r${i + 1}`,
           name: label.name || `region_${r.hex.replace('#', '')}_${i}`,
           color: r.hex,
           stitch_type,
-          density: label.density || 0.7,
-          angle: label.angle || (i * 17 % 180),
-          layer_order: label.layer_order || (i + 1),
+          density: density,
+          angle: angle,
+          layer_order: label.layer_order || (stitch_type === 'fill' ? 1 : stitch_type === 'satin' ? 2 : 3),
           pull_compensation: label.pull_compensation || 0.15,
-          underlay: label.underlay !== undefined ? label.underlay : stitch_type !== 'running_stitch',
+          underlay: label.underlay !== undefined ? label.underlay : stitch_type === 'fill',
           area_mm2: Math.round(r.coverage * w * h),
           stitch_count,
           is_auto_contour: false,
           visible: true,
           path_points: r.path_points,
+          // Métricas del vectorizador para debugging
+          _metrics: {
+            compacidad: r.compacidad,
+            inertia_ratio: r.inertia_ratio,
+            bbox_aspect: r.bbox_aspect,
+            area_relativa: r.area_relativa,
+          }
         };
       });
 
@@ -112,7 +137,7 @@ const stitch_type = label.stitch_type || r.type || (r.coverage > 0.05 ? 'fill' :
       });
     }
 
-    // ─── PATH B: Pure AI generation ───────────────────────────────────────────
+    // ─── PATH B: Pure AI generation (solo si no hay contornos) ──────────────
     const regionTarget = mode === 'ultra' ? '80-120' : mode === 'precision' ? '50-80' : mode === 'standard' ? '15-30' : '30-60';
     const pointsPerShape = mode === 'ultra' ? '40-80' : mode === 'precision' ? '30-60' : '15-40';
 
@@ -181,3 +206,29 @@ Responde SOLO con JSON válido (sin texto extra):
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
+
+// === NUEVO: Clasificación por geometría (fallback) ===
+function clasificarPorGeometria(r) {
+  const compacidad = r.compacidad || 0.5;
+  const aspect = r.bbox_aspect || 1;
+  const area = r.coverage || 0;
+  
+  if (compacidad < 0.25 && area < 0.02) return 'running_stitch';
+  if ((compacidad < 0.5 && aspect > 2) || (area < 0.05 && aspect > 1.6)) return 'satin';
+  if (area > 0.005) return 'fill';
+  return 'running_stitch';
+}
+
+// === NUEVO: Cálculo de stitch count por tipo ===
+function calcularStitchCount(r, type, density, w, h) {
+  const areaMm2 = (r.coverage || 0.01) * w * h;
+  const perimeterMm = (r.perimeter_mm || Math.sqrt(areaMm2) * 4);
+  
+  if (type === 'fill') {
+    return Math.round(areaMm2 * density * 15);
+  } else if (type === 'satin') {
+    return Math.round(perimeterMm * density * 20);
+  } else {
+    return Math.round(perimeterMm * 5);
+  }
+}
