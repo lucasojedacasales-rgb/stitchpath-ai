@@ -24,7 +24,7 @@ Deno.serve(async (req) => {
     if (!imageUrl) return Response.json({ error: 'imageUrl required' }, { status: 400 });
 
     const startMs = Date.now();
-
+  console.log("=== MOTOR CUSTOM EJECUTANDOSE === maxRegions:", maxRegions);
     const imgResp = await fetch(imageUrl);
     if (!imgResp.ok) return Response.json({ error: 'Could not fetch image' }, { status: 400 });
     
