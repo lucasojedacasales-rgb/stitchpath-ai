@@ -6,7 +6,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { regions, stitchParams = {}, sequencingMode = 'layerOrder', format, width_mm, height_mm, machine_name, speed_rpm, cuts, project_name } = await req.json();
+    const { regions, stitchParams = {}, sequencingMode = 'optimize', format, width_mm, height_mm, machine_name, speed_rpm, cuts, project_name } = await req.json();
     
     if (!regions || !Array.isArray(regions)) {
       return Response.json({ error: 'regions array required' }, { status: 400 });
@@ -359,8 +359,9 @@ function sequencePaths(paths, mode) {
     // Agrupar por color
     const byColor = {};
     for (const p of paths) {
-      if (!byColor[p.color]) byColor[p.color] = [];
-      byColor[p.color].push(p);
+    const normalizedColor = (p.color || '').toLowerCase().trim();
+if (!byColor[normalizedColor]) byColor[normalizedColor] = [];
+ byColor[normalizedColor].push(p);
     }
 
     const result = [];
