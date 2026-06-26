@@ -355,15 +355,60 @@ function sequencePaths(paths, mode) {
     return [...paths].sort((a, b) => (a.layerOrder || 999) - (b.layerOrder || 999));
   }
 
-  if (mode === 'colorGroup') {
+  if (mode === 'colorGroup' || mode === 'optimize') {
+    // Agrupar por color
     const byColor = {};
     for (const p of paths) {
       if (!byColor[p.color]) byColor[p.color] = [];
       byColor[p.color].push(p);
     }
-    return Object.values(byColor)
-      .map(group => group.sort((a, b) => (a.layerOrder || 999) - (b.layerOrder || 999)))
-      .flat();
+
+    const result = [];
+    const colorKeys = Object.keys(byColor);
+
+    // Ordenar colores por cantidad de puntadas (más grandes primero)
+    colorKeys.sort((a, b) => {
+      const stitchesA = byColor[a].reduce((s, p) => s + p.stitchCount, 0);
+      const stitchesB = byColor[b].reduce((s, p) => s + p.stitchCount, 0);
+      return stitchesB - stitchesA;
+    });
+
+    for (const color of colorKeys) {
+      const group = byColor[color];
+      
+      // Ordenar regiones del mismo color por vecino más cercano
+      const ordered = [group[0]];
+      const remaining = new Set(group.slice(1));
+      
+      while (remaining.size > 0) {
+        const last = ordered[ordered.length - 1];
+        const lastPt = last.points[last.points.length - 1] || [0, 0];
+        
+        let bestIdx = null;
+        let bestDist = Infinity;
+        
+        for (const path of remaining) {
+          const firstPt = path.points[0] || [0, 0];
+          const dist = Math.hypot(firstPt[0] - lastPt[0], firstPt[1] - lastPt[1]);
+          
+          // Bonus si la distancia es pequeña (menos de 5mm = conectable sin jump)
+          const bonus = dist < 5 ? 1000 : 0;
+          const score = dist - bonus;
+          
+          if (score < bestDist) {
+            bestDist = score;
+            bestIdx = path;
+          }
+        }
+        
+        ordered.push(bestIdx);
+        remaining.delete(bestIdx);
+      }
+      
+      result.push(...ordered);
+    }
+    
+    return result;
   }
 
   if (mode === 'minTravel') {
@@ -376,11 +421,13 @@ function sequencePaths(paths, mode) {
       const lastPt = current.points[current.points.length - 1] || [0, 0];
       let bestIdx = 0;
       let bestDist = Infinity;
+      
       for (let i = 0; i < remaining.length; i++) {
         const firstPt = remaining[i].points[0] || [0, 0];
-        const d = Math.hypot(firstPt[0] - lastPt[0], firstPt[1] - lastPt[1]);
-        if (d < bestDist) { bestDist = d; bestIdx = i; }
+        const dist = Math.hypot(firstPt[0] - lastPt[0], firstPt[1] - lastPt[1]);
+        if (dist < bestDist) { bestDist = dist; bestIdx = i; }
       }
+      
       current = remaining.splice(bestIdx, 1)[0];
       result.push(current);
     }
@@ -398,21 +445,39 @@ function convertToStitchFormat(sequencedPaths, width_mm, height_mm) {
   const stitches = [];
   const scale = 10;
 
-  for (const path of sequencedPaths) {
-    if (path.points.length === 0) continue;
+  for (let i = 0; i < sequencedPaths.length; i++) {
+  const path = sequencedPaths[i];
+  if (path.points.length === 0) continue;
 
+  // Color change solo si es diferente al anterior
+  const prevPath = i > 0 ? sequencedPaths[i - 1] : null;
+  const needsColorChange = !prevPath || prevPath.color !== path.color;
+  
+  if (needsColorChange) {
     stitches.push({ type: 'color_change', color: hexToRgb(path.color || '#000000') });
-
-    for (const [x, y] of path.points) {
-      stitches.push({
-        type: 'stitch',
-        x: Math.round(x * scale),
-        y: Math.round(y * scale)
-      });
+  } else {
+    // Mismo color: verificar si hay que hacer jump o se puede conectar
+    const lastPt = stitches[stitches.length - 1];
+    const firstPt = path.points[0];
+    const jumpDist = Math.hypot(firstPt[0] - lastPt.x / scale, firstPt[1] - lastPt.y / scale);
+    
+    if (jumpDist > 5.0) {
+      // Distancia grande: trim y jump
+      stitches.push({ type: 'trim' });
     }
+    // Si está cerca, no hacemos nada (se conecta automáticamente)
+  }
 
+  for (const [x, y] of path.points) {
+    stitches.push({ type: 'stitch', x: Math.round(x * scale), y: Math.round(y * scale) });
+  }
+
+  // Trim solo al final de todo o si el siguiente es color diferente
+  const nextPath = i < sequencedPaths.length - 1 ? sequencedPaths[i + 1] : null;
+  if (!nextPath || nextPath.color !== path.color) {
     stitches.push({ type: 'trim' });
   }
+}
 
   stitches.push({ type: 'end' });
   return stitches;
