@@ -32,27 +32,35 @@ Deno.serve(async (req) => {
     const stitchPaths = [];
 
     for (const region of regions) {
-      const poly = region.polygon;
+      // === PASO 1: Leer datos del vectorizador correctamente ===
+      const poly = region.path_points || region.polygon;
       if (!poly || poly.length < 3) continue;
 
-      const area = region.area || 0;
-      const compactness = region.compactness || 0;
-
-      // Determinar tipo de puntada automáticamente si no está asignado
-      let type = region.stitch_type;
+      const area = region.area_mm2 || region.area || 0;
+      const compacidad = region.compacidad !== undefined ? region.compacidad : (region.compactness || 0.5);
+      const perimeter = region.perimeter_mm || region.perimeter || 0;
+      
+      // === PASO 2: Priorizar tipo del vectorizador ===
+      const stitchTypeFromVectorizer = region.stitch_type || region.type;
+      let type = stitchTypeFromVectorizer;
+      
       if (!type) {
-        if (area > 300 || compactness < 15) type = 'fill';
-        else if (area >= 50 || compactness >= 15) type = 'satin';
+        // Fallback solo si no viene del vectorizador
+        if (compacidad > 0.55 && area > 40) type = 'fill';
+        else if (compacidad < 0.5 && area > 8) type = 'satin';
         else type = 'running_stitch';
       }
 
+      // === PASO 3: Usar ángulo del vectorizador ===
+      const fillAngleFromVectorizer = region.fill_angle !== undefined ? region.fill_angle : region.angle;
+      
       let points = [];
       let jumps = 0;
 
       if (type === 'fill') {
         const polyAngleDeg = sp.fillAngle !== null && sp.fillAngle !== undefined
           ? sp.fillAngle
-          : (region.angle !== undefined ? region.angle : dominantAngleDeg(poly));
+          : (fillAngleFromVectorizer !== undefined ? fillAngleFromVectorizer : dominantAngleDeg(poly));
         const perpAngle = polyAngleDeg + 90;
 
         // Underlay primero (perpendicular, más espaciado)
@@ -148,7 +156,7 @@ Deno.serve(async (req) => {
 
 // ── TATAMI FILL ─────────────────────────────────────────────────────────────
 function generateFillLines(poly, angleDeg, spacingMm, pullComp) {
-  const expanded = expandPolygon(poly, pullComp);
+  const expanded = expandPolygonByNormals(poly, pullComp);
   const angle = angleDeg * Math.PI / 180;
   const rowSpacing = Math.max(0.15, spacingMm || 0.4);
   const stitchPitch = rowSpacing;
@@ -246,7 +254,7 @@ function scanLineIntersect(poly, y) {
 
 // ── SATIN ───────────────────────────────────────────────────────────────────
 function generateSatinStitches(poly, satinWidth, pullComp) {
-  const expanded = expandPolygon(poly, pullComp);
+  const expanded = expandPolygonByNormals(poly, pullComp);
   const cx = expanded.reduce((s, p) => s + p[0], 0) / expanded.length;
   const cy = expanded.reduce((s, p) => s + p[1], 0) / expanded.length;
 
@@ -324,7 +332,7 @@ function dominantAngle(poly) {
 
 // ── RUNNING STITCH ──────────────────────────────────────────────────────────
 function generateRunningStitch(poly, stitchLength, offsetMm) {
-  const offsetPoly = offsetMm !== 0 ? expandPolygon(poly, offsetMm) : poly;
+  const offsetPoly = offsetMm !== 0 ? expandPolygonByNormals(poly, offsetMm) : poly;
   const points = [];
   let dist = 0;
   points.push([parseFloat(offsetPoly[0][0].toFixed(3)), parseFloat(offsetPoly[0][1].toFixed(3))]);
@@ -359,9 +367,9 @@ function sequencePaths(paths, mode) {
     // Agrupar por color
     const byColor = {};
     for (const p of paths) {
-    const normalizedColor = (p.color || '').toLowerCase().trim();
-if (!byColor[normalizedColor]) byColor[normalizedColor] = [];
- byColor[normalizedColor].push(p);
+      const normalizedColor = (p.color || '').toLowerCase().trim();
+      if (!byColor[normalizedColor]) byColor[normalizedColor] = [];
+      byColor[normalizedColor].push(p);
     }
 
     const result = [];
@@ -447,38 +455,39 @@ function convertToStitchFormat(sequencedPaths, width_mm, height_mm) {
   const scale = 10;
 
   for (let i = 0; i < sequencedPaths.length; i++) {
-  const path = sequencedPaths[i];
-  if (path.points.length === 0) continue;
+    const path = sequencedPaths[i];
+    if (path.points.length === 0) continue;
 
-  // Color change solo si es diferente al anterior
-  const prevPath = i > 0 ? sequencedPaths[i - 1] : null;
- const needsColorChange = !prevPath || 
-  (prevPath.color || '').toLowerCase().trim() !== (path.color || '').toLowerCase().trim();
-  if (needsColorChange) {
-    stitches.push({ type: 'color_change', color: hexToRgb(path.color || '#000000') });
-  } else {
-    // Mismo color: verificar si hay que hacer jump o se puede conectar
-    const lastPt = stitches[stitches.length - 1];
-    const firstPt = path.points[0];
-    const jumpDist = Math.hypot(firstPt[0] - lastPt.x / scale, firstPt[1] - lastPt.y / scale);
+    // Color change solo si es diferente al anterior
+    const prevPath = i > 0 ? sequencedPaths[i - 1] : null;
+    const needsColorChange = !prevPath || 
+      (prevPath.color || '').toLowerCase().trim() !== (path.color || '').toLowerCase().trim();
     
-    if (jumpDist > 5.0) {
-      // Distancia grande: trim y jump
+    if (needsColorChange) {
+      stitches.push({ type: 'color_change', color: hexToRgb(path.color || '#000000') });
+    } else {
+      // Mismo color: verificar si hay que hacer jump o se puede conectar
+      const lastPt = stitches[stitches.length - 1];
+      const firstPt = path.points[0];
+      const jumpDist = Math.hypot(firstPt[0] - lastPt.x / scale, firstPt[1] - lastPt.y / scale);
+      
+      if (jumpDist > 5.0) {
+        // Distancia grande: trim y jump
+        stitches.push({ type: 'trim' });
+      }
+      // Si está cerca, no hacemos nada (se conecta automáticamente)
+    }
+
+    for (const [x, y] of path.points) {
+      stitches.push({ type: 'stitch', x: Math.round(x * scale), y: Math.round(y * scale) });
+    }
+
+    // Trim solo al final de todo o si el siguiente es color diferente
+    const nextPath = i < sequencedPaths.length - 1 ? sequencedPaths[i + 1] : null;
+    if (!nextPath || nextPath.color !== path.color) {
       stitches.push({ type: 'trim' });
     }
-    // Si está cerca, no hacemos nada (se conecta automáticamente)
   }
-
-  for (const [x, y] of path.points) {
-    stitches.push({ type: 'stitch', x: Math.round(x * scale), y: Math.round(y * scale) });
-  }
-
-  // Trim solo al final de todo o si el siguiente es color diferente
-  const nextPath = i < sequencedPaths.length - 1 ? sequencedPaths[i + 1] : null;
-  if (!nextPath || nextPath.color !== path.color) {
-    stitches.push({ type: 'trim' });
-  }
-}
 
   stitches.push({ type: 'end' });
   return stitches;
@@ -553,7 +562,8 @@ function generateDST(stitches, width_mm, height_mm, machine, speed) {
     } else if (s.type === 'color_change') {
       dataBytes.push(0xC3, 0xC3, 0xC3);
     } else if (s.type === 'trim') {
-      dataBytes.push(0xC3, 0xC3, 0xC3);
+      // === PASO 5: Trim separado de color_change ===
+      dataBytes.push(0xC0, 0xC0, 0xC0);
     } else if (s.type === 'end') {
       dataBytes.push(0xF3, 0xF3, 0xF3);
     }
@@ -707,7 +717,7 @@ function generateDSB(stitches, width_mm, height_mm, machine) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// UTILIDADES
+// UTILIDADES MEJORADAS
 // ═══════════════════════════════════════════════════════════════════════════
 
 function dominantAngleDeg(poly) {
@@ -722,6 +732,60 @@ function dominantAngleDeg(poly) {
   return parseFloat((0.5 * Math.atan2(2 * cxy, cxx - cyy) * 180 / Math.PI).toFixed(1));
 }
 
+// === PASO 4: expandPolygon mejorado con offset por normales ===
+function expandPolygonByNormals(poly, amount) {
+  if (!amount || amount === 0) return poly;
+  
+  const n = poly.length;
+  if (n < 3) return poly;
+  
+  const normals = [];
+  for (let i = 0; i < n; i++) {
+    const prev = poly[(i - 1 + n) % n];
+    const curr = poly[i];
+    const next = poly[(i + 1) % n];
+    
+    // Vector de entrada
+    const dx1 = curr[0] - prev[0], dy1 = curr[1] - prev[1];
+    const len1 = Math.hypot(dx1, dy1);
+    
+    // Vector de salida
+    const dx2 = next[0] - curr[0], dy2 = next[1] - curr[1];
+    const len2 = Math.hypot(dx2, dy2);
+    
+    // Normal promedio (bisectriz)
+    let nx = 0, ny = 0;
+    if (len1 > 0.001) {
+      nx += (-dy1 / len1);
+      ny += (dx1 / len1);
+    }
+    if (len2 > 0.001) {
+      nx += (-dy2 / len2);
+      ny += (dx2 / len2);
+    }
+    
+    const nLen = Math.hypot(nx, ny);
+    if (nLen > 0.001) {
+      normals.push([nx / nLen, ny / nLen]);
+    } else {
+      normals.push([0, 1]);
+    }
+  }
+  
+  // Offset por normales
+  const expanded = [];
+  for (let i = 0; i < n; i++) {
+    const [nx, ny] = normals[i];
+    expanded.push([
+      poly[i][0] + nx * amount,
+      poly[i][1] + ny * amount
+    ]);
+  }
+  
+  return expanded;
+}
+
+// Mantener expandPolygon original como fallback
 function expandPolygon(poly, amount) {
   if (!amount || amount === 0) return poly;
   const cx = poly.reduce((s, p) => s + p[0], 0) / poly.length;
