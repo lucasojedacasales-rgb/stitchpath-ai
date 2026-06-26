@@ -18,7 +18,7 @@ Deno.serve(async (req) => {
       rdpEpsilon = 0.25,
       posterizeLevels = 5,
       mergeColorThreshold = 70,
-      maxRegions = 50
+      maxRegions = 300  // ═══ CAMBIO 1: Aumentar límite de regiones ═══
     } = await req.json();
     
     if (!imageUrl) return Response.json({ error: 'imageUrl required' }, { status: 400 });
@@ -202,8 +202,8 @@ for (let i = 0; i < W * H; i++) {
     const minPx = Math.max(5, Math.round(minRegionArea / (mmPerPx * mmPerPx)));
     let regions = floodFillRegions(labels, W, H, centroidsLab.length, minPx, mmPerPx, rgba, centroidsRgb);
 
-    // Merge post-flood: unir regiones del mismo color que están cerca
-    regions = mergeRegionsByProximity(regions, 30);
+    // ═══ CAMBIO 2: Desactivar merge por proximidad para más regiones ═══
+    // regions = mergeRegionsByProximity(regions, 30);
 
     // Limitar número máximo de regiones
     if (regions.length > maxRegions) {
@@ -288,22 +288,21 @@ const bboxWmm = bboxW * mmPerPx;
 const bboxHmm = bboxH * mmPerPx;
 const bboxAspect = Math.max(bboxWmm, bboxHmm) / Math.max(0.1, Math.min(bboxWmm, bboxHmm));
 
-// 5. Clasificación final
-let type = 'fill';
+      // ═══ CAMBIO 4: Clasificación contorno-céntrica (estilo StitchFlow) ═══
+      let type = 'fill';
 
-if (areaMm2 < 10 || reg.pixelCount < 60) {
-  // Regiones muy pequeñas: contorno simple
-  type = 'running_stitch';
-} else if (inertiaRatio > 8 || (inertiaRatio > 4 && bboxAspect > 3)) {
-  // Formas muy alargadas: satin
-  type = 'satin';
-} else if (areaMm2 > 20) {
-  // Regiones grandes y compactas: fill
-  type = 'fill';
-} else {
-  // Regiones medianas compactas: fill también
-  type = 'fill';
-}
+      // Regiones muy pequeñas: running stitch (detalles finos)
+      if (areaMm2 < 8 || reg.pixelCount < 50) {
+        type = 'running_stitch';
+      } 
+      // Regiones medianas y alargadas: satin (contornos y bordes)
+      else if (areaMm2 < 60 || inertiaRatio > 2.5 || bboxAspect > 1.8) {
+        type = 'satin';
+      } 
+      // Solo regiones realmente grandes: fill
+      else {
+        type = 'fill';
+      }
       let stitches = [];
       let contourStitches = [];
 
@@ -395,7 +394,8 @@ function posterizeImage(rgba, W, H, levels) {
   }
 }
 
-function mergeColorsAggressive(labels, W, H, centroidsLab, centroidsRgb, threshold) {
+    // ═══ CAMBIO 3: Desactivar merge agresivo de colores ═══
+    // mergeColorsAggressive(labels, W, H, centroidsLab, centroidsRgb, mergeColorThreshold);
   const k = centroidsLab.length;
   if (k <= 3) return;
 
