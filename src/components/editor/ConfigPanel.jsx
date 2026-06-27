@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { ChevronDown, ChevronRight, Zap, Cpu, Settings, BookMarked, Brain } from 'lucide-react';
 import WorkflowPresetPanel from './WorkflowPresetPanel';
 
@@ -51,23 +51,37 @@ function Toggle({ label, value, onChange }) {
   );
 }
 
-export default function ConfigPanel({ config, onChange, regions, selectedRegionIds, onRegionsUpdate }) {
-  const cfg = config || {};
-  const set = (key, val) => onChange({ ...cfg, [key]: val });
-  
-  const [aiSegments, setAISegments] = useState([]);
-  const [aiAnalyzing, setAIAnalyzing] = useState(false);
-  const [aiError, setAIError] = useState(null);
+// ── AI Segmentation Section (componente separado para evitar duplicados) ──
+function AISegmentationSection({ config, onAnalyze }) {
+  const [segments, setSegments] = useState([]);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [error, setError] = useState(null);
+  const [hasAnalyzed, setHasAnalyzed] = useState(false);
+  const isMounted = useRef(true);
 
-  const analyzeWithAI = async () => {
+  useEffect(() => {
+    return () => { isMounted.current = false; };
+  }, []);
+
+  const analyze = useCallback(async () => {
     const canvas = document.querySelector('canvas');
     if (!canvas) {
-      setAIError('No hay imagen para analizar');
+      setError('No hay imagen para analizar. Carga una imagen primero.');
       return;
     }
 
-    setAIAnalyzing(true);
-    setAIError(null);
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const hasContent = imageData.data.some((pixel, i) => i % 4 === 3 && pixel > 0);
+    
+    if (!hasContent) {
+      setError('El canvas está vacío. Carga una imagen primero.');
+      return;
+    }
+
+    setAnalyzing(true);
+    setError(null);
+    setHasAnalyzed(true);
 
     try {
       const imageBase64 = canvas.toDataURL('image/png');
@@ -81,30 +95,132 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
         })
       });
 
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+
       const result = await response.json();
+      if (!result.success) throw new Error(result.error || 'Error desconocido');
 
-      if (!result.success) {
-        throw new Error(result.error || 'Error en análisis');
+      if (!result.regions?.length) throw new Error('No se detectaron regiones');
+
+      if (isMounted.current) {
+        setSegments(result.regions);
+        console.log('✅ AI Segmentation:', result);
       }
-
-      setAISegments(result.regions);
-      console.log('✅ AI Segmentation:', result);
-
-    } catch (error) {
-      console.error('❌ Error AI Segmentation:', error);
-      setAIError(error.message);
+    } catch (err) {
+      if (isMounted.current) {
+        console.error('❌ Error AI Segmentation:', err);
+        setError(err.message);
+        setSegments([]);
+      }
     } finally {
-      setAIAnalyzing(false);
+      if (isMounted.current) setAnalyzing(false);
     }
-  };
+  }, []);
 
-  const handleModeChange = (modeId) => {
-    set('mode', modeId);
-    
-    if (modeId === 'ai-segmentation') {
-      analyzeWithAI();
+  // Auto-analizar al montar si estamos en modo AI
+  useEffect(() => {
+    if (!hasAnalyzed && !analyzing) {
+      analyze();
     }
-  };
+  }, [hasAnalyzed, analyzing, analyze]);
+
+  return (
+    <Section title="Regiones IA Detectadas" icon={Brain} defaultOpen={true}>
+      <div className="space-y-2">
+        {analyzing ? (
+          <div className="flex items-center gap-2 text-slate-400 py-4">
+            <div className="animate-spin w-4 h-4 border-2 border-violet-500 border-t-transparent rounded-full" />
+            <span className="text-xs">Analizando regiones con IA...</span>
+          </div>
+        ) : error ? (
+          <div className="bg-red-900/20 border border-red-500/30 rounded-lg p-3">
+            <div className="flex items-center gap-2 text-red-400 text-xs mb-1">
+              <span>❌</span>
+              <span className="font-semibold">Error en análisis</span>
+            </div>
+            <p className="text-[11px] text-red-300/80">{error}</p>
+            <button
+              onClick={analyze}
+              className="mt-2 text-[11px] px-3 py-1.5 rounded bg-red-600/30 text-red-300 border border-red-500/30 hover:bg-red-600/50 transition-colors"
+            >
+              Reintentar análisis
+            </button>
+          </div>
+        ) : segments.length > 0 ? (
+          <>
+            <div className="text-[10px] text-slate-500 mb-2">
+              {segments.length} regiones detectadas
+            </div>
+            {segments.map((region) => (
+              <div 
+                key={region.id} 
+                className="bg-[#161a23] border border-[#2a2d3a] rounded-lg p-2.5 hover:border-violet-500/40 transition-colors"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold capitalize text-white">{region.label}</span>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
+                      region.stitch === 'SATIN' ? 'bg-pink-600/30 text-pink-300 border border-pink-500/30' :
+                      region.stitch === 'TATAMI_FILL' ? 'bg-blue-600/30 text-blue-300 border border-blue-500/30' :
+                      region.stitch === 'RUNNING' ? 'bg-green-600/30 text-green-300 border border-green-500/30' :
+                      'bg-gray-600/30 text-gray-300 border border-gray-500/30'
+                    }`}>
+                      {region.stitch === 'SATIN' ? '✨' : 
+                       region.stitch === 'TATAMI_FILL' ? '▦' : 
+                       region.stitch === 'RUNNING' ? '━' : '○'} {region.stitch.replace('_', ' ')}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-500">
+                    {(region.stitchConfidence * 100).toFixed(0)}%
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-1 mt-1.5">
+                  <div className="text-[10px] text-slate-500">
+                    Curv: <span className="text-slate-300">{region.metrics?.curvature ?? 'N/A'}</span>
+                  </div>
+                  <div className="text-[10px] text-slate-500">
+                    Área: <span className="text-slate-300">{region.metrics?.area?.toLocaleString() ?? 'N/A'}px²</span>
+                  </div>
+                  <div className="text-[10px] text-slate-500">
+                    Comp: <span className="text-slate-300">{region.metrics?.compactness ?? 'N/A'}</span>
+                  </div>
+                </div>
+                <div className="text-[10px] text-slate-600 mt-1 italic">
+                  {region.reason}
+                </div>
+                {region.stitchParams && (
+                  <div className="text-[10px] text-slate-600 mt-1 pt-1 border-t border-[#2a2d3a]">
+                    Densidad: {region.stitchParams.density} · Longitud: {region.stitchParams.stitchLength}mm
+                    {region.stitchParams.angle !== undefined && ` · Ángulo: ${region.stitchParams.angle}°`}
+                  </div>
+                )}
+              </div>
+            ))}
+          </>
+        ) : (
+          <div className="bg-[#161a23] border border-[#2a2d3a] rounded-lg p-4 text-center">
+            <p className="text-slate-500 text-xs mb-2">No hay regiones analizadas aún</p>
+            <button
+              onClick={analyze}
+              className="text-[11px] px-3 py-1.5 rounded bg-violet-600/30 text-violet-300 border border-violet-500/30 hover:bg-violet-600/50 transition-colors"
+            >
+              <Brain className="w-3 h-3 inline mr-1" />
+              Analizar imagen con IA
+            </button>
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+export default function ConfigPanel({ config, onChange, regions, selectedRegionIds, onRegionsUpdate }) {
+  const cfg = config || {};
+  const set = (key, val) => onChange({ ...cfg, [key]: val });
+
+  const handleModeChange = useCallback((modeId) => {
+    set('mode', modeId);
+  }, [set]);
 
   return (
     <div className="flex flex-col h-full overflow-y-auto bg-[#0d0f14]">
@@ -259,78 +375,8 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
         </div>
       </Section>
 
-      {/* AI SEGMENTATION RESULTS */}
-      {cfg.mode === 'ai-segmentation' && (
-        <Section title="Regiones IA Detectadas" icon={Brain} defaultOpen={true}>
-          <div className="space-y-2">
-            {aiAnalyzing ? (
-              <div className="flex items-center gap-2 text-slate-400 py-4">
-                <div className="animate-spin w-4 h-4 border-2 border-violet-500 border-t-transparent rounded-full" />
-                <span className="text-xs">Analizando regiones con IA...</span>
-              </div>
-            ) : aiError ? (
-              <div className="text-red-400 text-xs py-2">
-                ❌ {aiError}
-              </div>
-            ) : aiSegments.length > 0 ? (
-              <>
-                <div className="text-[10px] text-slate-500 mb-2">
-                  {aiSegments.length} regiones detectadas · Click para ver detalles
-                </div>
-                {aiSegments.map((region) => (
-                  <div 
-                    key={region.id} 
-                    className="bg-[#161a23] border border-[#2a2d3a] rounded-lg p-2.5 hover:border-violet-500/40 transition-colors"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-semibold capitalize text-white">{region.label}</span>
-                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
-                          region.stitch === 'SATIN' ? 'bg-pink-600/30 text-pink-300 border border-pink-500/30' :
-                          region.stitch === 'TATAMI_FILL' ? 'bg-blue-600/30 text-blue-300 border border-blue-500/30' :
-                          region.stitch === 'RUNNING' ? 'bg-green-600/30 text-green-300 border border-green-500/30' :
-                          'bg-gray-600/30 text-gray-300 border border-gray-500/30'
-                        }`}>
-                          {region.stitch === 'SATIN' ? '✨' : 
-                           region.stitch === 'TATAMI_FILL' ? '▦' : 
-                           region.stitch === 'RUNNING' ? '━' : '○'} {region.stitch.replace('_', ' ')}
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-slate-500">
-                        {(region.stitchConfidence * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-3 gap-1 mt-1.5">
-                      <div className="text-[10px] text-slate-500">
-                        Curv: <span className="text-slate-300">{region.metrics.curvature}</span>
-                      </div>
-                      <div className="text-[10px] text-slate-500">
-                        Área: <span className="text-slate-300">{region.metrics.area.toLocaleString()}px²</span>
-                      </div>
-                      <div className="text-[10px] text-slate-500">
-                        Comp: <span className="text-slate-300">{region.metrics.compactness}</span>
-                      </div>
-                    </div>
-                    <div className="text-[10px] text-slate-600 mt-1 italic">
-                      {region.reason}
-                    </div>
-                    {region.stitchParams && (
-                      <div className="text-[10px] text-slate-600 mt-1 pt-1 border-t border-[#2a2d3a]">
-                        Densidad: {region.stitchParams.density} · Longitud: {region.stitchParams.stitchLength}mm
-                        {region.stitchParams.angle !== undefined && ` · Ángulo: ${region.stitchParams.angle}°`}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </>
-            ) : (
-              <div className="text-slate-500 text-xs py-4 text-center">
-                Selecciona una imagen y el modo AI Segmentation para analizar
-              </div>
-            )}
-          </div>
-        </Section>
-      )}
+      {/* AI SEGMENTATION - COMPONENTE SEPARADO, SOLO UNA VEZ */}
+      {cfg.mode === 'ai-segmentation' && <AISegmentationSection />}
 
       {/* AVANZADAS */}
       <Section title="Opciones Avanzadas" icon={Settings} defaultOpen={false}>
