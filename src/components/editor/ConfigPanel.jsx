@@ -4,12 +4,19 @@ import WorkflowPresetPanel from './WorkflowPresetPanel';
 
 const FABRIC_TYPES = ['Algodón', 'Poliéster', 'Mezcla', 'Denim', 'Lino', 'Seda', 'Lycra', 'Otro'];
 
-const MODES = [
-  { id: 'hybrid', label: 'Híbrido', desc: 'Pixel-perfect + Claude Sonnet', badge: 'Recomendado', color: 'violet' },
-  { id: 'ultra', label: 'Ultra-Detallada', desc: '1200px+ micro-detalles', color: 'cyan' },
-  { id: 'standard', label: 'Estándar', desc: 'Rápido, balance calidad/velocidad', color: 'slate' },
-  { id: 'precision', label: 'Precisión', desc: 'Máximo detalle, más puntadas', color: 'slate' },
-  { id: 'potrace', label: 'Potrace', desc: 'Rápido, sin IA extra', color: 'slate' },
+const modes = [
+  { id: 'hybrid', name: 'Híbrido', desc: 'Pixel-perfect + Claude Sonnet', badge: 'Recomendado' },
+  { id: 'ultra', name: 'Ultra-Detallada', desc: '1200px+ micro-detalles' },
+  { id: 'standard', name: 'Estándar', desc: 'Rápido, balance calidad/velocidad' },
+  { id: 'precision', name: 'Precisión', desc: 'Máximo detalle, más puntadas' },
+  { id: 'potrace', name: 'Potrace', desc: 'Rápido, sin IA extra' },
+  // ← NUEVO
+  { 
+    id: 'ai-segmentation', 
+    name: '🧠 AI Segmentation', 
+    desc: 'Regiones inteligentes: nariz→Satín, cuerpo→Tatami',
+    badge: 'Beta'
+  },
 ];
 
 function Section({ title, icon: Icon, children, defaultOpen = true }) {
