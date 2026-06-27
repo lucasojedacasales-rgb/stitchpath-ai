@@ -17,6 +17,16 @@ import { preprocessImage } from '@/lib/imagePreprocessor';
 import { analyzeImage } from '@/lib/imageAnalyzer';
 import { traceImageContours } from '@/lib/contourTracer';
 
+// ═══════════════════════════════════════════════════════════════
+// [NUEVO] Imports del Decision Engine
+// ═══════════════════════════════════════════════════════════════
+import { useDecisionEngine } from '@/base44/hooks/useDecisionEngine';
+import { DecisionPanel } from '@/base44/components/DecisionPanel';
+
+// Feature flag: si es false, todo funciona EXACTAMENTE igual que antes
+const AI_ENABLED = import.meta.env.VITE_ENABLE_AI_DECISIONS === 'true';
+// ═══════════════════════════════════════════════════════════════
+
 const DEFAULT_CONFIG = {
   fabric_type: 'Algodón', width_mm: 100, height_mm: 100, color_count: 6,
   mode: 'hybrid', use_full_bg: false, use_ia_vision: false,
@@ -60,6 +70,22 @@ export default function Editor() {
   const [maskedPixelCount, setMaskedPixelCount] = useState(0);
   const [applyingMask, setApplyingMask] = useState(false);
 
+  // ═══════════════════════════════════════════════════════════════
+  // [NUEVO] Decision Engine hook y estado del panel
+  // ═══════════════════════════════════════════════════════════════
+  const {
+    status: aiStatus,
+    result: aiResult,
+    error: aiError,
+    progress: aiProgress,
+    isLoading: aiLoading,
+    analyze,
+    reset: resetAI,
+  } = useDecisionEngine();
+
+  const [showDecisionPanel, setShowDecisionPanel] = useState(false);
+  // ═══════════════════════════════════════════════════════════════
+
   useEffect(() => {
     if (id) loadProject();
   }, [id]);
@@ -99,6 +125,9 @@ export default function Editor() {
     }
   };
 
+  // ═══════════════════════════════════════════════════════════════
+  // [MODIFICADO] handleImageUpload — ahora activa análisis IA
+  // ═══════════════════════════════════════════════════════════════
   const handleImageUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -108,17 +137,31 @@ export default function Editor() {
       setImageUrl(file_url);
       setStep(2);
       await base44.entities.Project.update(id, { image_url: file_url, step: 2, status: 'draft' });
+
+      // [NUEVO] Si AI está activada, analizar la imagen
+      if (AI_ENABLED) {
+        setShowDecisionPanel(true);
+        await analyze(file);
+      }
+
     } finally {
       setUploadingImage(false);
     }
   };
 
-  const startProcessing = async () => {
+  // ═══════════════════════════════════════════════════════════════
+  // [MODIFICADO] startProcessing — ahora acepta estrategia de IA
+  // ═══════════════════════════════════════════════════════════════
+  const startProcessing = async (aiStrategy) => {
     if (!imageUrl) return;
     setProcessing(true);
     setProcessingElapsed(0);
     timerRef.current = setInterval(() => setProcessingElapsed(s => s + 1), 1000);
     setStep(2);
+
+    // Detectar si venimos del Decision Engine
+    const useAIStrategy = AI_ENABLED && aiStrategy;
+
     try {
       // Pre-process image if enabled
       let finalImageUrl = imageUrl;
@@ -138,8 +181,8 @@ export default function Editor() {
       let tracedContours = null;
       try {
         const [analysis, contours] = await Promise.all([
-          analyzeImage(finalImageUrl, config.color_count || 8),
-          traceImageContours(finalImageUrl, config.color_count || 8, 0.003),
+          analyzeImage(finalImageUrl, useAIStrategy ? aiStrategy.recommendedParams.maxColors : (config.color_count || 8)),
+          traceImageContours(finalImageUrl, useAIStrategy ? aiStrategy.recommendedParams.maxColors : (config.color_count || 8), 0.003),
         ]);
         imageAnalysis = analysis;
         tracedContours = contours;
@@ -147,20 +190,35 @@ export default function Editor() {
         console.warn('Client analysis failed, continuing without:', e);
       }
 
-      const res = await base44.functions.invoke('hybridDigitize', {
+      // [NUEVO] Construir payload con parámetros de IA si aplica
+      const invokePayload = {
         image_url: finalImageUrl,
-        mode: config.mode,
+        mode: useAIStrategy ? 'hybrid' : config.mode,
         width_mm: config.width_mm,
         height_mm: config.height_mm,
-        color_count: config.color_count,
+        color_count: useAIStrategy ? aiStrategy.recommendedParams.maxColors : config.color_count,
         remove_bg: config.remove_bg,
-        use_ia_vision: config.use_ia_vision,
+        use_ia_vision: useAIStrategy ? true : config.use_ia_vision,
         use_full_bg: config.use_full_bg,
         image_analysis: imageAnalysis,
         traced_contours: tracedContours,
-        tatami_density: config.tatami_density || 0.4,
+        tatami_density: useAIStrategy
+          ? (aiStrategy.stitchType === 'satin' ? 0.6 : aiStrategy.stitchType === 'running' ? 0.2 : 0.4)
+          : (config.tatami_density || 0.4),
         fill_angle: config.fill_angle !== undefined ? config.fill_angle : null,
-      });
+      };
+
+      // Si hay estrategia de IA, agregar metadata extra
+      if (useAIStrategy) {
+        invokePayload.ai_strategy = {
+          contentType: aiResult?.contentType,
+          confidence: aiResult?.confidence,
+          warnings: aiResult?.warnings,
+          strategy: aiStrategy,
+        };
+      }
+
+      const res = await base44.functions.invoke('hybridDigitize', invokePayload);
 
       if (res.data?.success) {
         const rawData = res.data.data?.response || res.data.data;
@@ -169,14 +227,12 @@ export default function Editor() {
         // ── Filtrado estricto de regiones válidas ─────────────────────────────
         const filtered = (rawRegions || []).filter(r => {
           if ((r.area_mm2 || 0) <= 2.0) return false;
-          // Only filter by perimeter if the field exists
           if (r.perimeter_mm !== undefined && r.perimeter_mm <= 3.0) return false;
           if (r.boundingBox) {
             const { w, h } = r.boundingBox;
             if (w < 0.1 || h < 0.1) return false;
           }
           if (r.isEdgeRegion === true) return false;
-          // Must have path_points to be renderable
           if (!r.path_points || r.path_points.length < 3) return false;
           return true;
         });
@@ -186,14 +242,14 @@ export default function Editor() {
           const hex = (region.color || '').toLowerCase();
           const isDark = hex === '#000000' || hex === '#1a1a1a';
           const isContourName = (region.name || '').toLowerCase().includes('contour_');
-          
+
           if (isDark || isContourName || region.isContour) return 'running_stitch';
-          
+
           const area = region.area_mm2 || 0;
           const perim = region.perimeter_mm || 1;
           const avgWidth = area / perim;
           const compactness = (perim * perim) / Math.max(area, 1);
-          
+
           if (area > 200 && avgWidth > 5.0) {
             return 'fill';
           } else if (area < 50 || avgWidth < 3.0 || compactness > 15) {
@@ -208,23 +264,19 @@ export default function Editor() {
           const area = region.area_mm2 || 0;
           const perim = region.perimeter_mm || 1;
           const density = region.density || 0.7;
-          
+
           if (type === 'fill') {
-            // fill: area × density × 2.5 (zig-zag + conexiones + underlay)
             return Math.round(area * density * 2.5);
           } else if (type === 'satin') {
-            // satin: (perimeter / stitch_length) × (width / density)
             const width = Math.max(1, area / perim);
-            const stitchLength = 2.5; // 2.5mm stitch length for satin
+            const stitchLength = 2.5;
             return Math.round((perim / stitchLength) * (width / Math.max(0.4, density)));
           } else {
-            // running_stitch: perímetro / stitch_length
-            const stitchLength = 1.5; // 1.5mm stitch length for contours
+            const stitchLength = 1.5;
             return Math.round(perim / stitchLength);
           }
         };
 
-        // Color naming utilities
         const COLOR_NAMES = {
           '#000000': 'negro', '#1a1a1a': 'negro', '#ffffff': 'blanco', '#ffff00': 'amarillo',
           '#ff0000': 'rojo', '#00ff00': 'verde', '#0000ff': 'azul', '#ff69b4': 'rosa',
@@ -273,21 +325,24 @@ export default function Editor() {
           };
         });
 
-        // Recalculate total stitches
         const totalCalculatedStitches = newRegions.reduce((sum, r) => sum + (r.stitch_count || 0), 0);
 
         setRegions(newRegions);
         setStep(3);
+
+        // [NUEVO] Ocultar panel de decisión al completar
+        setShowDecisionPanel(false);
+
         await base44.entities.Project.update(id, {
           regions: newRegions, step: 3, status: 'ready',
           total_stitches: totalCalculatedStitches,
           color_count: new Set((newRegions || []).map(r => r.color)).size
         });
-        // Save version
+
         await base44.entities.VersionHistory.create({
           project_id: id,
-          label: `Vectorización ${config.mode}`,
-          description: `${newRegions?.length || 0} regiones generadas`,
+          label: `Vectorización ${useAIStrategy ? 'IA' : config.mode}`,
+          description: `${newRegions?.length || 0} regiones generadas${useAIStrategy ? ' (optimizado por IA)' : ''}`,
           snapshot: { regions: newRegions, config },
           step: 3
         });
@@ -354,7 +409,6 @@ export default function Editor() {
           </Link>
           <div className="w-px h-4 bg-[#2a2d3a]" />
 
-          {/* Breadcrumb / project name */}
           <ProjectNameInput name={project?.name || 'Sin título'} onSave={handleRename} />
 
           <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
@@ -371,7 +425,7 @@ export default function Editor() {
           {/* Right actions */}
           <div className="flex items-center gap-1.5">
             <NavButton onClick={() => setShowExport(true)} icon={Download} label="Exportar" accent />
-            <NavButton onClick={startProcessing} icon={Zap} label="Procesar" disabled={!imageUrl || processing} />
+            <NavButton onClick={() => startProcessing()} icon={Zap} label="Procesar" disabled={!imageUrl || processing} />
             <NavButton onClick={() => saveProject()} icon={Save} label={saving ? '...' : 'Guardar'} />
           </div>
         </div>
@@ -435,13 +489,52 @@ export default function Editor() {
             </div>
           </div>}
 
-          {/* Upload zone or Canvas */}
+          {/* ═══════════════════════════════════════════════════════════════
+              [MODIFICADO] Upload zone o DecisionPanel o Canvas
+              ═══════════════════════════════════════════════════════════════ */}
           {!imageUrl ? (
             <UploadZone
               onUpload={handleImageUpload}
               fileInputRef={fileInputRef}
               uploading={uploadingImage}
             />
+          ) : showDecisionPanel && AI_ENABLED ? (
+            // [NUEVO] Panel de decisión de IA
+            <div className="flex-1 flex items-center justify-center overflow-auto">
+              <div className="w-full max-w-md mx-4">
+                <div className="bg-[#0d0f14] border border-[#1e2130] rounded-xl p-5 shadow-2xl">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-semibold text-white">🧠 Análisis de IA</h3>
+                    <button
+                      onClick={() => { setShowDecisionPanel(false); resetAI(); }}
+                      className="p-1 rounded hover:bg-[#1a1d27] text-slate-500 hover:text-white transition-colors"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <DecisionPanel
+                    result={aiResult}
+                    status={aiStatus}
+                    progress={aiProgress}
+                    error={aiError}
+                    isLoading={aiLoading}
+                    onProceed={() => {
+                      if (aiResult) {
+                        startProcessing(aiResult.strategy);
+                      }
+                    }}
+                    onAdjustParams={() => {
+                      setShowDecisionPanel(false);
+                      setActiveTab('panel');
+                    }}
+                    onCancel={() => {
+                      setShowDecisionPanel(false);
+                      resetAI();
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
           ) : activeTab === 'mask' ? (
             <div className="flex-1 flex flex-col overflow-hidden">
               <MaskToolbar
@@ -500,14 +593,19 @@ export default function Editor() {
           )}
 
           {/* Process button when image uploaded but not processed */}
-          {imageUrl && regions.length === 0 && !processing && (
+          {imageUrl && regions.length === 0 && !processing && !showDecisionPanel && (
             <div className="border-t border-[#1a1d27] p-3 flex items-center gap-3 bg-[#0a0c12]">
-              <div className="flex-1 text-xs text-slate-500">Imagen cargada. Inicia la vectorización con IA.</div>
+              <div className="flex-1 text-xs text-slate-500">
+                {AI_ENABLED
+                  ? 'Imagen cargada. La IA analizará el mejor enfoque.'
+                  : 'Imagen cargada. Inicia la vectorización con IA.'}
+              </div>
               <button
-                onClick={startProcessing}
+                onClick={() => AI_ENABLED ? setShowDecisionPanel(true) : startProcessing()}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors"
               >
-                <Zap className="w-3.5 h-3.5" /> Vectorizar con IA
+                <Zap className="w-3.5 h-3.5" />
+                {AI_ENABLED ? 'Analizar con IA' : 'Vectorizar con IA'}
               </button>
             </div>
           )}
