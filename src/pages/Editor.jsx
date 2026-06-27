@@ -9,6 +9,7 @@ import ConfigPanel from '@/components/editor/ConfigPanel';
 import RegionsPanel from '@/components/editor/RegionsPanel';
 import SubpixelMetricsPanel from '@/components/editor/SubpixelMetricsPanel.jsx';
 import StitchPlannerPanel from '@/components/editor/StitchPlannerPanel.jsx';
+import PhysicsSimulator from '@/components/editor/PhysicsSimulator.jsx';
 import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
@@ -267,6 +268,7 @@ export default function Editor() {
           <div className="flex items-center gap-1">
             {[
               { id: 'editor',  label: 'Editor' },
+              { id: 'sim',     label: '◉ Simulación' },
               { id: 'mask',    label: '✂ Máscara' },
               { id: 'planner', label: '✦ Planner' },
               { id: 'panel',   label: 'Panel' },
@@ -291,7 +293,7 @@ export default function Editor() {
         </div>
 
         <div className="flex-1 flex flex-col overflow-hidden">
-          {activeTab !== 'mask' && activeTab !== 'planner' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
+          {activeTab !== 'mask' && activeTab !== 'planner' && activeTab !== 'sim' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
             <SliderControl label="Imagen" value={imageOpacity} onChange={setImageOpacity} color="text-amber-400" />
             <SliderControl label="Puntadas" value={stitchOpacity} onChange={setStitchOpacity} color="text-violet-400" />
             <div className="flex items-center gap-2 ml-auto">
@@ -300,7 +302,15 @@ export default function Editor() {
             </div>
           </div>}
 
-          {activeTab === 'planner' ? (
+          {activeTab === 'sim' ? (
+            <div className="flex-1 overflow-hidden">
+              <PhysicsSimulator
+                imageUrl={imageUrl}
+                regions={regions}
+                config={config}
+              />
+            </div>
+          ) : activeTab === 'planner' ? (
             <div className="flex-1 overflow-hidden">
               <StitchPlannerPanel
                 regions={regions}
