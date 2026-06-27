@@ -20,11 +20,6 @@ export interface VectorizeResult {
     perimeter_mm: number;
     centroid: number[];
     coverage: number;
-    inertia_ratio?: number;
-    bbox_aspect?: number;
-    compacidad?: number;
-    area_relativa?: number;
-    fill_angle?: number;
   }>;
   metadata: {
     totalRegions: number;
@@ -45,8 +40,6 @@ export interface UseDecisionEngineReturn {
   vectorize: (imageUrl: string, strategy?: ProcessingStrategy, config?: Record<string, any>) => Promise<VectorizeResult | null>;
   reset: () => void;
 }
-
-const AI_ENABLED = import.meta.env.VITE_ENABLE_AI_DECISIONS === 'true';
 
 export function useDecisionEngine(): UseDecisionEngineReturn {
   const [status, setStatus] = useState<AnalysisStatus>('idle');
@@ -108,6 +101,7 @@ export function useDecisionEngine(): UseDecisionEngineReturn {
       const aiParams = strategy ? mapStrategyToParams(strategy) : {};
       setProgress(75);
 
+      // Llamar a hybridDigitize con parámetros optimizados
       const res = await base44.functions.invoke('hybridDigitize', {
         image_url: imageUrl,
         mode: existingConfig?.mode || aiParams.mode || 'hybrid',
@@ -119,23 +113,43 @@ export function useDecisionEngine(): UseDecisionEngineReturn {
         use_full_bg: existingConfig?.use_full_bg || false,
         tatami_density: aiParams.tatami_density || existingConfig?.tatami_density || 0.4,
         fill_angle: existingConfig?.fill_angle !== undefined ? existingConfig.fill_angle : null,
-        ai_strategy: strategy || null,
-        ai_warnings: result?.warnings || [],
       });
 
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `Error ${response.status} en vectorización`);
+      // Verificar respuesta de Base44
+      if (!res.data?.success) {
+        throw new Error(res.data?.error || 'Error en vectorización');
       }
 
-      const data: VectorizeResult = await response.json();
+      // Normalizar datos al formato VectorizeResult
+      const rawData = res.data.data?.response || res.data.data;
+
+      const normalized: VectorizeResult = {
+        regions: (rawData.regions || []).map((r: any) => ({
+          id: r.id || `region_${Math.random().toString(36).slice(2, 8)}`,
+          color: r.color || '#000000',
+          type: r.stitch_type || r.type || 'fill',
+          path_points: r.path_points || [],
+          stitches: r.stitches || [],
+          contour_stitches: r.contour_stitches || [],
+          is_external_border: r.is_external_border || false,
+          stitch_count: r.stitch_count || 0,
+          area_mm2: r.area_mm2 || 0,
+          perimeter_mm: r.perimeter_mm || 0,
+          centroid: r.centroid || [0, 0],
+          coverage: r.coverage || 0,
+        })),
+        metadata: {
+          totalRegions: rawData.regions?.length || 0,
+          processingTimeMs: rawData.processingTimeMs || 0,
+        },
+      };
 
       if (abortControllerRef.current.signal.aborted) return null;
 
-      setVectorizeResult(data);
+      setVectorizeResult(normalized);
       setProgress(100);
       setStatus('complete');
-      return data;
+      return normalized;
 
     } catch (err) {
       if (abortControllerRef.current.signal.aborted) return null;
@@ -144,7 +158,7 @@ export function useDecisionEngine(): UseDecisionEngineReturn {
       setStatus('error');
       return null;
     }
-  }, [result]);
+  }, []);
 
   const isLoading = status === 'analyzing' || status === 'vectorizing';
   const hasWarnings = (result?.warnings.length ?? 0) > 0;
