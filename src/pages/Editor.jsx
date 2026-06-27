@@ -298,7 +298,7 @@ export default function Editor() {
           showDecisionPanel && AI_ENABLED ?
           <div className="flex-1 flex items-center justify-center overflow-auto">
               <div className="w-full max-w-md mx-4">
-                <div className="bg-[#0d0f14] border border-[#1e2130] p-5 shadow-2xl rounded mx-3 my-1">
+                <div className="bg-[#0d0f14] border border-[#1e2130] p-5 shadow-2xl rounded mx-6">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-semibold text-white">🧠 Análisis de IA</h3>
                     <button onClick={() => {setShowDecisionPanel(false);resetAI();}} className="p-1 rounded hover:bg-[#1a1d27] text-slate-500 hover:text-white transition-colors">✕</button>
