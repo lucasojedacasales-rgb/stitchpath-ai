@@ -7,6 +7,7 @@ import AIProgressIndicator from '@/components/editor/AIProgressIndicator';
 import StitchCanvas from '@/components/editor/StitchCanvas';
 import ConfigPanel from '@/components/editor/ConfigPanel';
 import RegionsPanel from '@/components/editor/RegionsPanel';
+import SubpixelMetricsPanel from '@/components/editor/SubpixelMetricsPanel.jsx';
 import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
@@ -340,8 +341,25 @@ export default function Editor() {
           }
         </div>
 
-        <div className="w-64 flex-shrink-0 border-l border-[#1e2130] overflow-hidden">
-          <RegionsPanel regions={regions} selectedId={selectedRegionId} onSelect={setSelectedRegionId} onUpdate={handleRegionsUpdate} />
+        <div className="w-64 flex-shrink-0 border-l border-[#1e2130] overflow-hidden flex flex-col">
+          <div className="flex-1 overflow-hidden min-h-0">
+            <RegionsPanel regions={regions} selectedId={selectedRegionId} onSelect={setSelectedRegionId} onUpdate={handleRegionsUpdate} />
+          </div>
+          {selectedRegionId && regions.find(r => r.id === selectedRegionId)?.stitch_type === 'fill' && (
+            <div className="border-t border-[#1e2130] overflow-y-auto max-h-[45%] bg-[#0a0c12]">
+              <div className="px-3 py-2 border-b border-[#1a1d27] flex items-center gap-2">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Métricas sub-pixel</span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-900/30 border border-violet-500/30 text-violet-400">β</span>
+              </div>
+              <div className="p-3">
+                <SubpixelMetricsPanel
+                  region={regions.find(r => r.id === selectedRegionId)}
+                  widthMm={config.width_mm}
+                  heightMm={config.height_mm}
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
