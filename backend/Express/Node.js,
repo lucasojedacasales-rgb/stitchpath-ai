@@ -1,1 +1,33 @@
+// server.js o routes.js
+app.post('/api/ai-segment/analyze', async (req, res) => {
+  try {
+    const { image, concepts } = req.body;
+    
+    // Aquí integras tu lógica de IA (Claude, OpenAI, etc.)
+    // Por ahora, mock de respuesta:
+    const mockRegions = [
+      {
+        id: 'region-1',
+        label: 'body',
+        stitch: 'TATAMI_FILL',
+        stitchConfidence: 0.95,
+        metrics: { curvature: 0.3, area: 15000, compactness: 0.85 },
+        reason: 'Área grande con curvatura suave → Tatami fill para cobertura',
+        stitchParams: { density: 0.4, stitchLength: 2.5, angle: 45 }
+      },
+      {
+        id: 'region-2',
+        label: 'nose',
+        stitch: 'SATIN',
+        stitchConfidence: 0.92,
+        metrics: { curvature: 0.8, area: 500, compactness: 0.95 },
+        reason: 'Forma ovalada compacta → Satin para brillo definido',
+        stitchParams: { density: 0.6, stitchLength: 1.2 }
+      }
+    ];
 
+    res.json({ success: true, regions: mockRegions });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
