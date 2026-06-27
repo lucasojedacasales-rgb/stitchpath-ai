@@ -1,3 +1,7 @@
+// src/pages/Editor.jsx
+// MODIFICADO: Integración StitchPath AI Decision Engine
+// Feature flag: VITE_ENABLE_AI_DECISIONS
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
