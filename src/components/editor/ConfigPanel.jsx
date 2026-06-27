@@ -1,16 +1,15 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Zap, Cpu, Settings, BookMarked } from 'lucide-react';
+import { ChevronDown, ChevronRight, Zap, Cpu, Settings, BookMarked, Brain } from 'lucide-react';
 import WorkflowPresetPanel from './WorkflowPresetPanel';
 
 const FABRIC_TYPES = ['Algodón', 'Poliéster', 'Mezcla', 'Denim', 'Lino', 'Seda', 'Lycra', 'Otro'];
 
-const modes = [
+const MODES = [
   { id: 'hybrid', name: 'Híbrido', desc: 'Pixel-perfect + Claude Sonnet', badge: 'Recomendado' },
   { id: 'ultra', name: 'Ultra-Detallada', desc: '1200px+ micro-detalles' },
   { id: 'standard', name: 'Estándar', desc: 'Rápido, balance calidad/velocidad' },
   { id: 'precision', name: 'Precisión', desc: 'Máximo detalle, más puntadas' },
   { id: 'potrace', name: 'Potrace', desc: 'Rápido, sin IA extra' },
-  // ← NUEVO
   { 
     id: 'ai-segmentation', 
     name: '🧠 AI Segmentation', 
@@ -55,6 +54,57 @@ function Toggle({ label, value, onChange }) {
 export default function ConfigPanel({ config, onChange, regions, selectedRegionIds, onRegionsUpdate }) {
   const cfg = config || {};
   const set = (key, val) => onChange({ ...cfg, [key]: val });
+  
+  const [aiSegments, setAISegments] = useState([]);
+  const [aiAnalyzing, setAIAnalyzing] = useState(false);
+  const [aiError, setAIError] = useState(null);
+
+  const analyzeWithAI = async () => {
+    const canvas = document.querySelector('canvas');
+    if (!canvas) {
+      setAIError('No hay imagen para analizar');
+      return;
+    }
+
+    setAIAnalyzing(true);
+    setAIError(null);
+
+    try {
+      const imageBase64 = canvas.toDataURL('image/png');
+      
+      const response = await fetch('/api/ai-segment/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: imageBase64,
+          concepts: ['nose', 'eye', 'body', 'mouth', 'head', 'ear', 'tail']
+        })
+      });
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'Error en análisis');
+      }
+
+      setAISegments(result.regions);
+      console.log('✅ AI Segmentation:', result);
+
+    } catch (error) {
+      console.error('❌ Error AI Segmentation:', error);
+      setAIError(error.message);
+    } finally {
+      setAIAnalyzing(false);
+    }
+  };
+
+  const handleModeChange = (modeId) => {
+    set('mode', modeId);
+    
+    if (modeId === 'ai-segmentation') {
+      analyzeWithAI();
+    }
+  };
 
   return (
     <div className="flex flex-col h-full overflow-y-auto bg-[#0d0f14]">
@@ -118,7 +168,7 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
             return (
               <button
                 key={mode.id}
-                onClick={() => set('mode', mode.id)}
+                onClick={() => handleModeChange(mode.id)}
                 className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all ${
                   active
                     ? 'border-violet-500/60 bg-violet-900/20 text-white'
@@ -126,7 +176,7 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold">{mode.label}</span>
+                  <span className="text-xs font-semibold">{mode.name}</span>
                   {mode.badge && <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-600/30 text-violet-300 border border-violet-500/30">{mode.badge}</span>}
                   {active && <div className="w-1.5 h-1.5 rounded-full bg-violet-400" />}
                 </div>
@@ -208,6 +258,79 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
           <Toggle label="IA Vision (análisis visual)" value={cfg.use_ia_vision || false} onChange={v => set('use_ia_vision', v)} />
         </div>
       </Section>
+
+      {/* AI SEGMENTATION RESULTS */}
+      {cfg.mode === 'ai-segmentation' && (
+        <Section title="Regiones IA Detectadas" icon={Brain} defaultOpen={true}>
+          <div className="space-y-2">
+            {aiAnalyzing ? (
+              <div className="flex items-center gap-2 text-slate-400 py-4">
+                <div className="animate-spin w-4 h-4 border-2 border-violet-500 border-t-transparent rounded-full" />
+                <span className="text-xs">Analizando regiones con IA...</span>
+              </div>
+            ) : aiError ? (
+              <div className="text-red-400 text-xs py-2">
+                ❌ {aiError}
+              </div>
+            ) : aiSegments.length > 0 ? (
+              <>
+                <div className="text-[10px] text-slate-500 mb-2">
+                  {aiSegments.length} regiones detectadas · Click para ver detalles
+                </div>
+                {aiSegments.map((region) => (
+                  <div 
+                    key={region.id} 
+                    className="bg-[#161a23] border border-[#2a2d3a] rounded-lg p-2.5 hover:border-violet-500/40 transition-colors"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold capitalize text-white">{region.label}</span>
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
+                          region.stitch === 'SATIN' ? 'bg-pink-600/30 text-pink-300 border border-pink-500/30' :
+                          region.stitch === 'TATAMI_FILL' ? 'bg-blue-600/30 text-blue-300 border border-blue-500/30' :
+                          region.stitch === 'RUNNING' ? 'bg-green-600/30 text-green-300 border border-green-500/30' :
+                          'bg-gray-600/30 text-gray-300 border border-gray-500/30'
+                        }`}>
+                          {region.stitch === 'SATIN' ? '✨' : 
+                           region.stitch === 'TATAMI_FILL' ? '▦' : 
+                           region.stitch === 'RUNNING' ? '━' : '○'} {region.stitch.replace('_', ' ')}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-500">
+                        {(region.stitchConfidence * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1 mt-1.5">
+                      <div className="text-[10px] text-slate-500">
+                        Curv: <span className="text-slate-300">{region.metrics.curvature}</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        Área: <span className="text-slate-300">{region.metrics.area.toLocaleString()}px²</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        Comp: <span className="text-slate-300">{region.metrics.compactness}</span>
+                      </div>
+                    </div>
+                    <div className="text-[10px] text-slate-600 mt-1 italic">
+                      {region.reason}
+                    </div>
+                    {region.stitchParams && (
+                      <div className="text-[10px] text-slate-600 mt-1 pt-1 border-t border-[#2a2d3a]">
+                        Densidad: {region.stitchParams.density} · Longitud: {region.stitchParams.stitchLength}mm
+                        {region.stitchParams.angle !== undefined && ` · Ángulo: ${region.stitchParams.angle}°`}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </>
+            ) : (
+              <div className="text-slate-500 text-xs py-4 text-center">
+                Selecciona una imagen y el modo AI Segmentation para analizar
+              </div>
+            )}
+          </div>
+        </Section>
+      )}
 
       {/* AVANZADAS */}
       <Section title="Opciones Avanzadas" icon={Settings} defaultOpen={false}>
