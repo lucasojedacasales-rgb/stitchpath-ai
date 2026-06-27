@@ -8,6 +8,7 @@ import StitchCanvas from '@/components/editor/StitchCanvas';
 import ConfigPanel from '@/components/editor/ConfigPanel';
 import RegionsPanel from '@/components/editor/RegionsPanel';
 import SubpixelMetricsPanel from '@/components/editor/SubpixelMetricsPanel.jsx';
+import StitchPlannerPanel from '@/components/editor/StitchPlannerPanel.jsx';
 import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
@@ -264,9 +265,14 @@ export default function Editor() {
         </div>
         <div className="flex items-center justify-between px-4 py-1.5 border-t border-[#1a1d27]">
           <div className="flex items-center gap-1">
-            {['editor', 'mask', 'preview', 'panel'].map((tab) =>
-            <button key={tab} onClick={() => setActiveTab(tab)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === tab ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
-                {tab === 'editor' ? 'Editor' : tab === 'mask' ? '✂ Máscara' : tab === 'preview' ? 'Vista Previa' : 'Panel'}
+            {[
+              { id: 'editor',  label: 'Editor' },
+              { id: 'mask',    label: '✂ Máscara' },
+              { id: 'planner', label: '✦ Planner' },
+              { id: 'panel',   label: 'Panel' },
+            ].map(({ id, label }) =>
+              <button key={id} onClick={() => setActiveTab(id)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
+                {label}
               </button>
             )}
           </div>
@@ -285,7 +291,7 @@ export default function Editor() {
         </div>
 
         <div className="flex-1 flex flex-col overflow-hidden">
-          {activeTab !== 'mask' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
+          {activeTab !== 'mask' && activeTab !== 'planner' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
             <SliderControl label="Imagen" value={imageOpacity} onChange={setImageOpacity} color="text-amber-400" />
             <SliderControl label="Puntadas" value={stitchOpacity} onChange={setStitchOpacity} color="text-violet-400" />
             <div className="flex items-center gap-2 ml-auto">
@@ -294,7 +300,22 @@ export default function Editor() {
             </div>
           </div>}
 
-          {!imageUrl ?
+          {activeTab === 'planner' ? (
+            <div className="flex-1 overflow-hidden">
+              <StitchPlannerPanel
+                regions={regions}
+                config={config}
+                onApplyPlan={(updates) => {
+                  const idMap = new Map(updates.map(u => [u.id, u]));
+                  setRegions(prev => prev.map(r => {
+                    const upd = idMap.get(r.id);
+                    if (!upd) return r;
+                    return { ...r, stitch_type: upd.stitch_type, angle: upd.angle, underlay: upd.underlay };
+                  }));
+                }}
+              />
+            </div>
+          ) : !imageUrl ?
           <UploadZone onUpload={handleImageUpload} fileInputRef={fileInputRef} uploading={uploadingImage} /> :
           showDecisionPanel && AI_ENABLED ?
           <div className="flex-1 flex items-center justify-center overflow-auto">
