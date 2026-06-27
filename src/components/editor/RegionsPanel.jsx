@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
-import { Eye, EyeOff, Edit2, Check, Layers, Focus } from 'lucide-react';
+import { Eye, EyeOff, Edit2, Check, Layers, Focus, ChevronDown, ChevronRight } from 'lucide-react';
 import RegionEditModal from './RegionEditModal';
+import RegionInspector from './RegionInspector.jsx';
 
 // ── Color naming ──────────────────────────────────────────────────────────────
 
@@ -217,6 +218,26 @@ function ActionBtn({ onClick, children, title, accent }) {
 
 const FILTER_OPTS = ['Todas', 'Fill', 'Satin', 'Run'];
 
+function RegionInspectorPanel({ region, allRegions }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-t border-violet-500/20 bg-[#0a0c12]">
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-3 py-2 hover:bg-[#161a23] transition-colors">
+        <div className="flex items-center gap-2">
+          <div className="w-2.5 h-2.5 rounded-full border border-white/10 flex-shrink-0" style={{ background: region.color }} />
+          <span className="text-[11px] font-semibold text-violet-300 truncate max-w-[140px]">{region.name}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[9px] text-slate-600">Inspector</span>
+          {open ? <ChevronDown className="w-3 h-3 text-slate-600" /> : <ChevronRight className="w-3 h-3 text-slate-600" />}
+        </div>
+      </button>
+      {open && <RegionInspector region={region} allRegions={allRegions} />}
+    </div>
+  );
+}
+
 export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate }) {
   const [filter, setFilter] = useState('Todas');
   const [batchMode, setBatchMode] = useState(false);
@@ -411,6 +432,14 @@ export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate }
           </button>
         </div>
       )}
+
+      {/* Region Inspector — expanded when a region is selected */}
+      {selectedId && !batchMode && (() => {
+        const sel = allRegions.find(r => r.id === selectedId);
+        return sel ? (
+          <RegionInspectorPanel region={sel} allRegions={allRegions} />
+        ) : null;
+      })()}
 
       {/* Edit modal */}
       {editingId && editingRegion && (

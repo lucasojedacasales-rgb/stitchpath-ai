@@ -17,6 +17,7 @@ import MaskCanvas from '@/components/editor/MaskCanvas';
 import { preprocessImage } from '@/lib/imagePreprocessor';
 import { analyzeImage } from '@/lib/imageAnalyzer';
 import { traceImageContours } from '@/lib/contourTracer';
+import { enrichAllRegions } from '@/lib/regionBuilder.js';
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
 import { useDecisionEngine } from '@/hooks/useDecisionEngine.js';
@@ -213,12 +214,14 @@ export default function Editor() {
           return { ...r, name: r.name || `${getPosition(r)}_${getColorName(r.color)}_${getStitchAbbr(type)}`, stitch_type: type, stitch_count: calculateStitchCount({ ...r, stitch_type: type }) };
         });
 
-        const totalCalculatedStitches = newRegions.reduce((sum, r) => sum + (r.stitch_count || 0), 0);
-        setRegions(newRegions);setStep(3);
+        // Enriquecer regiones con todos los campos avanzados del RegionBuilder
+        const enrichedRegions = enrichAllRegions(newRegions, config.width_mm || 100, config.height_mm || 100);
+        const totalCalculatedStitches = enrichedRegions.reduce((sum, r) => sum + (r.stitch_count || 0), 0);
+        setRegions(enrichedRegions);setStep(3);
         setShowDecisionPanel(false);
 
-        await base44.entities.Project.update(id, { regions: newRegions, step: 3, status: 'ready', total_stitches: totalCalculatedStitches, color_count: new Set(newRegions.map((r) => r.color)).size });
-        await base44.entities.VersionHistory.create({ project_id: id, label: `Vectorización ${useAIStrategy ? 'IA' : config.mode}`, description: `${newRegions.length || 0} regiones generadas${useAIStrategy ? ' (optimizado por IA)' : ''}`, snapshot: { regions: newRegions, config }, step: 3 });
+        await base44.entities.Project.update(id, { regions: enrichedRegions, step: 3, status: 'ready', total_stitches: totalCalculatedStitches, color_count: new Set(newRegions.map((r) => r.color)).size });
+        await base44.entities.VersionHistory.create({ project_id: id, label: `Vectorización ${useAIStrategy ? 'IA' : config.mode}`, description: `${newRegions.length || 0} regiones generadas${useAIStrategy ? ' (optimizado por IA)' : ''}`, snapshot: { regions: enrichedRegions, config }, step: 3 });
       }
     } catch (e) {console.error(e);} finally
     {setProcessing(false);clearInterval(timerRef.current);}
