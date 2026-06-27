@@ -1,202 +1,325 @@
-// base44/src/components/DecisionPanel.tsx
+// src/base44/components/DecisionPanel.tsx
 import React from 'react';
-import { DecisionResult, ContentType } from '../../entities/DecisionResult';
+import { Zap, Settings, AlertTriangle, CheckCircle, Loader2, X } from 'lucide-react';
+import type { DecisionResult, ProcessingStrategy } from '../entities/DecisionResult';
 
 interface DecisionPanelProps {
-  decision: DecisionResult;
-  onAcceptStrategy: () => void;
-  onModifyStrategy: () => void;
+  result: DecisionResult | null;
+  status: 'idle' | 'analyzing' | 'vectorizing' | 'complete' | 'error';
+  progress: number;
+  error: string | null;
+  isLoading: boolean;
+  onProceed: () => void;
+  onAdjustParams: () => void;
+  onCancel: () => void;
+  className?: string;
 }
 
-const contentTypeLabels: Record<ContentType, { label: string; emoji: string; description: string }> = {
-  logo: { label: 'Logo', emoji: '🎯', description: 'Diseño corporativo con bordes definidos' },
-  text: { label: 'Texto', emoji: '📝', description: 'Tipografía y caracteres' },
-  anime: { label: 'Anime/Vector', emoji: '✨', description: 'Arte con colores planos y líneas negras' },
-  photo: { label: 'Fotografía', emoji: '📷', description: 'Imagen real con textura y degradados' },
-  illustration: { label: 'Ilustración', emoji: '🎨', description: 'Arte digital intermedio' },
-  mixed: { label: 'Contenido Mixto', emoji: '🔀', description: 'Combinación de elementos' }
-};
-
-const complexityColors = {
-  low: 'text-green-400',
-  medium: 'text-yellow-400',
-  high: 'text-red-400'
-};
-
-export const DecisionPanel: React.FC<DecisionPanelProps> = ({ 
-  decision, 
-  onAcceptStrategy, 
-  onModifyStrategy 
+/**
+ * DecisionPanel — Panel visual que muestra la decisión de la IA
+ * Se integra en el paso 2 del editor (entre subir imagen y vectorizar)
+ */
+export const DecisionPanel: React.FC<DecisionPanelProps> = ({
+  result,
+  status,
+  progress,
+  error,
+  isLoading,
+  onProceed,
+  onAdjustParams,
+  onCancel,
+  className = '',
 }) => {
-  const contentInfo = contentTypeLabels[decision.contentType];
-  const confidencePercent = Math.round(decision.confidence * 100);
+  // ─── Loading: Analizando ───
+  if (status === 'analyzing') {
+    return (
+      <div className={`flex flex-col items-center justify-center gap-4 py-12 ${className}`}>
+        <Loader2 className="w-10 h-10 text-violet-500 animate-spin" />
+        <div className="text-center">
+          <p className="text-sm font-medium text-white">🔍 Analizando imagen con IA...</p>
+          <p className="text-xs text-slate-500 mt-1">Detectando tipo de contenido, colores y complejidad</p>
+        </div>
+        <div className="w-48 h-1.5 bg-[#1a1d27] rounded-full overflow-hidden">
+          <div
+            className="h-full bg-violet-500 rounded-full transition-all duration-300"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      </div>
+    );
+  }
 
+  // ─── Loading: Vectorizando ───
+  if (status === 'vectorizing') {
+    return (
+      <div className={`flex flex-col items-center justify-center gap-4 py-12 ${className}`}>
+        <Loader2 className="w-10 h-10 text-cyan-500 animate-spin" />
+        <div className="text-center">
+          <p className="text-sm font-medium text-white">🧵 Generando puntadas...</p>
+          <p className="text-xs text-slate-500 mt-1">Vectorizando regiones y clasificando stitches</p>
+        </div>
+        <div className="w-48 h-1.5 bg-[#1a1d27] rounded-full overflow-hidden">
+          <div
+            className="h-full bg-cyan-500 rounded-full transition-all duration-300"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Error ───
+  if (error) {
+    return (
+      <div className={`flex flex-col items-center gap-3 py-8 ${className}`}>
+        <AlertTriangle className="w-10 h-10 text-red-500" />
+        <p className="text-sm text-red-400">{error}</p>
+        <button
+          onClick={onCancel}
+          className="px-4 py-2 rounded-lg bg-[#1a1d27] border border-[#2a2d3a] text-slate-400 hover:text-white text-xs transition-colors"
+        >
+          Volver
+        </button>
+      </div>
+    );
+  }
+
+  // ─── No hay resultado ───
+  if (!result) return null;
+
+  // ─── Resultado completo ───
   return (
-    <div className="bg-gray-900 border border-gray-700 rounded-lg p-6 max-w-2xl">
+    <div className={`flex flex-col gap-4 ${className}`}>
       {/* Header */}
-      <div className="flex items-center gap-4 mb-6">
-        <span className="text-4xl">{contentInfo.emoji}</span>
+      <div className="flex items-center gap-3">
+        <CheckCircle className="w-5 h-5 text-emerald-500 flex-shrink-0" />
         <div>
-          <h2 className="text-xl font-bold text-white">
-            Detectado: {contentInfo.label}
-          </h2>
-          <p className="text-gray-400 text-sm">{contentInfo.description}</p>
-        </div>
-        <div className="ml-auto">
-          <div className={`text-sm font-mono ${confidencePercent > 70 ? 'text-green-400' : confidencePercent > 40 ? 'text-yellow-400' : 'text-red-400'}`}>
-            Confianza: {confidencePercent}%
-          </div>
-        </div>
-      </div>
-
-      {/* Propiedades detectadas */}
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        <PropertyCard 
-          label="Colores únicos" 
-          value={decision.properties.colorCount.toString()} 
-          highlight={decision.properties.colorCount > 32}
-        />
-        <PropertyCard 
-          label="Complejidad" 
-          value={decision.properties.complexity.toUpperCase()} 
-          className={complexityColors[decision.properties.complexity]}
-        />
-        <PropertyCard 
-          label="Dimensiones" 
-          value={`${decision.dimensions.width} × ${decision.dimensions.height}`} 
-        />
-        <PropertyCard 
-          label="Hilos estimados" 
-          value={decision.estimatedThreadColors.toString()} 
-        />
-      </div>
-
-      {/* Características detectadas */}
-      <div className="mb-6">
-        <h3 className="text-sm font-semibold text-gray-300 mb-2 uppercase tracking-wider">
-          Características detectadas
-        </h3>
-        <div className="flex flex-wrap gap-2">
-          <FeatureBadge active={decision.properties.hasShadows} label="Sombras" />
-          <FeatureBadge active={decision.properties.hasGradients} label="Degradados" />
-          <FeatureBadge active={decision.properties.hasTransparency} label="Transparencia" />
-          <FeatureBadge active={decision.properties.hasFineDetails} label="Detalles finos" />
-          <FeatureBadge active={decision.properties.isHighContrast} label="Alto contraste" />
-        </div>
-      </div>
-
-      {/* Estrategia recomendada */}
-      <div className="bg-gray-800 rounded-lg p-4 mb-6">
-        <h3 className="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wider">
-          Estrategia recomendada
-        </h3>
-        
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <StrategyItem label="Modo" value={decision.strategy.vectorizationMode} />
-          <StrategyItem label="Tipo de puntada" value={decision.strategy.stitchType} />
-          <StrategyItem label="Reducción de color" value={decision.strategy.colorReduction} />
-          <StrategyItem label="Preservación de detalle" value={decision.strategy.detailPreservation} />
-        </div>
-
-        <div className="mt-3 pt-3 border-t border-gray-700">
-          <div className="text-xs text-gray-500 mb-1">Parámetros:</div>
-          <code className="text-xs text-cyan-400 font-mono">
-            maxColors={decision.strategy.recommendedParams.maxColors}, 
-            minRegion={decision.strategy.recommendedParams.minRegionArea},
-            merge={decision.strategy.recommendedParams.mergeThreshold},
-            simplify={decision.strategy.recommendedParams.simplification}
-          </code>
-        </div>
-
-        <div className="mt-3 flex gap-1">
-          {decision.strategy.pipeline.map((step, i) => (
-            <React.Fragment key={step}>
-              <span className="text-xs bg-blue-900 text-blue-200 px-2 py-1 rounded">
-                {step}
-              </span>
-              {i < decision.strategy.pipeline.length - 1 && (
-                <span className="text-gray-600">→</span>
-              )}
-            </React.Fragment>
-          ))}
+          <h3 className="text-sm font-semibold text-white">
+            IA detectó: <span className="text-violet-400 capitalize">{result.contentType}</span>
+          </h3>
+          <p className="text-xs text-slate-500">
+            Confianza: {Math.round(result.confidence * 100)}% • {result.dimensions.width}×{result.dimensions.height}px
+          </p>
         </div>
       </div>
 
       {/* Warnings */}
-      {decision.warnings.length > 0 && (
-        <div className="mb-6">
-          {decision.warnings.map((warning, i) => (
-            <div key={i} className="text-sm text-yellow-400 bg-yellow-900/20 border border-yellow-700/50 rounded px-3 py-2 mb-2">
-              {warning}
-            </div>
-          ))}
+      {result.warnings.length > 0 && (
+        <div className="bg-red-900/10 border border-red-500/20 rounded-lg p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
+            <span className="text-xs font-medium text-red-400">Advertencias</span>
+          </div>
+          <ul className="space-y-1.5">
+            {result.warnings.map((w, i) => (
+              <li key={i} className="text-xs text-red-300/80 pl-2 border-l-2 border-red-500/30">
+                {w}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
-      {/* Colores dominantes */}
-      <div className="mb-6">
-        <h3 className="text-sm font-semibold text-gray-300 mb-2 uppercase tracking-wider">
-          Colores dominantes
-        </h3>
-        <div className="flex gap-2">
-          {decision.properties.dominantColors.slice(0, 8).map((color, i) => (
-            <div key={i} className="group relative">
-              <div 
-                className="w-8 h-8 rounded border border-gray-600"
-                style={{ backgroundColor: color }}
-              />
-              <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-xs text-gray-500 opacity-0 group-hover:opacity-100 transition">
-                {color}
-              </span>
-            </div>
-          ))}
+      {/* Propiedades */}
+      <div className="grid grid-cols-2 gap-2">
+        <PropertyBadge
+          label="Sombras"
+          active={result.properties.hasShadows}
+          icon="☁️"
+        />
+        <PropertyBadge
+          label="Degradados"
+          active={result.properties.hasGradients}
+          icon="🌈"
+        />
+        <PropertyBadge
+          label="Transparencia"
+          active={result.properties.hasTransparency}
+          icon="👻"
+        />
+        <PropertyBadge
+          label="Detalles finos"
+          active={result.properties.hasFineDetails}
+          icon="🔬"
+        />
+        <PropertyBadge
+          label="Alto contraste"
+          active={result.properties.isHighContrast}
+          icon="⚡"
+        />
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161a23] border border-[#2a2d3a]">
+          <span className="text-sm">🎨</span>
+          <div>
+            <span className="text-[10px] text-slate-500 uppercase">Colores</span>
+            <span className="text-xs font-semibold text-white ml-2">{result.properties.colorCount}</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161a23] border border-[#2a2d3a]">
+          <span className="text-sm">📊</span>
+          <div>
+            <span className="text-[10px] text-slate-500 uppercase">Complejidad</span>
+            <span className="text-xs font-semibold text-white ml-2 capitalize">{result.properties.complexity}</span>
+          </div>
         </div>
       </div>
 
+      {/* Estrategia */}
+      <div className="bg-[#161a23] border border-[#2a2d3a] rounded-lg p-3">
+        <h4 className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
+          🎯 Estrategia recomendada
+        </h4>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+          <StrategyRow label="Modo" value={translateMode(result.strategy.vectorizationMode)} />
+          <StrategyRow label="Stitch" value={translateStitch(result.strategy.stitchType)} />
+          <StrategyRow label="Reducción color" value={translateReduction(result.strategy.colorReduction)} />
+          <StrategyRow label="Detalles" value={translateDetail(result.strategy.detailPreservation)} />
+        </div>
+        <div className="mt-3 pt-3 border-t border-[#2a2d3a]">
+          <div className="flex items-center gap-2 text-xs text-slate-400">
+            <span className="text-violet-400 font-mono">{result.strategy.recommendedParams.maxColors}</span>
+            <span>colores máx.</span>
+            <span className="mx-1 text-slate-600">•</span>
+            <span className="text-violet-400 font-mono">{result.strategy.recommendedParams.minRegionArea}</span>
+            <span>mm² mín.</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Colores estimados */}
+      <div className="flex items-center gap-3">
+        <div className="flex -space-x-1.5">
+          {result.properties.dominantColors.slice(0, 6).map((color, i) => (
+            <div
+              key={i}
+              className="w-6 h-6 rounded-full border-2 border-[#0d0f14]"
+              style={{ backgroundColor: color }}
+              title={color}
+            />
+          ))}
+          {result.properties.dominantColors.length > 6 && (
+            <div className="w-6 h-6 rounded-full border-2 border-[#0d0f14] bg-[#1a1d27] flex items-center justify-center text-[9px] text-slate-500 font-bold">
+              +{result.properties.dominantColors.length - 6}
+            </div>
+          )}
+        </div>
+        <span className="text-xs text-slate-500">
+          ~<strong className="text-violet-400">{result.estimatedThreadColors}</strong> colores de hilo estimados
+        </span>
+      </div>
+
+      {/* Pipeline */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {result.strategy.pipeline.map((step, i) => (
+          <React.Fragment key={step}>
+            <span className="px-2 py-0.5 rounded-full bg-violet-900/30 border border-violet-500/20 text-[10px] font-medium text-violet-300">
+              {translateStep(step)}
+            </span>
+            {i < result.strategy.pipeline.length - 1 && (
+              <span className="text-slate-600 text-xs">→</span>
+            )}
+          </React.Fragment>
+        ))}
+      </div>
+
       {/* Acciones */}
-      <div className="flex gap-3">
+      <div className="flex flex-col gap-2 pt-2 border-t border-[#1a1d27]">
         <button
-          onClick={onAcceptStrategy}
-          className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2 px-4 rounded transition"
+          onClick={onProceed}
+          disabled={isLoading}
+          className="flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors"
         >
-          ✅ Aplicar estrategia recomendada
+          <Zap className="w-4 h-4" />
+          {isLoading ? 'Procesando...' : '✨ Vectorizar con estos parámetros'}
         </button>
-        <button
-          onClick={onModifyStrategy}
-          className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 px-4 rounded transition"
-        >
-          ⚙️ Modificar parámetros
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={onAdjustParams}
+            disabled={isLoading}
+            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-[#161a23] border border-[#2a2d3a] hover:border-violet-500/50 text-slate-400 hover:text-white text-xs transition-colors"
+          >
+            <Settings className="w-3.5 h-3.5" />
+            Ajustar parámetros
+          </button>
+          <button
+            onClick={onCancel}
+            disabled={isLoading}
+            className="px-3 py-2 rounded-lg bg-[#161a23] border border-[#2a2d3a] hover:border-red-500/30 text-slate-500 hover:text-red-400 text-xs transition-colors"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
     </div>
   );
 };
 
-// Subcomponentes
-const PropertyCard: React.FC<{ label: string; value: string; highlight?: boolean; className?: string }> = ({ 
-  label, value, highlight, className 
-}) => (
-  <div className="bg-gray-800 rounded p-3">
-    <div className="text-xs text-gray-500 uppercase">{label}</div>
-    <div className={`text-lg font-mono ${highlight ? 'text-red-400' : 'text-white'} ${className || ''}`}>
-      {value}
+// ─── Sub-componentes ───
+
+function PropertyBadge({ label, active, icon }: { label: string; active: boolean; icon: string }) {
+  return (
+    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors ${
+      active
+        ? 'bg-violet-900/10 border-violet-500/30'
+        : 'bg-[#161a23] border-[#2a2d3a] opacity-50'
+    }`}>
+      <span className="text-sm">{icon}</span>
+      <span className="text-xs text-slate-400">{label}</span>
+      {active && <span className="ml-auto text-[10px] font-bold text-violet-400">SÍ</span>}
     </div>
-  </div>
-);
+  );
+}
 
-const FeatureBadge: React.FC<{ active: boolean; label: string }> = ({ active, label }) => (
-  <span className={`text-xs px-2 py-1 rounded border ${
-    active 
-      ? 'bg-green-900/30 text-green-400 border-green-700' 
-      : 'bg-gray-800 text-gray-600 border-gray-700'
-  }`}>
-    {active ? '✓' : '✗'} {label}
-  </span>
-);
+function StrategyRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between">
+      <span className="text-slate-500">{label}</span>
+      <span className="text-white font-medium">{value}</span>
+    </div>
+  );
+}
 
-const StrategyItem: React.FC<{ label: string; value: string }> = ({ label, value }) => (
-  <div className="flex justify-between">
-    <span className="text-gray-500">{label}:</span>
-    <span className="text-cyan-400 font-mono capitalize">{value}</span>
-  </div>
-);
+// ─── Traducciones ───
+
+function translateMode(mode: string): string {
+  const map: Record<string, string> = {
+    posterize: 'Posterización',
+    'edge-trace': 'Trazado de bordes',
+    'color-quantize': 'Cuantización',
+    skip: 'Sin pre-proceso',
+  };
+  return map[mode] || mode;
+}
+
+function translateStitch(type: string): string {
+  const map: Record<string, string> = {
+    fill: 'Relleno (Tatami)',
+    satin: 'Satén',
+    running: 'Pespunte',
+    mixed: 'Mixto',
+    auto: 'Automático',
+  };
+  return map[type] || type;
+}
+
+function translateReduction(r: string): string {
+  const map: Record<string, string> = { none: 'Ninguna', light: 'Leve', aggressive: 'Agresiva' };
+  return map[r] || r;
+}
+
+function translateDetail(d: string): string {
+  const map: Record<string, string> = { high: 'Alta', medium: 'Media', low: 'Baja' };
+  return map[d] || d;
+}
+
+function translateStep(step: string): string {
+  const map: Record<string, string> = {
+    preprocess: 'Pre-procesar',
+    vectorize: 'Vectorizar',
+    'classify-stitches': 'Clasificar',
+    generate: 'Generar',
+    optimize: 'Optimizar',
+  };
+  return map[step] || step;
+}
+
+export default DecisionPanel;
