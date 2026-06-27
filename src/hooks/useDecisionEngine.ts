@@ -1,8 +1,8 @@
-// src/base44/hooks/useDecisionEngine.ts
+// src/hooks/useDecisionEngine.ts
 import { useState, useCallback, useRef } from 'react';
 import { base44 } from '@/api/base44Client';
-import { analyzeImage } from '../functions/decisionEngine/analyzeImage';
-import type { DecisionResult, ProcessingStrategy } from '../entities/DecisionResult';
+import { analyzeImage } from '../../base44/functions/decisionEngine/analyzeImage';
+import type { DecisionResult, ProcessingStrategy } from '../../base44/entities/DecisionResult';
 
 export type AnalysisStatus = 'idle' | 'analyzing' | 'vectorizing' | 'complete' | 'error';
 
@@ -68,9 +68,6 @@ export function useDecisionEngine(): UseDecisionEngineReturn {
     setProgress(0);
   }, []);
 
-  /**
-   * Paso 1: Analiza la imagen con el motor de decisiones local
-   */
   const analyze = useCallback(async (imageSource: File | string | HTMLImageElement): Promise<DecisionResult | null> => {
     reset();
     abortControllerRef.current = new AbortController();
@@ -97,10 +94,6 @@ export function useDecisionEngine(): UseDecisionEngineReturn {
     }
   }, [reset]);
 
-  /**
-   * Paso 2: Vectoriza usando tu función existente hybridDigitize
-   * con parámetros optimizados por la IA
-   */
   const vectorize = useCallback(async (
     imageUrl: string,
     strategy?: ProcessingStrategy,
@@ -112,12 +105,9 @@ export function useDecisionEngine(): UseDecisionEngineReturn {
       setStatus('vectorizing');
       setProgress(60);
 
-      // Si hay estrategia de IA, mapear a parámetros
       const aiParams = strategy ? mapStrategyToParams(strategy) : {};
-
       setProgress(75);
 
-      // Llamar a tu función existente hybridDigitize con parámetros optimizados
       const res = await base44.functions.invoke('hybridDigitize', {
         image_url: imageUrl,
         mode: existingConfig?.mode || aiParams.mode || 'hybrid',
@@ -125,49 +115,27 @@ export function useDecisionEngine(): UseDecisionEngineReturn {
         height_mm: existingConfig?.height_mm || 100,
         color_count: aiParams.color_count || existingConfig?.color_count || 6,
         remove_bg: existingConfig?.remove_bg || false,
-        use_ia_vision: true, // Siempre usar IA vision cuando viene del decision engine
+        use_ia_vision: true,
         use_full_bg: existingConfig?.use_full_bg || false,
         tatami_density: aiParams.tatami_density || existingConfig?.tatami_density || 0.4,
         fill_angle: existingConfig?.fill_angle !== undefined ? existingConfig.fill_angle : null,
-        // Parámetros extra del decision engine
         ai_strategy: strategy || null,
         ai_warnings: result?.warnings || [],
       });
 
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Error ${response.status} en vectorización`);
+      }
+
+      const data: VectorizeResult = await response.json();
+
       if (abortControllerRef.current.signal.aborted) return null;
 
-      if (res.data?.success) {
-        const rawData = res.data.data?.response || res.data.data;
-        setProgress(100);
-        setStatus('complete');
-
-        // Normalizar al formato VectorizeResult
-        const normalized: VectorizeResult = {
-          regions: (rawData.regions || []).map((r: any) => ({
-            id: r.id || `region_${Math.random().toString(36).slice(2, 8)}`,
-            color: r.color || '#000000',
-            type: r.stitch_type || r.type || 'fill',
-            path_points: r.path_points || [],
-            stitches: r.stitches || [],
-            contour_stitches: r.contour_stitches || [],
-            is_external_border: r.is_external_border || false,
-            stitch_count: r.stitch_count || 0,
-            area_mm2: r.area_mm2 || 0,
-            perimeter_mm: r.perimeter_mm || 0,
-            centroid: r.centroid || [0, 0],
-            coverage: r.coverage || 0,
-          })),
-          metadata: {
-            totalRegions: rawData.regions?.length || 0,
-            processingTimeMs: rawData.processingTimeMs || 0,
-          },
-        };
-
-        setVectorizeResult(normalized);
-        return normalized;
-      } else {
-        throw new Error(res.data?.error || 'Error en vectorización');
-      }
+      setVectorizeResult(data);
+      setProgress(100);
+      setStatus('complete');
+      return data;
 
     } catch (err) {
       if (abortControllerRef.current.signal.aborted) return null;
@@ -197,16 +165,12 @@ export function useDecisionEngine(): UseDecisionEngineReturn {
   };
 }
 
-/**
- * Mapea la estrategia del Decision Engine a parámetros de hybridDigitize
- */
 function mapStrategyToParams(strategy: ProcessingStrategy): Record<string, any> {
   const params: Record<string, any> = {
     color_count: 12,
     tatami_density: 0.4,
   };
 
-  // Modo de vectorización
   switch (strategy.vectorizationMode) {
     case 'posterize':
       params.mode = 'hybrid';
@@ -226,7 +190,6 @@ function mapStrategyToParams(strategy: ProcessingStrategy): Record<string, any> 
       break;
   }
 
-  // Preservación de detalles afecta densidad
   switch (strategy.detailPreservation) {
     case 'high':
       params.tatami_density = 0.5;
@@ -239,7 +202,6 @@ function mapStrategyToParams(strategy: ProcessingStrategy): Record<string, any> 
       break;
   }
 
-  // Tipo de stitch
   switch (strategy.stitchType) {
     case 'satin':
       params.tatami_density = 0.6;
