@@ -16,8 +16,8 @@ import { analyzeImage } from '@/lib/imageAnalyzer';
 import { traceImageContours } from '@/lib/contourTracer';
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
-import { useDecisionEngine } from '@/hooks/useDecisionEngine';
-import { DecisionPanel } from '@/components/DecisionPanel';
+import { useDecisionEngine } from '@/hooks/useDecisionEngine.js';
+import { DecisionPanel } from '@/components/DecisionPanel.jsx';
 const AI_ENABLED = true; // Cambiar a false para desactivar
 // ═══════════════════════════════════════════
 

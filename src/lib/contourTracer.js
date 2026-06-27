@@ -204,22 +204,28 @@ function traceContour(mask, W, H) {
   return contour;
 }
 
-// ─── Ramer-Douglas-Peucker ────────────────────────────────────────────────────
+// ─── Ramer-Douglas-Peucker (iterativo, sin riesgo de stack overflow) ──────────
 
 function rdpSimplify(points, epsilon) {
   if (points.length <= 2) return points;
-  let maxDist = 0, maxIdx = 0;
-  const s = points[0], e = points[points.length - 1];
-  for (let i = 1; i < points.length - 1; i++) {
-    const d = pointToSegDist(points[i], s, e);
-    if (d > maxDist) { maxDist = d; maxIdx = i; }
+  const keep = new Uint8Array(points.length);
+  keep[0] = 1;
+  keep[points.length - 1] = 1;
+  const stack = [[0, points.length - 1]];
+  while (stack.length > 0) {
+    const [start, end] = stack.pop();
+    let maxDist = 0, maxIdx = start;
+    for (let i = start + 1; i < end; i++) {
+      const d = pointToSegDist(points[i], points[start], points[end]);
+      if (d > maxDist) { maxDist = d; maxIdx = i; }
+    }
+    if (maxDist > epsilon) {
+      keep[maxIdx] = 1;
+      stack.push([start, maxIdx]);
+      stack.push([maxIdx, end]);
+    }
   }
-  if (maxDist > epsilon) {
-    const l = rdpSimplify(points.slice(0, maxIdx + 1), epsilon);
-    const r = rdpSimplify(points.slice(maxIdx), epsilon);
-    return l.slice(0, -1).concat(r);
-  }
-  return [s, e];
+  return points.filter((_, i) => keep[i]);
 }
 
 function pointToSegDist([px, py], [ax, ay], [bx, by]) {
