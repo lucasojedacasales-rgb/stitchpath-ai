@@ -223,32 +223,45 @@ export function improveRecommendationFromHistory(region, currentRec, historicalP
   }
 
   // Ponderación: patrones más similares tienen más peso
-  let weightedOutput = {};
+  let weightedOutput = {
+    density: 0,
+    angle: 0,
+    pull_compensation: 0,
+  };
   let totalWeight = 0;
 
   for (const { pattern, similarity } of similarities.slice(0, 10)) {
-    const weight = similarity * pattern.confidence;
+    const weight = similarity * (pattern.confidence || 0.5);
 
     // Actualizar campos ponderados
     if (pattern.output.stitch_type && !weightedOutput.stitch_type) {
       weightedOutput.stitch_type = pattern.output.stitch_type;
     }
-    if (pattern.output.density !== undefined) {
-      weightedOutput.density = (weightedOutput.density || 0) * (totalWeight / (totalWeight + weight)) + pattern.output.density * (weight / (totalWeight + weight));
+    
+    if (pattern.output.density !== undefined && typeof pattern.output.density === 'number') {
+      weightedOutput.density = weightedOutput.density + pattern.output.density * weight;
     }
-    if (pattern.output.angle !== undefined) {
-      // Ángulo circular: promediar correctamente
-      const angle = (weightedOutput.angle || pattern.output.angle);
-      weightedOutput.angle = angle; // simplificado para demo
+    
+    if (pattern.output.angle !== undefined && typeof pattern.output.angle === 'number') {
+      weightedOutput.angle = weightedOutput.angle + pattern.output.angle * weight;
     }
-    if (pattern.output.pull_compensation !== undefined) {
-      weightedOutput.pull_compensation = (weightedOutput.pull_compensation || 0) * (totalWeight / (totalWeight + weight)) + pattern.output.pull_compensation * (weight / (totalWeight + weight));
+    
+    if (pattern.output.pull_compensation !== undefined && typeof pattern.output.pull_compensation === 'number') {
+      weightedOutput.pull_compensation = weightedOutput.pull_compensation + pattern.output.pull_compensation * weight;
     }
+    
     if (pattern.output.underlay !== undefined) {
       weightedOutput.underlay = pattern.output.underlay;
     }
 
     totalWeight += weight;
+  }
+
+  // Normalizar pesos
+  if (totalWeight > 0) {
+    if (weightedOutput.density > 0) weightedOutput.density = +(weightedOutput.density / totalWeight).toFixed(2);
+    if (weightedOutput.angle > 0) weightedOutput.angle = +(weightedOutput.angle / totalWeight).toFixed(0);
+    if (weightedOutput.pull_compensation > 0) weightedOutput.pull_compensation = +(weightedOutput.pull_compensation / totalWeight).toFixed(3);
   }
 
   // Calcular confianza de mejora

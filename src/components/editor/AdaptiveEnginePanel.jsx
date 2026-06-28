@@ -110,12 +110,12 @@ function RegionRow({ region, expanded, onToggle }) {
 
           {/* Main parameters */}
           <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-            <Param label="Densidad" value={`${region.density} mm`} />
-            <Param label="Largo puntada" value={`${region.stitch_length} mm`} />
-            <Param label="Compensación" value={`${region.pull_compensation} mm`} />
-            <Param label="Ángulo" value={`${region.angle}°`} />
-            <Param label="Underlay" value={region.underlay ? region.underlay : 'ninguno'} />
-            <Param label="Prioridad" value={`${region.priority}/5`} />
+            <Param label="Densidad" value={`${region.density || 0.4} mm`} />
+            <Param label="Largo puntada" value={`${region.stitch_length || 2.5} mm`} />
+            <Param label="Compensación" value={`${region.pull_compensation || 0.1} mm`} />
+            <Param label="Ángulo" value={`${region.angle !== undefined ? region.angle : 45}°`} />
+            <Param label="Underlay" value={region.underlay_config?.enabled ? (region.underlay || 'edge_run') : 'ninguno'} />
+            <Param label="Prioridad" value={`${region.priority || 3}/5`} />
           </div>
 
           {/* Metrics used */}

@@ -466,8 +466,7 @@ export function computeAdaptiveDecisions(region, config = {}) {
       overall_confidence: +(
         (stitchDecision.confidence * 0.4 +
           angleDecision.confidence * 0.3 +
-          0.85 * 0.3) /
-        1.0
+          0.85 * 0.3)
       ).toFixed(2),
     },
 

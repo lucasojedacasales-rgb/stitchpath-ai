@@ -75,13 +75,14 @@ export function useLearningFeedback(projectId) {
  */
 export async function loadHistoricalPatterns(projectId, region, limit = 50) {
   try {
-    // Filtrar por proyecto y región con propiedades similares
+    if (!projectId) return [];
+    
+    // Filtrar por proyecto
     const similar = await base44.entities.UserFeedback.filter({
       project_id: projectId,
-      processed_for_training: false,
     }, '-created_date', limit);
 
-    return similar || [];
+    return similar && Array.isArray(similar) ? similar : [];
   } catch (error) {
     console.error('[loadHistoricalPatterns] Error:', error);
     return [];
@@ -93,7 +94,7 @@ export async function loadHistoricalPatterns(projectId, region, limit = 50) {
  */
 export async function markFeedbackAsProcessed(feedbackIds) {
   try {
-    if (feedbackIds.length === 0) return;
+    if (!feedbackIds || feedbackIds.length === 0) return;
 
     // Actualizar en batch
     await base44.entities.UserFeedback.updateMany(
