@@ -16,7 +16,6 @@ import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/Prep
 import MaskToolbar from '@/components/editor/MaskToolbar';
 import MaskCanvas from '@/components/editor/MaskCanvas';
 import NeedlePathPanel from '@/components/editor/NeedlePathPanel';
-import NeedleTraceSimulator from '@/components/editor/NeedleTraceSimulator';
 import { runPipeline } from '@/lib/pipeline/runner';
 import { enrichAllRegions } from '@/lib/regionBuilder.js';
 import { getModeStrategy } from '@/lib/digitizeModes.js';
@@ -258,10 +257,9 @@ export default function Editor() {
 
           {activeTab === 'sim' ? (
             <div className="flex-1 overflow-hidden">
-              <NeedleTraceSimulator
+              <PhysicsSimulator
                 imageUrl={imageUrl}
                 regions={regions}
-                sequence={pathMetrics?.sequence || regions}
                 config={config}
               />
             </div>
