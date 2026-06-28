@@ -15,9 +15,9 @@
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
-const STITCH_LENGTH_RANGE = { min: 1.0, max: 4.0 };  // mm
-const DENSITY_RANGE = { min: 0.25, max: 2.0 };       // mm spacing
-const COMPENSATION_RANGE = { min: 0.0, max: 0.25 };  // mm pull correction
+const STITCH_LENGTH_RANGE = { min: 1.5, max: 3.0 };  // mm — reduced for stability
+const DENSITY_RANGE = { min: 0.35, max: 0.65 };     // mm spacing — STABLE RANGE
+const COMPENSATION_RANGE = { min: 0.0, max: 0.20 }; // mm pull correction
 
 // Thresholds de geometría para clasificación
 const THRESHOLDS = {

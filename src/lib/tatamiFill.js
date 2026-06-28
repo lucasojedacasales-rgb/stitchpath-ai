@@ -15,9 +15,10 @@ const TATAMI_OFFSETS = [0, 0.25, 0.5, 0.75]; // cyclic row offsets
 export function generateTatamiFill(polygon, densityMm = 0.4, stitchLenMm = 2.5, angleDeg = 0, pxPerMm = 4) {
   if (!polygon || polygon.length < 3) return { stitches: [], totalStitches: 0 };
 
-  const rowSpacingPx  = Math.max(1, densityMm * pxPerMm);
+  // STABLE: densidad mínima 0.35mm (no bajar de aquí)
+  const safeDensityMm = Math.max(0.35, Math.min(1.0, densityMm));
+  const rowSpacingPx  = Math.max(1, safeDensityMm * pxPerMm);
   const stitchPitchPx = Math.max(1, stitchLenMm * pxPerMm);
-  // Half-length of each rendered stitch line (visual: ~2px at zoom=1)
   const halfLenPx = Math.max(1, (stitchLenMm * 0.4) * pxPerMm);
 
   const angle = (angleDeg * Math.PI) / 180;
