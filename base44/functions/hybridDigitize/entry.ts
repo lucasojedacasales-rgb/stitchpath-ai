@@ -18,13 +18,22 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { image_url, mode, width_mm, height_mm, color_count, use_ia_vision, image_analysis, traced_contours } = await req.json();
+    const {
+      image_url, mode, width_mm, height_mm, color_count,
+      use_ia_vision, image_analysis, traced_contours,
+      max_regions, stitch_strategy, tatami_density, fill_angle
+    } = await req.json();
 
     if (!image_url) return Response.json({ error: 'image_url required' }, { status: 400 });
 
     const maxColors = Math.min(color_count || 8, 20);
     const w = width_mm || 100;
     const h = height_mm || 100;
+    const regionLimit = max_regions || 150;
+    const density = tatami_density || 0.4;
+    const adaptiveAngles = stitch_strategy?.adaptiveAngles || false;
+    const travelOptimize = stitch_strategy?.travelOptimize || false;
+    const underlayEnabled = stitch_strategy?.underlayEnabled !== false;
 
     // Re-upload image so Claude Vision always gets a valid Base44-hosted URL
     const imageDataUrl = await reuploadForClaude(image_url, base44);
@@ -84,37 +93,48 @@ Responde SOLO JSON:
       const labelMap = {};
       for (const l of labels) labelMap[l.index] = l;
 
-      const finalRegions = clientRegions.slice(0, 200).map((r, i) => {
+      const finalRegions = clientRegions.slice(0, regionLimit).map((r, i) => {
         const label = labelMap[i] || {};
         
         // === PRIORIDAD: vectorizador > Claude > reglas geométricas ===
         const stitch_type = r.type || label.stitch_type || clasificarPorGeometria(r);
         
-        const density = label.density || (stitch_type === 'fill' ? 0.7 : stitch_type === 'satin' ? 0.55 : 0.4);
+        const regionDensity = label.density || (stitch_type === 'fill' ? density : stitch_type === 'satin' ? density * 1.25 : 0.4);
         
-        // Ángulo: fill_angle del vectorizador > angle de Claude > cálculo por índice
-        const angle = r.fill_angle !== undefined ? r.fill_angle : 
-                      label.angle !== undefined ? label.angle : 
-                      (i * 17 % 180);
+        // Ángulo: adaptiveAngles usa PCA del vectorizador si existe, sino Claude, sino fallback
+        let angle;
+        if (adaptiveAngles && r.fill_angle !== undefined) {
+          angle = r.fill_angle;
+        } else if (label.angle !== undefined) {
+          angle = label.angle;
+        } else if (fill_angle !== null && fill_angle !== undefined) {
+          angle = fill_angle;
+        } else {
+          angle = i * 17 % 180;
+        }
         
-        const stitch_count = calcularStitchCount(r, stitch_type, density, w, h);
+        const stitch_count = calcularStitchCount(r, stitch_type, regionDensity, w, h);
+
+        // Underlay: respects mode strategy
+        const useUnderlay = underlayEnabled
+          ? (label.underlay !== undefined ? label.underlay : stitch_type === 'fill')
+          : false;
 
         return {
           id: `r${i + 1}`,
           name: label.name || `region_${r.hex.replace('#', '')}_${i}`,
           color: r.hex,
           stitch_type,
-          density: density,
-          angle: angle,
+          density: regionDensity,
+          angle,
           layer_order: label.layer_order || (stitch_type === 'fill' ? 1 : stitch_type === 'satin' ? 2 : 3),
           pull_compensation: label.pull_compensation || 0.15,
-          underlay: label.underlay !== undefined ? label.underlay : stitch_type === 'fill',
+          underlay: useUnderlay,
           area_mm2: Math.round(r.coverage * w * h),
           stitch_count,
           is_auto_contour: false,
           visible: true,
           path_points: r.path_points,
-          // Métricas del vectorizador para debugging
           _metrics: {
             compacidad: r.compacidad,
             inertia_ratio: r.inertia_ratio,
@@ -139,8 +159,8 @@ Responde SOLO JSON:
     }
 
     // ─── PATH B: Pure AI generation (solo si no hay contornos) ──────────────
-    const regionTarget = mode === 'ultra' ? '80-120' : mode === 'precision' ? '50-80' : mode === 'standard' ? '15-30' : '30-60';
-    const pointsPerShape = mode === 'ultra' ? '40-80' : mode === 'precision' ? '30-60' : '15-40';
+    const regionTarget = mode === 'ultra' ? '80-120' : mode === 'precision' ? '50-80' : mode === 'fast' ? '10-20' : mode === 'standard' ? '15-30' : '30-60';
+    const pointsPerShape = mode === 'ultra' ? '40-80' : mode === 'precision' ? '30-60' : mode === 'fast' ? '8-15' : '15-40';
 
     let colorDataBlock = '';
     if (image_analysis?.dominantColors?.length > 0) {

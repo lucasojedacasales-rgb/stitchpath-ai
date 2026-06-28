@@ -1,17 +1,11 @@
 import { useState, useCallback } from 'react';
 import { ChevronDown, ChevronRight, Zap, Cpu, Settings, BookMarked } from 'lucide-react';
 import WorkflowPresetPanel from './WorkflowPresetPanel';
+import { DIGITIZE_MODES, MODE_COLORS } from '@/lib/digitizeModes';
 
 const FABRIC_TYPES = ['Algodón', 'Poliéster', 'Mezcla', 'Denim', 'Lino', 'Seda', 'Lycra', 'Otro'];
 
-const MODES = [
-  { id: 'hybrid', name: 'Híbrido', desc: 'Pixel-perfect + Claude Sonnet', badge: 'Recomendado' },
-  { id: 'ultra', name: 'Ultra-Detallada', desc: '1200px+ micro-detalles' },
-  { id: 'standard', name: 'Estándar', desc: 'Rápido, balance calidad/velocidad' },
-  { id: 'precision', name: 'Precisión', desc: 'Máximo detalle, más puntadas' },
-  { id: 'potrace', name: 'Potrace', desc: 'Rápido, sin IA extra' },
-
-];
+const MODE_ORDER = ['fast', 'standard', 'precision', 'hybrid', 'ultra'];
 
 function Section({ title, icon: Icon, children, defaultOpen = true }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -111,26 +105,44 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
       </Section>
 
       {/* MODOS */}
-      <Section title="Modo de Digitalización" icon={Zap}>
+      <Section title="Motor de Digitalización" icon={Zap}>
         <div className="space-y-2">
-          {MODES.map(mode => {
-            const active = (cfg.mode || 'hybrid') === mode.id;
+          {MODE_ORDER.map(modeId => {
+            const mode = DIGITIZE_MODES[modeId];
+            const active = (cfg.mode || 'hybrid') === modeId;
+            const colors = MODE_COLORS[mode.color];
             return (
               <button
-                key={mode.id}
-                onClick={() => handleModeChange(mode.id)}
+                key={modeId}
+                onClick={() => handleModeChange(modeId)}
                 className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all ${
                   active
-                    ? 'border-violet-500/60 bg-violet-900/20 text-white'
+                    ? `${colors.border} ${colors.bg} text-white`
                     : 'border-[#2a2d3a] bg-[#161a23] text-slate-400 hover:border-[#3a3d4a] hover:text-slate-300'
                 }`}
               >
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold">{mode.name}</span>
-                  {mode.badge && <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-600/30 text-violet-300 border border-violet-500/30">{mode.badge}</span>}
-                  {active && <div className="w-1.5 h-1.5 rounded-full bg-violet-400" />}
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm leading-none">{mode.icon}</span>
+                    <span className={`text-xs font-bold ${active ? colors.text : ''}`}>{mode.name}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {mode.badge && (
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded border font-bold ${active ? colors.badge : 'bg-[#1a1d27] text-slate-500 border-[#2a2d3a]'}`}>
+                        {mode.badge}
+                      </span>
+                    )}
+                    {active && <div className={`w-1.5 h-1.5 rounded-full ${colors.text.replace('text-', 'bg-')}`} />}
+                  </div>
                 </div>
-                <p className="text-[11px] text-slate-500 mt-0.5">{mode.desc}</p>
+                <p className="text-[10px] text-slate-500 leading-tight">{mode.description}</p>
+                {active && mode.recommended_for?.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {mode.recommended_for.slice(0, 3).map(tag => (
+                      <span key={tag} className={`text-[9px] px-1.5 py-0.5 rounded-full border ${colors.badge} opacity-70`}>{tag}</span>
+                    ))}
+                  </div>
+                )}
               </button>
             );
           })}

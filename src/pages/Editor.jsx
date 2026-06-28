@@ -19,6 +19,7 @@ import { preprocessImage } from '@/lib/imagePreprocessor';
 import { analyzeImage } from '@/lib/imageAnalyzer';
 import { traceImageContours } from '@/lib/contourTracer';
 import { enrichAllRegions } from '@/lib/regionBuilder.js';
+import { getModeStrategy } from '@/lib/digitizeModes.js';
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
 import { useDecisionEngine } from '@/hooks/useDecisionEngine.js';
@@ -28,8 +29,8 @@ const AI_ENABLED = true; // Cambiar a false para desactivar
 
 const DEFAULT_CONFIG = {
   fabric_type: 'Algodón', width_mm: 100, height_mm: 100, color_count: 6,
-  mode: 'hybrid', use_full_bg: false, use_ia_vision: false,
-  remove_bg: false, tension_comp: 0.5, ai_sequence: false
+  mode: 'hybrid', remove_bg: false, tension_comp: 0.5,
+  fill_angle: null, tatami_density: 0.4, vector_engine: 'hybrid',
 };
 
 export default function Editor() {
@@ -134,49 +135,59 @@ export default function Editor() {
     timerRef.current = setInterval(() => setProcessingElapsed((s) => s + 1), 1000);
     setStep(2);
 
+    // Resolve the active strategy: AI decision > selected mode > hybrid fallback
+    const modeStrategy = getModeStrategy(config.mode || 'hybrid');
     const useAIStrategy = AI_ENABLED && aiStrategy;
 
     try {
+      // --- PREPROCESSING: use mode's preset unless user has customized manually ---
       let finalImageUrl = imageUrl;
-      if (preprocessSettings.enabled) {
+      const prepSettings = modeStrategy.preprocess;
+      try {
+        const processed = await preprocessImage(imageUrl, prepSettings);
+        const { file_url } = await base44.integrations.Core.UploadFile({ file: processed.blob });
+        finalImageUrl = file_url;
+        setPreprocessedUrl(file_url);
+      } catch (prepErr) { console.warn('Preprocessing failed:', prepErr); }
+
+      // --- CLIENT-SIDE ANALYSIS: use mode's vectorizer params ---
+      const colorCount = useAIStrategy
+        ? aiStrategy.recommendedParams.maxColors
+        : modeStrategy.vectorizer.color_count;
+
+      let imageAnalysis = null, tracedContours = null;
+      // Fast mode skips slow client analysis
+      if (modeStrategy.id !== 'fast') {
         try {
-          const processed = await preprocessImage(imageUrl, {
-            ...preprocessSettings,
-            posterizeColors: preprocessSettings.posterizeColors !== false,
-            posterizeLevels: preprocessSettings.posterizeLevels || 6,
-            morphologyCleanup: preprocessSettings.morphologyCleanup !== false,
-          });
-          const { file_url } = await base44.integrations.Core.UploadFile({ file: processed.blob });
-          finalImageUrl = file_url;
-          setPreprocessedUrl(file_url);
-        } catch (prepErr) {console.warn('Preprocessing failed:', prepErr);}
+          const [analysis, contours] = await Promise.all([
+            analyzeImage(finalImageUrl, colorCount),
+            traceImageContours(finalImageUrl, colorCount, modeStrategy.vectorizer.rdpEpsilon || 0.003),
+          ]);
+          imageAnalysis = analysis;
+          tracedContours = contours;
+        } catch (e) { console.warn('Client analysis failed:', e); }
       }
 
-      let imageAnalysis = null,tracedContours = null;
-      try {
-        const [analysis, contours] = await Promise.all([
-        analyzeImage(finalImageUrl, useAIStrategy ? aiStrategy.recommendedParams.maxColors : config.color_count || 8),
-        traceImageContours(finalImageUrl, useAIStrategy ? aiStrategy.recommendedParams.maxColors : config.color_count || 8, 0.003)]
-        );
-        imageAnalysis = analysis;tracedContours = contours;
-      } catch (e) {console.warn('Client analysis failed:', e);}
-
+      // --- BACKEND: pass full mode strategy ---
+      const backendParams = modeStrategy.backend;
       const res = await base44.functions.invoke('hybridDigitize', {
         image_url: finalImageUrl,
-        mode: useAIStrategy ? 'hybrid' : config.mode,
+        mode: backendParams.mode,
         width_mm: config.width_mm,
         height_mm: config.height_mm,
-        color_count: useAIStrategy ? aiStrategy.recommendedParams.maxColors : config.color_count,
+        color_count: colorCount,
         remove_bg: config.remove_bg,
-        use_ia_vision: useAIStrategy ? true : config.use_ia_vision,
-        use_full_bg: config.use_full_bg,
+        use_ia_vision: useAIStrategy ? true : backendParams.use_ia_vision,
+        use_full_bg: backendParams.use_full_bg,
         image_analysis: imageAnalysis,
         traced_contours: tracedContours,
-        vector_engine: config.vector_engine || 'hybrid',
-        tatami_density: useAIStrategy ?
-        aiStrategy.stitchType === 'satin' ? 0.6 : aiStrategy.stitchType === 'running' ? 0.2 : 0.4 :
-        config.tatami_density || 0.4,
-        fill_angle: config.fill_angle !== undefined ? config.fill_angle : null
+        vector_engine: backendParams.vector_engine,
+        tatami_density: useAIStrategy
+          ? (aiStrategy.stitchType === 'satin' ? 0.6 : aiStrategy.stitchType === 'running' ? 0.2 : 0.4)
+          : backendParams.tatami_density,
+        fill_angle: config.fill_angle !== undefined ? config.fill_angle : null,
+        max_regions: backendParams.max_regions,
+        stitch_strategy: modeStrategy.stitchStrategy,
       });
 
       if (res.data?.success) {
