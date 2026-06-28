@@ -52,7 +52,7 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
 
   // Controles de simulación (sobreescribibles por el usuario)
   const [simParams, setSimParams] = useState({
-    threadThicknessPx: 2.8,
+    threadThicknessPx: 3.5, // user-facing control; actual render uses physical mm calculation
     tension:           fabricPreset.tensionBase,
     glossiness:        fabricPreset.glossiness,
     lightAngleDeg:     fabricPreset.lightAngleDeg,
@@ -142,11 +142,18 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
         return la - lb;
       });
 
-    const pxPerMm = drawW / 100;
-    const threadMult = FABRIC_SIM_PARAMS[fabricType]?.threadMult || 1;
+    // pxPerMm based on actual design size in mm
+    const designWidthMm  = config?.width_mm  || 100;
+    const designHeightMm = config?.height_mm || 100;
+    const pxPerMm = Math.min(drawW / designWidthMm, drawH / designHeightMm);
+
+    // Thread thickness: a real 40wt embroidery thread is ~0.35mm diameter
+    // At screen resolution we scale this: threadPx = 0.35mm * pxPerMm * zoom * fabricMult
+    const threadMult    = FABRIC_SIM_PARAMS[fabricType]?.threadMult || 1;
+    const physicalThreadPx = 0.38 * pxPerMm * threadMult; // 0.38mm = standard 40wt
     const baseParams = {
       ...simParams,
-      threadThicknessPx: simParams.threadThicknessPx * threadMult,
+      threadThicknessPx: Math.max(1.2, Math.min(physicalThreadPx, simParams.threadThicknessPx)),
       zoom,
     };
 
@@ -171,14 +178,15 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
 
       if (effectiveType === 'fill') {
         // Obtener o generar puntadas Tatami
-        const density  = region.tatami_density || region.density_mm || 0.4;
-        // fill_angle from PCA (contourTracer), angle from stitch planner, orientation from semantics
+        const density  = region.tatami_density || region.density_mm || 0.38;
         const angle    = region.fill_angle ?? region.angle ?? region.orientation ?? 45;
-        const cacheKey = `${region.id}_${drawW.toFixed(0)}_${drawH.toFixed(0)}_${angle}_${density.toFixed(2)}`;
+        // Stitch length: 3.0mm is professional standard for fill
+        const stitchLenMm = region.stitch_length_mm || 3.0;
+        const cacheKey = `${region.id}_${drawW.toFixed(0)}_${drawH.toFixed(0)}_${angle}_${density.toFixed(2)}_${stitchLenMm}`;
         let cached = stitchCacheRef.current.get(cacheKey);
         if (!cached) {
           const polygon = pts.map(p => [(p[0] - 0.5) * drawW, (p[1] - 0.5) * drawH]);
-          const { stitches } = generateTatamiFill(polygon, density, 2.5, angle, pxPerMm);
+          const { stitches } = generateTatamiFill(polygon, density, stitchLenMm, angle, pxPerMm);
           cached = stitches;
           stitchCacheRef.current.set(cacheKey, cached);
         }
@@ -196,23 +204,22 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
         ctx.globalAlpha = 1;
 
       } else if (effectiveType === 'satin') {
-        // Satén: líneas perpendiculares densas con perfil físico
-        const angle = (((region.fill_angle ?? region.angle ?? 45)) * Math.PI) / 180;
-        const density = region.density || 0.8;
-        const spacing = Math.max(baseParams.threadThicknessPx * 0.9, 6 / density) / zoom;
+        // Satén: columnas densas perpendiculares, espaciado = diámetro real del hilo (0.38mm)
+        const satinAngle = (((region.fill_angle ?? region.angle ?? 45)) * Math.PI) / 180;
+        // Satin column spacing = thread diameter for full coverage (no gaps, no overlap)
+        const satinSpacingPx = Math.max(1.2, 0.38 * pxPerMm);
 
         const xs = pts.map(p => (p[0] - 0.5) * drawW);
         const ys = pts.map(p => (p[1] - 0.5) * drawH);
         const cx2 = (Math.min(...xs) + Math.max(...xs)) / 2;
         const cy2 = (Math.min(...ys) + Math.max(...ys)) / 2;
-        const diagLen = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) + spacing * 2;
+        const diagLen = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 0.5 + satinSpacingPx * 2;
 
-        // Transform para dibujar las líneas rotadas
         ctx.save();
         ctx.translate(cx2, cy2);
-        ctx.rotate(angle);
-        for (let y = -diagLen; y < diagLen; y += spacing) {
-          drawPhysicalStitch(ctx, -diagLen, y, diagLen, y, color, { ...regionParams, zoom });
+        ctx.rotate(satinAngle);
+        for (let sy = -diagLen; sy <= diagLen; sy += satinSpacingPx) {
+          drawPhysicalStitch(ctx, -diagLen, sy, diagLen, sy, color, { ...regionParams, zoom });
         }
         ctx.restore();
 

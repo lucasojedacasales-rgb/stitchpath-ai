@@ -183,10 +183,10 @@ export function drawPhysicalStitch(ctx, x0, y0, x1, y1, color, params) {
     layerDepth = 0,          // 0 = base, 1+ = capas superiores
   } = params;
 
-  const thick = Math.max(1.2, threadThicknessPx / zoom);
+  const thick = Math.max(1.0, threadThicknessPx / zoom);
   const dx = x1 - x0, dy = y1 - y0;
   const len = Math.hypot(dx, dy);
-  if (len < 0.5) return;
+  if (len < 0.3) return;
 
   // Normal perpendicular a la puntada
   const nx = -dy / len, ny = dx / len;
@@ -224,15 +224,20 @@ export function drawPhysicalStitch(ctx, x0, y0, x1, y1, color, params) {
   const bodyGrad = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
 
   const baseR = hexToRgb(color);
-  const brightFactor = 0.3 + dot * 0.2;
-  const darkFactor   = 0.25 + (1 - dot) * 0.15;
+  // Real thread: tight specular highlight at center, dark flanks — like a polyester cylinder
+  const brightFactor = 0.22 + dot * 0.18;   // max highlight ~40% lightening
+  const darkFactor   = 0.28 + (1 - dot) * 0.12; // flanks darker
 
-  // Perfil: oscuro en borde izquierdo → claro en cima → oscuro en borde derecho
-  bodyGrad.addColorStop(0,    `rgba(${Math.round(baseR.r*(1-darkFactor))},${Math.round(baseR.g*(1-darkFactor))},${Math.round(baseR.b*(1-darkFactor))},0.9)`);
-  bodyGrad.addColorStop(0.25, `rgba(${baseR.r},${baseR.g},${baseR.b},0.95)`);
-  bodyGrad.addColorStop(0.5,  `rgba(${Math.min(255,Math.round(baseR.r+(255-baseR.r)*brightFactor*0.8))},${Math.min(255,Math.round(baseR.g+(255-baseR.g)*brightFactor*0.8))},${Math.min(255,Math.round(baseR.b+(255-baseR.b)*brightFactor*0.8))},1)`);
-  bodyGrad.addColorStop(0.75, `rgba(${baseR.r},${baseR.g},${baseR.b},0.95)`);
-  bodyGrad.addColorStop(1,    `rgba(${Math.round(baseR.r*(1-darkFactor*0.8))},${Math.round(baseR.g*(1-darkFactor*0.8))},${Math.round(baseR.b*(1-darkFactor*0.8))},0.88)`);
+  const hi = (ch) => Math.min(255, Math.round(ch + (255 - ch) * brightFactor));
+  const sh = (ch, f) => Math.round(ch * (1 - f));
+
+  // Perfil cilíndrico realista: sombra → base → pico especular estrecho → base → sombra
+  bodyGrad.addColorStop(0,    `rgba(${sh(baseR.r,darkFactor)},${sh(baseR.g,darkFactor)},${sh(baseR.b,darkFactor)},0.95)`);
+  bodyGrad.addColorStop(0.20, `rgba(${baseR.r},${baseR.g},${baseR.b},0.97)`);
+  bodyGrad.addColorStop(0.42, `rgba(${hi(baseR.r)},${hi(baseR.g)},${hi(baseR.b)},1)`);
+  bodyGrad.addColorStop(0.50, `rgba(${hi(baseR.r)},${hi(baseR.g)},${hi(baseR.b)},1)`);
+  bodyGrad.addColorStop(0.72, `rgba(${baseR.r},${baseR.g},${baseR.b},0.97)`);
+  bodyGrad.addColorStop(1,    `rgba(${sh(baseR.r,darkFactor*0.85)},${sh(baseR.g,darkFactor*0.85)},${sh(baseR.b,darkFactor*0.85)},0.92)`);
 
   ctx.strokeStyle = bodyGrad;
   ctx.lineWidth = thick;

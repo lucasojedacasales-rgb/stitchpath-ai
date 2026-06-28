@@ -1,78 +1,82 @@
 // ── Tatami Fill Generator ─────────────────────────────────────────────────────
-// Generates real stitch points from a polygon contour (canvas px coords).
-// Returns { stitches: [[x0,y0,x1,y1], ...], totalStitches: number }
-// Each stitch is a short line segment [startX, startY, endX, endY].
+// Generates real machine embroidery stitch paths from a polygon.
+// Output: { stitches: [[x0,y0,x1,y1], ...], totalStitches: number }
+//
+// Each stitch is ONE needle penetration — a segment from the previous
+// needle point to the next, as a real embroidery machine produces them.
+// Rows run full width (edge to edge) alternating direction (boustrophedon).
+// Tatami offset shifts each row's start by stitchPitch/4 for the classic brick pattern.
 
-const TATAMI_OFFSETS = [0, 0.25, 0.5, 0.75]; // cyclic row offsets
+const TATAMI_OFFSETS = [0, 0.25, 0.5, 0.75]; // fraction of stitch pitch per row cycle
 
 /**
- * @param {Array<[number,number]>} polygon  - canvas px coords [[x,y],...]
- * @param {number} densityMm  - row spacing in mm (default 0.4)
- * @param {number} stitchLenMm - stitch pitch in mm (default 2.5)
- * @param {number} angleDeg   - fill angle in degrees (default 0 = horizontal rows)
- * @param {number} pxPerMm    - canvas pixels per mm
+ * @param {Array<[number,number]>} polygon   - canvas px coords [[x,y],...]
+ * @param {number} densityMm   - row spacing in mm  (typical: 0.35–0.5)
+ * @param {number} stitchLenMm - stitch length in mm (typical: 2.5–4.0)
+ * @param {number} angleDeg    - fill angle in degrees (0 = horizontal)
+ * @param {number} pxPerMm     - canvas pixels per mm
  */
-export function generateTatamiFill(polygon, densityMm = 0.4, stitchLenMm = 2.5, angleDeg = 0, pxPerMm = 4) {
+export function generateTatamiFill(polygon, densityMm = 0.4, stitchLenMm = 3.0, angleDeg = 0, pxPerMm = 4) {
   if (!polygon || polygon.length < 3) return { stitches: [], totalStitches: 0 };
 
-  const rowSpacingPx  = Math.max(1, densityMm * pxPerMm);
-  const stitchPitchPx = Math.max(1, stitchLenMm * pxPerMm);
-  // Half-length of each rendered stitch line (visual: ~2px at zoom=1)
-  const halfLenPx = Math.max(1, (stitchLenMm * 0.4) * pxPerMm);
+  // Professional machine parameters
+  // Row spacing = thread diameter territory (~0.35mm for 40wt, ~0.45mm for 30wt)
+  const rowSpacingPx  = Math.max(1.5, densityMm * pxPerMm);
+  // Stitch pitch = distance between needle penetrations along the row
+  const stitchPitchPx = Math.max(rowSpacingPx * 2, stitchLenMm * pxPerMm);
 
-  const angle = (angleDeg * Math.PI) / 180;
-  const cos = Math.cos(-angle), sin = Math.sin(-angle);
-  const cosR = Math.cos(angle), sinR = Math.sin(angle);
+  const angleRad = (angleDeg * Math.PI) / 180;
+  const cosF = Math.cos(-angleRad), sinF = Math.sin(-angleRad); // into fill space
+  const cosB = Math.cos(angleRad),  sinB = Math.sin(angleRad);  // back to world
 
-  // Rotate polygon into fill-angle space
-  const rotated = polygon.map(([x, y]) => [x * cos - y * sin, x * sin + y * cos]);
+  // Rotate polygon into fill-angle space so rows are horizontal
+  const rotPoly = polygon.map(([x, y]) => [
+    x * cosF - y * sinF,
+    x * sinF + y * cosF,
+  ]);
 
-  const minY = Math.min(...rotated.map(p => p[1]));
-  const maxY = Math.max(...rotated.map(p => p[1]));
+  const minY = Math.min(...rotPoly.map(p => p[1]));
+  const maxY = Math.max(...rotPoly.map(p => p[1]));
 
   const stitches = [];
   let rowIdx = 0;
 
-  for (let ry = minY + rowSpacingPx / 2; ry <= maxY; ry += rowSpacingPx) {
-    const xs = scanlineIntersections(rotated, ry);
+  for (let ry = minY + rowSpacingPx * 0.5; ry <= maxY; ry += rowSpacingPx) {
+    const xs = scanlineIntersections(rotPoly, ry);
     if (xs.length < 2) { rowIdx++; continue; }
     xs.sort((a, b) => a - b);
 
-    const cycleOffset = TATAMI_OFFSETS[rowIdx % 4] * stitchPitchPx;
+    // Tatami brick offset for this row
+    const brickOffset = TATAMI_OFFSETS[rowIdx % 4] * stitchPitchPx;
     const forward = rowIdx % 2 === 0;
 
-    for (let i = 0; i < xs.length - 1; i += 2) {
-      const xL = xs[i], xR = xs[i + 1];
-      const segLen = xR - xL;
-      if (segLen < stitchPitchPx * 0.5) continue;
+    for (let si = 0; si < xs.length - 1; si += 2) {
+      const xL = xs[si], xR = xs[si + 1];
+      if (xR - xL < stitchPitchPx * 0.4) { rowIdx++; continue; }
 
-      // First stitch position with cyclic offset
-      const firstX = xL + ((cycleOffset % stitchPitchPx + stitchPitchPx) % stitchPitchPx);
-
-      const rowPoints = [];
-      // Entry point at polygon edge
-      rowPoints.push(forward ? xL : xR);
-      // Interior stitch points
-      for (let x = firstX; x < xR - 0.1; x += stitchPitchPx) {
-        if (x > xL + 0.1) rowPoints.push(x);
+      // Build needle penetration points for this span
+      // Start at left edge, place needle points every stitchPitch with brick offset
+      const needles = [xL];
+      const firstNeedle = xL + ((brickOffset % stitchPitchPx + stitchPitchPx) % stitchPitchPx);
+      for (let nx = firstNeedle; nx < xR - 0.5; nx += stitchPitchPx) {
+        if (nx > xL + 0.5) needles.push(nx);
       }
-      // Exit point at polygon edge
-      const exitX = forward ? xR : xL;
-      if (Math.abs(exitX - rowPoints[rowPoints.length - 1]) > 0.1) rowPoints.push(exitX);
+      needles.push(xR);
 
-      const ordered = forward ? rowPoints : rowPoints.slice().reverse();
+      // Direction: alternate each row (boustrophedon = real machine behavior)
+      if (!forward) needles.reverse();
 
-      for (const px of ordered) {
-        // Stitch as short line in the fill direction
-        // In rotated space: line goes along X axis (fill direction)
-        const rx0 = px - halfLenPx, ry0 = ry;
-        const rx1 = px + halfLenPx, ry1 = ry;
-        // Rotate back to world space
-        const wx0 = rx0 * cosR - ry0 * sinR;
-        const wy0 = rx0 * sinR + ry0 * cosR;
-        const wx1 = rx1 * cosR - ry1 * sinR;
-        const wy1 = rx1 * sinR + ry1 * cosR;
-        stitches.push([wx0, wy0, wx1, wy1]);
+      // Emit stitch segments: from needle[i] to needle[i+1]
+      for (let ni = 0; ni < needles.length - 1; ni++) {
+        const rx0 = needles[ni],     ry0 = ry;
+        const rx1 = needles[ni + 1], ry1 = ry;
+        // Rotate back to world coordinates
+        stitches.push([
+          rx0 * cosB - ry0 * sinB,
+          rx0 * sinB + ry0 * cosB,
+          rx1 * cosB - ry1 * sinB,
+          rx1 * sinB + ry1 * cosB,
+        ]);
       }
     }
 
