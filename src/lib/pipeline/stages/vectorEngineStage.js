@@ -57,8 +57,8 @@ export async function runVectorEngine(ctx) {
 }
 
 function isValidRegion(r) {
-  if ((r.area_mm2 || 0) <= 0.3)                          return false;
-  if (r.perimeter_mm !== undefined && r.perimeter_mm <= 0.5) return false;
+  if ((r.area_mm2 || 0) <= 0.8)                          return false;
+  if (r.perimeter_mm !== undefined && r.perimeter_mm <= 1.2) return false;
   if (r.isEdgeRegion === true)                            return false;
   if (!r.path_points || r.path_points.length < 3)        return false;
   return true;

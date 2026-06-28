@@ -53,15 +53,15 @@ export async function semanticSegment(imageUrl, config = {}) {
   // ── 2. Detect image type ─────────────────────────────────────────────────
   const imageType = detectImageType(pixels, W, H, gradMag);
 
-  // ── 3. Color quantization — extra clusters for fine merging ─────────────
-  const kClusters = Math.min(color_count * 3, 32);
+  // ── 3. Color quantization — respect requested color count ─────────────
+  const kClusters = Math.min(color_count, 12);
   const palette   = kMeansPlusPlus(pixels, W, H, kClusters);
 
   // ── 4. Label map ────────────────────────────────────────────────────────
   const labels = buildLabelMap(pixels, W, H, palette);
 
   // ── 5. Blobs per cluster ─────────────────────────────────────────────────
-  const minPx = Math.max(6, Math.floor(W * H * 0.00008));
+  const minPx = Math.max(12, Math.floor(W * H * 0.0002));
   const rawBlobs = [];
   for (let ci = 0; ci < palette.length; ci++) {
     const blobs = findBlobs(labels, W, H, ci, minPx);
@@ -290,8 +290,8 @@ function findBlobs(labels, W, H, colorIdx, minPixels) {
  * For photos/anime:   looser merge (group flesh tones, sky, etc.)
  */
 function semanticMerge(blobs, palette, W, H, imageType) {
-  const hueTol   = imageType === 'photo' ? 30 : imageType === 'anime' ? 20 : 15;
-  const bboxTol  = imageType === 'photo' ? 0.15 : 0.08; // fraction of image
+  const hueTol   = imageType === 'photo' ? 40 : imageType === 'anime' ? 35 : 25;
+  const bboxTol  = imageType === 'photo' ? 0.20 : 0.12; // fraction of image
 
   // Build union-find
   const parent = blobs.map((_, i) => i);
@@ -345,7 +345,7 @@ function semanticMerge(blobs, palette, W, H, imageType) {
     });
   }
 
-  return objects.filter(o => o.pixelCount >= 8);
+  return objects.filter(o => o.pixelCount >= 20);
 }
 
 // ─── Merged Contour Tracing ───────────────────────────────────────────────────

@@ -29,12 +29,12 @@ export async function runContourEngine(ctx) {
 
   const contourOpts = {
     analysisSize:       strategy.preprocess?.outputSize || 900,
-    minPixelArea:       strategy.vectorizer?.minPixelArea || 10,
-    minSegmentLengthPx: strategy.id === 'ultra' ? 1.0 : strategy.id === 'precision' ? 1.5 : 2.0,
-    cornerAngleDeg:     strategy.id === 'ultra' ? 110 : strategy.id === 'precision' ? 115 : 120,
-    rdpBaseEpsilon:     strategy.id === 'ultra' ? 0.4 : strategy.id === 'precision' ? 0.6 : 0.8,
-    chaikinPasses:      strategy.vectorizer?.smoothPasses ?? 2,
-    gapClosurePx:       strategy.id === 'ultra' ? 2 : 4,
+    minPixelArea:       strategy.vectorizer?.minPixelArea || 25,
+    minSegmentLengthPx: strategy.id === 'ultra' ? 2.0 : strategy.id === 'precision' ? 2.5 : 3.0,
+    cornerAngleDeg:     strategy.id === 'ultra' ? 120 : strategy.id === 'precision' ? 125 : 130,
+    rdpBaseEpsilon:     strategy.id === 'ultra' ? 0.8 : strategy.id === 'precision' ? 1.0 : 1.2,
+    chaikinPasses:      strategy.vectorizer?.smoothPasses ?? 1,
+    gapClosurePx:       strategy.id === 'ultra' ? 3 : 5,
   };
 
   // Resolve engine override (config > strategy > 'hybrid' = auto)
