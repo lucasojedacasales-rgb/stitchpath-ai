@@ -11,13 +11,10 @@ import SubpixelMetricsPanel from '@/components/editor/SubpixelMetricsPanel.jsx';
 import StitchPlannerPanel from '@/components/editor/StitchPlannerPanel.jsx';
 import TravelOptimizerPanel from '@/components/editor/TravelOptimizerPanel.jsx';
 import PhysicsSimulator from '@/components/editor/PhysicsSimulator.jsx';
-import AdaptiveEnginePanel from '@/components/editor/AdaptiveEnginePanel.jsx';
-import LearningPanel from '@/components/editor/LearningPanel.jsx';
 import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
 import MaskCanvas from '@/components/editor/MaskCanvas';
-import ValidationPanel from '@/components/editor/ValidationPanel';
 import { runPipeline } from '@/lib/pipeline/runner';
 import { enrichAllRegions } from '@/lib/regionBuilder.js';
 import { getModeStrategy } from '@/lib/digitizeModes.js';
@@ -58,7 +55,6 @@ export default function Editor() {
   const [uploadingImage, setUploadingImage] = useState(false);
   const [preprocessSettings, setPreprocessSettings] = useState(DEFAULT_PREPROCESS);
   const [preprocessedUrl, setPreprocessedUrl] = useState(null);
-  const [validationReport, setValidationReport] = useState(null);
   const timerRef = useRef(null);
 
   const maskCanvasRef = useRef(null);
@@ -153,7 +149,6 @@ export default function Editor() {
       setRegions(enrichedRegions);
       setStep(3);
       setShowDecisionPanel(false);
-      setValidationReport(ctx.validationReport || null);
 
       const label = aiStrategy ? 'Vectorización IA' : `Vectorización ${config.mode}`;
       const desc  = `${enrichedRegions.length} regiones generadas${aiStrategy ? ' (optimizado por IA)' : ''}`;
@@ -195,8 +190,8 @@ export default function Editor() {
   const handleRegionsUpdate = (updated) => setRegions(updated);
   const handleRename = async (name) => {if (!project || !name.trim()) return;const updated = await base44.entities.Project.update(id, { name: name.trim() });setProject(updated);};
 
-  const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || r.stitch_length || 0), 0);
-  const colorsUsed = regions.length > 0 ? new Set(regions.map((r) => r.color)).size : 0;
+  const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
+  const colorsUsed = new Set(regions.map((r) => r.color)).size;
 
   if (loading) return <div className="min-h-screen bg-[#0d0f14] flex items-center justify-center"><div className="w-8 h-8 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" /></div>;
 
@@ -220,14 +215,12 @@ export default function Editor() {
         <div className="flex items-center justify-between px-4 py-1.5 border-t border-[#1a1d27]">
           <div className="flex items-center gap-1">
             {[
-              { id: 'editor',    label: 'Editor' },
-              { id: 'sim',       label: '◉ Simulación' },
-              { id: 'mask',      label: '✂ Máscara' },
-              { id: 'planner',   label: '✦ Planner' },
-              { id: 'travel',    label: '⚡ Travel' },
-              { id: 'adaptive',  label: '🧬 Adaptativo' },
-              { id: 'learning',  label: '🧠 Learning' },
-              { id: 'panel',     label: 'Panel' },
+              { id: 'editor',  label: 'Editor' },
+              { id: 'sim',     label: '◉ Simulación' },
+              { id: 'mask',    label: '✂ Máscara' },
+              { id: 'planner', label: '✦ Planner' },
+              { id: 'travel',  label: '⚡ Travel' },
+              { id: 'panel',   label: 'Panel' },
             ].map(({ id, label }) =>
               <button key={id} onClick={() => setActiveTab(id)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
                 {label}
@@ -249,7 +242,7 @@ export default function Editor() {
         </div>
 
         <div className="flex-1 flex flex-col overflow-hidden">
-          {activeTab !== 'mask' && activeTab !== 'planner' && activeTab !== 'sim' && activeTab !== 'travel' && activeTab !== 'adaptive' && activeTab !== 'learning' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
+          {activeTab !== 'mask' && activeTab !== 'planner' && activeTab !== 'sim' && activeTab !== 'travel' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
             <SliderControl label="Imagen" value={imageOpacity} onChange={setImageOpacity} color="text-amber-400" />
             <SliderControl label="Puntadas" value={stitchOpacity} onChange={setStitchOpacity} color="text-violet-400" />
             <div className="flex items-center gap-2 ml-auto">
@@ -288,14 +281,6 @@ export default function Editor() {
                 onApplyOrder={(ordered) => setRegions(ordered)}
               />
             </div>
-          ) : activeTab === 'adaptive' ? (
-            <div className="flex-1 overflow-hidden">
-              <AdaptiveEnginePanel regions={regions} />
-            </div>
-          ) : activeTab === 'learning' ? (
-            <div className="flex-1 overflow-hidden">
-              <LearningPanel projectId={id} />
-            </div>
           ) : !imageUrl ?
           <UploadZone onUpload={handleImageUpload} fileInputRef={fileInputRef} uploading={uploadingImage} /> :
           showDecisionPanel && AI_ENABLED ?
@@ -333,7 +318,7 @@ export default function Editor() {
             </div>
           }
 
-          {imageUrl && regions.length === 0 && !processing && !showDecisionPanel && activeTab === 'editor' &&
+          {imageUrl && regions.length === 0 && !processing && !showDecisionPanel &&
           <div className="border-t border-[#1a1d27] p-3 flex items-center gap-3 bg-[#0a0c12]">
               <div className="flex-1 text-xs text-slate-500">Imagen cargada. La IA analizará el mejor enfoque.</div>
               <button onClick={() => AI_ENABLED ? setShowDecisionPanel(true) : startProcessing()} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors">
@@ -347,16 +332,8 @@ export default function Editor() {
           <div className="flex-1 overflow-hidden min-h-0">
             <RegionsPanel regions={regions} selectedId={selectedRegionId} onSelect={setSelectedRegionId} onUpdate={handleRegionsUpdate} />
           </div>
-          {validationReport && (
-            <div className="border-t border-[#1e2130] overflow-y-auto max-h-[35%] bg-[#0a0c12]">
-              <div className="px-3 py-2 border-b border-[#1a1d27]">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">✓ Validación</span>
-              </div>
-              <ValidationPanel validationReport={validationReport} />
-            </div>
-          )}
           {selectedRegionId && regions.find(r => r.id === selectedRegionId)?.stitch_type === 'fill' && (
-            <div className="border-t border-[#1e2130] overflow-y-auto max-h-[35%] bg-[#0a0c12]">
+            <div className="border-t border-[#1e2130] overflow-y-auto max-h-[45%] bg-[#0a0c12]">
               <div className="px-3 py-2 border-b border-[#1a1d27] flex items-center gap-2">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Métricas sub-pixel</span>
                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-900/30 border border-violet-500/30 text-violet-400">β</span>

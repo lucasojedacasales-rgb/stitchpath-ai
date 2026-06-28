@@ -17,20 +17,20 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'regions array required' }, { status: 400 });
     }
 
-    // ── Parámetros de puntada — STABLE DEFAULTS ─────────────────────────
+    // ── Parámetros de puntada ─────────────────────────────────────────────
     const sp = {
-      tatamiDensityMm: 0.40,        // STABLE: 0.40mm (no bajar)
+      tatamiDensityMm: 0.4,
       fillAngle: null,
-      fillDensity: 0.4,             // STABLE: multiplicador 1.0 → densidad real 0.4
+      fillDensity: 1.0,
       satinWidth: 3.0,
-      runningStitchLength: 2.0,     // reduced from 2.5
-      pullCompensation: 0.12,       // reduced from 0.15
-      underlay: false,              // DISABLED: causa triplicación de stitches
-      underlayDensity: 0.6,
+      runningStitchLength: 2.5,
+      pullCompensation: 0.15,
+      underlay: true,
+      underlayDensity: 0.5,
       underlayAngle: -45,
-      underlayStitchLength: 2.5,
-      trimThreshold: 8.0,
-      maxStitchLength: 10.0,
+      underlayStitchLength: 3.0,
+      trimThreshold: 5.0,           // NUEVO: distancia para trim
+      maxStitchLength: 12.0,        // NUEVO: máxima longitud de puntada
       ...stitchParams,
     };
 
@@ -69,9 +69,8 @@ Deno.serve(async (req) => {
       }
 
       // === PASO 2: Agregar underlay si está configurado ===
-      // DISABLED: underlay causa triplicación de stitches. Solo para regiones grandes (> 100mm²)
       let underlayPoints = [];
-      if (sp.underlay && (type === 'fill' || type === 'satin') && area > 100) {
+      if (sp.underlay && (type === 'fill' || type === 'satin') && area > 20) {
         underlayPoints = generateUnderlay(poly, type, sp, region);
       }
 
@@ -101,14 +100,13 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Contour stitches — ONLY for small regions (< 20mm²) or running stitch outlines
-      // Large regions already have edges from tatami fill
-      if (type === 'running_stitch' && contourPoints.length > 0) {
+      // Contour stitches (después del fill)
+      if (contourPoints.length > 0) {
         stitchPaths.push({
           regionId: `${region.id}_contour`,
-          type: 'running_stitch',
+          type: type === 'satin' ? 'satin' : 'running_stitch',
           color,
-          layerOrder: layerOrder + 0.5,
+          layerOrder: layerOrder + 0.5,  // contour después del main
           points: contourPoints,
           isUnderlay: false,
         });

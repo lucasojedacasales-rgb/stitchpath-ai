@@ -44,55 +44,10 @@ function Section({ title, children, defaultOpen = true }) {
 
 const PRIORITY_LABELS = ['', 'Detalle final', 'Pequeño', 'Mediano', 'Grande', 'Base (primero)'];
 
-export default function RegionEditModal({ region, onSave, onClose, projectId, originalRecommendation, fabricType, imageType }) {
+export default function RegionEditModal({ region, onSave, onClose }) {
   const [r, setR] = useState({ ...region });
   const set = (k, v) => setR(prev => ({ ...prev, [k]: v }));
   const setThread = (k, v) => setR(prev => ({ ...prev, thread: { ...(prev.thread || {}), [k]: v } }));
-  
-  const handleSave = async () => {
-    // Detectar cambios vs recomendación original
-    const userChange = {};
-    let hasChanges = false;
-    
-    for (const field of ['stitch_type', 'density', 'angle', 'pull_compensation', 'underlay']) {
-      if (r[field] !== region[field]) {
-        userChange[field] = r[field];
-        hasChanges = true;
-      }
-    }
-    
-    // Registrar feedback si hubo cambios
-    if (hasChanges && projectId && originalRecommendation) {
-      try {
-        await fetch('/api/base44Client', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'recordFeedback',
-            projectId,
-            regionId: region.id,
-            regionProperties: {
-              area_mm2: region.area_mm2,
-              avg_width_mm: region.avg_width_mm,
-              convexity: region.convexity,
-              curvature: region.curvature,
-              complexity_score: region.complexity?.score,
-              inertia_ratio: region._metrics?.inertia_ratio,
-              color: region.color,
-            },
-            originalRecommendation,
-            userChange,
-            fabricType,
-            imageType,
-          }),
-        }).catch(() => {}); // No fallar si no se registra
-      } catch (e) {
-        console.log('Feedback log skipped:', e.message);
-      }
-    }
-    
-    onSave(r);
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
@@ -206,7 +161,7 @@ export default function RegionEditModal({ region, onSave, onClose, projectId, or
 
         <div className="flex gap-2 px-5 pb-5 pt-2">
           <button onClick={onClose} className="flex-1 py-2 rounded-lg border border-[#2a2d3a] text-slate-400 text-xs hover:text-white transition-colors">Cancelar</button>
-          <button onClick={handleSave} className="flex-1 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors">Guardar</button>
+          <button onClick={() => onSave(r)} className="flex-1 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors">Guardar</button>
         </div>
       </div>
     </div>

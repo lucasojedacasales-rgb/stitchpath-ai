@@ -124,30 +124,16 @@
 /**
  * @typedef {Object} EnrichedRegion
  * @extends VectorRegion
- * @property {number}   area_mm2                  - polygon area in mm²
- * @property {number}   perimeter_mm              - polygon perimeter in mm
- * @property {number}   orientation               - dominant angle degrees [0,180)
- * @property {number}   convexity                 - area/hull area 0–1
- * @property {number}   concavity                 - 1 - convexity
- * @property {number[][]} skeleton               - medial axis sample points (normalized)
- * @property {number}   avg_width_mm              - average width from medial axis
- * @property {number}   max_thickness_mm          - maximum inscribed circle diameter
- * @property {number}   min_thickness_mm          - minimum inscribed circle diameter
- * @property {number}   curvature                 - mean angular curvature (radians/vertex)
- * @property {number}   holes                     - estimated number of interior holes
+ * @property {number}  orientation        - dominant angle degrees
+ * @property {number}  convexity          - 0–1
+ * @property {number}  curvature          - mean curvature
  * @property {{score:number, level:string}} complexity
- * @property {string}   color                     - '#rrggbb' (preserved)
- * @property {{weight:string, finish:string, reason:string}} thread_recommendation
- * @property {'fill'|'satin'|'running_stitch'} recommended_stitch_type
- * @property {boolean}  recommended_underlay
- * @property {number}   recommended_density       - mm row/column spacing
- * @property {number}   recommended_compensation  - mm pull compensation
- * @property {number}   stitch_count
- * @property {number}   estimatedTime             - minutes
+ * @property {number}  holes
+ * @property {number}  estimatedTime      - minutes
  * @property {{mm:number, grams:number}} estimatedThread
- * @property {number}   qualityScore              - 0–100
- * @property {number}   priority                  - 1–5
- * @property {number}   travelOrder               - sequencing index
+ * @property {number}  priority           - 1–5
+ * @property {number}  qualityScore       - 0–100
+ * @property {number}  travelOrder        - sequencing index
  */
 
 // ─── Stage 6: Stitch Planner ──────────────────────────────────────────────────
@@ -245,7 +231,7 @@
  *
  * @typedef {Object} PipelineContext
  * @property {string}              imageUrl
- * @property {Object}              config              - user/mode config
+ * @property {Object}              config         - user/mode config
  * @property {ImageAnalysisResult} [analysis]
  * @property {EnhancedImageResult} [enhanced]
  * @property {ContourSet}          [contours]
@@ -255,8 +241,7 @@
  * @property {OptimizedPlan}       [optimized]
  * @property {SimulationScene}     [simulation]
  * @property {ExportPayload}       [export]
- * @property {Object[]}            stageLog            - [{stage, durationMs, ok}]
- * @property {{engine:string, quality:number, profile:Object}} [_vectorizerMeta]  - selected engine info
+ * @property {Object[]}            stageLog       - [{stage, durationMs, ok}]
  */
 
 export const PIPELINE_STAGES = [
@@ -294,38 +279,4 @@ export function createContext(imageUrl, config = {}) {
  */
 export function logStage(ctx, stage, durationMs, ok = true) {
   ctx.stageLog.push({ stage, durationMs, ok, ts: Date.now() });
-}
-
-/**
- * Detailed stage tracing: logs input shape, critical values, output shape.
- * Helps identify where data is lost or corrupted.
- */
-export function debugStage(stageName, input, output) {
-  const summary = {
-    stage: stageName,
-    input: summarizeObject(input),
-    output: summarizeObject(output),
-    timestamp: new Date().toISOString(),
-  };
-  
-  if (typeof window !== 'undefined') {
-    console.groupCollapsed(`📍 [${stageName}]`);
-    console.log('Input:', input);
-    console.log('Output:', output);
-    console.log('Summary:', summary);
-    console.groupEnd();
-  }
-  
-  return summary;
-}
-
-function summarizeObject(obj) {
-  if (!obj) return 'null/undefined';
-  if (Array.isArray(obj)) {
-    return `Array[${obj.length}]${obj.length ? ` {${Object.keys(obj[0] || {}).join(',')}...}` : ''}`;
-  }
-  if (typeof obj === 'object') {
-    return `Object {${Object.keys(obj).join(',')}...}`;
-  }
-  return typeof obj;
 }

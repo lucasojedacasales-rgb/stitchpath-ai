@@ -10,13 +10,11 @@
  */
 
 import { createContext, logStage } from './types.js';
-import { validateFinalPipeline } from './validator.js';
 import { runImageAnalysis }     from './stages/imageAnalysisStage.js';
 import { runImageEnhancement }  from './stages/imageEnhancementStage.js';
 import { runContourEngine }     from './stages/contourEngineStage.js';
 import { runVectorEngine }      from './stages/vectorEngineStage.js';
 import { runRegionBuilder }     from './stages/regionBuilderStage.js';
-import { runAdaptiveEngine }    from './stages/adaptiveEngineStage.js';
 import { runStitchPlanner }     from './stages/stitchPlannerStage.js';
 import { runStitchOptimizer }   from './stages/stitchOptimizerStage.js';
 
@@ -27,9 +25,8 @@ const CLIENT_STAGES = [
   { id: 'image_enhancement', fn: runImageEnhancement, weight: 20 },
   { id: 'contour_engine',    fn: runContourEngine,    weight: 35 },
   { id: 'vector_engine',     fn: runVectorEngine,     weight: 60 }, // backend call
-  { id: 'region_builder',    fn: runRegionBuilder,    weight: 78 },
-  { id: 'adaptive_engine',   fn: runAdaptiveEngine,   weight: 85 },
-  { id: 'stitch_planner',    fn: runStitchPlanner,    weight: 92 },
+  { id: 'region_builder',    fn: runRegionBuilder,    weight: 80 },
+  { id: 'stitch_planner',    fn: runStitchPlanner,    weight: 90 },
   { id: 'stitch_optimizer',  fn: runStitchOptimizer,  weight: 100 },
 ];
 
@@ -69,9 +66,6 @@ export async function runPipeline(imageUrl, config, opts = {}) {
       ctx.stageLog[ctx.stageLog.length - 1].error = err.message;
     }
   }
-
-  // Run final validation
-  ctx.validationReport = validateFinalPipeline(ctx);
 
   return ctx;
 }

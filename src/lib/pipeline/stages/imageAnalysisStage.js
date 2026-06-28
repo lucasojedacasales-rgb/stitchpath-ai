@@ -6,7 +6,6 @@
 
 import { analyzeImage } from '../../imageAnalyzer.js';
 import { getModeStrategy } from '../../digitizeModes.js';
-import { debugStage } from '../types.js';
 
 export async function runImageAnalysis(ctx) {
   const strategy = getModeStrategy(ctx.config.mode || 'hybrid');
@@ -31,17 +30,9 @@ export async function runImageAnalysis(ctx) {
     ...raw,
     contentType,
     confidence,
-    hasTransparency: false,
+    hasTransparency: false, // updated by contour stage if needed
     hasFineDetails:  edgeAvg > 0.18,
     hasGradients:    colorBuckets > 8,
     complexity:      colorBuckets > 8 ? 'high' : colorBuckets > 4 ? 'medium' : 'low',
   };
-
-  debugStage('image_analysis', { imageUrl: ctx.imageUrl, mode: ctx.config.mode, colorCount }, {
-    dominantColors: colorBuckets,
-    imageSize: `${ctx.analysis.imageWidth}×${ctx.analysis.imageHeight}`,
-    contentType: ctx.analysis.contentType,
-    complexity: ctx.analysis.complexity,
-    edgeDensity: edgeAvg.toFixed(3),
-  });
 }

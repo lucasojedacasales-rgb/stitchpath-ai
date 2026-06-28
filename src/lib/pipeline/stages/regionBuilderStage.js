@@ -5,7 +5,6 @@
  */
 
 import { enrichAllRegions } from '../../regionBuilder.js';
-import { debugStage } from '../types.js';
 
 export async function runRegionBuilder(ctx) {
   if (!ctx.vectorRegions || ctx.vectorRegions.length === 0) {
@@ -16,36 +15,12 @@ export async function runRegionBuilder(ctx) {
   const { width_mm = 100, height_mm = 100 } = ctx.config;
 
   // Auto-name any unnamed regions before enrichment
-  const named = ctx.vectorRegions.map((r, i) => {
-    // Ensure critical fields exist before autoName
-    const region = {
-      ...r,
-      centroid: r.centroid || [0.5, 0.5],
-      stitch_type: r.stitch_type || 'fill',
-    };
-    return {
-      ...region,
-      name: r.name || autoName(region, i),
-    };
-  });
+  const named = ctx.vectorRegions.map((r, i) => ({
+    ...r,
+    name: r.name || autoName(r, i),
+  }));
 
   ctx.regions = enrichAllRegions(named, width_mm, height_mm);
-
-  debugStage('region_builder',
-    { vectorRegions: named.length },
-    {
-      enrichedRegions: ctx.regions.length,
-      sampleRegions: ctx.regions.slice(0, 3).map(r => ({
-        name: r.name,
-        stitchType: r.recommended_stitch_type,
-        area_mm2: r.area_mm2?.toFixed(2),
-        avgWidth: r.avg_width_mm?.toFixed(2),
-        complexity: r.complexity?.level,
-        stitches: r.stitch_count,
-      })) || [],
-      totalStitches: ctx.regions.reduce((s, r) => s + (r.stitch_count || 0), 0),
-    }
-  );
 }
 
 // ─── Auto-naming ──────────────────────────────────────────────────────────────

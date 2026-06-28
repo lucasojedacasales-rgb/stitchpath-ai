@@ -10,7 +10,6 @@
 
 import { base44 } from '@/api/base44Client';
 import { getModeStrategy } from '../../digitizeModes.js';
-import { debugStage } from '../types.js';
 
 export async function runVectorEngine(ctx) {
   const strategy = getModeStrategy(ctx.config.mode || 'hybrid');
@@ -31,14 +30,12 @@ export async function runVectorEngine(ctx) {
     use_full_bg:      bp.use_full_bg,
     image_analysis:   ctx.analysis  || null,
     traced_contours:  ctx.contours  || null,
-    semantic_regions: ctx.semantic?.regions || null,
-    image_type:       ctx.semantic?.imageType || ctx.contours?.imageType || null,
-    vector_engine:    ctx._vectorizerMeta?.engine || bp.vector_engine,
+    vector_engine:    bp.vector_engine,
     tatami_density:   aiStrategy
       ? (aiStrategy.stitchType === 'satin' ? 0.6 : aiStrategy.stitchType === 'running' ? 0.2 : 0.4)
       : bp.tatami_density || cfg.tatami_density || 0.4,
     fill_angle:       cfg.fill_angle ?? null,
-    max_regions:      bp.max_regions || 50,
+    max_regions:      bp.max_regions || 150,
     stitch_strategy:  strategy.stitchStrategy,
   };
 
@@ -55,30 +52,12 @@ export async function runVectorEngine(ctx) {
     estimated_time_min: raw.estimated_time_min,
     colors_used:        raw.colors_used,
   };
-
-  debugStage('vector_engine',
-    { contourRegions: ctx.contours?.regions?.length || 0, maxRegions: payload.max_regions },
-    {
-      vectorRegions: ctx.vectorRegions.length,
-      totalStitches: ctx._backendMeta.total_stitches,
-      colorCount: ctx._backendMeta.colors_used,
-      sampleRegions: ctx.vectorRegions.slice(0, 3).map(r => ({
-        color: r.color,
-        stitchType: r.stitch_type,
-        area_mm2: r.area_mm2?.toFixed(2),
-        centroid: r.centroid,
-        hasCentroid: !!r.centroid,
-      })) || [],
-    }
-  );
 }
 
 function isValidRegion(r) {
-  if ((r.area_mm2 || 0) <= 0.6)                          return false;
-  if (r.perimeter_mm !== undefined && r.perimeter_mm <= 0.9) return false;
+  if ((r.area_mm2 || 0) <= 0.3)                          return false;
+  if (r.perimeter_mm !== undefined && r.perimeter_mm <= 0.5) return false;
   if (r.isEdgeRegion === true)                            return false;
   if (!r.path_points || r.path_points.length < 3)        return false;
-  if (!r.centroid || r.centroid.length !== 2)            return false;
-  if (!r.stitch_type)                                     return false;
   return true;
 }

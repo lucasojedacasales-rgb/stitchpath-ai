@@ -189,7 +189,7 @@ export default function StitchPlannerPanel({ regions, config, onApplyPlan }) {
           <StatPill label="Colores" value={summary.uniqueColors} color="text-cyan-400" />
           <StatPill label="Cambios hilo" value={summary.colorChanges} color="text-amber-400" />
           <StatPill label="Puntadas est." value={`~${Math.round(summary.totalStitches / 1000)}k`} color="text-violet-400" />
-          <StatPill label="Tiempo" value={summary.production?.formatted || 'N/A'} color="text-emerald-400" />
+          <StatPill label="Tiempo" value={summary.time.formatted} color="text-emerald-400" />
         </div>
         <div className="flex gap-1.5">
           <div className="flex-1 text-center bg-[#0d0f14] rounded px-2 py-1.5">
