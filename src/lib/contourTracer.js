@@ -7,7 +7,7 @@
  * Returns regions with real path_points normalized 0–1
  */
 
-const ANALYSIS_SIZE = 512;
+const ANALYSIS_SIZE = 800; // Mayor resolución = más detalles finos capturados (ojos, nariz, etc.)
 
 export async function traceImageContours(imageUrl, maxColors = 8) {
   const img = await loadImage(imageUrl);
@@ -42,15 +42,17 @@ export async function traceImageContours(imageUrl, maxColors = 8) {
   }
 
   // 3. For each color, find connected blobs
-  // minPixels = 0.05% of image (catches eyes, small details)
-  const minPixels = Math.max(20, Math.floor(W * H * 0.0005));
+  // minPixels muy bajo para capturar detalles pequeños (ojos, nariz, etc.)
+  // 0.01% de la imagen a 800px = ~64px mínimo (suficiente para un ojo pequeño)
+  const minPixels = Math.max(8, Math.floor(W * H * 0.0001));
   const regions = [];
 
   for (let ci = 0; ci < palette.length; ci++) {
     const blobs = findBlobs(labels, W, H, ci, minPixels);
     for (const blob of blobs) {
       // RDP tolerance in pixel space (scale with image size, ~1px)
-      const rdpEps = Math.max(1.0, Math.min(W, H) * 0.005);
+      // RDP más fino para preservar contornos de detalles pequeños
+      const rdpEps = Math.max(0.5, Math.min(W, H) * 0.003);
       const contour = traceContour(blob.mask, W, H);
       if (contour.length < 4) continue;
       const simplified = rdpSimplify(contour, rdpEps);

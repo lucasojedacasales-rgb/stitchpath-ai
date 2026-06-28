@@ -179,9 +179,9 @@ export default function Editor() {
         const { regions: rawRegions } = rawData;
 
         const filtered = (rawRegions || []).filter((r) => {
-          if ((r.area_mm2 || 0) <= 2.0) return false;
-          if (r.perimeter_mm !== undefined && r.perimeter_mm <= 3.0) return false;
-          if (r.boundingBox) {const { w, h } = r.boundingBox;if (w < 0.1 || h < 0.1) return false;}
+          // Umbral mínimo muy bajo para preservar detalles pequeños (ojos, nariz)
+          if ((r.area_mm2 || 0) <= 0.3) return false;
+          if (r.perimeter_mm !== undefined && r.perimeter_mm <= 0.5) return false;
           if (r.isEdgeRegion === true) return false;
           if (!r.path_points || r.path_points.length < 3) return false;
           return true;

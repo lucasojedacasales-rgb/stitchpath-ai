@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
       const clientRegions = traced_contours.regions;
 
       // === NUEVO: Usar métricas geométricas del vectorizador para clasificación ===
-      const regionDescriptions = clientRegions.slice(0, 150).map((r, i) => {
+      const regionDescriptions = clientRegions.slice(0, 200).map((r, i) => {
         const bbox = r.bbox;
         const cx = ((bbox.minX + bbox.maxX) / 2 / (traced_contours.analysisW || 512)).toFixed(3);
         const cy = ((bbox.minY + bbox.maxY) / 2 / (traced_contours.analysisH || 512)).toFixed(3);
@@ -47,21 +47,22 @@ Deno.serve(async (req) => {
         return `Región ${i}: color=${r.hex} centro=(${cx},${cy}) cobertura=${areaPct}% tipo_vectorizador=${tipoVec} compacidad=${compacidad} inertia=${inertia} aspect=${aspect}`;
       }).join('\n');
 
-      const labelPrompt = `Eres un experto digitalizador de bordados. Analiza la imagen.
+      const labelPrompt = `Eres un experto digitalizador de bordados. Analiza la imagen con MÁXIMO detalle.
 
-Tengo ${Math.min(clientRegions.length, 150)} regiones detectadas píxel a píxel:
+Tengo ${Math.min(clientRegions.length, 200)} regiones detectadas píxel a píxel:
 ${regionDescriptions}
 
 Para CADA región asigna (en orden 0, 1, 2...):
-- name: nombre descriptivo (ej: "cuerpo_principal", "ojo_izquierdo")
-- stitch_type: respeta el tipo del vectorizador si existe, sino usa: "fill" zonas compactas grandes, "satin" bordes medianos/alargados, "running_stitch" detalles finos
-- density: 0.4-0.9 (fill=0.6-0.8, satin=0.5-0.7, running=0.3-0.5)
-- angle: 0-180 (ángulo puntadas). Si el vectorizador envió fill_angle, úsalo como base
-- layer_order: 1=primero (fills grandes antes que contornos)
-- underlay: true para fill/satin grandes, false para detalles
+- name: nombre descriptivo. PRESTA ESPECIAL ATENCIÓN a detalles pequeños: ojos, nariz, boca, pupilas, reflejos, manchas. Si la cobertura es < 0.5%, probablemente es un detalle anatómico pequeño — nómbralo apropiadamente (ej: "ojo_izquierdo_pupila", "nariz_punta", "reflejo_ojo").
+- stitch_type: "satin" para detalles pequeños/medianos (< 5% cobertura) porque quedan mejor que fill. "fill" para zonas grandes. "running_stitch" solo para bordes muy finos.
+- density: 0.4-0.9 (satin detalles=0.5-0.6, fill grande=0.7-0.8, running=0.3-0.4)
+- angle: 0-180 (ángulo puntadas). Para detalles redondos como ojos usa 45 o 90.
+- layer_order: fills grandes primero (1), luego medianos (2), detalles pequeños encima (3-4)
+- underlay: true para fill/satin > 2% cobertura, false para micro-detalles
 - pull_compensation: 0.1-0.2
 
-IMPORTANTE: No cambies el stitch_type del vectorizador a menos que sea claramente incorrecto.
+CRÍTICO: NO omitas ninguna región aunque sea muy pequeña. Cada detalle cuenta.
+CRÍTICO: No cambies el stitch_type del vectorizador a menos que sea claramente incorrecto.
 
 Responde SOLO JSON:
 {"labels":[{"index":0,"name":"...","stitch_type":"fill","density":0.7,"angle":45,"layer_order":1,"underlay":true,"pull_compensation":0.15}],"estimated_time_min":12}`;
@@ -83,7 +84,7 @@ Responde SOLO JSON:
       const labelMap = {};
       for (const l of labels) labelMap[l.index] = l;
 
-      const finalRegions = clientRegions.slice(0, 150).map((r, i) => {
+      const finalRegions = clientRegions.slice(0, 200).map((r, i) => {
         const label = labelMap[i] || {};
         
         // === PRIORIDAD: vectorizador > Claude > reglas geométricas ===
