@@ -9,6 +9,7 @@ import ConfigPanel from '@/components/editor/ConfigPanel';
 import RegionsPanel from '@/components/editor/RegionsPanel';
 import SubpixelMetricsPanel from '@/components/editor/SubpixelMetricsPanel.jsx';
 import StitchPlannerPanel from '@/components/editor/StitchPlannerPanel.jsx';
+import TravelOptimizerPanel from '@/components/editor/TravelOptimizerPanel.jsx';
 import PhysicsSimulator from '@/components/editor/PhysicsSimulator.jsx';
 import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
@@ -274,6 +275,7 @@ export default function Editor() {
               { id: 'sim',     label: '◉ Simulación' },
               { id: 'mask',    label: '✂ Máscara' },
               { id: 'planner', label: '✦ Planner' },
+              { id: 'travel',  label: '⚡ Travel' },
               { id: 'panel',   label: 'Panel' },
             ].map(({ id, label }) =>
               <button key={id} onClick={() => setActiveTab(id)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
@@ -296,7 +298,7 @@ export default function Editor() {
         </div>
 
         <div className="flex-1 flex flex-col overflow-hidden">
-          {activeTab !== 'mask' && activeTab !== 'planner' && activeTab !== 'sim' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
+          {activeTab !== 'mask' && activeTab !== 'planner' && activeTab !== 'sim' && activeTab !== 'travel' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
             <SliderControl label="Imagen" value={imageOpacity} onChange={setImageOpacity} color="text-amber-400" />
             <SliderControl label="Puntadas" value={stitchOpacity} onChange={setStitchOpacity} color="text-violet-400" />
             <div className="flex items-center gap-2 ml-auto">
@@ -326,6 +328,13 @@ export default function Editor() {
                     return { ...r, stitch_type: upd.stitch_type, angle: upd.angle, underlay: upd.underlay };
                   }));
                 }}
+              />
+            </div>
+          ) : activeTab === 'travel' ? (
+            <div className="flex-1 overflow-hidden">
+              <TravelOptimizerPanel
+                regions={regions}
+                onApplyOrder={(ordered) => setRegions(ordered)}
               />
             </div>
           ) : !imageUrl ?
