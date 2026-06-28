@@ -21,6 +21,7 @@ Deno.serve(async (req) => {
     const {
       image_url, mode, width_mm, height_mm, color_count,
       use_ia_vision, image_analysis, traced_contours,
+      semantic_regions, image_type,
       max_regions, stitch_strategy, tatami_density, fill_angle
     } = await req.json();
 
@@ -43,38 +44,56 @@ Deno.serve(async (req) => {
       const clientRegions = traced_contours.regions;
 
       // === NUEVO: Usar métricas geométricas del vectorizador para clasificación ===
+      // Build a semantic lookup map (centroid proximity) for enriching descriptions
+      const semLookup = buildSemanticLookup(semantic_regions || []);
+
       const regionDescriptions = clientRegions.slice(0, 200).map((r, i) => {
         const bbox = r.bbox;
         const cx = ((bbox.minX + bbox.maxX) / 2 / (traced_contours.analysisW || 512)).toFixed(3);
         const cy = ((bbox.minY + bbox.maxY) / 2 / (traced_contours.analysisH || 512)).toFixed(3);
         const areaPct = (r.coverage * 100).toFixed(1);
-        // Usar métricas del vectorizador si existen
         const compacidad = r.compacidad !== undefined ? r.compacidad.toFixed(2) : 'N/A';
         const inertia = r.inertia_ratio !== undefined ? r.inertia_ratio.toFixed(2) : 'N/A';
         const aspect = r.bbox_aspect !== undefined ? r.bbox_aspect.toFixed(2) : 'N/A';
         const tipoVec = r.type || 'N/A';
-        return `Región ${i}: color=${r.hex} centro=(${cx},${cy}) cobertura=${areaPct}% tipo_vectorizador=${tipoVec} compacidad=${compacidad} inertia=${inertia} aspect=${aspect}`;
+        // Semantic enrichment
+        const sem = semLookup(parseFloat(cx), parseFloat(cy));
+        const semInfo = sem
+          ? ` objeto="${sem.semantic_object}" clase="${sem.semantic_class}" puntada_rec="${sem.recommended_stitch_type}" prioridad=${sem.priority}`
+          : '';
+        return `Región ${i}: color=${r.hex} centro=(${cx},${cy}) cobertura=${areaPct}% tipo_vec=${tipoVec} compac=${compacidad} inertia=${inertia} aspect=${aspect}${semInfo}`;
       }).join('\n');
 
-      const labelPrompt = `Eres un experto digitalizador de bordados. Analiza la imagen con MÁXIMO detalle.
+      const imageTypeInfo = image_type ? `TIPO DE IMAGEN DETECTADO: ${image_type.toUpperCase()}` : '';
 
-Tengo ${Math.min(clientRegions.length, 200)} regiones detectadas píxel a píxel:
+      const labelPrompt = `Eres el mejor digitalizador de bordados del mundo (nivel Wilcom). Analiza la imagen con MÁXIMO detalle semántico.
+
+${imageTypeInfo}
+
+Tengo ${Math.min(clientRegions.length, 200)} regiones detectadas píxel a píxel con segmentación semántica:
 ${regionDescriptions}
 
-Para CADA región asigna (en orden 0, 1, 2...):
-- name: nombre descriptivo. PRESTA ESPECIAL ATENCIÓN a detalles pequeños: ojos, nariz, boca, pupilas, reflejos, manchas. Si la cobertura es < 0.5%, probablemente es un detalle anatómico pequeño — nómbralo apropiadamente (ej: "ojo_izquierdo_pupila", "nariz_punta", "reflejo_ojo").
-- stitch_type: "satin" para detalles pequeños/medianos (< 5% cobertura) porque quedan mejor que fill. "fill" para zonas grandes. "running_stitch" solo para bordes muy finos.
-- density: 0.4-0.9 (satin detalles=0.5-0.6, fill grande=0.7-0.8, running=0.3-0.4)
-- angle: 0-180 (ángulo puntadas). Para detalles redondos como ojos usa 45 o 90.
-- layer_order: fills grandes primero (1), luego medianos (2), detalles pequeños encima (3-4)
-- underlay: true para fill/satin > 2% cobertura, false para micro-detalles
+Para CADA región (en orden 0, 1, 2...) asigna:
+- name: nombre del OBJETO REAL que representa. Usa el campo "objeto" si está disponible. Sé muy específico: "ojo_izquierdo", "cabello_superior", "borde_ropa", "reflejo_ojo_derecho", "nariz_punta", "cielo_fondo", etc. Para logos: "letra_A", "icono_estrella". Para anime: "contorno_cara", "sombra_pelo".
+- stitch_type: usa "puntada_rec" del segmentador si existe y tiene sentido. Reglas: satin=detalles/bordes/letras (<5% area), fill=zonas grandes, running_stitch=bordes muy finos o reflejos.
+- density: 0.3-0.9 según tipo. fill_photo=0.35, fill_normal=0.45-0.7, satin=0.5-0.6, run=0.3
+- angle: 0-180. Usa orientación PCA si disponible. Ojos/redondos=45°, cabello=ángulo de caída, ropa=45°.
+- layer_order: background/fondo=1, rellenos grandes=2, rellenos medianos=3, detalles=4, contornos=5
+- underlay: true para fill/satin >2% cobertura
 - pull_compensation: 0.1-0.2
 
-CRÍTICO: NO omitas ninguna región aunque sea muy pequeña. Cada detalle cuenta.
-CRÍTICO: No cambies el stitch_type del vectorizador a menos que sea claramente incorrecto.
+TIPOS DE IMAGEN — estrategias:
+- drawing: énfasis en contornos precisos (satin bordes), fills limpios, pocos colores
+- logo: formas geométricas precisas, satin en letras/bordes, fill en áreas sólidas
+- anime: fills planos limpios (fill), bordes nítidos (satin), detalles anatómicos (satin fino)
+- photo: fills texturizados (fill 0.35), gradientes como capas de color, detalles pequeños (satin)
+
+CRÍTICO: Nombra los objetos reales — no pongas "region_ffffff_3", pon "reflejo_ojo_izquierdo".
+CRÍTICO: Respeta el campo "puntada_rec" del segmentador semántico a menos que sea claramente incorrecto.
+CRÍTICO: Ordena layer_order correctamente — bordes y detalles SIEMPRE encima de fills.
 
 Responde SOLO JSON:
-{"labels":[{"index":0,"name":"...","stitch_type":"fill","density":0.7,"angle":45,"layer_order":1,"underlay":true,"pull_compensation":0.15}],"estimated_time_min":12}`;
+{"labels":[{"index":0,"name":"nombre_objeto_real","stitch_type":"fill","density":0.7,"angle":45,"layer_order":2,"underlay":true,"pull_compensation":0.15}],"estimated_time_min":12}`;
 
       const labelResult = await base44.asServiceRole.integrations.Core.InvokeLLM({
         prompt: labelPrompt,
@@ -96,8 +115,15 @@ Responde SOLO JSON:
       const finalRegions = clientRegions.slice(0, regionLimit).map((r, i) => {
         const label = labelMap[i] || {};
         
-        // === PRIORIDAD: vectorizador > Claude > reglas geométricas ===
-        const stitch_type = r.type || label.stitch_type || clasificarPorGeometria(r, w, h);
+        // === PRIORIDAD: vectorizador > semántico > Claude > geométrico ===
+        const semMatch = semLookup(
+          (r.centroid?.[0]) || ((r.bbox?.minX + r.bbox?.maxX) / 2 / (traced_contours.analysisW || 512)),
+          (r.centroid?.[1]) || ((r.bbox?.minY + r.bbox?.maxY) / 2 / (traced_contours.analysisH || 512))
+        );
+        const stitch_type = r.type
+          || label.stitch_type
+          || semMatch?.recommended_stitch_type
+          || clasificarPorGeometria(r, w, h);
         
         const regionDensity = label.density || (stitch_type === 'fill' ? density : stitch_type === 'satin' ? density * 1.25 : 0.4);
         
@@ -147,11 +173,15 @@ Responde SOLO JSON:
           is_auto_contour: false,
           visible: true,
           path_points: r.path_points,
+          // Semantic metadata
+          semantic_object:  r.semantic_object  || semMatch?.semantic_object  || null,
+          semantic_class:   r.semantic_class   || semMatch?.semantic_class   || null,
+          image_type:       image_type || null,
           _metrics: {
-            compacidad: r.compacidad,
+            compacidad:    r.compacidad,
             inertia_ratio: r.inertia_ratio,
-            bbox_aspect: r.bbox_aspect,
-            fill_angle: r.fill_angle,
+            bbox_aspect:   r.bbox_aspect,
+            fill_angle:    r.fill_angle,
           }
         };
       });
@@ -239,6 +269,23 @@ Responde SOLO con JSON válido (sin texto extra):
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
+
+/**
+ * Builds a fast centroid-based lookup for semantic regions.
+ * Returns a function (cx, cy) => nearest semantic region or null.
+ */
+function buildSemanticLookup(semanticRegions) {
+  if (!semanticRegions || semanticRegions.length === 0) return () => null;
+  return (cx, cy) => {
+    let best = null, bestD = Infinity;
+    for (const s of semanticRegions) {
+      const [sx, sy] = s.centroid || [0.5, 0.5];
+      const d = Math.hypot(cx - sx, cy - sy);
+      if (d < bestD) { bestD = d; best = s; }
+    }
+    return bestD < 0.25 ? best : null;
+  };
+}
 
 /**
  * Classify stitch type from real geometric metrics.

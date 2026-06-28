@@ -30,6 +30,8 @@ export async function runVectorEngine(ctx) {
     use_full_bg:      bp.use_full_bg,
     image_analysis:   ctx.analysis  || null,
     traced_contours:  ctx.contours  || null,
+    semantic_regions: ctx.semantic?.regions || null,
+    image_type:       ctx.semantic?.imageType || ctx.contours?.imageType || null,
     vector_engine:    bp.vector_engine,
     tatami_density:   aiStrategy
       ? (aiStrategy.stitchType === 'satin' ? 0.6 : aiStrategy.stitchType === 'running' ? 0.2 : 0.4)

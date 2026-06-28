@@ -236,12 +236,17 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
     complexity,
     holes,
     // Computed production estimates
-    stitch_count:     stitches,
-    estimatedTime:    time,
-    estimatedThread:  thread,
+    stitch_count:    stitches,
+    estimatedTime:   time,
+    estimatedThread: thread,
     // Planning
     priority,
     qualityScore,
+    // Semantic fields — preserved from segmenter, not overwritten
+    semantic_object: region.semantic_object || null,
+    semantic_class:  region.semantic_class  || null,
+    image_type:      region.image_type      || null,
+    recommended_stitch_type: region.recommended_stitch_type || region.stitch_type,
   };
 }
 
