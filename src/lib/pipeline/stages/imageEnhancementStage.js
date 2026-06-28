@@ -7,6 +7,7 @@
 import { preprocessImage } from '../../imagePreprocessor.js';
 import { getModeStrategy } from '../../digitizeModes.js';
 import { base44 } from '@/api/base44Client';
+import { debugStage } from '../types.js';
 
 export async function runImageEnhancement(ctx) {
   const strategy = getModeStrategy(ctx.config.mode || 'hybrid');
@@ -37,4 +38,9 @@ export async function runImageEnhancement(ctx) {
     height:          result.height,
     appliedSettings: settings,
   };
+
+  debugStage('image_enhancement',
+    { originalSize: `${ctx.analysis?.imageWidth || 0}×${ctx.analysis?.imageHeight || 0}` },
+    { enhancedSize: `${result.width}×${result.height}`, settings: ctx.enhanced.appliedSettings }
+  );
 }

@@ -10,6 +10,7 @@
 
 import { base44 } from '@/api/base44Client';
 import { getModeStrategy } from '../../digitizeModes.js';
+import { debugStage } from '../types.js';
 
 export async function runVectorEngine(ctx) {
   const strategy = getModeStrategy(ctx.config.mode || 'hybrid');
@@ -54,6 +55,22 @@ export async function runVectorEngine(ctx) {
     estimated_time_min: raw.estimated_time_min,
     colors_used:        raw.colors_used,
   };
+
+  debugStage('vector_engine',
+    { contourRegions: ctx.contours?.regions?.length || 0, maxRegions: payload.max_regions },
+    {
+      vectorRegions: ctx.vectorRegions.length,
+      totalStitches: ctx._backendMeta.total_stitches,
+      colorCount: ctx._backendMeta.colors_used,
+      sampleRegions: ctx.vectorRegions.slice(0, 3).map(r => ({
+        color: r.color,
+        stitchType: r.stitch_type,
+        area_mm2: r.area_mm2?.toFixed(2),
+        centroid: r.centroid,
+        hasCentroid: !!r.centroid,
+      })) || [],
+    }
+  );
 }
 
 function isValidRegion(r) {

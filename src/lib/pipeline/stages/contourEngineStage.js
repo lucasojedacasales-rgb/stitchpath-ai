@@ -14,6 +14,7 @@
 import { runHybridVectorizer, buildImageProfile } from '../../vectorizer/index.js';
 import { semanticSegment }                        from '../../semanticSegmenter.js';
 import { getModeStrategy }                        from '../../digitizeModes.js';
+import { debugStage } from '../types.js';
 
 export async function runContourEngine(ctx) {
   const strategy   = getModeStrategy(ctx.config.mode || 'hybrid');
@@ -78,6 +79,20 @@ export async function runContourEngine(ctx) {
       imageType: semantic.imageType,
     };
   }
+
+  debugStage('contour_engine',
+    { engine: vectorResult.engineUsed, semanticRegions: semantic?.regions?.length || 0 },
+    {
+      contourRegions: ctx.contours?.regions?.length || 0,
+      regionDetails: ctx.contours?.regions?.slice(0, 3).map(r => ({
+        color: r.hex,
+        area_norm: r.area_norm?.toFixed(4),
+        centroid: r.centroid,
+        pathPoints: r.path_points?.length,
+        stitchType: r.stitch_type || 'undefined',
+      })) || [],
+    }
+  );
 }
 
 /**

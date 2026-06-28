@@ -5,6 +5,7 @@
  */
 
 import { enrichAllRegions } from '../../regionBuilder.js';
+import { debugStage } from '../types.js';
 
 export async function runRegionBuilder(ctx) {
   if (!ctx.vectorRegions || ctx.vectorRegions.length === 0) {
@@ -29,6 +30,22 @@ export async function runRegionBuilder(ctx) {
   });
 
   ctx.regions = enrichAllRegions(named, width_mm, height_mm);
+
+  debugStage('region_builder',
+    { vectorRegions: named.length },
+    {
+      enrichedRegions: ctx.regions.length,
+      sampleRegions: ctx.regions.slice(0, 3).map(r => ({
+        name: r.name,
+        stitchType: r.recommended_stitch_type,
+        area_mm2: r.area_mm2?.toFixed(2),
+        avgWidth: r.avg_width_mm?.toFixed(2),
+        complexity: r.complexity?.level,
+        stitches: r.stitch_count,
+      })) || [],
+      totalStitches: ctx.regions.reduce((s, r) => s + (r.stitch_count || 0), 0),
+    }
+  );
 }
 
 // ─── Auto-naming ──────────────────────────────────────────────────────────────

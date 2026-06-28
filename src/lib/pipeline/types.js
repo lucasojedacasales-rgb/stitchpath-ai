@@ -295,3 +295,37 @@ export function createContext(imageUrl, config = {}) {
 export function logStage(ctx, stage, durationMs, ok = true) {
   ctx.stageLog.push({ stage, durationMs, ok, ts: Date.now() });
 }
+
+/**
+ * Detailed stage tracing: logs input shape, critical values, output shape.
+ * Helps identify where data is lost or corrupted.
+ */
+export function debugStage(stageName, input, output) {
+  const summary = {
+    stage: stageName,
+    input: summarizeObject(input),
+    output: summarizeObject(output),
+    timestamp: new Date().toISOString(),
+  };
+  
+  if (typeof window !== 'undefined') {
+    console.groupCollapsed(`📍 [${stageName}]`);
+    console.log('Input:', input);
+    console.log('Output:', output);
+    console.log('Summary:', summary);
+    console.groupEnd();
+  }
+  
+  return summary;
+}
+
+function summarizeObject(obj) {
+  if (!obj) return 'null/undefined';
+  if (Array.isArray(obj)) {
+    return `Array[${obj.length}]${obj.length ? ` {${Object.keys(obj[0] || {}).join(',')}...}` : ''}`;
+  }
+  if (typeof obj === 'object') {
+    return `Object {${Object.keys(obj).join(',')}...}`;
+  }
+  return typeof obj;
+}
