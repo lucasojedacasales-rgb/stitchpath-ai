@@ -95,18 +95,20 @@ export async function semanticSegment(imageUrl, config = {}) {
       id:            `sem_${regions.length + 1}`,
       hex:           obj.dominantHex,
       rgb:           obj.dominantRgb,
+      color:         obj.dominantHex,
       // Coverage
       coverage:      obj.pixelCount / (W * H),
       pixelCount:    obj.pixelCount,
       area_px:       obj.pixelCount,
-      // Geometry
+      // Geometry — all required for downstream stages
       area_norm:     geo.areaNorm,
       perimeter_norm:geo.perimNorm,
       compacidad:    geo.compactness,
       inertia_ratio: geo.inertiaRatio,
       bbox_aspect:   geo.bboxAspect,
       fill_angle:    geo.orientation,
-      centroid:      geo.centroid,
+      orientation:   geo.orientation,
+      centroid:      geo.centroid || [0.5, 0.5],
       curvature:     geo.meanCurvature,
       complexity:    geo.complexityScore,
       convexity:     geo.convexity,
@@ -119,6 +121,7 @@ export async function semanticSegment(imageUrl, config = {}) {
       recommended_stitch_type:stitch.type,
       recommended_density:    stitch.density,
       recommended_angle:      stitch.angle,
+      stitch_type:    stitch.type,
       // Production
       priority:      prio,
       layer_order:   prio,

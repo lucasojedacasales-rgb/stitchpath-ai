@@ -15,10 +15,18 @@ export async function runRegionBuilder(ctx) {
   const { width_mm = 100, height_mm = 100 } = ctx.config;
 
   // Auto-name any unnamed regions before enrichment
-  const named = ctx.vectorRegions.map((r, i) => ({
-    ...r,
-    name: r.name || autoName(r, i),
-  }));
+  const named = ctx.vectorRegions.map((r, i) => {
+    // Ensure critical fields exist before autoName
+    const region = {
+      ...r,
+      centroid: r.centroid || [0.5, 0.5],
+      stitch_type: r.stitch_type || 'fill',
+    };
+    return {
+      ...region,
+      name: r.name || autoName(region, i),
+    };
+  });
 
   ctx.regions = enrichAllRegions(named, width_mm, height_mm);
 }

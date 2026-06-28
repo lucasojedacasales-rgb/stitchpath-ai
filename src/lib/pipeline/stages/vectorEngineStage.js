@@ -37,7 +37,7 @@ export async function runVectorEngine(ctx) {
       ? (aiStrategy.stitchType === 'satin' ? 0.6 : aiStrategy.stitchType === 'running' ? 0.2 : 0.4)
       : bp.tatami_density || cfg.tatami_density || 0.4,
     fill_angle:       cfg.fill_angle ?? null,
-    max_regions:      bp.max_regions || 150,
+    max_regions:      bp.max_regions || 50,
     stitch_strategy:  strategy.stitchStrategy,
   };
 
@@ -57,9 +57,11 @@ export async function runVectorEngine(ctx) {
 }
 
 function isValidRegion(r) {
-  if ((r.area_mm2 || 0) <= 0.5)                          return false;
-  if (r.perimeter_mm !== undefined && r.perimeter_mm <= 0.8) return false;
+  if ((r.area_mm2 || 0) <= 0.6)                          return false;
+  if (r.perimeter_mm !== undefined && r.perimeter_mm <= 0.9) return false;
   if (r.isEdgeRegion === true)                            return false;
   if (!r.path_points || r.path_points.length < 3)        return false;
+  if (!r.centroid || r.centroid.length !== 2)            return false;
+  if (!r.stitch_type)                                     return false;
   return true;
 }
