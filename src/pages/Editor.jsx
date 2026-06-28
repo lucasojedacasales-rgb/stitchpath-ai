@@ -17,6 +17,7 @@ import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
 import MaskCanvas from '@/components/editor/MaskCanvas';
+import ValidationPanel from '@/components/editor/ValidationPanel';
 import { runPipeline } from '@/lib/pipeline/runner';
 import { enrichAllRegions } from '@/lib/regionBuilder.js';
 import { getModeStrategy } from '@/lib/digitizeModes.js';
@@ -57,6 +58,7 @@ export default function Editor() {
   const [uploadingImage, setUploadingImage] = useState(false);
   const [preprocessSettings, setPreprocessSettings] = useState(DEFAULT_PREPROCESS);
   const [preprocessedUrl, setPreprocessedUrl] = useState(null);
+  const [validationReport, setValidationReport] = useState(null);
   const timerRef = useRef(null);
 
   const maskCanvasRef = useRef(null);
@@ -151,6 +153,7 @@ export default function Editor() {
       setRegions(enrichedRegions);
       setStep(3);
       setShowDecisionPanel(false);
+      setValidationReport(ctx.validationReport || null);
 
       const label = aiStrategy ? 'Vectorización IA' : `Vectorización ${config.mode}`;
       const desc  = `${enrichedRegions.length} regiones generadas${aiStrategy ? ' (optimizado por IA)' : ''}`;
@@ -344,8 +347,16 @@ export default function Editor() {
           <div className="flex-1 overflow-hidden min-h-0">
             <RegionsPanel regions={regions} selectedId={selectedRegionId} onSelect={setSelectedRegionId} onUpdate={handleRegionsUpdate} />
           </div>
+          {validationReport && (
+            <div className="border-t border-[#1e2130] overflow-y-auto max-h-[35%] bg-[#0a0c12]">
+              <div className="px-3 py-2 border-b border-[#1a1d27]">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">✓ Validación</span>
+              </div>
+              <ValidationPanel validationReport={validationReport} />
+            </div>
+          )}
           {selectedRegionId && regions.find(r => r.id === selectedRegionId)?.stitch_type === 'fill' && (
-            <div className="border-t border-[#1e2130] overflow-y-auto max-h-[45%] bg-[#0a0c12]">
+            <div className="border-t border-[#1e2130] overflow-y-auto max-h-[35%] bg-[#0a0c12]">
               <div className="px-3 py-2 border-b border-[#1a1d27] flex items-center gap-2">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Métricas sub-pixel</span>
                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-900/30 border border-violet-500/30 text-violet-400">β</span>

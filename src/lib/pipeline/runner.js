@@ -10,6 +10,7 @@
  */
 
 import { createContext, logStage } from './types.js';
+import { validateFinalPipeline } from './validator.js';
 import { runImageAnalysis }     from './stages/imageAnalysisStage.js';
 import { runImageEnhancement }  from './stages/imageEnhancementStage.js';
 import { runContourEngine }     from './stages/contourEngineStage.js';
@@ -68,6 +69,9 @@ export async function runPipeline(imageUrl, config, opts = {}) {
       ctx.stageLog[ctx.stageLog.length - 1].error = err.message;
     }
   }
+
+  // Run final validation
+  ctx.validationReport = validateFinalPipeline(ctx);
 
   return ctx;
 }
