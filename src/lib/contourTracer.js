@@ -36,12 +36,12 @@
 export async function traceImageContours(imageUrl, maxColors = 8, opts = {}) {
   const {
     analysisSize     = 900,
-    minPixelArea     = 25,
-    minSegmentLengthPx = 3.0,
-    cornerAngleDeg   = 125,
-    rdpBaseEpsilon   = 1.2,
-    chaikinPasses    = 1,
-    gapClosurePx     = 5,
+    minPixelArea     = 15,
+    minSegmentLengthPx = 2.2,
+    cornerAngleDeg   = 122,
+    rdpBaseEpsilon   = 0.9,
+    chaikinPasses    = 2,
+    gapClosurePx     = 4,
   } = opts;
 
   const img = await loadImage(imageUrl);
