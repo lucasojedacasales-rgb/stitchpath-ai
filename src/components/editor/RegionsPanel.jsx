@@ -220,7 +220,7 @@ function ActionBtn({ onClick, children, title, accent }) {
 
 const FILTER_OPTS = ['Todas', 'Fill', 'Satin', 'Run'];
 
-function RegionInspectorPanel({ region, allRegions }) {
+function RegionInspectorPanel({ region, allRegions, fabricType, widthMm, heightMm }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="border-t border-violet-500/20 bg-[#0a0c12]">
@@ -235,12 +235,12 @@ function RegionInspectorPanel({ region, allRegions }) {
           {open ? <ChevronDown className="w-3 h-3 text-slate-600" /> : <ChevronRight className="w-3 h-3 text-slate-600" />}
         </div>
       </button>
-      {open && <RegionInspector region={region} allRegions={allRegions} />}
+      {open && <RegionInspector region={region} allRegions={allRegions} fabricType={fabricType} widthMm={widthMm || 100} heightMm={heightMm || 100} />}
     </div>
   );
 }
 
-export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate }) {
+export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate, fabricType, widthMm, heightMm }) {
   const [filter, setFilter] = useState('Todas');
   const [batchMode, setBatchMode] = useState(false);
   const [selected, setSelected] = useState([]);
@@ -439,7 +439,7 @@ export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate }
       {selectedId && !batchMode && (() => {
         const sel = allRegions.find(r => r.id === selectedId);
         return sel ? (
-          <RegionInspectorPanel region={sel} allRegions={allRegions} />
+          <RegionInspectorPanel region={sel} allRegions={allRegions} fabricType={fabricType} widthMm={widthMm} heightMm={heightMm} />
         ) : null;
       })()}
 

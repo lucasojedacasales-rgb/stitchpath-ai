@@ -168,7 +168,7 @@ export default function StitchCanvas({
     const alpha = stitchOpacity / 100;
 
     for (const region of validRegions) {
-      if (region.visible === false) continue;
+      if (region.visible === false) continue; // undefined = visible by default, only false hides
       const pts = region.path_points;
       if (!pts || pts.length < 3) continue;
 
@@ -361,7 +361,7 @@ export default function StitchCanvas({
 
     let found = null;
     for (const region of regions) {
-      if (!region.visible || !region.path_points) continue;
+      if (region.visible === false || !region.path_points) continue;
       const pts = region.path_points;
       const minX = Math.min(...pts.map(p => p[0]));
       const maxX = Math.max(...pts.map(p => p[0]));
