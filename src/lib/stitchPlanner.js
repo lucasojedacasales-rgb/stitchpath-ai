@@ -1,359 +1,540 @@
 /**
- * stitchPlanner.js
- *
- * Motor de planificación estratégica de bordado.
- * Dado un conjunto de regiones analizadas, genera un plan completo:
- * - Secuencia óptima de capas
- * - Tipo de puntada por región (con justificación)
- * - Underlays recomendados
- * - Estimación de saltos de color
- * - Advertencias de producción
- * - Score de viabilidad
+ * stitchPlanner.js — Intelligent AI Stitch Planner
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Before generating a single stitch, this module decides:
+ *   1. Stitch type per region (fill / satin / running — with justification)
+ *   2. Optimal stitch angle per region (PCA-driven)
+ *   3. Density & pull compensation per region (fabric + geometry aware)
+ *   4. Underlay strategy per region (type + density)
+ *   5. Layer ordering (background → fills → satin → details → outlines)
+ *   6. Color grouping (minimise thread changes)
+ *   7. Travel path (greedy TSP per color group → minimise jumps)
+ *   8. Production warnings & viability score
+ *   9. Time & thread estimation
+ *  10. Narrative summary
  */
 
-// ─── Constantes de decisión ───────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-const STITCH_RULES = {
-  fill: {
-    minAreaMm2: 30,
-    maxPerimeterRatio: 0.08, // área/perímetro² — formas compactas
-    needsUnderlay: true,
-    typicalDensityMm: 0.4,
-  },
-  satin: {
-    minAreaMm2: 2,
-    maxAreaMm2: 200,
-    maxWidthMm: 12,
-    needsUnderlay: true,
-    typicalDensityMm: 0.5,
-  },
-  running_stitch: {
-    maxAreaMm2: 40,
-    isContourType: true,
-    needsUnderlay: false,
-    typicalDensityMm: 1.5,
-  },
-};
+const MACHINE_SPM           = 800;   // stitches/min default speed
+const COLOR_CHANGE_SEC      = 30;    // seconds per thread change
+const JUMP_PENALTY_SEC      = 0.05;  // seconds per jump stitch
+const THREAD_MM_PER_STITCH  = 5.5;
+const MM_PER_GRAM           = 220;
 
-const LAYER_ORDER = {
-  underlay:        0,
-  running_stitch:  1,
+// Layer order: lower = sewn first (base layers before details)
+const LAYER_RANK = {
+  background:      0,
+  fill:            1,
   satin:           2,
-  fill:            3,
+  running_stitch:  3,
   detail:          4,
+  outline:         5,
 };
 
-// ─── Clasificador de región ───────────────────────────────────────────────────
+// Fabric-specific density multipliers
+const FABRIC_DENSITY = {
+  'Algodón':    1.00,
+  'Poliéster':  0.95,
+  'Mezcla':     0.98,
+  'Denim':      1.10,  // tighter — dense fabric needs more coverage
+  'Lino':       1.05,
+  'Seda':       0.85,  // loose — delicate
+  'Lycra':      1.15,  // stretch — dense underlay essential
+  'Otro':       1.00,
+};
 
-function classifyRegion(region) {
-  const area    = region.area_mm2    || 0;
-  const perim   = region.perimeter_mm || 1;
-  const compactness = (perim * perim) / Math.max(area, 0.1); // 4π para círculo ≈ 12.6
-  const avgWidth = area / perim;
-  const color   = (region.color || '').toLowerCase();
-  const name    = (region.name  || '').toLowerCase();
+// Fabric pull compensation multipliers
+const FABRIC_PULL = {
+  'Algodón':    1.00,
+  'Poliéster':  1.05,
+  'Mezcla':     1.02,
+  'Denim':      1.10,
+  'Lino':       1.05,
+  'Seda':       0.90,
+  'Lycra':      1.20,
+  'Otro':       1.00,
+};
 
-  // Contornos explícitos
-  if (name.includes('contour') || color === '#000000' || color === '#1a1a1a') {
-    return { type: 'running_stitch', reason: 'Contorno detectado — pespunte perimetral', confidence: 0.95 };
+// ─── 1. Stitch Type Classification ───────────────────────────────────────────
+
+/**
+ * Classifies the best stitch type for a region using geometric + semantic signals.
+ * Priority chain: explicit semantic → region builder recommendation → geometry
+ */
+function classifyStitchType(region) {
+  const area      = region.area_mm2    || 0;
+  const perim     = region.perimeter_mm || Math.max(1, Math.sqrt(area) * 3.5);
+  const avgWidth  = region.avg_width_mm || (area / perim);
+  const compact   = region.convexity   ?? (4 * Math.PI * area) / Math.max(1, perim * perim);
+  const inertia   = region._metrics?.inertia_ratio ?? 1;
+  const name      = (region.name || '').toLowerCase();
+  const color     = (region.color || '#888').toLowerCase();
+  const semClass  = region.semantic_class  || '';
+  const semObj    = region.semantic_object || '';
+
+  // ── Semantic overrides ──
+  if (/outline|contorno|border|borde/.test(name + semClass + semObj)) {
+    return { type: 'running_stitch', reason: 'Contorno semántico — pespunte perimetral', confidence: 0.97, layer: 'outline' };
+  }
+  if (/text|letra|letter|font/.test(name + semClass + semObj)) {
+    return { type: 'satin', reason: 'Texto / letra detectada — satén columnar', confidence: 0.95, layer: 'detail' };
+  }
+  if (/eye|ojo|pupil|pupila|reflejo|highlight/.test(name + semClass + semObj)) {
+    return { type: 'satin', reason: 'Detalle anatómico — satén fino', confidence: 0.93, layer: 'detail' };
+  }
+  if (/background|fondo|bg/.test(name + semClass + semObj)) {
+    return { type: 'fill', reason: 'Fondo detectado — relleno Tatami base', confidence: 0.92, layer: 'background' };
   }
 
-  // Formas muy delgadas → satin
-  if (avgWidth < 4 && area < 150) {
-    return { type: 'satin', reason: `Forma estrecha (ancho medio ${avgWidth.toFixed(1)} mm) — satén columnar`, confidence: 0.88 };
+  // ── Geometry rules ──
+  if (area < 4 || avgWidth < 0.8) {
+    return { type: 'running_stitch', reason: `Área mínima (${area.toFixed(1)}mm²) — pespunte`, confidence: 0.90, layer: 'detail' };
+  }
+  if ((color === '#000000' || color === '#1a1a1a') && area < 50) {
+    return { type: 'running_stitch', reason: 'Negro fino — contorno en pespunte', confidence: 0.88, layer: 'outline' };
+  }
+  if (avgWidth < 5 && (compact < 0.45 || inertia > 2.5)) {
+    return { type: 'satin', reason: `Forma estrecha (${avgWidth.toFixed(1)}mm) — satén`, confidence: 0.88, layer: 'satin' };
+  }
+  if (area < 60 && compact < 0.40) {
+    return { type: 'satin', reason: `Forma alargada baja compacidad (${compact.toFixed(2)}) — satén`, confidence: 0.82, layer: 'satin' };
+  }
+  if (area >= 30 && compact >= 0.35) {
+    return { type: 'fill', reason: `Zona compacta (${area.toFixed(0)}mm²) — relleno Tatami`, confidence: 0.90, layer: 'fill' };
+  }
+  if (area < 30 && avgWidth < 8) {
+    return { type: 'satin', reason: `Área media + forma estrecha — satén`, confidence: 0.78, layer: 'satin' };
   }
 
-  // Áreas muy pequeñas → running
-  if (area < 8) {
-    return { type: 'running_stitch', reason: 'Área mínima — pespunte simple', confidence: 0.85 };
-  }
-
-  // Áreas grandes y compactas → fill
-  if (area >= STITCH_RULES.fill.minAreaMm2 && compactness < 60) {
-    return { type: 'fill', reason: `Zona amplia (${area.toFixed(0)} mm², compacidad ${compactness.toFixed(0)}) — relleno Tatami`, confidence: 0.92 };
-  }
-
-  // Áreas medianas con alta esbeltez → satin
-  if (area < 200 && avgWidth < 8) {
-    return { type: 'satin', reason: `Forma de grosor medio (${avgWidth.toFixed(1)} mm) — satén`, confidence: 0.80 };
-  }
-
-  // Default: fill
-  return { type: 'fill', reason: `Forma genérica — relleno Tatami por defecto`, confidence: 0.70 };
+  return { type: 'fill', reason: 'Forma genérica — relleno Tatami', confidence: 0.70, layer: 'fill' };
 }
 
-// ─── Cálculo de ángulo óptimo por PCA ────────────────────────────────────────
+// ─── 2. Optimal Stitch Angle (PCA) ───────────────────────────────────────────
 
-function computeOptimalAngle(pathPoints) {
-  if (!pathPoints || pathPoints.length < 3) return 45;
-  const n = pathPoints.length;
-  const cx = pathPoints.reduce((s, p) => s + p[0], 0) / n;
-  const cy = pathPoints.reduce((s, p) => s + p[1], 0) / n;
+function computeOptimalAngle(region) {
+  // Use pre-computed PCA angle from regionBuilder if available
+  if (region.orientation !== undefined) return region.orientation;
+
+  const pts = region.path_points || [];
+  if (pts.length < 3) return 45;
+
+  const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+  const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
   let sxx = 0, sxy = 0, syy = 0;
-  for (const [x, y] of pathPoints) {
+  for (const [x, y] of pts) {
     const dx = x - cx, dy = y - cy;
-    sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
+    sxx += dx*dx; sxy += dx*dy; syy += dy*dy;
   }
-  const angle = 0.5 * Math.atan2(2 * sxy, sxx - syy);
-  return Math.round(((angle * 180) / Math.PI + 180) % 180);
+  const angle = 0.5 * Math.atan2(2*sxy, sxx - syy);
+  return Math.round(((angle * 180 / Math.PI) + 180) % 180);
 }
 
-// ─── Underlay strategy ───────────────────────────────────────────────────────
+// ─── 3. Density & Compensation ───────────────────────────────────────────────
 
-function recommendUnderlay(region, stitchType) {
-  const area  = region.area_mm2 || 0;
-  const color = (region.color || '#ffffff').toLowerCase();
-  const isLight = isLightColor(color);
+function computeDensityAndCompensation(region, stitchType, fabricType) {
+  const area     = region.area_mm2    || 0;
+  const avgWidth = region.avg_width_mm || 3;
+  const maxThick = region.max_thickness_mm || avgWidth;
+  const fabric   = fabricType || 'Algodón';
+  const densityMult = FABRIC_DENSITY[fabric] || 1.0;
+  const pullMult    = FABRIC_PULL[fabric]    || 1.0;
 
+  let baseDensity;
+  if (stitchType === 'fill') {
+    baseDensity = area > 400 ? 0.32 : area > 200 ? 0.37 : area > 80 ? 0.42 : area > 30 ? 0.47 : 0.52;
+  } else if (stitchType === 'satin') {
+    // Wider satin → tighter columns to avoid gaps
+    baseDensity = avgWidth > 8 ? 0.40 : avgWidth > 5 ? 0.45 : 0.52;
+  } else {
+    baseDensity = 1.5; // running stitch: 1.5mm stitch length
+  }
+
+  const density = +(baseDensity * densityMult).toFixed(3);
+
+  // Pull compensation: larger / wider shapes pull more
+  let baseComp = 0.10;
+  if (stitchType !== 'running_stitch') {
+    if (area > 200 || maxThick > 15) baseComp = 0.20;
+    else if (area > 80 || maxThick > 8) baseComp = 0.17;
+    else if (area > 30) baseComp = 0.14;
+    else baseComp = 0.10;
+  }
+  const compensation = +(baseComp * pullMult).toFixed(3);
+
+  return { density, compensation };
+}
+
+// ─── 4. Underlay Strategy ─────────────────────────────────────────────────────
+
+function computeUnderlay(region, stitchType, fabricType) {
   if (stitchType === 'running_stitch') return null;
 
+  const area     = region.area_mm2   || 0;
+  const avgWidth = region.avg_width_mm || 3;
+  const hex      = (region.color || '#888').toLowerCase();
+  const r = parseInt(hex.slice(1,3),16)||0, g = parseInt(hex.slice(3,5),16)||0, b = parseInt(hex.slice(5,7),16)||0;
+  const luminance  = 0.299*r + 0.587*g + 0.114*b;
+  const isLight    = luminance > 180;
+  const isStretch  = fabricType === 'Lycra';
+  const isDense    = ['Denim','Lino'].includes(fabricType);
+
   if (stitchType === 'satin') {
-    return { type: 'center_run', density: 1.2, reason: 'Estabilización central para satén' };
+    if (avgWidth > 6 || isStretch) {
+      return { type: 'center_run', density: 1.0, angle: 90, reason: 'Satén ancho — run central estabilizador' };
+    }
+    return { type: 'center_run', density: 1.2, angle: 90, reason: 'Satén — run central' };
   }
 
-  if (area > 300 || isLight) {
-    return {
-      type: 'edge_run_plus_zigzag',
-      density: 0.8,
-      reason: isLight
-        ? 'Color claro — doble underlay para cobertura máxima'
-        : 'Zona grande — underlay perimetral + zigzag',
-    };
+  // Fill underlay
+  if (isStretch) {
+    return { type: 'zigzag_plus_edge', density: 0.7, angle: 45, reason: 'Tejido elástico — zigzag + perimetral' };
   }
-
-  return { type: 'edge_run', density: 1.0, reason: 'Underlay perimetral estándar' };
+  if (area > 500 || (isLight && area > 100)) {
+    return { type: 'grid', density: 0.8, angle: 45, reason: isLight ? 'Color claro grande — grid para máxima cobertura' : 'Zona muy grande — grid underlay' };
+  }
+  if (area > 150 || isDense) {
+    return { type: 'edge_run_plus_zigzag', density: 0.9, angle: 45, reason: 'Zona amplia — perimetral + zigzag' };
+  }
+  if (area > 30) {
+    return { type: 'edge_run', density: 1.0, angle: 0, reason: 'Relleno estándar — run perimetral' };
+  }
+  return null; // small fills: no underlay needed
 }
 
-function isLightColor(hex) {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return (r * 0.299 + g * 0.587 + b * 0.114) > 180;
+// ─── 5. Layer Ordering ────────────────────────────────────────────────────────
+
+function getLayerRank(region, stitchType, layerHint) {
+  // Explicit layer_order from digitizer takes precedence
+  if (region.layer_order !== undefined) return region.layer_order;
+  // Use layer hint from classification
+  const baseRank = LAYER_RANK[layerHint] ?? LAYER_RANK[stitchType] ?? 1;
+  // Background regions always first
+  const area = region.area_mm2 || 0;
+  if (area > 600) return 0; // large background
+  return baseRank;
 }
 
-// ─── Secuenciación de color (min. saltos) ─────────────────────────────────────
+// ─── 6 + 7. Color Grouping & Travel Path ─────────────────────────────────────
 
-function optimizeColorSequence(regionPlans) {
-  // Agrupar por color, luego ordenar grupos por área descendente
-  const colorGroups = {};
+/**
+ * Groups regions by color, orders groups largest-first (minimise resets),
+ * then within each group orders by layer rank.
+ * Inside same layer: greedy nearest-centroid TSP to minimise jumps.
+ */
+function optimizeSequence(regionPlans) {
+  // Group by color
+  const colorMap = new Map();
   for (const rp of regionPlans) {
     const c = rp.color;
-    if (!colorGroups[c]) colorGroups[c] = [];
-    colorGroups[c].push(rp);
+    if (!colorMap.has(c)) colorMap.set(c, []);
+    colorMap.get(c).push(rp);
   }
 
-  const groups = Object.entries(colorGroups)
+  // Sort color groups: largest total area first
+  const colorGroups = [...colorMap.entries()]
     .map(([color, plans]) => ({
       color,
       plans,
-      totalArea: plans.reduce((s, p) => s + (p.areaMm2 || 0), 0),
+      totalArea: plans.reduce((s, p) => s + (p.areaMm2||0), 0),
     }))
     .sort((a, b) => b.totalArea - a.totalArea);
 
-  // Dentro de cada grupo: ordenar por layer_order
   const sequenced = [];
   let colorChanges = 0;
-  for (const group of groups) {
-    group.plans.sort((a, b) => (LAYER_ORDER[a.stitchType] || 0) - (LAYER_ORDER[b.stitchType] || 0));
+  let jumpCount = 0;
+  let cx = 0.5, cy = 0.5; // machine head position (normalized)
+
+  for (const group of colorGroups) {
     if (sequenced.length > 0) colorChanges++;
-    sequenced.push(...group.plans);
+
+    // Sort within group by layer rank, then greedy travel
+    group.plans.sort((a, b) => a.layerRank - b.layerRank);
+
+    // Greedy TSP within same layer-rank tiers
+    const visited   = new Set();
+    const ordered   = [];
+    let headX = cx, headY = cy;
+
+    while (ordered.length < group.plans.length) {
+      const remaining = group.plans.filter((_, i) => !visited.has(i));
+      // Find minimum rank among remaining
+      const minRank = Math.min(...remaining.map(r => r.layerRank));
+      const tier    = remaining.filter(r => r.layerRank === minRank);
+
+      let best = tier[0], bestDist = Infinity, bestIdx = -1;
+      for (const r of tier) {
+        const [rx, ry] = r.centroid || [0.5, 0.5];
+        const d = Math.hypot(rx - headX, ry - headY);
+        if (d < bestDist) { bestDist = d; best = r; bestIdx = group.plans.indexOf(r); }
+      }
+      if (!best || bestIdx === -1) break;
+      visited.add(bestIdx);
+      ordered.push(best);
+      const [rx, ry] = best.centroid || [0.5, 0.5];
+      // Count jumps: distance > 5mm (normalized ~0.05 on 100mm design)
+      if (Math.hypot(rx - headX, ry - headY) > 0.05) jumpCount++;
+      headX = rx; headY = ry;
+    }
+
+    sequenced.push(...ordered);
+    // Update head to last position of this color group
+    if (ordered.length > 0) {
+      const last = ordered[ordered.length-1];
+      const [lx, ly] = last.centroid || [0.5, 0.5];
+      cx = lx; cy = ly;
+    }
   }
 
-  return { sequenced, colorChanges, uniqueColors: groups.length };
+  return {
+    sequenced,
+    colorChanges,
+    uniqueColors: colorGroups.length,
+    jumpCount,
+  };
 }
 
-// ─── Advertencias de producción ───────────────────────────────────────────────
+// ─── 8. Production Warnings ───────────────────────────────────────────────────
 
 function generateWarnings(regions, regionPlans, config) {
   const warnings = [];
+  const uniqueColors  = new Set(regionPlans.map(r => r.color)).size;
+  const totalStitches = regionPlans.reduce((s, r) => s + r.estimatedStitches, 0);
 
-  // Demasiados colores
-  const uniqueColors = new Set(regionPlans.map(r => r.color)).size;
-  if (uniqueColors > 12) {
-    warnings.push({ level: 'error', code: 'TOO_MANY_COLORS', message: `${uniqueColors} colores detectados. La mayoría de máquinas soportan ≤12. Reducir paleta.` });
-  } else if (uniqueColors > 8) {
-    warnings.push({ level: 'warn', code: 'HIGH_COLOR_COUNT', message: `${uniqueColors} colores. Considera reducir a ≤8 para mayor compatibilidad.` });
+  // Color count
+  if (uniqueColors > 15) {
+    warnings.push({ level: 'error', code: 'TOO_MANY_COLORS', message: `${uniqueColors} colores — excede la mayoría de máquinas (máx. 15). Reducir paleta.` });
+  } else if (uniqueColors > 10) {
+    warnings.push({ level: 'warn', code: 'HIGH_COLOR_COUNT', message: `${uniqueColors} colores. Considera reducir a ≤10 para mayor compatibilidad.` });
   }
 
-  // Regiones muy pequeñas
-  const tinyCount = regions.filter(r => (r.area_mm2 || 0) < 5).length;
-  if (tinyCount > 0) {
-    warnings.push({ level: 'warn', code: 'TINY_REGIONS', message: `${tinyCount} región(es) < 5mm². Pueden perderse en bordado físico.` });
+  // Stitch count
+  if (totalStitches > 100000) {
+    warnings.push({ level: 'warn', code: 'VERY_HIGH_STITCH_COUNT', message: `~${(totalStitches/1000).toFixed(0)}k puntadas. Bordado muy largo. Considera reducir densidad o simplificar.` });
+  } else if (totalStitches > 50000) {
+    warnings.push({ level: 'info', code: 'HIGH_STITCH_COUNT', message: `~${(totalStitches/1000).toFixed(0)}k puntadas — bordado complejo pero viable.` });
   }
 
-  // Alta densidad de puntadas
-  const totalStitches = regionPlans.reduce((s, r) => s + (r.estimatedStitches || 0), 0);
-  if (totalStitches > 50000) {
-    warnings.push({ level: 'warn', code: 'HIGH_STITCH_COUNT', message: `~${Math.round(totalStitches / 1000)}k puntadas estimadas. Tiempo de bordado prolongado.` });
+  // Tiny regions
+  const tinyCount = regions.filter(r => (r.area_mm2||0) < 5).length;
+  if (tinyCount > 3) {
+    warnings.push({ level: 'warn', code: 'TINY_REGIONS', message: `${tinyCount} regiones < 5mm² — pueden perderse en producción física.` });
   }
 
-  // Diseño muy pequeño con fill
-  const fillSmall = regionPlans.filter(r => r.stitchType === 'fill' && (r.areaMm2 || 0) < 20).length;
-  if (fillSmall > 0) {
-    warnings.push({ level: 'info', code: 'FILL_SMALL_AREA', message: `${fillSmall} zona(s) con fill en áreas pequeñas (<20mm²). Considera running stitch.` });
-  }
-
-  // Saturación de satén
-  const satinWide = regionPlans.filter(r => r.stitchType === 'satin' && (r.areaMm2 || 0) > 200).length;
+  // Wide satin
+  const satinWide = regionPlans.filter(r => r.stitchType === 'satin' && (r.areaMm2||0) > 200).length;
   if (satinWide > 0) {
-    warnings.push({ level: 'warn', code: 'SATIN_TOO_WIDE', message: `${satinWide} región(es) satin muy amplias. Riesgo de puntadas flojas. Cambiar a fill.` });
+    warnings.push({ level: 'warn', code: 'SATIN_TOO_WIDE', message: `${satinWide} zona(s) satin muy amplia(s) — riesgo de puntadas flojas. Cambiar a fill.` });
+  }
+
+  // Small fill
+  const smallFill = regionPlans.filter(r => r.stitchType === 'fill' && (r.areaMm2||0) < 15).length;
+  if (smallFill > 0) {
+    warnings.push({ level: 'info', code: 'FILL_SMALL', message: `${smallFill} zona(s) fill < 15mm² — considera running stitch para mejor resultado.` });
+  }
+
+  // Stretch fabric missing underlay
+  if (config.fabric_type === 'Lycra') {
+    const noUnderlay = regionPlans.filter(r => r.stitchType === 'fill' && !r.underlay).length;
+    if (noUnderlay > 0) {
+      warnings.push({ level: 'warn', code: 'LYCRA_NO_UNDERLAY', message: `Tejido Lycra: ${noUnderlay} zona(s) fill sin underlay — necesario para estabilizar.` });
+    }
+  }
+
+  // High jump count
+  const jumps = regionPlans.reduce((s, r) => s + (r.jumpsBefore || 0), 0);
+  if (jumps > 30) {
+    warnings.push({ level: 'info', code: 'HIGH_JUMPS', message: `Alta densidad de saltos (~${jumps}). El Travel Optimizer puede reducirlos.` });
   }
 
   return warnings;
 }
 
-// ─── Score de viabilidad ──────────────────────────────────────────────────────
+// ─── 9. Time & Thread Estimation ─────────────────────────────────────────────
+
+function estimateProduction(totalStitches, colorChanges, jumpCount) {
+  const stitchSec  = (totalStitches / MACHINE_SPM) * 60;
+  const changeSec  = colorChanges * COLOR_CHANGE_SEC;
+  const jumpSec    = jumpCount * JUMP_PENALTY_SEC;
+  const totalSec   = stitchSec + changeSec + jumpSec;
+  const totalMin   = totalSec / 60;
+
+  const threadMm   = totalStitches * THREAD_MM_PER_STITCH;
+  const threadGrams = threadMm / MM_PER_GRAM;
+
+  return {
+    totalMinutes:   +totalMin.toFixed(1),
+    stitchMinutes:  +(stitchSec/60).toFixed(1),
+    colorMinutes:   +(changeSec/60).toFixed(1),
+    jumpMinutes:    +(jumpSec/60).toFixed(1),
+    formatted: totalMin < 1
+      ? '<1 min'
+      : totalMin < 60
+      ? `${Math.round(totalMin)} min`
+      : `${Math.floor(totalMin/60)}h ${Math.round(totalMin%60)}min`,
+    threadMm:     Math.round(threadMm),
+    threadGrams:  +threadGrams.toFixed(1),
+  };
+}
+
+// ─── Viability Score ──────────────────────────────────────────────────────────
 
 function computeViabilityScore(warnings, regionPlans, colorChanges) {
   let score = 100;
   for (const w of warnings) {
     if (w.level === 'error') score -= 25;
-    else if (w.level === 'warn')  score -= 10;
+    else if (w.level === 'warn') score -= 8;
     else score -= 2;
   }
-  // Penalizar muchos cambios de color
-  if (colorChanges > 8)  score -= 10;
-  if (colorChanges > 12) score -= 10;
-
-  // Penalizar si muchas regiones tienen baja confianza
+  if (colorChanges > 10) score -= 10;
+  if (colorChanges > 15) score -= 10;
   const lowConf = regionPlans.filter(r => r.confidence < 0.75).length;
-  score -= Math.min(20, lowConf * 3);
-
-  return Math.max(0, Math.min(100, score));
+  score -= Math.min(15, lowConf * 2);
+  return Math.max(0, Math.min(100, Math.round(score)));
 }
 
-// ─── Estimación de tiempo de bordado ─────────────────────────────────────────
+// ─── Narrative Summary ────────────────────────────────────────────────────────
 
-function estimateTime(totalStitches, colorChanges, speedSpm = 800) {
-  const stitchMinutes = totalStitches / speedSpm;
-  const colorMinutes  = colorChanges * 0.5; // 30s por cambio de color
-  const totalMinutes  = stitchMinutes + colorMinutes;
-  return {
-    totalMinutes: +totalMinutes.toFixed(1),
-    stitchMinutes: +stitchMinutes.toFixed(1),
-    colorMinutes:  +colorMinutes.toFixed(1),
-    formatted: totalMinutes < 1
-      ? `<1 min`
-      : totalMinutes < 60
-      ? `${Math.round(totalMinutes)} min`
-      : `${Math.floor(totalMinutes / 60)}h ${Math.round(totalMinutes % 60)}min`,
-  };
+function buildNarrative({ fillCount, satinCount, runCount, uniqueColors, colorChanges, viabilityScore, production, warnings, jumpCount }) {
+  const parts = [];
+  if (fillCount > 0 && satinCount > 0) {
+    parts.push(`Diseño mixto: ${fillCount} zona(s) fill Tatami + ${satinCount} zona(s) satén.`);
+  } else if (fillCount > 0) {
+    parts.push(`Diseño de relleno (${fillCount} zonas Tatami).`);
+  } else if (satinCount > 0) {
+    parts.push(`Diseño de satén puro (${satinCount} zonas) — ideal para formas y texto.`);
+  }
+  if (runCount > 0) parts.push(`${runCount} contorno(s) en pespunte.`);
+  parts.push(`${uniqueColors} hilo(s) · ${colorChanges} cambio(s) · ~${jumpCount} salto(s) · ${production.formatted}.`);
+  if (viabilityScore >= 85) parts.push('✓ Diseño viable para producción directa.');
+  else if (viabilityScore >= 60) parts.push('⚠ Revisión recomendada antes de producción.');
+  else parts.push('✗ Problemas detectados — revisa las advertencias antes de producir.');
+  return parts.join(' ');
 }
 
-// ─── API principal ────────────────────────────────────────────────────────────
+// ─── PUBLIC API ───────────────────────────────────────────────────────────────
 
 /**
- * Genera un plan estratégico completo de bordado.
+ * Generates a complete, intelligent stitch plan for a set of regions.
  *
- * @param {Array}  regions  - regiones del proyecto
- * @param {object} config   - configuración del proyecto (width_mm, height_mm, fabric_type, etc.)
+ * @param {Array}  regions  - enriched regions from RegionBuilder
+ * @param {Object} config   - { width_mm, height_mm, fabric_type, ... }
  * @returns {StitchPlan}
  */
 export function generateStitchPlan(regions, config = {}) {
   const { width_mm = 100, height_mm = 100, fabric_type = 'Algodón' } = config;
 
-  // 1. Clasificar y enriquecer cada región
-  const regionPlans = regions
-    .filter(r => r.path_points?.length >= 3)
-    .map(region => {
-      const classification = classifyRegion(region);
-      const angle   = computeOptimalAngle(region.path_points);
-      const underlay = recommendUnderlay(region, classification.type);
+  if (!regions || regions.length === 0) return null;
 
-      // Estimar puntadas
-      const area  = region.area_mm2  || 0;
-      const perim = region.perimeter_mm || 1;
-      let estimatedStitches = 0;
-      if (classification.type === 'fill') {
-        estimatedStitches = Math.round(area * 6.25); // ~2.5 pts/mm² a 0.4mm
-      } else if (classification.type === 'satin') {
-        const w = Math.max(1, area / perim);
-        estimatedStitches = Math.round(perim / 2.5 * (w / 0.5));
-      } else {
-        estimatedStitches = Math.round(perim / 1.5);
+  // ── Step 1–5: Classify + compute per-region decisions ──
+  const regionPlans = regions
+    .filter(r => (r.path_points?.length ?? 0) >= 3 || (r.area_mm2 || 0) > 0)
+    .map(region => {
+      const classification = classifyStitchType(region);
+      const stitchType     = classification.type;
+      const optimalAngle   = computeOptimalAngle(region);
+      const { density, compensation } = computeDensityAndCompensation(region, stitchType, fabric_type);
+      const underlay   = computeUnderlay(region, stitchType, fabric_type);
+      const layerRank  = getLayerRank(region, stitchType, classification.layer);
+
+      // Stitch count: use pre-computed if available, otherwise canonical formula
+      const area  = region.area_mm2   || 0;
+      const perim = region.perimeter_mm || Math.max(1, Math.sqrt(area) * 3.5);
+      let estimatedStitches = region.stitch_count > 0 ? region.stitch_count : 0;
+      if (!estimatedStitches) {
+        if (stitchType === 'fill')          estimatedStitches = Math.round(area * 2.5 * (1 / Math.max(0.25, density)));
+        else if (stitchType === 'satin')    estimatedStitches = Math.round(perim * 2 * (area / Math.max(1, perim)));
+        else                                estimatedStitches = Math.round(perim / 1.5);
       }
 
       return {
         regionId:          region.id,
-        regionName:        region.name,
+        regionName:        region.name || region.id,
         color:             region.color || '#000000',
         areaMm2:           area,
-        stitchType:        classification.type,
+        perimeterMm:       perim,
+        centroid:          region.centroid || [0.5, 0.5],
+
+        // Stitch decisions
+        stitchType,
         reason:            classification.reason,
         confidence:        classification.confidence,
-        optimalAngle:      angle,
+        optimalAngle,
+        density,
+        compensation,
         underlay,
+        layerRank,
+
+        // Underlay flag (for UI compatibility)
+        hasUnderlay: !!underlay,
+
+        // Production
         estimatedStitches,
-        layerOrder:        LAYER_ORDER[classification.type] || 0,
+
+        // Geometry snapshot (from regionBuilder)
+        avgWidthMm:    region.avg_width_mm   || 0,
+        maxThicknessMm: region.max_thickness_mm || 0,
+        convexity:     region.convexity      || 1,
+        complexity:    region.complexity     || { score: 0, level: 'simple' },
+        qualityScore:  region.qualityScore   || 80,
+
+        // Semantic context
+        semanticObject: region.semantic_object || null,
+        semanticClass:  region.semantic_class  || null,
       };
     });
 
-  // 2. Optimizar secuencia de colores
-  const { sequenced, colorChanges, uniqueColors } = optimizeColorSequence(regionPlans);
+  // ── Step 6–7: Color grouping + travel path optimization ──
+  const { sequenced, colorChanges, uniqueColors, jumpCount } = optimizeSequence(regionPlans);
 
-  // 3. Advertencias
-  const warnings = generateWarnings(regions, regionPlans, config);
+  // Attach travel order to plans
+  const finalSequence = sequenced.map((rp, i) => ({
+    ...rp,
+    travelOrder:  i + 1,
+    colorChangeAt: i === 0 || sequenced[i].color !== sequenced[i-1]?.color,
+  }));
 
-  // 4. Totales
-  const totalStitches = regionPlans.reduce((s, r) => s + r.estimatedStitches, 0);
+  // ── Step 8: Warnings ──
+  const warnings = generateWarnings(regions, finalSequence, config);
 
-  // 5. Tiempo estimado
-  const time = estimateTime(totalStitches, colorChanges);
+  // ── Step 9: Production estimates ──
+  const totalStitches = finalSequence.reduce((s, r) => s + r.estimatedStitches, 0);
+  const production    = estimateProduction(totalStitches, colorChanges, jumpCount);
 
-  // 6. Viabilidad
-  const viabilityScore = computeViabilityScore(warnings, regionPlans, colorChanges);
+  // ── Viability ──
+  const viabilityScore = computeViabilityScore(warnings, finalSequence, colorChanges);
 
-  // 7. Resumen de estrategia
-  const fillCount    = regionPlans.filter(r => r.stitchType === 'fill').length;
-  const satinCount   = regionPlans.filter(r => r.stitchType === 'satin').length;
-  const runCount     = regionPlans.filter(r => r.stitchType === 'running_stitch').length;
-  const withUnderlay = regionPlans.filter(r => r.underlay).length;
+  // ── Summary counts ──
+  const fillCount  = finalSequence.filter(r => r.stitchType === 'fill').length;
+  const satinCount = finalSequence.filter(r => r.stitchType === 'satin').length;
+  const runCount   = finalSequence.filter(r => r.stitchType === 'running_stitch').length;
+  const withUnderlay = finalSequence.filter(r => r.hasUnderlay).length;
 
   return {
-    // Plan secuenciado
-    sequence: sequenced,
+    // Full ordered sequence with all decisions
+    sequence: finalSequence,
 
-    // Resumen
+    // Summary statistics
     summary: {
-      totalRegions:   regionPlans.length,
+      totalRegions: finalSequence.length,
       uniqueColors,
       colorChanges,
       totalStitches,
+      jumpCount,
       fillCount,
       satinCount,
       runCount,
       withUnderlay,
       viabilityScore,
-      time,
-      fabricType: fabric_type,
+      production,
+      fabricType:    fabric_type,
       designSizeMm: `${width_mm}×${height_mm}`,
     },
 
-    // Advertencias
+    // Actionable warnings
     warnings,
 
-    // Recomendación narrativa
-    narrative: buildNarrative({ fillCount, satinCount, runCount, uniqueColors, colorChanges, viabilityScore, time, warnings }),
+    // Human-readable narrative
+    narrative: buildNarrative({ fillCount, satinCount, runCount, uniqueColors, colorChanges, viabilityScore, production, warnings, jumpCount }),
   };
-}
-
-function buildNarrative({ fillCount, satinCount, runCount, uniqueColors, colorChanges, viabilityScore, time, warnings }) {
-  const parts = [];
-
-  if (fillCount > 0 && satinCount > 0) {
-    parts.push(`Diseño mixto: ${fillCount} zonas de relleno Tatami y ${satinCount} zonas de satén.`);
-  } else if (fillCount > 0) {
-    parts.push(`Diseño dominado por relleno Tatami (${fillCount} zonas).`);
-  } else if (satinCount > 0) {
-    parts.push(`Diseño orientado a satén (${satinCount} zonas) — ideal para letras o formas estrechas.`);
-  }
-
-  if (runCount > 0) parts.push(`${runCount} contorno(s) en pespunte.`);
-  parts.push(`${uniqueColors} color(es) · ${colorChanges} cambio(s) de hilo · tiempo estimado: ${time.formatted}.`);
-
-  if (viabilityScore >= 85) parts.push('✓ Diseño viable para producción.');
-  else if (viabilityScore >= 60) parts.push('⚠ Requiere ajustes antes de producción.');
-  else parts.push('✗ Diseño con problemas significativos — revisar advertencias.');
-
-  return parts.join(' ');
 }
