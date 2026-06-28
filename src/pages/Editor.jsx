@@ -15,9 +15,7 @@ import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
 import MaskCanvas from '@/components/editor/MaskCanvas';
-import { preprocessImage } from '@/lib/imagePreprocessor';
-import { analyzeImage } from '@/lib/imageAnalyzer';
-import { traceImageContours } from '@/lib/contourTracer';
+import { runPipeline } from '@/lib/pipeline/runner';
 import { enrichAllRegions } from '@/lib/regionBuilder.js';
 import { getModeStrategy } from '@/lib/digitizeModes.js';
 
@@ -135,114 +133,43 @@ export default function Editor() {
     timerRef.current = setInterval(() => setProcessingElapsed((s) => s + 1), 1000);
     setStep(2);
 
-    // Resolve the active strategy: AI decision > selected mode > hybrid fallback
-    const modeStrategy = getModeStrategy(config.mode || 'hybrid');
-    const useAIStrategy = AI_ENABLED && aiStrategy;
-
     try {
-      // --- PREPROCESSING: use mode's preset unless user has customized manually ---
-      let finalImageUrl = imageUrl;
-      const prepSettings = modeStrategy.preprocess;
-      try {
-        const processed = await preprocessImage(imageUrl, prepSettings);
-        const { file_url } = await base44.integrations.Core.UploadFile({ file: processed.blob });
-        finalImageUrl = file_url;
-        setPreprocessedUrl(file_url);
-      } catch (prepErr) { console.warn('Preprocessing failed:', prepErr); }
-
-      // --- CLIENT-SIDE ANALYSIS: use mode's vectorizer params ---
-      const colorCount = useAIStrategy
-        ? aiStrategy.recommendedParams.maxColors
-        : modeStrategy.vectorizer.color_count;
-
-      let imageAnalysis = null, tracedContours = null;
-      // Fast mode skips slow client analysis
-      if (modeStrategy.id !== 'fast') {
-        try {
-          const [analysis, contours] = await Promise.all([
-            analyzeImage(finalImageUrl, colorCount, modeStrategy.preprocess.outputSize || 512),
-            traceImageContours(finalImageUrl, colorCount, modeStrategy.vectorizer.rdpEpsilon || 0.003),
-          ]);
-          imageAnalysis = analysis;
-          tracedContours = contours;
-        } catch (e) { console.warn('Client analysis failed:', e); }
-      }
-
-      // --- BACKEND: pass full mode strategy ---
-      const backendParams = modeStrategy.backend;
-      const res = await base44.functions.invoke('hybridDigitize', {
-        image_url: finalImageUrl,
-        mode: backendParams.mode,
-        width_mm: config.width_mm,
-        height_mm: config.height_mm,
-        color_count: colorCount,
-        remove_bg: config.remove_bg,
-        use_ia_vision: useAIStrategy ? true : backendParams.use_ia_vision,
-        use_full_bg: backendParams.use_full_bg,
-        image_analysis: imageAnalysis,
-        traced_contours: tracedContours,
-        vector_engine: backendParams.vector_engine,
-        tatami_density: useAIStrategy
-          ? (aiStrategy.stitchType === 'satin' ? 0.6 : aiStrategy.stitchType === 'running' ? 0.2 : 0.4)
-          : backendParams.tatami_density,
-        fill_angle: config.fill_angle !== undefined ? config.fill_angle : null,
-        max_regions: backendParams.max_regions,
-        stitch_strategy: modeStrategy.stitchStrategy,
+      const ctx = await runPipeline(imageUrl, config, {
+        onProgress: (pct) => setProcessingElapsed((s) => s), // timer drives UI
+        initialCtx: aiStrategy ? { aiStrategy } : {},
       });
 
-      if (res.data?.success) {
-        const rawData = res.data.data?.response || res.data.data;
-        const { regions: rawRegions } = rawData;
+      const enrichedRegions = ctx.regions || [];
+      if (enrichedRegions.length === 0) throw new Error('No regions generated');
 
-        const filtered = (rawRegions || []).filter((r) => {
-          // Umbral mínimo muy bajo para preservar detalles pequeños (ojos, nariz)
-          if ((r.area_mm2 || 0) <= 0.3) return false;
-          if (r.perimeter_mm !== undefined && r.perimeter_mm <= 0.5) return false;
-          if (r.isEdgeRegion === true) return false;
-          if (!r.path_points || r.path_points.length < 3) return false;
-          return true;
-        });
+      const totalCalculatedStitches = enrichedRegions.reduce((s, r) => s + (r.stitch_count || 0), 0);
 
-        const classifyStitchType = (region) => {
-          const hex = (region.color || '').toLowerCase();
-          const isDark = hex === '#000000' || hex === '#1a1a1a';
-          const isContourName = (region.name || '').toLowerCase().includes('contour_');
-          if (isDark || isContourName || region.isContour) return 'running_stitch';
-          const area = region.area_mm2 || 0,perim = region.perimeter_mm || 1;
-          const avgWidth = area / perim,compactness = perim * perim / Math.max(area, 1);
-          if (area > 200 && avgWidth > 5.0) return 'fill';else
-          if (area < 50 || avgWidth < 3.0 || compactness > 15) return 'satin';else
-          return 'fill';
-        };
+      if (ctx.enhanced?.enhancedUrl) setPreprocessedUrl(ctx.enhanced.enhancedUrl);
 
-        const calculateStitchCount = (region) => {
-          const type = region.stitch_type,area = region.area_mm2 || 0,perim = region.perimeter_mm || 1,density = region.density || 0.7;
-          if (type === 'fill') return Math.round(area * density * 2.5);else
-          if (type === 'satin') {const width = Math.max(1, area / perim);return Math.round(perim / 2.5 * (width / Math.max(0.4, density)));} else
-          return Math.round(perim / 1.5);
-        };
+      setRegions(enrichedRegions);
+      setStep(3);
+      setShowDecisionPanel(false);
 
-        const COLOR_NAMES = { '#000000': 'negro', '#1a1a1a': 'negro', '#ffffff': 'blanco', '#ffff00': 'amarillo', '#ff0000': 'rojo', '#00ff00': 'verde', '#0000ff': 'azul', '#ff69b4': 'rosa', '#ffa500': 'naranja', '#800080': 'morado', '#ffc0cb': 'rosa', '#ee82ee': 'violeta' };
-        const getColorName = (hex) => {if (!hex) return 'color';const h = hex.toLowerCase();if (COLOR_NAMES[h]) return COLOR_NAMES[h];const matches = Object.entries(COLOR_NAMES).map(([k, v]) => ({ name: v, dist: Math.sqrt(Math.pow(parseInt(k.slice(1, 3), 16) - parseInt(h.slice(1, 3), 16), 2) + Math.pow(parseInt(k.slice(3, 5), 16) - parseInt(h.slice(3, 5), 16), 2) + Math.pow(parseInt(k.slice(5, 7), 16) - parseInt(h.slice(5, 7), 16), 2)) })).sort((a, b) => a.dist - b.dist);return matches[0]?.name || 'color';};
-        const getPosition = (region) => {const [cx, cy] = region.centroid || [0.5, 0.5];const v = cy < 0.33 ? 'sup' : cy > 0.66 ? 'inf' : 'cen';const h = cx < 0.33 ? 'izq' : cx > 0.66 ? 'der' : '';return h ? `${v}_${h}` : v;};
-        const getStitchAbbr = (type) => type === 'fill' ? 'fill' : type === 'satin' ? 'sat' : 'run';
+      const label = aiStrategy ? 'Vectorización IA' : `Vectorización ${config.mode}`;
+      const desc  = `${enrichedRegions.length} regiones generadas${aiStrategy ? ' (optimizado por IA)' : ''}`;
 
-        const newRegions = filtered.map((r) => {
-          const type = classifyStitchType(r);
-          return { ...r, name: r.name || `${getPosition(r)}_${getColorName(r.color)}_${getStitchAbbr(type)}`, stitch_type: type, stitch_count: calculateStitchCount({ ...r, stitch_type: type }) };
-        });
-
-        // Enriquecer regiones con todos los campos avanzados del RegionBuilder
-        const enrichedRegions = enrichAllRegions(newRegions, config.width_mm || 100, config.height_mm || 100);
-        const totalCalculatedStitches = enrichedRegions.reduce((sum, r) => sum + (r.stitch_count || 0), 0);
-        setRegions(enrichedRegions);setStep(3);
-        setShowDecisionPanel(false);
-
-        await base44.entities.Project.update(id, { regions: enrichedRegions, step: 3, status: 'ready', total_stitches: totalCalculatedStitches, color_count: new Set(newRegions.map((r) => r.color)).size });
-        await base44.entities.VersionHistory.create({ project_id: id, label: `Vectorización ${useAIStrategy ? 'IA' : config.mode}`, description: `${newRegions.length || 0} regiones generadas${useAIStrategy ? ' (optimizado por IA)' : ''}`, snapshot: { regions: enrichedRegions, config }, step: 3 });
-      }
-    } catch (e) {console.error(e);} finally
-    {setProcessing(false);clearInterval(timerRef.current);}
+      await Promise.all([
+        base44.entities.Project.update(id, {
+          regions: enrichedRegions, step: 3, status: 'ready',
+          total_stitches: totalCalculatedStitches,
+          color_count: new Set(enrichedRegions.map((r) => r.color)).size,
+        }),
+        base44.entities.VersionHistory.create({
+          project_id: id, label, description: desc,
+          snapshot: { regions: enrichedRegions, config }, step: 3,
+        }),
+      ]);
+    } catch (e) {
+      console.error('[startProcessing]', e);
+    } finally {
+      setProcessing(false);
+      clearInterval(timerRef.current);
+    }
   };
 
   const handleApplyMask = async () => {
