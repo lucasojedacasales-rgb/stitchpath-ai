@@ -192,8 +192,8 @@ export default function Editor() {
   const handleRegionsUpdate = (updated) => setRegions(updated);
   const handleRename = async (name) => {if (!project || !name.trim()) return;const updated = await base44.entities.Project.update(id, { name: name.trim() });setProject(updated);};
 
-  const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
-  const colorsUsed = new Set(regions.map((r) => r.color)).size;
+  const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || r.stitch_length || 0), 0);
+  const colorsUsed = regions.length > 0 ? new Set(regions.map((r) => r.color)).size : 0;
 
   if (loading) return <div className="min-h-screen bg-[#0d0f14] flex items-center justify-center"><div className="w-8 h-8 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" /></div>;
 
@@ -246,7 +246,7 @@ export default function Editor() {
         </div>
 
         <div className="flex-1 flex flex-col overflow-hidden">
-          {activeTab !== 'mask' && activeTab !== 'planner' && activeTab !== 'sim' && activeTab !== 'travel' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
+          {activeTab !== 'mask' && activeTab !== 'planner' && activeTab !== 'sim' && activeTab !== 'travel' && activeTab !== 'adaptive' && activeTab !== 'learning' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
             <SliderControl label="Imagen" value={imageOpacity} onChange={setImageOpacity} color="text-amber-400" />
             <SliderControl label="Puntadas" value={stitchOpacity} onChange={setStitchOpacity} color="text-violet-400" />
             <div className="flex items-center gap-2 ml-auto">
@@ -330,7 +330,7 @@ export default function Editor() {
             </div>
           }
 
-          {imageUrl && regions.length === 0 && !processing && !showDecisionPanel &&
+          {imageUrl && regions.length === 0 && !processing && !showDecisionPanel && activeTab === 'editor' &&
           <div className="border-t border-[#1a1d27] p-3 flex items-center gap-3 bg-[#0a0c12]">
               <div className="flex-1 text-xs text-slate-500">Imagen cargada. La IA analizará el mejor enfoque.</div>
               <button onClick={() => AI_ENABLED ? setShowDecisionPanel(true) : startProcessing()} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors">
