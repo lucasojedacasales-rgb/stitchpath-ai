@@ -167,6 +167,7 @@ export default function Editor() {
         use_full_bg: config.use_full_bg,
         image_analysis: imageAnalysis,
         traced_contours: tracedContours,
+        vector_engine: config.vector_engine || 'hybrid',
         tatami_density: useAIStrategy ?
         aiStrategy.stitchType === 'satin' ? 0.6 : aiStrategy.stitchType === 'running' ? 0.2 : 0.4 :
         config.tatami_density || 0.4,

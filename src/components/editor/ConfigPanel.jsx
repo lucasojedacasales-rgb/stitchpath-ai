@@ -201,11 +201,41 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
         </div>
       </Section>
 
-      {/* MOTOR IA */}
-      <Section title="Motor IA" icon={Cpu}>
-        <div className="space-y-1">
-          <Toggle label="Fondos completos (Claude Sonnet)" value={cfg.use_full_bg || false} onChange={v => set('use_full_bg', v)} />
-          <Toggle label="IA Vision (análisis visual)" value={cfg.use_ia_vision || false} onChange={v => set('use_ia_vision', v)} />
+      {/* VECTOR ENGINE */}
+      <Section title="Vector Engine" icon={Cpu}>
+        <div className="space-y-2">
+          <label className="text-[11px] text-slate-500 uppercase tracking-wider block">Motor de vectorización</label>
+          <div className="grid grid-cols-2 gap-1.5">
+            {[
+              { id: 'hybrid',  name: 'Híbrido',  desc: 'Canny + VTracer + Potrace', badge: 'Rec.' },
+              { id: 'opencv',  name: 'OpenCV',   desc: 'Canny multi-umbral + morfología' },
+              { id: 'vtracer', name: 'VTracer',  desc: 'Segmentación jerárquica por color' },
+              { id: 'potrace', name: 'Potrace',  desc: 'Trazado de bordes + curvas' },
+            ].map(eng => {
+              const active = (cfg.vector_engine || 'hybrid') === eng.id;
+              return (
+                <button
+                  key={eng.id}
+                  onClick={() => set('vector_engine', eng.id)}
+                  className={`text-left px-2.5 py-2 rounded-lg border transition-all ${
+                    active
+                      ? 'border-cyan-500/60 bg-cyan-900/20 text-white'
+                      : 'border-[#2a2d3a] bg-[#161a23] text-slate-400 hover:border-[#3a3d4a] hover:text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-0.5">
+                    <span className="text-[11px] font-bold">{eng.name}</span>
+                    {eng.badge && <span className="text-[9px] px-1 rounded bg-cyan-600/30 text-cyan-300 border border-cyan-500/30">{eng.badge}</span>}
+                  </div>
+                  <p className="text-[10px] text-slate-500 leading-tight">{eng.desc}</p>
+                </button>
+              );
+            })}
+          </div>
+          <div className="space-y-1 pt-1">
+            <Toggle label="IA Vision (análisis visual)" value={cfg.use_ia_vision || false} onChange={v => set('use_ia_vision', v)} />
+            <Toggle label="Fondos completos (Claude Sonnet)" value={cfg.use_full_bg || false} onChange={v => set('use_full_bg', v)} />
+          </div>
         </div>
       </Section>
 
