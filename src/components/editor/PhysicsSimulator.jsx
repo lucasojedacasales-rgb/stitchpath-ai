@@ -171,12 +171,13 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
 
       if (effectiveType === 'fill') {
         // Obtener o generar puntadas Tatami
-        const cacheKey = `${region.id}_${drawW.toFixed(0)}_${drawH.toFixed(0)}`;
+        const density  = region.tatami_density || region.density_mm || 0.4;
+        // fill_angle from PCA (contourTracer), angle from stitch planner, orientation from semantics
+        const angle    = region.fill_angle ?? region.angle ?? region.orientation ?? 45;
+        const cacheKey = `${region.id}_${drawW.toFixed(0)}_${drawH.toFixed(0)}_${angle}_${density.toFixed(2)}`;
         let cached = stitchCacheRef.current.get(cacheKey);
         if (!cached) {
           const polygon = pts.map(p => [(p[0] - 0.5) * drawW, (p[1] - 0.5) * drawH]);
-          const density = region.tatami_density || region.density_mm || 0.4;
-          const angle   = region.angle || 0;
           const { stitches } = generateTatamiFill(polygon, density, 2.5, angle, pxPerMm);
           cached = stitches;
           stitchCacheRef.current.set(cacheKey, cached);
@@ -196,7 +197,7 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
 
       } else if (effectiveType === 'satin') {
         // Satén: líneas perpendiculares densas con perfil físico
-        const angle = ((region.angle || 45) * Math.PI) / 180;
+        const angle = (((region.fill_angle ?? region.angle ?? 45)) * Math.PI) / 180;
         const density = region.density || 0.8;
         const spacing = Math.max(baseParams.threadThicknessPx * 0.9, 6 / density) / zoom;
 
