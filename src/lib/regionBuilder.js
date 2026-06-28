@@ -243,16 +243,132 @@ function recommendStitch(region, skeletonMetrics, convexity) {
   return { type: 'fill', rationale: `Área ${area.toFixed(1)}mm² con ancho medio ${meanW.toFixed(1)}mm; tatami fill garantiza cobertura uniforme.` };
 }
 
-function recommendUnderlay(stitchType, area_mm2, mean_width_mm) {
-  if (stitchType === 'running_stitch') return { enabled: false, type: null, rationale: 'Running stitch no requiere underlay.' };
-  if (stitchType === 'satin') {
-    const type = mean_width_mm > 4 ? 'zigzag_center' : 'single_run';
-    return { enabled: true, type, rationale: `Satin sobre ${mean_width_mm.toFixed(1)}mm de ancho: underlay ${type} estabiliza la tela.` };
+// ─── Motor de Underlay ────────────────────────────────────────────────────────
+//
+// Tipos de underlay disponibles:
+//   none          — sin underlay
+//   edge_run      — puntada de borde (perimetral), recorre el contorno a 0.5mm interior
+//   center_run    — puntada de centro (sigue el esqueleto medial del área)
+//   zigzag        — zigzag diagonal a 45° respecto al fill principal
+//   double_zigzag — zigzag doble (45° + 135°), máxima estabilidad
+//   grid_90deg    — cuadrícula ortogonal (edge_run + zigzag perpendicular al fill)
+//
+// Ángulo de underlay: siempre perpendicular al fill principal (+90°) para máxima sujeción.
+// Densidad de underlay: siempre más abierta que el fill (× 1.8) para no saturar el tejido.
+
+// Propiedades físicas de cada tejido: qué tan inestable es y cuánto tiende a desplazarse.
+const FABRIC_UNDERLAY_PROFILE = {
+  //              instability  stretch   embeds
+  'Algodón':   { instability: 0.30, stretch: 0.10, embeds: false },
+  'Poliéster': { instability: 0.25, stretch: 0.15, embeds: false },
+  'Denim':     { instability: 0.20, stretch: 0.05, embeds: true  }, // grueso, ancla bien
+  'Lino':      { instability: 0.35, stretch: 0.08, embeds: false },
+  'Seda':      { instability: 0.55, stretch: 0.20, embeds: false }, // muy resbaladizo
+  'Lycra':     { instability: 0.80, stretch: 0.70, embeds: false }, // máxima inestabilidad
+  'Mezcla':    { instability: 0.40, stretch: 0.25, embeds: false },
+  'Otro':      { instability: 0.35, stretch: 0.15, embeds: false },
+};
+
+/**
+ * Motor de underlay automático.
+ * Decide tipo, ángulo y densidad de underlay en base a:
+ *   - Tipo de puntada (fill / satin / running_stitch)
+ *   - Tipo de tela (instability, stretch)
+ *   - Complejidad geométrica (complexity.level)
+ *   - Área, ancho medio y convexidad
+ *
+ * @param {string}  stitchType
+ * @param {number}  area_mm2
+ * @param {number}  mean_width_mm
+ * @param {number}  max_width_mm
+ * @param {object}  complexity        — { score, level }
+ * @param {number}  convexity
+ * @param {number}  fillAngle         — ángulo del fill principal (°)
+ * @param {string}  fabricType
+ * @returns {{ enabled, type, angle_deg, density_mm, rationale }}
+ */
+function recommendUnderlay(stitchType, area_mm2, mean_width_mm, max_width_mm, complexity, convexity, fillAngle, fabricType) {
+  // Running stitch nunca lleva underlay
+  if (stitchType === 'running_stitch') {
+    return { enabled: false, type: 'none', angle_deg: 0, density_mm: 0,
+      rationale: 'Running stitch no requiere underlay.' };
   }
-  // Fill
-  if (area_mm2 > 80) return { enabled: true, type: 'grid_90deg', rationale: 'Fill grande (>80mm²): underlay cuadrícula 90° para máxima estabilidad.' };
-  if (area_mm2 > 20) return { enabled: true, type: 'single_run', rationale: 'Fill mediano (>20mm²): underlay perimetral reduce desplazamiento de tela.' };
-  return { enabled: false, type: null, rationale: 'Fill pequeño; underlay opcional.' };
+
+  const fabric  = FABRIC_UNDERLAY_PROFILE[fabricType] || FABRIC_UNDERLAY_PROFILE['Otro'];
+  const isHighStretch   = fabric.stretch > 0.40;   // Lycra, Mezcla
+  const isUnstable      = fabric.instability > 0.45; // Seda, Lycra
+  const isStiff         = fabric.embeds;             // Denim: tejido rígido, ancla
+
+  // Ángulo perpendicular al fill (underlay siempre perpendicular = máximo agarre)
+  const underlayAngle = (fillAngle + 90) % 180;
+
+  // ── SATIN ─────────────────────────────────────────────────────────────────
+  if (stitchType === 'satin') {
+    // Satin muy estrecho (<1.5mm): sin underlay, el hilo no tiene espacio
+    if (max_width_mm < 1.5) {
+      return { enabled: false, type: 'none', angle_deg: 0, density_mm: 0,
+        rationale: `Satin muy estrecho (${max_width_mm.toFixed(1)}mm): sin espacio para underlay.` };
+    }
+    // Satin ancho + tela inestable o stretch → doble zigzag
+    if ((max_width_mm > 5 || isUnstable) && (isHighStretch || isUnstable)) {
+      return { enabled: true, type: 'double_zigzag', angle_deg: underlayAngle, density_mm: 0.80,
+        rationale: `Satin ${max_width_mm.toFixed(1)}mm en ${fabricType} (alta inestabilidad/stretch): doble zigzag perpendicular al fill.` };
+    }
+    // Satin ancho (>3mm): zigzag central
+    if (max_width_mm > 3) {
+      return { enabled: true, type: 'zigzag', angle_deg: underlayAngle, density_mm: 0.70,
+        rationale: `Satin ${max_width_mm.toFixed(1)}mm: zigzag a ${underlayAngle}° estabiliza columnas sin saturar el tejido.` };
+    }
+    // Satin estrecho (1.5–3mm): solo borde perimetral
+    return { enabled: true, type: 'edge_run', angle_deg: underlayAngle, density_mm: 0,
+      rationale: `Satin estrecho (${max_width_mm.toFixed(1)}mm): puntada de borde ancla el inicio de las columnas.` };
+  }
+
+  // ── FILL (tatami) ─────────────────────────────────────────────────────────
+
+  // Fill pequeño en tejido estable: sin underlay
+  if (area_mm2 < 8 && !isUnstable) {
+    return { enabled: false, type: 'none', angle_deg: 0, density_mm: 0,
+      rationale: `Fill pequeño (${area_mm2.toFixed(1)}mm²) en ${fabricType} estable: underlay innecesario.` };
+  }
+
+  // Calcular "necesidad de underlay" como puntuación compuesta
+  const fabricScore   = fabric.instability + fabric.stretch * 0.5;   // 0–1.2
+  const complexScore  = complexity.score;                              // 0–1
+  const areaScore     = Math.min(1, area_mm2 / 200);                   // 0–1
+  const concavScore   = 1 - convexity;                                 // 0–1
+  const need = fabricScore * 0.40 + complexScore * 0.25 + areaScore * 0.20 + concavScore * 0.15;
+
+  // Densidad del underlay siempre más abierta que el fill (no saturar)
+  // Base: 0.70mm para tejidos estables, más apretado para inestables
+  const baseDensity = isHighStretch ? 0.55 : isUnstable ? 0.60 : 0.70;
+
+  // ALTA necesidad (tela inestable + grande + complejo) → cuadrícula
+  if (need > 0.65 || (isHighStretch && area_mm2 > 30)) {
+    return { enabled: true, type: 'grid_90deg', angle_deg: underlayAngle, density_mm: baseDensity - 0.05,
+      rationale: `Fill en ${fabricType} (need=${need.toFixed(2)}): cuadrícula edge_run + zigzag perpendicular, máxima estabilidad.` };
+  }
+
+  // MEDIA-ALTA (tela moderada + área grande o alta complejidad) → zigzag
+  if (need > 0.42 || area_mm2 > 80) {
+    return { enabled: true, type: 'zigzag', angle_deg: underlayAngle, density_mm: baseDensity,
+      rationale: `Fill ${area_mm2.toFixed(0)}mm² en ${fabricType} (need=${need.toFixed(2)}): zigzag a ${underlayAngle}° equilibra cobertura y estabilidad.` };
+  }
+
+  // MEDIA (área moderada o tejido ligeramente inestable) → borde perimetral
+  if (need > 0.22 || area_mm2 > 20) {
+    return { enabled: true, type: 'edge_run', angle_deg: underlayAngle, density_mm: baseDensity + 0.05,
+      rationale: `Fill ${area_mm2.toFixed(0)}mm² en ${fabricType}: puntada de borde perimetral ancla el área de relleno.` };
+  }
+
+  // BAJA — tejido rígido (denim) o fill pequeño y simple
+  if (isStiff) {
+    return { enabled: true, type: 'center_run', angle_deg: underlayAngle, density_mm: baseDensity + 0.10,
+      rationale: `${fabricType} rígido: puntada de centro refuerza sin tensionar la tela.` };
+  }
+
+  return { enabled: false, type: 'none', angle_deg: 0, density_mm: 0,
+    rationale: `Fill simple (${area_mm2.toFixed(1)}mm²) en ${fabricType} estable: underlay opcional.` };
 }
 
 function recommendDensity(stitchType, mean_width_mm, complexity) {
@@ -403,8 +519,11 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
   // ── Recomendaciones ──
   const stitchRec       = recommendStitch({ ...region, area_mm2 }, skeletonMetrics, convexity);
   const stitchType      = region.stitch_type || stitchRec.type; // respetar override manual
-  const underlayRec     = recommendUnderlay(stitchType, area_mm2, skeletonMetrics.mean_width_mm);
   const density         = region.density || recommendDensity(stitchType, skeletonMetrics.mean_width_mm, complexity);
+  const underlayRec     = recommendUnderlay(
+    stitchType, area_mm2, skeletonMetrics.mean_width_mm, skeletonMetrics.max_width_mm,
+    complexity, convexity, region.fill_angle ?? region.angle ?? orientation, fabricType
+  );
   const compensation    = recommendCompensation(stitchType, skeletonMetrics.mean_width_mm, fabricType);
   const threadRec       = recommendThread(region.color || '#888888');
 
