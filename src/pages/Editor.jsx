@@ -15,6 +15,7 @@ import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
 import MaskCanvas from '@/components/editor/MaskCanvas';
+import NeedlePathPanel from '@/components/editor/NeedlePathPanel';
 import { runPipeline } from '@/lib/pipeline/runner';
 import { enrichAllRegions } from '@/lib/regionBuilder.js';
 import { getModeStrategy } from '@/lib/digitizeModes.js';
@@ -55,6 +56,7 @@ export default function Editor() {
   const [uploadingImage, setUploadingImage] = useState(false);
   const [preprocessSettings, setPreprocessSettings] = useState(DEFAULT_PREPROCESS);
   const [preprocessedUrl, setPreprocessedUrl] = useState(null);
+  const [pathMetrics, setPathMetrics] = useState(null);
   const timerRef = useRef(null);
 
   const maskCanvasRef = useRef(null);
@@ -147,6 +149,7 @@ export default function Editor() {
       if (ctx.enhanced?.enhancedUrl) setPreprocessedUrl(ctx.enhanced.enhancedUrl);
 
       setRegions(enrichedRegions);
+      setPathMetrics(ctx.pathMetrics || null);
       setStep(3);
       setShowDecisionPanel(false);
 
@@ -236,9 +239,10 @@ export default function Editor() {
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        <div className="w-64 flex-shrink-0 border-r border-[#1e2130] overflow-y-auto">
+        <div className="w-64 flex-shrink-0 border-r border-[#1e2130] overflow-y-auto space-y-4 p-4">
           <ConfigPanel config={config} onChange={setConfig} regions={regions} selectedRegionIds={selectedRegionId ? [selectedRegionId] : []} onRegionsUpdate={handleRegionsUpdate} />
           <PreprocessingPanel settings={preprocessSettings} onChange={setPreprocessSettings} />
+          <NeedlePathPanel regions={regions} pathMetrics={pathMetrics} config={config} />
         </div>
 
         <div className="flex-1 flex flex-col overflow-hidden">
@@ -318,13 +322,24 @@ export default function Editor() {
             </div>
           }
 
+          {imageUrl && regions.length > 0 && pathMetrics?.metrics && !processing &&
+          <div className="border-t border-[#1a1d27] p-2.5 flex items-center gap-4 bg-[#0a0c12] text-[11px]">
+             <div className="flex-1 text-slate-400">
+               Recorrido: <span className="text-cyan-400 font-bold">{pathMetrics.metrics.totalJumps} saltos</span>
+               {' '}· <span className="text-amber-400 font-bold">{pathMetrics.metrics.totalDistance}mm</span>
+               {' '}· <span className="text-violet-400 font-bold">{pathMetrics.metrics.colorChanges} cambios</span>
+             </div>
+             <div className="text-emerald-400 font-bold">{pathMetrics.machineTime.formatted}</div>
+           </div>
+          }
+
           {imageUrl && regions.length === 0 && !processing && !showDecisionPanel &&
           <div className="border-t border-[#1a1d27] p-3 flex items-center gap-3 bg-[#0a0c12]">
-              <div className="flex-1 text-xs text-slate-500">Imagen cargada. La IA analizará el mejor enfoque.</div>
-              <button onClick={() => AI_ENABLED ? setShowDecisionPanel(true) : startProcessing()} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors">
-                <Zap className="w-3.5 h-3.5" /> Analizar con IA
-              </button>
-            </div>
+             <div className="flex-1 text-xs text-slate-500">Imagen cargada. La IA analizará el mejor enfoque.</div>
+             <button onClick={() => AI_ENABLED ? setShowDecisionPanel(true) : startProcessing()} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors">
+               <Zap className="w-3.5 h-3.5" /> Analizar con IA
+             </button>
+           </div>
           }
         </div>
 
