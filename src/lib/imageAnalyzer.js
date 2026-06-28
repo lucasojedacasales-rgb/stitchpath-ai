@@ -7,8 +7,8 @@
 export async function analyzeImage(imageUrl, maxColors = 10) {
   const img = await loadImage(imageUrl);
 
-  // Work at a fixed analysis resolution for speed
-  const ANALYSIS_SIZE = 256;
+  // Analysis at higher resolution for better color zone detection
+  const ANALYSIS_SIZE = 512;
   const scale = Math.min(ANALYSIS_SIZE / img.width, ANALYSIS_SIZE / img.height);
   const W = Math.round(img.width * scale);
   const H = Math.round(img.height * scale);
@@ -104,7 +104,7 @@ function kMeansPlusPlus(pixels, W, H, k) {
 
   return centroids
     .map((c, i) => ({ hex: rgbToHex(c), rgb: c, coverage: counts[i] / total }))
-    .filter(c => c.coverage > 0.005) // drop colors under 0.5%
+    .filter(c => c.coverage > 0.001) // keep even tiny color zones (0.1%) — eyes, nose, etc.
     .sort((a, b) => b.coverage - a.coverage)
     .slice(0, k);
 }

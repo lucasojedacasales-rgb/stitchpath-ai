@@ -4,11 +4,14 @@ import { Sliders, ChevronDown, ChevronRight, Zap } from 'lucide-react';
 export const DEFAULT_PREPROCESS = {
   enabled: true,
   gaussianRadius: 1,
-  contrastBoost: 1.4,
-  saturationBoost: 1.6,
+  contrastBoost: 1.5,
+  saturationBoost: 1.8,
   sharpenEdges: true,
-  sharpenStrength: 0.8,
+  sharpenStrength: 0.9,
   outputSize: 1024,
+  posterizeColors: true,
+  posterizeLevels: 6,
+  morphologyCleanup: true,
 };
 
 function SliderRow({ label, value, min, max, step, onChange, format }) {
@@ -93,6 +96,20 @@ export default function PreprocessingPanel({ settings, onChange }) {
                 onChange={v => set('saturationBoost', v)}
                 format={v => `×${v.toFixed(1)}`}
               />
+
+              <div className="pt-1 pb-0.5">
+                <span className="text-[10px] text-slate-600 uppercase tracking-widest">Vectorización</span>
+              </div>
+              <Toggle label="Posterizar colores (límites nítidos)" value={s.posterizeColors !== false} onChange={v => set('posterizeColors', v)} />
+              {s.posterizeColors !== false && (
+                <SliderRow
+                  label="Niveles de color"
+                  value={s.posterizeLevels || 6} min={3} max={12} step={1}
+                  onChange={v => set('posterizeLevels', v)}
+                  format={v => `${v} niveles`}
+                />
+              )}
+              <Toggle label="Limpieza morfológica (filtro mediana)" value={s.morphologyCleanup !== false} onChange={v => set('morphologyCleanup', v)} />
 
               <div className="pt-1 pb-0.5">
                 <span className="text-[10px] text-slate-600 uppercase tracking-widest">Bordes</span>

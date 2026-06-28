@@ -53,8 +53,14 @@ export async function traceImageContours(imageUrl, maxColors = 8) {
       // RDP tolerance in pixel space (scale with image size, ~1px)
       // RDP más fino para preservar contornos de detalles pequeños
       const rdpEps = Math.max(0.5, Math.min(W, H) * 0.003);
-      const contour = traceContour(blob.mask, W, H);
+      let contour = traceContour(blob.mask, W, H);
       if (contour.length < 4) continue;
+
+      // Laplacian smoothing before RDP — reduces jagged/staircase artifacts
+      // More passes for larger blobs (more noise), fewer for small details
+      const smoothPasses = blob.pixelCount > 500 ? 3 : 1;
+      contour = laplacianSmooth(contour, smoothPasses, 0.5);
+
       const simplified = rdpSimplify(contour, rdpEps);
       if (simplified.length < 3) continue;
 
@@ -254,4 +260,31 @@ function loadImage(url) {
     img.onerror = reject;
     img.src = url;
   });
+}
+
+/**
+ * Laplacian smoothing for polygon contours.
+ * Each vertex moves toward the average of its neighbors by factor lambda.
+ * Preserves shape better than simple averaging — no shrinkage.
+ */
+function laplacianSmooth(pts, passes = 2, lambda = 0.5) {
+  if (pts.length < 4) return pts;
+  let current = pts.slice();
+  const n = current.length;
+  for (let p = 0; p < passes; p++) {
+    const next = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const prev = current[(i - 1 + n) % n];
+      const curr = current[i];
+      const nxt  = current[(i + 1) % n];
+      const avgX = (prev[0] + nxt[0]) / 2;
+      const avgY = (prev[1] + nxt[1]) / 2;
+      next[i] = [
+        curr[0] + lambda * (avgX - curr[0]),
+        curr[1] + lambda * (avgY - curr[1]),
+      ];
+    }
+    current = next;
+  }
+  return current;
 }

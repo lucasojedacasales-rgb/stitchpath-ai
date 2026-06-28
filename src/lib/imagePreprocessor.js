@@ -22,13 +22,17 @@ export async function preprocessImage(imageUrl, options = {}) {
     contrastBoost = 1.4,
     saturationBoost = 1.6,
     sharpenEdges = true,
-    sharpenStrength = 0.8,
+    sharpenStrength = 0.9,
     outputSize = 1024,
+    // NEW: color quantization to clean up color boundaries
+    posterizeColors = true,
+    posterizeLevels = 6,
+    // NEW: morphological cleanup
+    morphologyCleanup = true,
   } = options;
 
   const img = await loadImage(imageUrl);
 
-  // Scale to outputSize keeping aspect ratio
   const scale = Math.min(outputSize / img.width, outputSize / img.height, 1);
   const W = Math.round(img.width * scale);
   const H = Math.round(img.height * scale);
@@ -39,15 +43,26 @@ export async function preprocessImage(imageUrl, options = {}) {
   const ctx = canvas.getContext('2d');
   ctx.drawImage(img, 0, 0, W, H);
 
-  // Step 1: Gaussian blur (noise reduction)
+  // Step 1: Light blur to reduce JPEG artifacts / noise BEFORE color analysis
   if (gaussianRadius > 0) {
     applyGaussianBlur(ctx, W, H, gaussianRadius);
   }
 
-  // Step 2: Contrast + saturation enhancement
+  // Step 2: Contrast + saturation — make color zones more distinct
   applyContrastSaturation(ctx, W, H, contrastBoost, saturationBoost);
 
-  // Step 3: Unsharp mask (edge sharpening)
+  // Step 3: Posterize — quantize colors to clean up boundaries between regions
+  // This is the key step that makes vectorization much cleaner
+  if (posterizeColors) {
+    applyPosterize(ctx, W, H, posterizeLevels);
+  }
+
+  // Step 4: Morphological cleanup — remove salt-and-pepper noise between regions
+  if (morphologyCleanup) {
+    applyMedianFilter(ctx, W, H);
+  }
+
+  // Step 5: Unsharp mask — re-sharpen edges after posterization
   if (sharpenEdges) {
     applyUnsharpMask(ctx, W, H, sharpenStrength);
   }
@@ -58,6 +73,51 @@ export async function preprocessImage(imageUrl, options = {}) {
       resolve({ url, blob, width: W, height: H });
     }, 'image/png', 0.95);
   });
+}
+
+/**
+ * Posterize: quantize each channel to N levels.
+ * Dramatically cleans up color region boundaries for vectorization.
+ */
+function applyPosterize(ctx, W, H, levels) {
+  const imageData = ctx.getImageData(0, 0, W, H);
+  const d = imageData.data;
+  const step = 255 / (levels - 1);
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] < 128) continue;
+    d[i]     = Math.round(Math.round(d[i]     / step) * step);
+    d[i + 1] = Math.round(Math.round(d[i + 1] / step) * step);
+    d[i + 2] = Math.round(Math.round(d[i + 2] / step) * step);
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+/**
+ * 3x3 Median filter — removes isolated noise pixels between color regions.
+ * Much better than blur for preserving sharp edges while killing outliers.
+ */
+function applyMedianFilter(ctx, W, H) {
+  const imageData = ctx.getImageData(0, 0, W, H);
+  const src = new Uint8ClampedArray(imageData.data);
+  const dst = imageData.data;
+  const samples = [];
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      const idx = (y * W + x) * 4;
+      if (src[idx + 3] < 128) continue;
+      for (let ch = 0; ch < 3; ch++) {
+        samples.length = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            samples.push(src[((y + dy) * W + (x + dx)) * 4 + ch]);
+          }
+        }
+        samples.sort((a, b) => a - b);
+        dst[idx + ch] = samples[4]; // median of 9
+      }
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
 }
 
 function loadImage(url) {

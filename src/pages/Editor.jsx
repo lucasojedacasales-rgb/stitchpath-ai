@@ -140,7 +140,12 @@ export default function Editor() {
       let finalImageUrl = imageUrl;
       if (preprocessSettings.enabled) {
         try {
-          const processed = await preprocessImage(imageUrl, preprocessSettings);
+          const processed = await preprocessImage(imageUrl, {
+            ...preprocessSettings,
+            posterizeColors: preprocessSettings.posterizeColors !== false,
+            posterizeLevels: preprocessSettings.posterizeLevels || 6,
+            morphologyCleanup: preprocessSettings.morphologyCleanup !== false,
+          });
           const { file_url } = await base44.integrations.Core.UploadFile({ file: processed.blob });
           finalImageUrl = file_url;
           setPreprocessedUrl(file_url);
