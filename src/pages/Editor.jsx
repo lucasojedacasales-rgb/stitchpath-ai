@@ -160,7 +160,7 @@ export default function Editor() {
       if (modeStrategy.id !== 'fast') {
         try {
           const [analysis, contours] = await Promise.all([
-            analyzeImage(finalImageUrl, colorCount),
+            analyzeImage(finalImageUrl, colorCount, modeStrategy.preprocess.outputSize || 512),
             traceImageContours(finalImageUrl, colorCount, modeStrategy.vectorizer.rdpEpsilon || 0.003),
           ]);
           imageAnalysis = analysis;

@@ -74,17 +74,37 @@ function clipLineAgainstPolygon(p0, p1, polygon) {
   return [[add(p0, scale(d, tMin)), add(p0, scale(d, tMax))]];
 }
 
+// ── Polygon winding ────────────────────────────────────────────────────────────
+
+/** Signed area via Shoelace. Positive = CCW in standard coords (y-up). Canvas is y-down so positive = CW. */
+function signedArea(poly) {
+  let area = 0;
+  const n = poly.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area += poly[i][0] * poly[j][1];
+    area -= poly[j][0] * poly[i][1];
+  }
+  return area / 2;
+}
+
+/** Ensure polygon is CW in canvas space (y-down) so outward normals point outward */
+function ensureCW(poly) {
+  return signedArea(poly) > 0 ? poly : [...poly].reverse();
+}
+
 // ── Polygon offset (pull compensation) ────────────────────────────────────────
 
 function offsetPolygon(poly, amount) {
   if (amount === 0 || poly.length < 3) return poly;
+  const oriented = ensureCW(poly); // ensure consistent winding before offsetting
   const result = [];
-  const n = poly.length;
+  const n = oriented.length;
 
   for (let i = 0; i < n; i++) {
-    const prev = poly[(i - 1 + n) % n];
-    const cur  = poly[i];
-    const next = poly[(i + 1) % n];
+    const prev = oriented[(i - 1 + n) % n];
+    const cur  = oriented[i];
+    const next = oriented[(i + 1) % n];
 
     const e1 = sub(cur, prev);
     const e2 = sub(next, cur);
@@ -105,6 +125,7 @@ function offsetPolygon(poly, amount) {
   }
   return result;
 }
+
 
 // ── Bounding box in rotated space ─────────────────────────────────────────────
 

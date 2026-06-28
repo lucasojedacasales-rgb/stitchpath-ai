@@ -74,12 +74,47 @@ export async function traceImageContours(imageUrl, maxColors = 8) {
         pts.push([...pts[0]]);
       }
 
+      // ── Geometric metrics ────────────────────────────────────────────────
+      const coverage = blob.pixelCount / (W * H);
+
+      // Perimeter in normalized units (same space as path_points)
+      let perimNorm = 0;
+      for (let i = 0; i < pts.length - 1; i++) {
+        perimNorm += Math.hypot(pts[i+1][0] - pts[i][0], pts[i+1][1] - pts[i][1]);
+      }
+
+      // Compactness = 4π·area / perimeter²  (circle = 1, thin line → 0)
+      const areaNorm = Math.abs(shoelaceArea(pts));
+      const compacidad = perimNorm > 0 ? (4 * Math.PI * areaNorm) / (perimNorm * perimNorm) : 0;
+
+      // Inertia ratio (PCA): ratio of eigenvalues — elongation measure
+      const inertia_ratio = computeInertiaRatio(pts);
+
+      // Bounding-box aspect ratio
+      const bw = (blob.bbox.maxX - blob.bbox.minX) / W;
+      const bh = (blob.bbox.maxY - blob.bbox.minY) / H;
+      const bbox_aspect = bh > 0 ? bw / bh : 1;
+
+      // Dominant fill angle via PCA (degrees, 0–180)
+      const fill_angle = computePCAAngle(pts);
+
+      // Centroid (normalized)
+      const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+      const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+
       regions.push({
         hex: rgbToHex(palette[ci]),
         rgb: palette[ci],
-        coverage: blob.pixelCount / (W * H),
+        coverage,
         pixelCount: blob.pixelCount,
         area_px: blob.pixelCount,
+        area_norm: areaNorm,        // area in normalized [0,1]² space
+        perimeter_norm: perimNorm,  // perimeter in normalized space
+        compacidad,
+        inertia_ratio,
+        bbox_aspect,
+        fill_angle,
+        centroid: [cx, cy],
         path_points: pts,
         bbox: blob.bbox,
       });
@@ -260,6 +295,54 @@ function loadImage(url) {
     img.onerror = reject;
     img.src = url;
   });
+}
+
+// ─── Geometric helpers for region metrics ─────────────────────────────────────
+
+/** Shoelace formula — area in the same coordinate space as pts */
+function shoelaceArea(pts) {
+  let area = 0;
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area += pts[i][0] * pts[j][1];
+    area -= pts[j][0] * pts[i][1];
+  }
+  return Math.abs(area) / 2;
+}
+
+/** PCA dominant angle of a polygon's point cloud — returns degrees [0,180) */
+function computePCAAngle(pts) {
+  const n = pts.length;
+  if (n < 3) return 45;
+  const cx = pts.reduce((s, p) => s + p[0], 0) / n;
+  const cy = pts.reduce((s, p) => s + p[1], 0) / n;
+  let sxx = 0, sxy = 0, syy = 0;
+  for (const [x, y] of pts) {
+    const dx = x - cx, dy = y - cy;
+    sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
+  }
+  const angle = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  return Math.round(((angle * 180) / Math.PI + 180) % 180);
+}
+
+/** Inertia ratio: ratio of PCA eigenvalues → elongation (1=circle, >3=elongated) */
+function computeInertiaRatio(pts) {
+  const n = pts.length;
+  if (n < 3) return 1;
+  const cx = pts.reduce((s, p) => s + p[0], 0) / n;
+  const cy = pts.reduce((s, p) => s + p[1], 0) / n;
+  let sxx = 0, sxy = 0, syy = 0;
+  for (const [x, y] of pts) {
+    const dx = x - cx, dy = y - cy;
+    sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
+  }
+  const trace = sxx + syy;
+  const det = sxx * syy - sxy * sxy;
+  const disc = Math.sqrt(Math.max(0, (trace / 2) ** 2 - det));
+  const lam1 = trace / 2 + disc;
+  const lam2 = trace / 2 - disc;
+  return lam2 > 1e-9 ? lam1 / lam2 : 10; // high ratio = very elongated
 }
 
 /**

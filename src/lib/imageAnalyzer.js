@@ -4,11 +4,11 @@
  * to feed the AI prompt with real image metadata for precise contour tracing.
  */
 
-export async function analyzeImage(imageUrl, maxColors = 10) {
+export async function analyzeImage(imageUrl, maxColors = 10, analysisSize = 512) {
   const img = await loadImage(imageUrl);
 
-  // Analysis at higher resolution for better color zone detection
-  const ANALYSIS_SIZE = 512;
+  // Clamp analysis size: min 256 for speed, max 1024 (beyond that k-means gets slow)
+  const ANALYSIS_SIZE = Math.min(1024, Math.max(256, analysisSize));
   const scale = Math.min(ANALYSIS_SIZE / img.width, ANALYSIS_SIZE / img.height);
   const W = Math.round(img.width * scale);
   const H = Math.round(img.height * scale);

@@ -131,17 +131,18 @@ function estimateHoles(region, allRegions) {
 
 // ─── Estimaciones de producción ───────────────────────────────────────────────
 
+/**
+ * Canonical stitch count — mirrors the backend calcularStitchCount formula exactly.
+ * Single source of truth: fill ≈ 2.5/mm² · (1/density), satin via perimeter, running 1/1.5mm
+ */
 function estimateStitchCount(region) {
   const type  = region.stitch_type || 'fill';
   const area  = region.area_mm2    || 0;
-  const perim = region.perimeter_mm || 1;
-  const dens  = region.density     || 0.7;
+  const perim = region.perimeter_mm || Math.sqrt(area) * 3.5;
+  const dens  = region.density     || 0.4;
 
-  if (type === 'fill')           return Math.round(area * dens * 2.5);
-  if (type === 'satin') {
-    const w = Math.max(1, area / perim);
-    return Math.round(perim / 2.5 * (w / Math.max(0.4, dens)));
-  }
+  if (type === 'fill')   return Math.round(area * 2.5 * (1 / Math.max(0.25, dens)));
+  if (type === 'satin')  return Math.round(perim * 2 * (area / Math.max(1, perim)));
   return Math.round(perim / 1.5);
 }
 
@@ -219,7 +220,8 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
   const complexity  = computeComplexity(scaledPts, curvature, convexity);
   const holes       = estimateHoles(region, allRegions);
 
-  const stitches    = region.stitch_count || estimateStitchCount(region);
+  // Preserve backend-computed stitch_count — only estimate if missing
+  const stitches    = (region.stitch_count > 0) ? region.stitch_count : estimateStitchCount(region);
   const time        = estimateTime(stitches);
   const thread      = estimateThread(stitches);
   const priority    = region.priority ?? computePriority(region);

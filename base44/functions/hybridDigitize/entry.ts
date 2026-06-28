@@ -97,20 +97,24 @@ Responde SOLO JSON:
         const label = labelMap[i] || {};
         
         // === PRIORIDAD: vectorizador > Claude > reglas geométricas ===
-        const stitch_type = r.type || label.stitch_type || clasificarPorGeometria(r);
+        const stitch_type = r.type || label.stitch_type || clasificarPorGeometria(r, w, h);
         
         const regionDensity = label.density || (stitch_type === 'fill' ? density : stitch_type === 'satin' ? density * 1.25 : 0.4);
         
-        // Ángulo: adaptiveAngles usa PCA del vectorizador si existe, sino Claude, sino fallback
+        // Ángulo: priority chain — PCA (if adaptiveAngles) > Claude label > global fill_angle > color-coherent fallback
         let angle;
         if (adaptiveAngles && r.fill_angle !== undefined) {
-          angle = r.fill_angle;
+          angle = r.fill_angle;                                    // PCA per-region — most precise
         } else if (label.angle !== undefined) {
-          angle = label.angle;
+          angle = label.angle;                                     // AI classification
         } else if (fill_angle !== null && fill_angle !== undefined) {
-          angle = fill_angle;
+          angle = fill_angle;                                      // user override
+        } else if (r.fill_angle !== undefined) {
+          angle = r.fill_angle;                                    // PCA even when not adaptiveAngles
         } else {
-          angle = i * 17 % 180;
+          // Color-coherent fallback: same color → same angle (deterministic from hex)
+          const colorSeed = parseInt((r.hex || '#888888').replace('#', '').slice(0, 2), 16);
+          angle = (colorSeed * 53) % 180;                         // deterministic, spread, not per-index
         }
         
         const stitch_count = calcularStitchCount(r, stitch_type, regionDensity, w, h);
@@ -119,6 +123,12 @@ Responde SOLO JSON:
         const useUnderlay = underlayEnabled
           ? (label.underlay !== undefined ? label.underlay : stitch_type === 'fill')
           : false;
+
+        // Derive perimeter_mm from normalized perimeter (diagonal of design = reference)
+        const diagMm = Math.hypot(w, h);
+        const perimeterMm = r.perimeter_norm
+          ? r.perimeter_norm * diagMm
+          : (r.perimeter_mm || Math.sqrt(r.coverage * w * h) * 3.5);
 
         return {
           id: `r${i + 1}`,
@@ -131,6 +141,8 @@ Responde SOLO JSON:
           pull_compensation: label.pull_compensation || 0.15,
           underlay: useUnderlay,
           area_mm2: Math.round(r.coverage * w * h),
+          perimeter_mm: +perimeterMm.toFixed(2),
+          centroid: r.centroid || [0.5, 0.5],
           stitch_count,
           is_auto_contour: false,
           visible: true,
@@ -139,7 +151,7 @@ Responde SOLO JSON:
             compacidad: r.compacidad,
             inertia_ratio: r.inertia_ratio,
             bbox_aspect: r.bbox_aspect,
-            area_relativa: r.area_relativa,
+            fill_angle: r.fill_angle,
           }
         };
       });
@@ -228,28 +240,58 @@ Responde SOLO con JSON válido (sin texto extra):
   }
 });
 
-// === NUEVO: Clasificación por geometría (fallback) ===
-function clasificarPorGeometria(r) {
-  const compacidad = r.compacidad || 0.5;
-  const aspect = r.bbox_aspect || 1;
-  const area = r.coverage || 0;
-  
-  if (compacidad < 0.25 && area < 0.02) return 'running_stitch';
-  if ((compacidad < 0.5 && aspect > 2) || (area < 0.05 && aspect > 1.6)) return 'satin';
-  if (area > 0.005) return 'fill';
-  return 'running_stitch';
+/**
+ * Classify stitch type from real geometric metrics.
+ * Uses area_mm2 (scaled to design) for correct thresholds.
+ * Priority: compactness → aspect/inertia → area
+ */
+function clasificarPorGeometria(r, w = 100, h = 100) {
+  const areaMm2    = (r.coverage || 0) * w * h;
+  const compacidad = r.compacidad   !== undefined ? r.compacidad   : 0.5;
+  const inertia    = r.inertia_ratio !== undefined ? r.inertia_ratio : 1;
+  const aspect     = r.bbox_aspect  !== undefined ? r.bbox_aspect  : 1;
+
+  // Very thin, elongated shapes → satin (like letters, stripes, stems)
+  if (compacidad < 0.3 && (inertia > 3 || aspect > 2.5)) return 'satin';
+
+  // Micro areas → running stitch (hairlines, fine details)
+  if (areaMm2 < 4) return 'running_stitch';
+
+  // Small-medium areas with elongation → satin
+  if (areaMm2 < 80 && (inertia > 2 || compacidad < 0.45)) return 'satin';
+
+  // Large compact areas → fill
+  if (areaMm2 >= 25 && compacidad >= 0.35) return 'fill';
+
+  // Medium areas — use compactness to decide
+  if (compacidad >= 0.5) return 'fill';
+  return 'satin';
 }
 
-// === NUEVO: Cálculo de stitch count por tipo ===
+/**
+ * Canonical stitch count formula — single source of truth for backend + regionBuilder.
+ * Aligned with physical embroidery constants:
+ *   fill:    ~2.5 stitches/mm² at density 1.0 (0.4mm row spacing)
+ *   satin:   ~2 stitches/mm of perimeter per mm of width
+ *   running: ~1 stitch per 1.5mm of perimeter
+ */
 function calcularStitchCount(r, type, density, w, h) {
-  const areaMm2 = (r.coverage || 0.01) * w * h;
-  const perimeterMm = (r.perimeter_mm || Math.sqrt(areaMm2) * 4);
-  
+  const areaMm2    = (r.coverage || 0.01) * w * h;
+  // Perimeter: use normalized value scaled to design dimensions
+  const diagMm     = Math.hypot(w, h);
+  const perimeterMm = r.perimeter_norm
+    ? r.perimeter_norm * diagMm
+    : (r.perimeter_mm || Math.sqrt(areaMm2) * 3.5);
+
   if (type === 'fill') {
-    return Math.round(areaMm2 * density * 15);
+    // rows/mm = 1/density_mm. stitches per row ≈ stitch_length (2.5mm default)
+    // total ≈ area * (1/density) * (1/stitch_length) ≈ area * 2.5 * density_factor
+    return Math.round(areaMm2 * 2.5 * (1 / Math.max(0.25, density)));
   } else if (type === 'satin') {
-    return Math.round(perimeterMm * density * 20);
+    // each satin column = 1 stitch. columns spaced ~0.4mm along perimeter direction
+    return Math.round(perimeterMm * 2 * (areaMm2 / Math.max(1, perimeterMm)));
   } else {
-    return Math.round(perimeterMm * 5);
+    // running: 1 stitch every 1.5mm
+    return Math.round(perimeterMm / 1.5);
   }
 }
