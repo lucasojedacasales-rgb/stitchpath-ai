@@ -12,7 +12,7 @@ export async function runRegionBuilder(ctx) {
     return;
   }
 
-  const { width_mm = 100, height_mm = 100 } = ctx.config;
+  const { width_mm = 100, height_mm = 100, fabric_type = 'Algodón' } = ctx.config;
 
   // Apply semantic metadata to vector regions when available
   const semanticObjects = ctx.semanticMap?.objects || [];
@@ -37,7 +37,7 @@ export async function runRegionBuilder(ctx) {
     };
   });
 
-  ctx.regions = enrichAllRegions(named, width_mm, height_mm);
+  ctx.regions = enrichAllRegions(named, width_mm, height_mm, fabric_type);
 }
 
 // ─── Semantic matching ────────────────────────────────────────────────────────
