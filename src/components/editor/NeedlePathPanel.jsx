@@ -101,13 +101,19 @@ export default function NeedlePathPanel({ regions, pathMetrics, config }) {
               color="bg-violet-500"
             />
             <TimeBar
-              label="Saltos"
-              seconds={machineTime.jumpSeconds}
+              label="Saltos (mismo color)"
+              seconds={machineTime.jumpSecondsSameColor}
               total={machineTime.totalSeconds}
               color="bg-cyan-500"
             />
             <TimeBar
-              label="Cambios"
+              label="Saltos (cambio hilo)"
+              seconds={machineTime.jumpSecondsDifferent}
+              total={machineTime.totalSeconds}
+              color="bg-amber-600"
+            />
+            <TimeBar
+              label="Cambios de hilo"
               seconds={machineTime.colorSeconds}
               total={machineTime.totalSeconds}
               color="bg-amber-500"

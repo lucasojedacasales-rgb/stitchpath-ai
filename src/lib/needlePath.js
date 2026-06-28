@@ -48,7 +48,7 @@ function transitionCost(fromRegion, toRegion, config = {}) {
   return dist * distanceFactor + (colorPenalty / 100) * (1 - distanceFactor);
 }
 
-// ─── TSP Greedy con soporte a prioridad y color ──────────────────────────────
+// ─── TSP Greedy + 2-opt local optimization ─────────────────────────────────
 
 function greedyTSPWithPriority(regions, startPos = [0.5, 0.5], config = {}) {
   if (regions.length === 0) return [];
@@ -65,28 +65,24 @@ function greedyTSPWithPriority(regions, startPos = [0.5, 0.5], config = {}) {
     for (let i = 0; i < remaining.length; i++) {
       const candidate = remaining[i];
       const c = getCentroid(candidate);
-
-      // Base: distancia euclidiana
       let cost = distance(cursor, c);
 
-      // Bonus por ser del mismo color (evita cambios)
+      // Bonus: mismo color = 30% descuento (no requiere corte/cambio)
       if (lastColor && candidate.color === lastColor) {
-        cost *= 0.7; // 30% de descuento si mismo color
+        cost *= 0.7;
       }
 
-      // Bonus por prioridad (regiones prioritarias primero)
+      // Bonus: prioridad (regiones base primero)
       if (candidate.priority) {
         cost *= Math.max(0.5, 1 - candidate.priority / 5 * 0.3);
       }
 
-      // Penalidad por cambio de color (más grave si hay alternativas del mismo color)
+      // Penalidad: cambio de color si hay alternativas del mismo color
       if (lastColor && candidate.color !== lastColor) {
         const sameColorAlternative = remaining.some(
           r => r.color === lastColor && r.id !== candidate.id
         );
-        if (sameColorAlternative) {
-          cost *= 1.5; // penaliza cambio si hay alternativas
-        }
+        if (sameColorAlternative) cost *= 1.5;
       }
 
       if (cost < bestCost) {
@@ -101,7 +97,55 @@ function greedyTSPWithPriority(regions, startPos = [0.5, 0.5], config = {}) {
     lastColor = next.color;
   }
 
-  return ordered;
+  // Aplicar 2-opt local para mejorar tour
+  return twoOptImprove(ordered);
+}
+
+/**
+ * 2-opt local optimization: intercambia pares de aristas para reducir distancia total.
+ * Mejora tours greedy sin garantizar óptimo global (suficientemente rápido).
+ */
+function twoOptImprove(tour, maxIterations = 100) {
+  let improved = true;
+  let iterations = 0;
+
+  while (improved && iterations < maxIterations) {
+    improved = false;
+    iterations++;
+
+    for (let i = 0; i < tour.length - 2; i++) {
+      for (let j = i + 2; j < tour.length; j++) {
+        const c1 = getCentroid(tour[i]);
+        const c2 = getCentroid(tour[i + 1]);
+        const c3 = getCentroid(tour[j]);
+        const c4 = getCentroid(tour[(j + 1) % tour.length]);
+
+        // Distancia actual: i->i+1 + j->j+1
+        const dCurrent = distance(c1, c2) + distance(c3, c4);
+
+        // Distancia después de reversión: i->j + i+1->j+1
+        const dNew = distance(c1, c3) + distance(c2, c4);
+
+        if (dNew < dCurrent - 1e-6) {
+          // Reversión mejora tour
+          const newTour = [...tour];
+          let left = i + 1;
+          let right = j;
+          while (left < right) {
+            [newTour[left], newTour[right]] = [newTour[right], newTour[left]];
+            left++;
+            right--;
+          }
+          tour = newTour;
+          improved = true;
+          break;
+        }
+      }
+      if (improved) break;
+    }
+  }
+
+  return tour;
 }
 
 // ─── Agrupación por color con optimización intra-grupo ─────────────────────
@@ -165,6 +209,8 @@ export function calculateNeedlePathMetrics(sequence, designWidthMm = 100, design
       totalDistance: 0,
       totalJumps: 0,
       colorChanges: 0,
+      sameColorJumps: 0,
+      differentColorJumps: 0,
       averageJumpDistance: 0,
       metrics: {},
     };
@@ -173,22 +219,31 @@ export function calculateNeedlePathMetrics(sequence, designWidthMm = 100, design
   let totalDistance = 0;
   let totalJumps = 0;
   let colorChanges = 0;
+  let sameColorJumps = 0;
+  let differentColorJumps = 0;
   const jumps = [];
+  const colorChangeJumps = [];
   let prevColor = null;
-  let prevPos = [0, 0]; // inicio en esquina
+  let prevPos = [0, 0];
 
   for (const region of sequence) {
     const c = getCentroid(region);
-    const jumpDist = distance(prevPos, c) * designWidthMm; // escalar a mm
+    const jumpDist = distance(prevPos, c) * designWidthMm;
 
     if (jumpDist > 0.5) {
       totalJumps++;
       jumps.push(jumpDist);
       totalDistance += jumpDist;
-    }
 
-    if (prevColor && region.color !== prevColor) {
-      colorChanges++;
+      if (prevColor && region.color === prevColor) {
+        sameColorJumps++;
+      } else if (prevColor && region.color !== prevColor) {
+        differentColorJumps++;
+        colorChangeJumps.push(jumpDist);
+        colorChanges++;
+      } else {
+        sameColorJumps++;
+      }
     }
 
     prevColor = region.color;
@@ -199,6 +254,10 @@ export function calculateNeedlePathMetrics(sequence, designWidthMm = 100, design
     ? jumps.reduce((s, j) => s + j, 0) / jumps.length
     : 0;
 
+  const averageColorChangeJump = colorChangeJumps.length > 0
+    ? colorChangeJumps.reduce((s, j) => s + j, 0) / colorChangeJumps.length
+    : 0;
+
   const maxJumpDistance = jumps.length > 0 ? Math.max(...jumps) : 0;
   const minJumpDistance = jumps.length > 0 ? Math.min(...jumps) : 0;
 
@@ -206,7 +265,10 @@ export function calculateNeedlePathMetrics(sequence, designWidthMm = 100, design
     totalDistance: Math.round(totalDistance),
     totalJumps,
     colorChanges,
+    sameColorJumps,
+    differentColorJumps,
     averageJumpDistance: Math.round(averageJumpDistance * 10) / 10,
+    averageColorChangeJump: Math.round(averageColorChangeJump * 10) / 10,
     maxJumpDistance: Math.round(maxJumpDistance * 10) / 10,
     minJumpDistance: Math.round(minJumpDistance * 10) / 10,
     regionCount: sequence.length,
@@ -219,19 +281,25 @@ export function calculateNeedlePathMetrics(sequence, designWidthMm = 100, design
 export function estimateMachineTime(sequence, metrics, speedSpm = 800) {
   const totalStitches = sequence.reduce((s, r) => s + (r.stitch_count || 0), 0);
 
-  // Tiempo de puntadas (segundos)
   const stitchSeconds = (totalStitches / speedSpm) * 60;
 
-  // Tiempo de saltos (asumiendo 300 mm/s de velocidad de salto)
-  const jumpSeconds = (metrics.totalDistance || 0) / 300;
+  const sameColorDistance = metrics.sameColorJumps > 0
+    ? (metrics.totalDistance * (metrics.sameColorJumps / metrics.totalJumps))
+    : 0;
+  const differentColorDistance = metrics.totalDistance - sameColorDistance;
 
-  // Tiempo de cambios de hilo (30 segundos por cambio)
-  const colorSeconds = (metrics.colorChanges || 0) * 30;
+  const jumpSecondsSameColor = sameColorDistance / 400;
+  const jumpSecondsDifferent = differentColorDistance / 200;
+  const jumpSeconds = jumpSecondsSameColor + jumpSecondsDifferent;
+
+  const colorSeconds = (metrics.colorChanges || 0) * 20;
 
   const totalSeconds = stitchSeconds + jumpSeconds + colorSeconds;
 
   return {
     stitchSeconds: Math.round(stitchSeconds),
+    jumpSecondsSameColor: Math.round(jumpSecondsSameColor),
+    jumpSecondsDifferent: Math.round(jumpSecondsDifferent),
     jumpSeconds: Math.round(jumpSeconds),
     colorSeconds,
     totalSeconds: Math.round(totalSeconds),
@@ -244,15 +312,15 @@ export function estimateMachineTime(sequence, metrics, speedSpm = 800) {
 export function generatePathReport(sequence, metrics, machineTime) {
   const parts = [];
 
-  parts.push(`Recorrido optimizado:`);
-  parts.push(`  • ${sequence.length} regiones procesadas en ${metrics.uniqueColors} color(es)`);
-  parts.push(`  • Distancia total de saltos: ${metrics.totalDistance} mm`);
-  parts.push(`  • Número de saltos: ${metrics.totalJumps}`);
-  parts.push(`  • Cambios de hilo: ${metrics.colorChanges}`);
+  parts.push(`Recorrido optimizado (TSP + 2-opt):`);
+  parts.push(`  • ${sequence.length} regiones en ${metrics.uniqueColors} color(es)`);
+  parts.push(`  • Distancia: ${metrics.totalDistance} mm (${metrics.sameColorJumps} saltos internos + ${metrics.differentColorJumps} cambios)`);
   parts.push(`  • Salto promedio: ${metrics.averageJumpDistance} mm`);
-  parts.push(`Tiempo total máquina: ${machineTime.formatted}`);
+  parts.push(`  • Cambios de hilo: ${metrics.colorChanges} (promedio: ${metrics.averageColorChangeJump} mm)`);
+  parts.push(`Tiempo máquina: ${machineTime.formatted}`);
   parts.push(`  • Puntadas: ${machineTime.stitchSeconds}s`);
-  parts.push(`  • Saltos: ${machineTime.jumpSeconds}s`);
+  parts.push(`  • Saltos (color): ${machineTime.jumpSecondsSameColor}s`);
+  parts.push(`  • Saltos (cambio): ${machineTime.jumpSecondsDifferent}s`);
   parts.push(`  • Cambios hilo: ${machineTime.colorSeconds}s`);
 
   return parts.join('\n');
