@@ -32,7 +32,7 @@ export async function runVectorEngine(ctx) {
     traced_contours:  ctx.contours  || null,
     semantic_regions: ctx.semantic?.regions || null,
     image_type:       ctx.semantic?.imageType || ctx.contours?.imageType || null,
-    vector_engine:    bp.vector_engine,
+    vector_engine:    ctx._vectorizerMeta?.engine || bp.vector_engine,
     tatami_density:   aiStrategy
       ? (aiStrategy.stitchType === 'satin' ? 0.6 : aiStrategy.stitchType === 'running' ? 0.2 : 0.4)
       : bp.tatami_density || cfg.tatami_density || 0.4,

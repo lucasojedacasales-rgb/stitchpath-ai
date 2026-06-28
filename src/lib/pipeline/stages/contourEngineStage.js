@@ -11,13 +11,13 @@
  * per-region metadata: objectType, recommended_stitch_type, priority, etc.
  */
 
-import { traceImageContours } from '../../contourTracer.js';
-import { semanticSegment }    from '../../semanticSegmenter.js';
-import { getModeStrategy }    from '../../digitizeModes.js';
+import { runHybridVectorizer, buildImageProfile } from '../../vectorizer/index.js';
+import { semanticSegment }                        from '../../semanticSegmenter.js';
+import { getModeStrategy }                        from '../../digitizeModes.js';
 
 export async function runContourEngine(ctx) {
-  const strategy  = getModeStrategy(ctx.config.mode || 'hybrid');
-  const sourceUrl = ctx.enhanced?.enhancedUrl || ctx.imageUrl;
+  const strategy   = getModeStrategy(ctx.config.mode || 'hybrid');
+  const sourceUrl  = ctx.enhanced?.enhancedUrl || ctx.imageUrl;
   const colorCount = strategy.vectorizer?.color_count || ctx.config.color_count || 8;
 
   // Fast mode: skip expensive client-side tracing — let backend handle it
@@ -37,9 +37,20 @@ export async function runContourEngine(ctx) {
     gapClosurePx:       strategy.id === 'ultra' ? 2 : 4,
   };
 
-  // Run both engines in parallel
-  const [contours, semantic] = await Promise.all([
-    traceImageContours(sourceUrl, colorCount, contourOpts),
+  // Resolve engine override (config > strategy > 'hybrid' = auto)
+  const forceEngine = ctx.config.vector_engine && ctx.config.vector_engine !== 'hybrid'
+    ? ctx.config.vector_engine
+    : strategy.backend?.vector_engine !== 'hybrid' ? strategy.backend?.vector_engine : null;
+
+  // Detect image type from prior semantic/analysis context if available
+  const imageType = ctx.semantic?.imageType || ctx.analysis?.contentType || null;
+
+  // Run hybrid vectorizer + semantic segmenter in parallel
+  const [vectorResult, semantic] = await Promise.all([
+    runHybridVectorizer(
+      sourceUrl, colorCount, contourOpts,
+      ctx.analysis, imageType, forceEngine
+    ),
     semanticSegment(sourceUrl, {
       color_count: colorCount,
       width_mm:    ctx.config.width_mm  || 100,
@@ -48,6 +59,14 @@ export async function runContourEngine(ctx) {
     }),
   ]);
 
+  // Store which engine was used and its quality score in context
+  ctx._vectorizerMeta = {
+    engine:  vectorResult.engineUsed,
+    quality: vectorResult.quality,
+    profile: buildImageProfile(ctx.analysis, imageType),
+  };
+
+  const contours = vectorResult.contourSet;
   ctx.contours = contours;
   ctx.semantic = semantic;
 

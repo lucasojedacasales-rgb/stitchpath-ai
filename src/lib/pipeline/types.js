@@ -231,7 +231,7 @@
  *
  * @typedef {Object} PipelineContext
  * @property {string}              imageUrl
- * @property {Object}              config         - user/mode config
+ * @property {Object}              config              - user/mode config
  * @property {ImageAnalysisResult} [analysis]
  * @property {EnhancedImageResult} [enhanced]
  * @property {ContourSet}          [contours]
@@ -241,7 +241,8 @@
  * @property {OptimizedPlan}       [optimized]
  * @property {SimulationScene}     [simulation]
  * @property {ExportPayload}       [export]
- * @property {Object[]}            stageLog       - [{stage, durationMs, ok}]
+ * @property {Object[]}            stageLog            - [{stage, durationMs, ok}]
+ * @property {{engine:string, quality:number, profile:Object}} [_vectorizerMeta]  - selected engine info
  */
 
 export const PIPELINE_STAGES = [
