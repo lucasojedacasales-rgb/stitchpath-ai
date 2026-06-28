@@ -162,6 +162,34 @@ const FABRIC_PATTERNS = {
   'Otro': (ctx, W, H) => {},
 };
 
+// ─── Parámetros por tipo de puntada ──────────────────────────────────────────
+//
+// Cada tipo tiene propiedades físicas distintas de la máquina de bordar:
+//   fill (tatami): hilo ~40wt, grosor 0.38mm, pasadas densas y paralelas
+//   satin:         hilo ~40wt compacto, grosor 0.35mm, columnas muy juntas, más brillo
+//   running_stitch: hilo ~60wt más fino, grosor 0.25mm, puntadas largas separadas
+
+export const STITCH_TYPE_PROFILES = {
+  fill: {
+    threadDiameterMm: 0.38,  // 40wt estándar
+    glossBoost:       0.0,   // sin brillo extra
+    shadowAlpha:      0.22,  // sombra moderada entre filas
+    specularWidth:    0.32,  // pico especular moderado
+  },
+  satin: {
+    threadDiameterMm: 0.35,  // 40wt compacto, columnas apretadas
+    glossBoost:       0.20,  // satin siempre más brillante
+    shadowAlpha:      0.15,  // columnas muy juntas → menos sombra individual
+    specularWidth:    0.28,  // pico especular más estrecho y definido
+  },
+  running_stitch: {
+    threadDiameterMm: 0.25,  // 60wt más fino
+    glossBoost:       0.05,
+    shadowAlpha:      0.30,  // puntadas aisladas → sombra más visible
+    specularWidth:    0.38,
+  },
+};
+
 // ─── Renderizado de puntada física ────────────────────────────────────────────
 
 /**
@@ -176,81 +204,81 @@ const FABRIC_PATTERNS = {
 export function drawPhysicalStitch(ctx, x0, y0, x1, y1, color, params) {
   const {
     threadThicknessPx = 2.5,
-    tension = 0.5,           // 0 = flojo, 1 = tenso
+    tension = 0.5,
     lightAngleDeg = 45,
-    glossiness = 0.6,        // 0 = mate, 1 = satinado
+    glossiness = 0.6,
     zoom = 1,
-    layerDepth = 0,          // 0 = base, 1+ = capas superiores
+    layerDepth = 0,
+    stitchType = 'fill',     // ← nuevo: 'fill' | 'satin' | 'running_stitch'
   } = params;
 
-  const thick = Math.max(1.0, threadThicknessPx / zoom);
+  const profile = STITCH_TYPE_PROFILES[stitchType] || STITCH_TYPE_PROFILES.fill;
+
+  // Grosor real según tipo de puntada: el threadThicknessPx viene calibrado en mm*pxPerMm,
+  // pero cada tipo tiene su diámetro propio — se aplica un factor relativo
+  const diamRatio = profile.threadDiameterMm / 0.38; // normalizado respecto a fill
+  const thick = Math.max(0.8, (threadThicknessPx * diamRatio) / zoom);
+
   const dx = x1 - x0, dy = y1 - y0;
   const len = Math.hypot(dx, dy);
   if (len < 0.3) return;
 
-  // Normal perpendicular a la puntada
   const nx = -dy / len, ny = dx / len;
 
-  // Dirección de la luz
   const lightRad = (lightAngleDeg * Math.PI) / 180;
   const lx = Math.cos(lightRad), ly = Math.sin(lightRad);
+  const dot       = Math.abs(dx / len * lx + dy / len * ly);
+  const normalDot = Math.abs(nx * lx + ny * ly);
 
-  // Dot product: cuánto alinea la puntada con la luz
-  const dot = Math.abs(dx / len * lx + dy / len * ly);
-  const normalDot = Math.abs(nx * lx + ny * ly); // para brillo especular
-
-  // ── Sombra de proyección (relieve/solapamiento) ──
-  if (layerDepth > 0) {
-    const shadowOffset = Math.min(thick * 0.5 * layerDepth, thick * 1.5);
+  // ── Sombra de proyección ──
+  if (layerDepth > 0 || stitchType === 'running_stitch') {
+    const shadowAlpha  = profile.shadowAlpha * (layerDepth > 0 ? 1 : 0.6);
+    const shadowOffset = Math.min(thick * 0.45 * Math.max(layerDepth, 0.5), thick * 1.4);
     ctx.save();
-    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
-    ctx.lineWidth = thick * 1.4;
+    ctx.strokeStyle = `rgba(0,0,0,${shadowAlpha.toFixed(2)})`;
+    ctx.lineWidth = thick * 1.35;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(x0 + shadowOffset * 0.5, y0 + shadowOffset * 0.7);
-    ctx.lineTo(x1 + shadowOffset * 0.5, y1 + shadowOffset * 0.7);
+    ctx.moveTo(x0 + shadowOffset * 0.4, y0 + shadowOffset * 0.6);
+    ctx.lineTo(x1 + shadowOffset * 0.4, y1 + shadowOffset * 0.6);
     ctx.stroke();
     ctx.restore();
   }
 
-  // ── Cuerpo del hilo con gradiente transversal (perfil cilíndrico) ──
+  // ── Gradiente cilíndrico ──
   const perpLen = thick * 0.8;
-  // Dos puntos en los extremos perpendiculares
-  const gx0 = (x0 + x1) / 2 - nx * perpLen;
-  const gy0 = (y0 + y1) / 2 - ny * perpLen;
-  const gx1 = (x0 + x1) / 2 + nx * perpLen;
-  const gy1 = (y0 + y1) / 2 + ny * perpLen;
-
+  const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+  const gx0 = mx - nx * perpLen, gy0 = my - ny * perpLen;
+  const gx1 = mx + nx * perpLen, gy1 = my + ny * perpLen;
   const bodyGrad = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
 
   const baseR = hexToRgb(color);
-  // Real thread: tight specular highlight at center, dark flanks — like a polyester cylinder
-  const brightFactor = 0.22 + dot * 0.18;   // max highlight ~40% lightening
-  const darkFactor   = 0.28 + (1 - dot) * 0.12; // flanks darker
+  const effectiveGloss = Math.min(1, glossiness + profile.glossBoost);
+  const brightFactor   = 0.18 + dot * 0.18 + effectiveGloss * 0.10;
+  const darkFactor     = 0.30 + (1 - dot) * 0.10;
 
   const hi = (ch) => Math.min(255, Math.round(ch + (255 - ch) * brightFactor));
-  const sh = (ch, f) => Math.round(ch * (1 - f));
+  const sh = (ch, f) => Math.max(0, Math.round(ch * (1 - f)));
 
-  // Perfil cilíndrico realista: sombra → base → pico especular estrecho → base → sombra
-  bodyGrad.addColorStop(0,    `rgba(${sh(baseR.r,darkFactor)},${sh(baseR.g,darkFactor)},${sh(baseR.b,darkFactor)},0.95)`);
-  bodyGrad.addColorStop(0.20, `rgba(${baseR.r},${baseR.g},${baseR.b},0.97)`);
-  bodyGrad.addColorStop(0.42, `rgba(${hi(baseR.r)},${hi(baseR.g)},${hi(baseR.b)},1)`);
-  bodyGrad.addColorStop(0.50, `rgba(${hi(baseR.r)},${hi(baseR.g)},${hi(baseR.b)},1)`);
-  bodyGrad.addColorStop(0.72, `rgba(${baseR.r},${baseR.g},${baseR.b},0.97)`);
-  bodyGrad.addColorStop(1,    `rgba(${sh(baseR.r,darkFactor*0.85)},${sh(baseR.g,darkFactor*0.85)},${sh(baseR.b,darkFactor*0.85)},0.92)`);
+  // Perfil cilíndrico: borde oscuro → cuerpo → pico especular → cuerpo → borde oscuro
+  bodyGrad.addColorStop(0,    `rgba(${sh(baseR.r,darkFactor)},${sh(baseR.g,darkFactor)},${sh(baseR.b,darkFactor)},0.94)`);
+  bodyGrad.addColorStop(0.18, `rgba(${baseR.r},${baseR.g},${baseR.b},0.97)`);
+  bodyGrad.addColorStop(0.44, `rgba(${hi(baseR.r)},${hi(baseR.g)},${hi(baseR.b)},1)`);
+  bodyGrad.addColorStop(0.56, `rgba(${hi(baseR.r)},${hi(baseR.g)},${hi(baseR.b)},1)`);
+  bodyGrad.addColorStop(0.78, `rgba(${baseR.r},${baseR.g},${baseR.b},0.97)`);
+  bodyGrad.addColorStop(1,    `rgba(${sh(baseR.r,darkFactor*0.80)},${sh(baseR.g,darkFactor*0.80)},${sh(baseR.b,darkFactor*0.80)},0.90)`);
 
   ctx.strokeStyle = bodyGrad;
-  ctx.lineWidth = thick;
-  ctx.lineCap = 'round';
+  ctx.lineWidth   = thick;
+  ctx.lineCap     = 'round';
 
-  // Tensión: puntada tensa → recta, floja → ligera curva
+  // Tensión: puntada floja → ligera curva (más notorio en running_stitch)
+  const sagMult = stitchType === 'running_stitch' ? 1.4 : 1.0;
   if (tension < 0.7 && len > thick * 3) {
-    const sag = thick * (1 - tension) * 0.8;
-    const mx = (x0 + x1) / 2 + ny * sag;
-    const my = (y0 + y1) / 2 + nx * sag * 0.3;
+    const sag = thick * (1 - tension) * 0.8 * sagMult;
     ctx.beginPath();
     ctx.moveTo(x0, y0);
-    ctx.quadraticCurveTo(mx, my, x1, y1);
+    ctx.quadraticCurveTo(mx + ny * sag, my + nx * sag * 0.3, x1, y1);
     ctx.stroke();
   } else {
     ctx.beginPath();
@@ -260,21 +288,21 @@ export function drawPhysicalStitch(ctx, x0, y0, x1, y1, color, params) {
   }
 
   // ── Brillo especular ──
-  if (glossiness > 0.2 && thick > 1.5) {
-    const specStrength = glossiness * normalDot * 0.85;
-    if (specStrength > 0.05) {
-      // Línea de brillo desplazada hacia la luz
-      const specOffset = thick * 0.22;
+  if (effectiveGloss > 0.15 && thick > 1.2) {
+    const specStrength = effectiveGloss * normalDot * 0.9;
+    if (specStrength > 0.06) {
+      const specW    = profile.specularWidth;
+      const specOffset = thick * 0.20;
       const specGrad = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
-      specGrad.addColorStop(0, 'rgba(255,255,255,0)');
-      specGrad.addColorStop(0.45, `rgba(255,255,255,${(specStrength * 0.9).toFixed(2)})`);
-      specGrad.addColorStop(0.55, `rgba(255,255,255,${specStrength.toFixed(2)})`);
-      specGrad.addColorStop(0.65, `rgba(255,255,255,${(specStrength * 0.6).toFixed(2)})`);
-      specGrad.addColorStop(1, 'rgba(255,255,255,0)');
+      specGrad.addColorStop(0,               'rgba(255,255,255,0)');
+      specGrad.addColorStop(0.5 - specW / 2, `rgba(255,255,255,${(specStrength * 0.7).toFixed(2)})`);
+      specGrad.addColorStop(0.5,             `rgba(255,255,255,${specStrength.toFixed(2)})`);
+      specGrad.addColorStop(0.5 + specW / 2, `rgba(255,255,255,${(specStrength * 0.7).toFixed(2)})`);
+      specGrad.addColorStop(1,               'rgba(255,255,255,0)');
 
       ctx.strokeStyle = specGrad;
-      ctx.lineWidth = Math.max(0.5, thick * 0.35);
-      ctx.lineCap = 'round';
+      ctx.lineWidth   = Math.max(0.4, thick * 0.30);
+      ctx.lineCap     = 'round';
       ctx.beginPath();
       ctx.moveTo(x0 + nx * specOffset, y0 + ny * specOffset);
       ctx.lineTo(x1 + nx * specOffset, y1 + ny * specOffset);

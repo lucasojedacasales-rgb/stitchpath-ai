@@ -14,6 +14,7 @@ import {
   drawPhysicalStitch,
   drawUnderlayStitches,
   FABRIC_SIM_PARAMS,
+  STITCH_TYPE_PROFILES,
 } from '@/lib/physicsSimulator';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -164,7 +165,7 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
       const effectiveType = isContourRegion(region) ? 'running_stitch' : region.stitch_type;
       const layerDepth = Math.min(layerIdx / sorted.length * 2, 1.5);
 
-      const regionParams = { ...baseParams, layerDepth };
+      const regionParams = { ...baseParams, layerDepth, stitchType: effectiveType };
 
       // Clip a la región
       ctx.save();
@@ -193,7 +194,7 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
 
         // Underlay primero
         if (simParams.showUnderlay && region.underlay !== false) {
-          drawUnderlayStitches(ctx, cached, color, { ...regionParams, zoom });
+          drawUnderlayStitches(ctx, cached, color, { ...regionParams, zoom, stitchType: 'fill' });
         }
 
         // Puntadas físicas principales
@@ -204,10 +205,10 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
         ctx.globalAlpha = 1;
 
       } else if (effectiveType === 'satin') {
-        // Satén: columnas densas perpendiculares, espaciado = diámetro real del hilo (0.38mm)
+        // Satén: columnas densas perpendiculares — espaciado = diámetro real del hilo satin (0.35mm)
         const satinAngle = (((region.fill_angle ?? region.angle ?? 45)) * Math.PI) / 180;
-        // Satin column spacing = thread diameter for full coverage (no gaps, no overlap)
-        const satinSpacingPx = Math.max(1.2, 0.38 * pxPerMm);
+        const satinDiamMm = STITCH_TYPE_PROFILES.satin.threadDiameterMm; // 0.35mm
+        const satinSpacingPx = Math.max(1.0, satinDiamMm * pxPerMm);
 
         const xs = pts.map(p => (p[0] - 0.5) * drawW);
         const ys = pts.map(p => (p[1] - 0.5) * drawH);
