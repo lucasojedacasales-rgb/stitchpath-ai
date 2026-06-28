@@ -10,24 +10,26 @@
  */
 
 import { createContext, logStage } from './types.js';
-import { runImageAnalysis }     from './stages/imageAnalysisStage.js';
-import { runImageEnhancement }  from './stages/imageEnhancementStage.js';
-import { runContourEngine }     from './stages/contourEngineStage.js';
-import { runVectorEngine }      from './stages/vectorEngineStage.js';
-import { runRegionBuilder }     from './stages/regionBuilderStage.js';
-import { runStitchPlanner }     from './stages/stitchPlannerStage.js';
-import { runStitchOptimizer }   from './stages/stitchOptimizerStage.js';
+import { runImageAnalysis }          from './stages/imageAnalysisStage.js';
+import { runImageEnhancement }       from './stages/imageEnhancementStage.js';
+import { runContourEngine }          from './stages/contourEngineStage.js';
+import { runSemanticSegmentation }   from './stages/semanticSegmentationStage.js';
+import { runVectorEngine }           from './stages/vectorEngineStage.js';
+import { runRegionBuilder }          from './stages/regionBuilderStage.js';
+import { runStitchPlanner }          from './stages/stitchPlannerStage.js';
+import { runStitchOptimizer }        from './stages/stitchOptimizerStage.js';
 
 // ─── Stage registry (order matters) ──────────────────────────────────────────
 
 const CLIENT_STAGES = [
-  { id: 'image_analysis',    fn: runImageAnalysis,    weight: 10 },
-  { id: 'image_enhancement', fn: runImageEnhancement, weight: 20 },
-  { id: 'contour_engine',    fn: runContourEngine,    weight: 35 },
-  { id: 'vector_engine',     fn: runVectorEngine,     weight: 60 }, // backend call
-  { id: 'region_builder',    fn: runRegionBuilder,    weight: 80 },
-  { id: 'stitch_planner',    fn: runStitchPlanner,    weight: 90 },
-  { id: 'stitch_optimizer',  fn: runStitchOptimizer,  weight: 100 },
+  { id: 'image_analysis',        fn: runImageAnalysis,        weight: 10 },
+  { id: 'image_enhancement',     fn: runImageEnhancement,     weight: 20 },
+  { id: 'contour_engine',        fn: runContourEngine,        weight: 35 },
+  { id: 'semantic_segmentation', fn: runSemanticSegmentation, weight: 50 }, // LLM Vision objects
+  { id: 'vector_engine',         fn: runVectorEngine,         weight: 65 }, // backend call
+  { id: 'region_builder',        fn: runRegionBuilder,        weight: 82 },
+  { id: 'stitch_planner',        fn: runStitchPlanner,        weight: 92 },
+  { id: 'stitch_optimizer',      fn: runStitchOptimizer,      weight: 100 },
 ];
 
 // ─── Main pipeline runner ─────────────────────────────────────────────────────

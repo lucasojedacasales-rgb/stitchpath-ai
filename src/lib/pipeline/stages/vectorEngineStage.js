@@ -19,6 +19,20 @@ export async function runVectorEngine(ctx) {
   // Resolve AI strategy from decision engine if available
   const aiStrategy = ctx.aiStrategy || null;
 
+  // Distill semantic map into compact form to avoid payload bloat
+  const semanticSummary = ctx.semanticMap?.objects?.length
+    ? ctx.semanticMap.objects.map(o => ({
+        label:       o.label,
+        group:       o.object_group,
+        bbox:        o.bbox,
+        color:       o.color_hex,
+        stitch_type: o.stitch_type,
+        priority:    o.priority,
+        geometry:    o.geometry,
+        complexity:  o.complexity,
+      }))
+    : null;
+
   const payload = {
     image_url:        ctx.enhanced?.enhancedUrl || ctx.imageUrl,
     mode:             bp.mode,
@@ -30,6 +44,8 @@ export async function runVectorEngine(ctx) {
     use_full_bg:      bp.use_full_bg,
     image_analysis:   ctx.analysis  || null,
     traced_contours:  ctx.contours  || null,
+    semantic_objects: semanticSummary,
+    content_type:     ctx.analysis?.contentType || null,
     vector_engine:    bp.vector_engine,
     tatami_density:   aiStrategy
       ? (aiStrategy.stitchType === 'satin' ? 0.6 : aiStrategy.stitchType === 'running' ? 0.2 : 0.4)

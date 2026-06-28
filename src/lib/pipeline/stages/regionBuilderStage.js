@@ -14,13 +14,49 @@ export async function runRegionBuilder(ctx) {
 
   const { width_mm = 100, height_mm = 100 } = ctx.config;
 
-  // Auto-name any unnamed regions before enrichment
-  const named = ctx.vectorRegions.map((r, i) => ({
-    ...r,
-    name: r.name || autoName(r, i),
-  }));
+  // Apply semantic metadata to vector regions when available
+  const semanticObjects = ctx.semanticMap?.objects || [];
+
+  const named = ctx.vectorRegions.map((r, i) => {
+    const sem = findSemanticForRegion(r, semanticObjects);
+    return {
+      ...r,
+      // Semantic enrichment: override stitch_type and priority if LLM is confident
+      ...(sem ? {
+        object:         sem.label,
+        object_group:   sem.object_group,
+        geometry:       sem.geometry,
+        complexity:     sem.complexity,
+        curvature:      sem.curvature,
+        orientation:    sem.orientation,
+        stitch_type:    sem.stitch_type,
+        stitch_notes:   sem.stitch_notes,
+        priority:       sem.priority,
+      } : {}),
+      name: r.name || (sem ? sem.label : autoName(r, i)),
+    };
+  });
 
   ctx.regions = enrichAllRegions(named, width_mm, height_mm);
+}
+
+// ─── Semantic matching ────────────────────────────────────────────────────────
+
+function findSemanticForRegion(region, objects) {
+  if (!objects?.length) return null;
+  const [cx, cy] = region.centroid || [0.5, 0.5];
+  let best = null, bestScore = -Infinity;
+
+  for (const obj of objects) {
+    const { x, y, w, h } = obj.bbox || {};
+    if (x === undefined) continue;
+    const inside = cx >= x && cx <= x + w && cy >= y && cy <= y + h;
+    const dist   = Math.hypot(cx - (x + w / 2), cy - (y + h / 2));
+    const score  = inside ? (1 - dist) : -dist;
+    if (score > bestScore) { bestScore = score; best = obj; }
+  }
+
+  return bestScore > -0.3 ? best : null;
 }
 
 // ─── Auto-naming ──────────────────────────────────────────────────────────────
