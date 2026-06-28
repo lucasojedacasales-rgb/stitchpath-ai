@@ -11,6 +11,8 @@ import SubpixelMetricsPanel from '@/components/editor/SubpixelMetricsPanel.jsx';
 import StitchPlannerPanel from '@/components/editor/StitchPlannerPanel.jsx';
 import TravelOptimizerPanel from '@/components/editor/TravelOptimizerPanel.jsx';
 import PhysicsSimulator from '@/components/editor/PhysicsSimulator.jsx';
+import AdaptiveEnginePanel from '@/components/editor/AdaptiveEnginePanel.jsx';
+import LearningPanel from '@/components/editor/LearningPanel.jsx';
 import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
@@ -215,12 +217,14 @@ export default function Editor() {
         <div className="flex items-center justify-between px-4 py-1.5 border-t border-[#1a1d27]">
           <div className="flex items-center gap-1">
             {[
-              { id: 'editor',  label: 'Editor' },
-              { id: 'sim',     label: '◉ Simulación' },
-              { id: 'mask',    label: '✂ Máscara' },
-              { id: 'planner', label: '✦ Planner' },
-              { id: 'travel',  label: '⚡ Travel' },
-              { id: 'panel',   label: 'Panel' },
+              { id: 'editor',    label: 'Editor' },
+              { id: 'sim',       label: '◉ Simulación' },
+              { id: 'mask',      label: '✂ Máscara' },
+              { id: 'planner',   label: '✦ Planner' },
+              { id: 'travel',    label: '⚡ Travel' },
+              { id: 'adaptive',  label: '🧬 Adaptativo' },
+              { id: 'learning',  label: '🧠 Learning' },
+              { id: 'panel',     label: 'Panel' },
             ].map(({ id, label }) =>
               <button key={id} onClick={() => setActiveTab(id)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
                 {label}
@@ -280,6 +284,14 @@ export default function Editor() {
                 regions={regions}
                 onApplyOrder={(ordered) => setRegions(ordered)}
               />
+            </div>
+          ) : activeTab === 'adaptive' ? (
+            <div className="flex-1 overflow-hidden">
+              <AdaptiveEnginePanel regions={regions} />
+            </div>
+          ) : activeTab === 'learning' ? (
+            <div className="flex-1 overflow-hidden">
+              <LearningPanel projectId={id} />
             </div>
           ) : !imageUrl ?
           <UploadZone onUpload={handleImageUpload} fileInputRef={fileInputRef} uploading={uploadingImage} /> :
