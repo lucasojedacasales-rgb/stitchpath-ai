@@ -48,12 +48,14 @@ function getRelativePosition(region, allRegions) {
 
 function isContourRegion(region) {
   if ((region.name || '').toLowerCase().includes('contour_')) return true;
+  if (region.stitch_type === 'running_stitch') return false;
   const hex = (region.color || '').toLowerCase();
-  if (hex === '#000000' || hex === '#1a1a1a') return true;
-  if (region.area_mm2 && region.perimeter_mm) {
-    if (region.area_mm2 / (region.perimeter_mm * region.perimeter_mm) < 0.05) return true;
+  const isBlack = hex === '#000000' || hex === '#1a1a1a' || hex === '#111111';
+  if (isBlack && region.area_mm2 && region.perimeter_mm) {
+    const ratio = region.area_mm2 / (region.perimeter_mm * region.perimeter_mm);
+    if (ratio < 0.03) return true;
   }
-  return Array.isArray(region.neighbors) && region.neighbors.length >= 3;
+  return false;
 }
 
 function isEyeRegion(region, allRegions) {

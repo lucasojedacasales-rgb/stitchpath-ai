@@ -6,14 +6,17 @@ import { generateTatamiFill } from '@/lib/tatamiFill';
 
 function isContourRegion(region) {
   if (!region) return false;
+  // Nombre explícito de contorno
   if ((region.name || '').toLowerCase().includes('contour_')) return true;
+  // Stitch type explícito de running
+  if (region.stitch_type === 'running_stitch') return false; // no reclasificar running stitch forzado
+  // Color negro casi puro + ratio compacidad muy baja (forma de línea)
   const hex = (region.color || '').toLowerCase();
-  if (hex === '#000000' || hex === '#1a1a1a') return true;
-  if (region.area_mm2 && region.perimeter_mm) {
+  const isBlack = hex === '#000000' || hex === '#1a1a1a' || hex === '#111111';
+  if (isBlack && region.area_mm2 && region.perimeter_mm) {
     const ratio = region.area_mm2 / (region.perimeter_mm * region.perimeter_mm);
-    if (ratio < 0.05) return true;
+    if (ratio < 0.03) return true; // umbral más estricto: solo formas muy lineales
   }
-  if (Array.isArray(region.neighbors) && region.neighbors.length >= 3) return true;
   return false;
 }
 
@@ -158,14 +161,14 @@ export default function StitchCanvas({
     ctx.translate(offset.x + W / 2, offset.y + H / 2);
     ctx.scale(zoom, zoom);
 
-    const canvasArea = drawW * drawH;
-    const validRegions = regions.filter(r => (r.area_mm2 || 0) <= canvasArea * 0.9);
+    // Filtrar solo regiones sin path_points válidos — no usar area_mm2 para filtrar (unidades diferentes)
+    const validRegions = regions.filter(r => r.path_points && r.path_points.length >= 3);
 
     const outlineOnly = viewMode === 'outline';
     const alpha = stitchOpacity / 100;
 
     for (const region of validRegions) {
-      if (!region.visible) continue;
+      if (region.visible === false) continue;
       const pts = region.path_points;
       if (!pts || pts.length < 3) continue;
 
