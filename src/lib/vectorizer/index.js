@@ -115,8 +115,8 @@ export function scoreContourQuality(contourSet) {
   const regions = contourSet.regions;
   const n       = regions.length;
 
-  // Region count score — sweet spot is 5–40
-  const countScore = n < 3 ? 0.3 : n < 5 ? 0.6 : n <= 40 ? 1.0 : n <= 80 ? 0.8 : 0.5;
+  // Region count score — sweet spot is 5–60 (allows more detail without penalty)
+  const countScore = n < 3 ? 0.3 : n < 5 ? 0.6 : n <= 60 ? 1.0 : n <= 100 ? 0.85 : 0.6;
 
   // Average path density
   const avgPoints = regions.reduce((s, r) => s + (r.path_points?.length || 0), 0) / n;
