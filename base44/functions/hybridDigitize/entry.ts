@@ -163,8 +163,8 @@ Responde SOLO JSON:
           angle = r.fill_angle;                                    // PCA even when not adaptiveAngles
         } else {
           // Color-coherent fallback: same color → same angle (deterministic from hex)
-          const colorSeed = parseInt((r.hex || '#888888').replace('#', '').slice(0, 2), 16);
-          angle = (colorSeed * 53) % 180;                         // deterministic, spread, not per-index
+          // Default to 45° — safest embroidery angle (avoids trampolining on axis-aligned shapes)
+          angle = 45;
         }
         
         const stitch_count = calcularStitchCount(r, stitch_type, regionDensity, w, h);
@@ -356,12 +356,13 @@ function calcularStitchCount(r, type, density, w, h) {
     const stitchLength = 2.4; // mm nominal
     return Math.round((areaMm2 / rowSpacing) * (1 / stitchLength));
   } else if (type === 'satin') {
-    // Satin: columns perpendicular to shape axis, spaced by density along axis
-    // estimatedWidth = area / perimeterMm * 2 (mean width of satin column)
-    const meanWidth    = areaMm2 / Math.max(1, perimeterMm / 2);
-    const numColumns   = perimeterMm / (2 * dens); // columns along the path
-    // Each column = 2 stitches (one each side of centre)
-    return Math.round(numColumns * 2 * Math.max(1, meanWidth / 2));
+    // Satin physical model: needle travels perpendicular to the shape axis.
+    // Number of columns = perimeter / 2 (half-perimeter = one side of the shape).
+    // Column spacing = density_mm along the axis of travel.
+    // Each column is a single stitch from edge to edge — no doubling.
+    // Reference: 20mm long × 4mm wide satin @ 0.4mm = 20/0.4 = 50 stitches ✓
+    const numColumns = (perimeterMm / 2) / dens;
+    return Math.round(Math.max(1, numColumns));
   } else {
     // Running: 1 stitch every 1.8mm (standard 40wt thread)
     return Math.round(perimeterMm / 1.8);

@@ -103,47 +103,69 @@ export function eieStitchType(geo) {
     };
   }
 
+  // ── Hard rule: large areas always fill (satin >8mm wide puckers fabric) ──────
+  // This gate runs BEFORE scoring so no satin signal can override it.
+  if (area_mm2 > 120) {
+    const conf = Math.min(0.95, 0.70 + Math.min(0.25, (area_mm2 - 120) / 2000));
+    return {
+      type: 'fill', confidence: +conf.toFixed(2),
+      rationale: `Fill forzado: área=${area_mm2.toFixed(0)}mm² > 120mm² (satin width would exceed 8mm limit).`,
+      signals: [{ id: 'fill_area_gate', weight: 1.0, fired: true }],
+    };
+  }
+
   // Score each candidate type with weighted signals
   let satinScore = 0, fillScore = 0;
 
   // — Satin signals —
-  const satinWidthOk = max_width_mm <= SATIN_WIDTH_MAX;
-  const satinMeanOk  = mean_width_mm <= 6.5;
-  const satinConvex  = convexity > 0.52;
-  const satinSimple  = complexity.score < 0.60;
-  const satinAspect  = elongation > 1.5 || mean_width_mm < 5.5;
-  const noHoles      = holes === 0;
+  // max_width must be within satin limits — hard negative if exceeded
+  const satinWidthOk   = max_width_mm <= SATIN_WIDTH_MAX;
+  const satinMeanOk    = mean_width_mm <= 6.0;
+  const satinConvex    = convexity > 0.55;
+  const satinSimple    = complexity.score < 0.55;
+  // Elongation or narrow width are strong satin indicators
+  const satinElongated = elongation > 2.0;
+  const satinNarrow    = mean_width_mm < 5.0;
+  const noHoles        = holes === 0;
 
-  if (satinWidthOk)  { satinScore += 0.35; signals.push({ id: 'satin_width_ok',  weight: 0.35, fired: true }); }
-  if (satinMeanOk)   { satinScore += 0.15; signals.push({ id: 'satin_mean_ok',   weight: 0.15, fired: true }); }
-  if (satinConvex)   { satinScore += 0.20; signals.push({ id: 'satin_convex',    weight: 0.20, fired: true }); }
-  if (satinSimple)   { satinScore += 0.15; signals.push({ id: 'satin_simple',    weight: 0.15, fired: true }); }
-  if (satinAspect)   { satinScore += 0.10; signals.push({ id: 'satin_aspect',    weight: 0.10, fired: true }); }
-  if (noHoles)       { satinScore += 0.05; signals.push({ id: 'satin_no_holes',  weight: 0.05, fired: true }); }
-  if (!satinWidthOk) { satinScore -= 0.60; signals.push({ id: 'satin_too_wide',  weight: -0.60, fired: true }); }
-  if (!satinConvex)  { satinScore -= 0.25; signals.push({ id: 'satin_concave',   weight: -0.25, fired: true }); }
-  if (holes > 0)     { satinScore -= 0.30; signals.push({ id: 'satin_holes',     weight: -0.30, fired: true }); }
+  // Positive evidence (max realistic total without width bonus: 0.85)
+  if (satinWidthOk)   { satinScore += 0.25; signals.push({ id: 'satin_width_ok',  weight: 0.25, fired: true }); }
+  if (satinMeanOk)    { satinScore += 0.10; signals.push({ id: 'satin_mean_ok',   weight: 0.10, fired: true }); }
+  if (satinConvex)    { satinScore += 0.20; signals.push({ id: 'satin_convex',    weight: 0.20, fired: true }); }
+  if (satinSimple)    { satinScore += 0.15; signals.push({ id: 'satin_simple',    weight: 0.15, fired: true }); }
+  if (satinElongated) { satinScore += 0.20; signals.push({ id: 'satin_elongated', weight: 0.20, fired: true }); }
+  if (satinNarrow)    { satinScore += 0.10; signals.push({ id: 'satin_narrow',    weight: 0.10, fired: true }); }
+  if (noHoles)        { satinScore += 0.05; signals.push({ id: 'satin_no_holes',  weight: 0.05, fired: true }); }
+
+  // Hard negatives — non-negotiable satin disqualifiers
+  if (!satinWidthOk)  { satinScore -= 0.70; signals.push({ id: 'satin_too_wide',  weight: -0.70, fired: true }); }
+  if (!satinConvex)   { satinScore -= 0.30; signals.push({ id: 'satin_concave',   weight: -0.30, fired: true }); }
+  if (holes > 0)      { satinScore -= 0.35; signals.push({ id: 'satin_holes',     weight: -0.35, fired: true }); }
+  // Area penalty: large areas shouldn't be satin even if other signals pass
+  if (area_mm2 > 60)  { satinScore -= 0.20; signals.push({ id: 'satin_area_large', weight: -0.20, fired: true }); }
+  if (area_mm2 > 90)  { satinScore -= 0.20; signals.push({ id: 'satin_area_xlarge', weight: -0.20, fired: true }); }
 
   // — Fill signals —
   if (area_mm2 > FILL_AREA_MIN)     { fillScore += 0.40; }
-  if (convexity > 0.40)              { fillScore += 0.20; }
-  if (area_mm2 > 50)                 { fillScore += 0.20; }
-  if (complexity.level !== 'simple') { fillScore += 0.10; }
-  if (holes > 0)                     { fillScore += 0.25; }
+  if (convexity > 0.40)             { fillScore += 0.20; }
+  if (area_mm2 > 50)                { fillScore += 0.20; }
+  if (complexity.level !== 'simple'){ fillScore += 0.10; }
+  if (holes > 0)                    { fillScore += 0.30; }
 
-  if (satinScore >= 0.65 && area_mm2 >= RUNNING_AREA_MAX) {
-    const conf = Math.min(0.95, 0.55 + satinScore * 0.40);
+  // Threshold raised to 0.70 — requires strong satin evidence, not just width+convexity
+  if (satinScore >= 0.70 && area_mm2 >= RUNNING_AREA_MAX) {
+    const conf = Math.min(0.95, 0.55 + satinScore * 0.35);
     return {
       type: 'satin', confidence: +conf.toFixed(2),
-      rationale: `Satin: max_w=${max_width_mm.toFixed(1)}mm, convexidad=${convexity.toFixed(2)}, puntuación=${satinScore.toFixed(2)}.`,
+      rationale: `Satin: max_w=${max_width_mm.toFixed(1)}mm, elon=${elongation.toFixed(1)}×, convex=${convexity.toFixed(2)}, score=${satinScore.toFixed(2)}.`,
       signals,
     };
   }
 
-  const conf = Math.min(0.95, 0.50 + (fillScore / 1.15) * 0.45);
+  const conf = Math.min(0.95, 0.50 + (fillScore / 1.20) * 0.45);
   return {
     type: 'fill', confidence: +conf.toFixed(2),
-    rationale: `Fill tatami: área=${area_mm2.toFixed(0)}mm², convexidad=${convexity.toFixed(2)}, complejidad=${complexity.level}.`,
+    rationale: `Fill tatami: área=${area_mm2.toFixed(0)}mm², convex=${convexity.toFixed(2)}, complejidad=${complexity.level}.`,
     signals,
   };
 }
@@ -252,7 +274,8 @@ export function eieDensity(geo, stitchType, fabricType = 'Algodón') {
     } else if (area_mm2 < 300) {
       d = 0.40; reasons.push(`fill estándar (${area_mm2.toFixed(0)}mm²) → 0.40`);
     } else {
-      d = 0.44; reasons.push(`fill grande (${area_mm2.toFixed(0)}mm²) → base 0.44`);
+      // Large fills: stay at 0.42mm — opening higher causes bald spots on cotton
+      d = 0.42; reasons.push(`fill grande (${area_mm2.toFixed(0)}mm²) → base 0.42`);
     }
 
     // Complexity correction (complex shapes need more coverage)
@@ -273,9 +296,9 @@ export function eieDensity(geo, stitchType, fabricType = 'Algodón') {
     d += fabric.density_adj;
     reasons.push(`tejido ${fabricType}: Δ${fabric.density_adj.toFixed(3)}`);
 
-    // Large simple areas: open up slightly for efficiency
+    // Large simple areas: slight efficiency open-up, capped at 0.45mm (professional ceiling)
     if (area_mm2 > 400 && complexity.level === 'simple') {
-      d += 0.05; reasons.push('área grande simple → +0.05 (eficiencia)');
+      d = Math.min(d + 0.03, 0.45); reasons.push('área grande simple → ligera apertura (eficiencia)');
     }
   }
 
@@ -447,18 +470,23 @@ export function eieUnderlay(geo, stitchType, fabricType = 'Algodón') {
 
   if (area_mm2 < 120) {
     const d = +(THREAD.diameter_fill * 2.0).toFixed(2);
-    const angleAdj = complexity.level === 'alta' ? 45 : 90;
+    // Underlay angle: perpendicular to fill direction (geo.orientation) — not hardcoded 90°
+    // When orientation is unavailable, use 45° (bisects most shapes better than 90°)
+    const fillOrientation = geo.orientation != null ? geo.orientation : 45;
+    const underlayAngle = (fillOrientation + 90) % 180;
     return {
-      type: 'edge_walk_zigzag', density_mm: d, angle_deg: angleAdj, second_pass: false,
-      rationale: `Fill medio ${area_mm2.toFixed(0)}mm²: edge walk + zigzag ${d}mm @ ${angleAdj}°.`,
+      type: 'edge_walk_zigzag', density_mm: d, angle_deg: underlayAngle, second_pass: false,
+      rationale: `Fill medio ${area_mm2.toFixed(0)}mm²: edge walk + zigzag ${d}mm @ ${underlayAngle}° (perp. al fill).`,
     };
   }
 
-  // Large fill: full zigzag underlay, perpendicular to fill direction
+  // Large fill: full zigzag underlay perpendicular to fill orientation
   const d = +(THREAD.diameter_fill * 2.5).toFixed(2);
+  const fillOrientation = geo.orientation != null ? geo.orientation : 45;
+  const underlayAngle = (fillOrientation + 90) % 180;
   return {
-    type: 'zigzag', density_mm: d, angle_deg: 90, second_pass: complexity.level === 'alta',
-    rationale: `Fill grande ${area_mm2.toFixed(0)}mm²: zigzag ${d}mm @ 90°${complexity.level === 'alta' ? ' (doble pase)' : ''}.`,
+    type: 'zigzag', density_mm: d, angle_deg: underlayAngle, second_pass: complexity.level === 'alta',
+    rationale: `Fill grande ${area_mm2.toFixed(0)}mm²: zigzag ${d}mm @ ${underlayAngle}°${complexity.level === 'alta' ? ' (doble pase)' : ''}.`,
   };
 }
 

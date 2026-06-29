@@ -71,7 +71,10 @@ function findSemanticForRegion(region, objects) {
     if (score > bestScore) { bestScore = score; best = obj; }
   }
 
-  return bestScore > -0.3 ? best : null;
+  // Strict threshold: only accept a semantic match when the region centroid is
+  // inside or very close to the semantic bounding box (score > 0 = inside, > -0.1 = nearby).
+  // Larger negative values (e.g. -0.3) cause cross-region semantic pollution.
+  return bestScore > -0.08 ? best : null;
 }
 
 // ─── Auto-naming ──────────────────────────────────────────────────────────────
