@@ -470,23 +470,25 @@ export function eieUnderlay(geo, stitchType, fabricType = 'Algodón') {
 
   if (area_mm2 < 120) {
     const d = +(THREAD.diameter_fill * 2.0).toFixed(2);
-    // Underlay angle: perpendicular to fill direction (geo.orientation) — not hardcoded 90°
-    // When orientation is unavailable, use 45° (bisects most shapes better than 90°)
-    const fillOrientation = geo.orientation != null ? geo.orientation : 45;
-    const underlayAngle = (fillOrientation + 90) % 180;
+    // Underlay angle: must be perpendicular to the ACTUAL fill angle (not orientation).
+    // geo.fill_angle is the computed EIE fill angle; geo.orientation is the PCA axis.
+    // The two differ when A2/A3/A4 corrections apply (elongated/curved shapes).
+    // Running underlay parallel to top stitches provides zero stabilization — it must cross them.
+    const topAngle = geo.fill_angle != null ? geo.fill_angle : (geo.orientation != null ? geo.orientation : 45);
+    const underlayAngle = (topAngle + 90) % 180;
     return {
       type: 'edge_walk_zigzag', density_mm: d, angle_deg: underlayAngle, second_pass: false,
-      rationale: `Fill medio ${area_mm2.toFixed(0)}mm²: edge walk + zigzag ${d}mm @ ${underlayAngle}° (perp. al fill).`,
+      rationale: `Fill medio ${area_mm2.toFixed(0)}mm²: edge walk + zigzag ${d}mm @ ${underlayAngle}° (perp. al ángulo de relleno ${topAngle}°).`,
     };
   }
 
-  // Large fill: full zigzag underlay perpendicular to fill orientation
+  // Large fill: full zigzag underlay perpendicular to actual fill angle
   const d = +(THREAD.diameter_fill * 2.5).toFixed(2);
-  const fillOrientation = geo.orientation != null ? geo.orientation : 45;
-  const underlayAngle = (fillOrientation + 90) % 180;
+  const topAngle = geo.fill_angle != null ? geo.fill_angle : (geo.orientation != null ? geo.orientation : 45);
+  const underlayAngle = (topAngle + 90) % 180;
   return {
     type: 'zigzag', density_mm: d, angle_deg: underlayAngle, second_pass: complexity.level === 'alta',
-    rationale: `Fill grande ${area_mm2.toFixed(0)}mm²: zigzag ${d}mm @ ${underlayAngle}°${complexity.level === 'alta' ? ' (doble pase)' : ''}.`,
+    rationale: `Fill grande ${area_mm2.toFixed(0)}mm²: zigzag ${d}mm @ ${underlayAngle}° (perp. al ángulo de relleno ${topAngle}°)${complexity.level === 'alta' ? ' doble pase' : ''}.`,
   };
 }
 
@@ -608,8 +610,11 @@ export function eieAnalyzeRegion(geo, fabricType = 'Algodón', context = {}, ove
   // — Push compensation —
   const pushResult   = eiePushCompensation(geo, stitch_type, fabricType);
 
-  // — Underlay —
-  const underlayResult = eieUnderlay(geo, stitch_type, fabricType);
+  // — Underlay: pass fill_angle into geo so the underlay angle is perpendicular
+  //   to the ACTUAL top stitch angle (not the raw PCA orientation, which diverges
+  //   after A2/A3/A4 corrections for elongated/curved shapes).
+  const geoWithAngle = { ...geo, fill_angle };
+  const underlayResult = eieUnderlay(geoWithAngle, stitch_type, fabricType);
 
   // — Priority —
   const prioResult   = eiePriority(geo, stitch_type, context.existingPriority ?? null);
