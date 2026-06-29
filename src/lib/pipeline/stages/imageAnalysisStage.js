@@ -30,7 +30,7 @@ export async function runImageAnalysis(ctx) {
     ...raw,
     contentType,
     confidence,
-    hasTransparency: false, // updated by contour stage if needed
+    hasTransparency: raw.hasTransparency || false,
     hasFineDetails:  edgeAvg > 0.18,
     hasGradients:    colorBuckets > 8,
     complexity:      colorBuckets > 8 ? 'high' : colorBuckets > 4 ? 'medium' : 'low',
