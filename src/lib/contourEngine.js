@@ -18,13 +18,13 @@
 
 const DEFAULTS = {
   analysisSize:       1024,   // px — higher = more sub-pixel accuracy
-  minSegmentPx:       6.0,    // px — remove segments shorter than this (raised from 4: removes JPEG micro-segments)
-  cornerAngleDeg:     135,    // deg — only real sharp corners (lowered from 150: 150° over-detected gentle curves → fragmentation)
-  rdpBaseEpsilon:     1.6,    // px — base RDP simplification tolerance (raised from 1.2: aggressive smooth-section simplification)
-  rdpCornerFactor:    0.3,    // multiplier — tighter epsilon near corners
-  chaikinPasses:      2,      // iterations of Chaikin subdivision
-  gapCloseThreshold:  10.0,   // px — auto-close gaps smaller than this (raised from 8: merges more quantization gaps)
-  minAreaPx:          200,    // px² — minimum blob area (raised from 120: stronger noise filter, still captures eye-sized details at 1024px)
+  minSegmentPx:       5.0,    // px — remove segments shorter than this
+  cornerAngleDeg:     130,    // deg — real sharp corners (lower = fewer false corners on gentle curves)
+  rdpBaseEpsilon:     1.4,    // px — base RDP simplification
+  rdpCornerFactor:    0.25,   // multiplier — tighter epsilon near corners (more detail at corners)
+  chaikinPasses:      3,      // iterations of Chaikin subdivision (3 = smoother curves without over-rounding)
+  gapCloseThreshold:  12.0,   // px — auto-close gaps (larger = merges more quantization gaps)
+  minAreaPx:          180,    // px² — minimum blob area
 };
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -47,20 +47,23 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
   cx.drawImage(img, 0, 0, W, H);
   const { data: pixels } = cx.getImageData(0, 0, W, H);
 
-  // 1. K-means++ quantization
+  // 1. K-means++ quantization with perceptual Lab color space
   const samples = [];
   for (let i = 0; i < W * H; i++) {
     if (pixels[i * 4 + 3] < 128) continue;
-    samples.push([pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]]);
+    samples.push(rgbToLab(pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]));
   }
   const k = Math.min(maxColors, Math.max(1, samples.length));
-  const palette = kMeansPP(samples, k, 24);
+  const paletteLab = kMeansPP(samples, k, 30); // more iterations for better convergence
+  // Convert palette back to RGB for downstream use
+  const palette = paletteLab.map(labToRgb);
 
-  // 2. Label map (pixel → palette index, -1 = transparent)
+  // 2. Label map using Lab distance for perceptually accurate assignment
   const labels = new Int32Array(W * H);
   for (let i = 0; i < W * H; i++) {
     if (pixels[i * 4 + 3] < 128) { labels[i] = -1; continue; }
-    labels[i] = nearestIdx([pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]], palette);
+    const lab = rgbToLab(pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]);
+    labels[i] = nearestIdx(lab, paletteLab);
   }
 
   // Relative floor raised to 0.0005 (was 0.0003) — 0.05% of image area.
@@ -322,11 +325,14 @@ function removeShortSegments(pts, minPx) {
  */
 function computeBezierHandles(pts, corners) {
   const n = pts.length;
-  const tension = 0.3;
   return pts.map((pt, i) => {
     if (corners.has(i)) return null;
     const prev = pts[(i - 1 + n) % n];
     const next = pts[(i + 1) % n];
+    // Adaptive tension: shorter segments → tighter handles to avoid overshoot
+    const dPrev = Math.hypot(pt[0]-prev[0], pt[1]-prev[1]);
+    const dNext = Math.hypot(next[0]-pt[0], next[1]-pt[1]);
+    const tension = Math.max(0.15, Math.min(0.35, 0.25 / (1 + (dPrev + dNext) * 0.05)));
     const tx = (next[0] - prev[0]) * tension;
     const ty = (next[1] - prev[1]) * tension;
     return {
@@ -544,6 +550,37 @@ function ptSegDist([px, py], [ax, ay], [bx, by]) {
 }
 
 function distSq3(a, b) { return (a[0]-b[0])**2 + (a[1]-b[1])**2 + (a[2]-b[2])**2; }
+
+// ─── Perceptual color (CIE Lab) ───────────────────────────────────────────────
+function rgbToLab(r, g, b) {
+  // sRGB → linear
+  let rl = r / 255, gl = g / 255, bl = b / 255;
+  rl = rl > 0.04045 ? ((rl + 0.055) / 1.055) ** 2.4 : rl / 12.92;
+  gl = gl > 0.04045 ? ((gl + 0.055) / 1.055) ** 2.4 : gl / 12.92;
+  bl = bl > 0.04045 ? ((bl + 0.055) / 1.055) ** 2.4 : bl / 12.92;
+  // linear RGB → XYZ (D65)
+  const X = rl * 0.4124 + gl * 0.3576 + bl * 0.1805;
+  const Y = rl * 0.2126 + gl * 0.7152 + bl * 0.0722;
+  const Z = rl * 0.0193 + gl * 0.1192 + bl * 0.9505;
+  // XYZ → Lab
+  const fx = f(X / 0.9505), fy = f(Y), fz = f(Z / 1.0888);
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+function f(t) { return t > 0.008856 ? t ** (1/3) : 7.787 * t + 16/116; }
+
+function labToRgb([L, A, B]) {
+  const fy = (L + 16) / 116, fx = A / 500 + fy, fz = fy - B / 200;
+  const X = 0.9505 * (fx ** 3 > 0.008856 ? fx ** 3 : (fx - 16/116) / 7.787);
+  const Y =          (fy ** 3 > 0.008856 ? fy ** 3 : (fy - 16/116) / 7.787);
+  const Z = 1.0888 * (fz ** 3 > 0.008856 ? fz ** 3 : (fz - 16/116) / 7.787);
+  // XYZ → linear RGB
+  let rl =  3.2406 * X - 1.5372 * Y - 0.4986 * Z;
+  let gl = -0.9689 * X + 1.8758 * Y + 0.0415 * Z;
+  let bl =  0.0557 * X - 0.2040 * Y + 1.0570 * Z;
+  // linear → sRGB
+  const toSRGB = c => Math.max(0, Math.min(1, c > 0.0031308 ? 1.055 * c ** (1/2.4) - 0.055 : 12.92 * c));
+  return [Math.round(toSRGB(rl) * 255), Math.round(toSRGB(gl) * 255), Math.round(toSRGB(bl) * 255)];
+}
 
 function rgbToHex([r, g, b]) {
   return '#' + [r, g, b].map(v => Math.round(v).toString(16).padStart(2, '0')).join('');

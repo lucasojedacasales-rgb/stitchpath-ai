@@ -16,11 +16,11 @@ import { getModeStrategy }   from '../../digitizeModes.js';
 // RDP epsilons raised across all modes to prevent sub-pixel micro-segmentation
 // while preserving real geometric detail. minSegmentPx raised to filter noise.
 const MODE_OPTIONS = {
-  fast:      { analysisSize: 512,  chaikinPasses: 1, rdpBaseEpsilon: 2.0, minSegmentPx: 6 },
-  standard:  { analysisSize: 800,  chaikinPasses: 2, rdpBaseEpsilon: 1.4, minSegmentPx: 5 },
-  precision: { analysisSize: 1200, chaikinPasses: 3, rdpBaseEpsilon: 0.9, minSegmentPx: 3 },
-  hybrid:    { analysisSize: 1024, chaikinPasses: 2, rdpBaseEpsilon: 1.2, minSegmentPx: 4 },
-  ultra:     { analysisSize: 1600, chaikinPasses: 3, rdpBaseEpsilon: 0.7, minSegmentPx: 3 },
+  fast:      { analysisSize: 512,  chaikinPasses: 1, rdpBaseEpsilon: 2.2, minSegmentPx: 7,  cornerAngleDeg: 125, gapCloseThreshold: 14 },
+  standard:  { analysisSize: 800,  chaikinPasses: 2, rdpBaseEpsilon: 1.5, minSegmentPx: 5,  cornerAngleDeg: 130, gapCloseThreshold: 12 },
+  precision: { analysisSize: 1200, chaikinPasses: 3, rdpBaseEpsilon: 0.8, minSegmentPx: 3,  cornerAngleDeg: 120, gapCloseThreshold: 10 },
+  hybrid:    { analysisSize: 1024, chaikinPasses: 3, rdpBaseEpsilon: 1.1, minSegmentPx: 4,  cornerAngleDeg: 128, gapCloseThreshold: 12 },
+  ultra:     { analysisSize: 1600, chaikinPasses: 4, rdpBaseEpsilon: 0.6, minSegmentPx: 2,  cornerAngleDeg: 115, gapCloseThreshold: 8  },
 };
 
 export async function runContourEngine(ctx) {

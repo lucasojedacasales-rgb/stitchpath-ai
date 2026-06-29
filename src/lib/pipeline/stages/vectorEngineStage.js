@@ -33,6 +33,12 @@ export async function runVectorEngine(ctx) {
       }))
     : null;
 
+  // Forward analysis W/H for correct mm² geometry computation inside hybridDigitize
+  if (ctx.contours) {
+    ctx.contours.analysisW = ctx.contours.analysisW || 1024;
+    ctx.contours.analysisH = ctx.contours.analysisH || 1024;
+  }
+
   const payload = {
     image_url:        ctx.enhanced?.enhancedUrl || ctx.imageUrl,
     mode:             bp.mode,

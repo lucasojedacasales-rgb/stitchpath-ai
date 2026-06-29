@@ -70,36 +70,61 @@ Deno.serve(async (req) => {
       // === NUEVO: Usar métricas geométricas del vectorizador para clasificación ===
       const regionDescriptions = clientRegions.slice(0, 200).map((r, i) => {
         const bbox = r.bbox;
-        const cx = ((bbox.minX + bbox.maxX) / 2 / (traced_contours.analysisW || 512)).toFixed(3);
-        const cy = ((bbox.minY + bbox.maxY) / 2 / (traced_contours.analysisH || 512)).toFixed(3);
-        const areaPct = (r.coverage * 100).toFixed(1);
-        // Usar métricas del vectorizador si existen
-        const compacidad = r.compacidad !== undefined ? r.compacidad.toFixed(2) : 'N/A';
-        const inertia = r.inertia_ratio !== undefined ? r.inertia_ratio.toFixed(2) : 'N/A';
-        const aspect = r.bbox_aspect !== undefined ? r.bbox_aspect.toFixed(2) : 'N/A';
-        const tipoVec = r.type || 'N/A';
-        return `Región ${i}: color=${r.hex} centro=(${cx},${cy}) cobertura=${areaPct}% tipo_vectorizador=${tipoVec} compacidad=${compacidad} inertia=${inertia} aspect=${aspect}`;
+        const aW = traced_contours.analysisW || 512;
+        const aH = traced_contours.analysisH || 512;
+        const cx = ((bbox.minX + bbox.maxX) / 2 / aW).toFixed(3);
+        const cy = ((bbox.minY + bbox.maxY) / 2 / aH).toFixed(3);
+        const bw = ((bbox.maxX - bbox.minX) / aW * w).toFixed(1);
+        const bh = ((bbox.maxY - bbox.minY) / aH * h).toFixed(1);
+        const areaMm2 = (r.coverage * w * h).toFixed(1);
+        const compacidad = r.compacidad !== undefined ? r.compacidad.toFixed(3) : '?';
+        const inertia = r.inertia_ratio !== undefined ? r.inertia_ratio.toFixed(2) : '?';
+        const aspect = r.bbox_aspect !== undefined ? r.bbox_aspect.toFixed(2) : '?';
+        const corners = r.corner_count !== undefined ? r.corner_count : '?';
+        const pts = r.path_points?.length || '?';
+        const perimEst = r.perimeter_norm ? (r.perimeter_norm * Math.hypot(w, h)).toFixed(1) : '?';
+        // Pre-classify for context (AI can override if visual evidence contradicts)
+        const geoHint = clasificarPorGeometria(r, w, h);
+        return `R${i}: hex=${r.hex} cx=${cx} cy=${cy} bbox=${bw}x${bh}mm area=${areaMm2}mm² perim≈${perimEst}mm compact=${compacidad} inertia=${inertia} aspect=${aspect} corners=${corners} pts=${pts} geo_hint=${geoHint}`;
       }).join('\n');
 
-      const labelPrompt = `Eres un experto digitalizador de bordados. Analiza la imagen con MÁXIMO detalle.
+      const labelPrompt = `Eres un experto digitalizador de bordados con 20 años de experiencia en Wilcom y Hatch. Analiza la imagen adjunta con máximo detalle.
 
-Tengo ${Math.min(clientRegions.length, 200)} regiones detectadas píxel a píxel:
+DISEÑO: ${w}mm × ${h}mm | ${Math.min(clientRegions.length, 200)} regiones detectadas geométricamente
+
+REGIONES (geo_hint = sugerencia geométrica del vectorizador, puedes confirmar o corregir según lo que VES):
 ${regionDescriptions}
 
-Para CADA región asigna (en orden 0, 1, 2...):
-- name: nombre descriptivo. PRESTA ESPECIAL ATENCIÓN a detalles pequeños: ojos, nariz, boca, pupilas, reflejos, manchas. Si la cobertura es < 0.5%, probablemente es un detalle anatómico pequeño — nómbralo apropiadamente (ej: "ojo_izquierdo_pupila", "nariz_punta", "reflejo_ojo").
-- stitch_type: "satin" para detalles pequeños/medianos (< 5% cobertura) porque quedan mejor que fill. "fill" para zonas grandes. "running_stitch" solo para bordes muy finos.
-- density: 0.4-0.9 (satin detalles=0.5-0.6, fill grande=0.7-0.8, running=0.3-0.4)
-- angle: 0-180 (ángulo puntadas). Para detalles redondos como ojos usa 45 o 90.
-- layer_order: fills grandes primero (1), luego medianos (2), detalles pequeños encima (3-4)
-- underlay: true para fill/satin > 2% cobertura, false para micro-detalles
-- pull_compensation: 0.1-0.2
+REGLAS DE DIGITIZACIÓN PROFESIONAL:
+1. stitch_type:
+   - "fill" (tatami): zonas grandes >80mm², compactas. Ángulo perpendicular a la dirección visual dominante.
+   - "satin": formas medianas <80mm², elongadas (inertia>2 o aspect>1.8), contornos, letras, pétalos. MAX ancho recomendado 7mm.
+   - "running_stitch": líneas muy finas <3mm de ancho, contornos de detalle, pelo, nervios de hoja.
+   - Si geo_hint=satin pero el área es >120mm² → cambia a fill.
+   - Si geo_hint=fill pero inertia>3 → cambia a satin.
 
-CRÍTICO: NO omitas ninguna región aunque sea muy pequeña. Cada detalle cuenta.
-CRÍTICO: No cambies el stitch_type del vectorizador a menos que sea claramente incorrecto.
+2. angle: Sigue la forma visual real:
+   - Zonas redondas/circulares → 45°
+   - Rectángulos horizontales → 0°
+   - Rectángulos verticales → 90°
+   - Diagonales → 135° o 45°
+   - Satin elongado → perpendicular al eje largo
+
+3. density:
+   - fill grande: 0.35-0.45mm (densidad media — no asfixia la tela)
+   - satin detalle: 0.25-0.35mm (más denso = mejor cobertura)
+   - running: 0.3-0.4mm
+
+4. layer_order: 1=fondo más grande, 2=capas medias, 3=detalles encima, 4=micro-detalles. Fills siempre antes que satin del mismo color.
+
+5. underlay: true si area_mm² > 20 y stitch_type=fill. true si es satin y ancho > 2mm. false para micro-detalles.
+
+6. pull_compensation: 0.10 para satin fino, 0.15 para fill estándar, 0.20 para fill en lycra/elásticos.
+
+CRÍTICO: Asigna TODOS los índices 0 a ${Math.min(clientRegions.length, 200) - 1}. No omitas ninguno.
 
 Responde SOLO JSON:
-{"labels":[{"index":0,"name":"...","stitch_type":"fill","density":0.7,"angle":45,"layer_order":1,"underlay":true,"pull_compensation":0.15}],"estimated_time_min":12}`;
+{"labels":[{"index":0,"name":"nombre_descriptivo_en_español","stitch_type":"fill","density":0.4,"angle":45,"layer_order":1,"underlay":true,"pull_compensation":0.15}],"estimated_time_min":12}`;
 
       const labelResult = await base44.asServiceRole.integrations.Core.InvokeLLM({
         prompt: labelPrompt,
@@ -275,25 +300,34 @@ Responde SOLO con JSON válido (sin texto extra):
  */
 function clasificarPorGeometria(r, w = 100, h = 100) {
   const areaMm2    = (r.coverage || 0) * w * h;
-  const compacidad = r.compacidad   !== undefined ? r.compacidad   : 0.5;
+  const compacidad = r.compacidad    !== undefined ? r.compacidad    : 0.5;
   const inertia    = r.inertia_ratio !== undefined ? r.inertia_ratio : 1;
-  const aspect     = r.bbox_aspect  !== undefined ? r.bbox_aspect  : 1;
+  const aspect     = r.bbox_aspect   !== undefined ? r.bbox_aspect   : 1;
+  const corners    = r.corner_count  !== undefined ? r.corner_count  : 4;
 
-  // Very thin, elongated shapes → satin (like letters, stripes, stems)
-  if (compacidad < 0.3 && (inertia > 3 || aspect > 2.5)) return 'satin';
+  // Hairlines / very thin lines → running stitch
+  if (areaMm2 < 2.5) return 'running_stitch';
 
-  // Micro areas → running stitch (hairlines, fine details)
-  if (areaMm2 < 4) return 'running_stitch';
+  // Very thin elongated shapes → satin (outlines, stems, stripes)
+  if (compacidad < 0.25 && (inertia > 4 || aspect > 3.5)) return 'satin';
 
-  // Small-medium areas with elongation → satin
-  if (areaMm2 < 80 && (inertia > 2 || compacidad < 0.45)) return 'satin';
+  // Small micro-details with high corner count → satin (better than fill for tiny shapes)
+  if (areaMm2 < 6 && corners > 8) return 'satin';
 
-  // Large compact areas → fill
-  if (areaMm2 >= 25 && compacidad >= 0.35) return 'fill';
+  // Large areas → fill regardless of shape (satin >8mm wide is bad practice)
+  if (areaMm2 >= 120) return 'fill';
 
-  // Medium areas — use compactness to decide
-  if (compacidad >= 0.5) return 'fill';
-  return 'satin';
+  // Medium-large compact areas → fill
+  if (areaMm2 >= 40 && compacidad >= 0.4) return 'fill';
+
+  // Medium elongated → satin
+  if (areaMm2 < 80 && (inertia > 2.2 || compacidad < 0.4)) return 'satin';
+
+  // Medium compact → fill
+  if (compacidad >= 0.45) return 'fill';
+
+  // Default medium uncertain shapes → satin (looks better than fill for small shapes)
+  return areaMm2 > 50 ? 'fill' : 'satin';
 }
 
 /**
@@ -304,22 +338,32 @@ function clasificarPorGeometria(r, w = 100, h = 100) {
  *   running: ~1 stitch per 1.5mm of perimeter
  */
 function calcularStitchCount(r, type, density, w, h) {
-  const areaMm2    = (r.coverage || 0.01) * w * h;
-  // Perimeter: use normalized value scaled to design dimensions
-  const diagMm     = Math.hypot(w, h);
+  const areaMm2     = (r.coverage || 0.01) * w * h;
+  const diagMm      = Math.hypot(w, h);
   const perimeterMm = r.perimeter_norm
     ? r.perimeter_norm * diagMm
-    : (r.perimeter_mm || Math.sqrt(areaMm2) * 3.5);
+    : (r.perimeter_mm || Math.sqrt(areaMm2) * 3.8);
+
+  const dens = Math.max(0.2, density); // guard against zero/negative
 
   if (type === 'fill') {
-    // rows/mm = 1/density_mm. stitches per row ≈ stitch_length (2.5mm default)
-    // total ≈ area * (1/density) * (1/stitch_length) ≈ area * 2.5 * density_factor
-    return Math.round(areaMm2 * 2.5 * (1 / Math.max(0.25, density)));
+    // Physical formula: rows = area / (rowSpacing * avgRowLength)
+    // rowSpacing = density (mm), avgRowLength ≈ sqrt(area) * 1.1 (accounts for shape irregularity)
+    // stitchesPerRow = avgRowLength / stitch_length (2.5mm nominal)
+    const rowSpacing   = dens;
+    const avgRowLength = Math.sqrt(areaMm2) * 1.1;
+    const numRows      = avgRowLength / rowSpacing;
+    const stitchLength = 2.4; // mm nominal
+    return Math.round((areaMm2 / rowSpacing) * (1 / stitchLength));
   } else if (type === 'satin') {
-    // each satin column = 1 stitch. columns spaced ~0.4mm along perimeter direction
-    return Math.round(perimeterMm * 2 * (areaMm2 / Math.max(1, perimeterMm)));
+    // Satin: columns perpendicular to shape axis, spaced by density along axis
+    // estimatedWidth = area / perimeterMm * 2 (mean width of satin column)
+    const meanWidth    = areaMm2 / Math.max(1, perimeterMm / 2);
+    const numColumns   = perimeterMm / (2 * dens); // columns along the path
+    // Each column = 2 stitches (one each side of centre)
+    return Math.round(numColumns * 2 * Math.max(1, meanWidth / 2));
   } else {
-    // running: 1 stitch every 1.5mm
-    return Math.round(perimeterMm / 1.5);
+    // Running: 1 stitch every 1.8mm (standard 40wt thread)
+    return Math.round(perimeterMm / 1.8);
   }
 }
