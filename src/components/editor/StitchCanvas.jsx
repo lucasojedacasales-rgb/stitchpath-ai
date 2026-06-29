@@ -68,9 +68,14 @@ function drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCac
   const { stitches } = cached;
   if (!stitches.length) return;
 
+  // Row spacing in design px — line width equals it so adjacent rows abut and the
+  // fill reads as solid instead of a sparse wireframe of separate parallel lines.
+  const pxPerMm = drawW / 100;
+  const rowSpacingPx = Math.max(1.5, densityMm * pxPerMm);
+
   ctx.globalAlpha = alpha * 0.92;
   ctx.strokeStyle = color;
-  ctx.lineWidth = Math.max(0.8, 1.5 / zoom);
+  ctx.lineWidth = Math.max(0.8, rowSpacingPx / zoom);
   ctx.lineCap = 'round';
 
   ctx.beginPath();
