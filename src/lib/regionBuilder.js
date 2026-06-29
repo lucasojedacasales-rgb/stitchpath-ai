@@ -412,7 +412,11 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
   const stitch_count    = (region.stitch_count > 0) ? region.stitch_count : estimateStitchCount({ ...region, stitch_type: stitchType, area_mm2, perimeter_mm }, density);
   const estimatedTime   = estimateTime(stitch_count);
   const estimatedThread = estimateThread(stitch_count);
-  const priority        = region.priority ?? computePriority({ area_mm2 }, stitchType);
+  // Respect priority already set by backend (hybridDigitize layer_order mapping).
+  // Only compute from area when no priority is provided.
+  const priority        = (region.priority != null && region.priority > 0)
+    ? region.priority
+    : computePriority({ area_mm2 }, stitchType);
 
   // ── Calidad ──
   const { quality_score, quality_issues } = computeQuality(
@@ -465,11 +469,12 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
 export function enrichAllRegions(regions, designWidthMm = 100, designHeightMm = 100, fabricType = 'Algodón') {
   const enriched = regions.map(r => enrichRegion(r, regions, designWidthMm, designHeightMm, fabricType));
 
-  // Greedy travel order: mayor prioridad primero, dentro del mismo nivel → más cercano
+  // Greedy travel order: menor prioridad primero (capas base/fondo), mayor prioridad al final (detalles encima).
+  // This ensures fills are drawn before satin outlines, and satin before running_stitch details.
   const ordered = [];
   const visited = new Set();
   let cx = 0.5, cy = 0.5;
-  const pool = [...enriched].sort((a, b) => (b.priority || 1) - (a.priority || 1));
+  const pool = [...enriched].sort((a, b) => (a.priority || 1) - (b.priority || 1));
 
   while (ordered.length < pool.length) {
     const topPrio = pool.find(r => !visited.has(r.id))?.priority || 1;

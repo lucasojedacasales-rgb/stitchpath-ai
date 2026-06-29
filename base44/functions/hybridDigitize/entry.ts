@@ -138,6 +138,9 @@ Responde SOLO JSON:
           density: regionDensity,
           angle,
           layer_order: label.layer_order || (stitch_type === 'fill' ? 1 : stitch_type === 'satin' ? 2 : 3),
+          // Map layer_order → priority so regionBuilder preserves embroidery build order:
+          // layer 1 (bottom) = priority 1, layer 10 (top/details) = priority 10
+          priority: label.layer_order ? label.layer_order : (stitch_type === 'fill' ? 2 : stitch_type === 'satin' ? 5 : 8),
           pull_compensation: label.pull_compensation || 0.15,
           underlay: useUnderlay,
           area_mm2: Math.round(r.coverage * w * h),

@@ -146,10 +146,10 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
         if (!aContour && bContour) return -1;
         // Use travelOrder if both have it (most accurate — computed by enrichAllRegions)
         if (a.travelOrder != null && b.travelOrder != null) return a.travelOrder - b.travelOrder;
-        // Fall back to priority (higher priority = drawn first = lower layer)
-        const pa = a.priority ?? (a.stitch_type === 'fill' ? 5 : 3);
-        const pb = b.priority ?? (b.stitch_type === 'fill' ? 5 : 3);
-        return pb - pa; // higher priority drawn first
+        // Fall back to priority: lower priority = drawn first (bottom layer), higher = drawn last (on top)
+        const pa = a.priority ?? (a.stitch_type === 'fill' ? 2 : a.stitch_type === 'satin' ? 5 : 8);
+        const pb = b.priority ?? (b.stitch_type === 'fill' ? 2 : b.stitch_type === 'satin' ? 5 : 8);
+        return pa - pb; // lower priority drawn first (background), higher priority drawn last (details on top)
       });
 
     // pxPerMm based on actual design size in mm
