@@ -10,6 +10,21 @@ const STATUS_COLORS = {
   exported: 'text-cyan-400 bg-cyan-900/30',
 };
 
+// Thumbnail with graceful fallback: if the uploaded image URL expired or is
+// unreachable, show a placeholder instead of the browser's broken-image icon.
+function ProjectThumb({ url, name }) {
+  const [errored, setErrored] = useState(false);
+  if (!url || errored) return <Folder className="w-10 h-10 text-[#2a2d3a]" />;
+  return (
+    <img
+      src={url}
+      alt={name}
+      onError={() => setErrored(true)}
+      className="w-full h-full object-contain"
+    />
+  );
+}
+
 export default function Dashboard() {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -111,11 +126,7 @@ export default function Dashboard() {
               >
                 {/* Thumbnail */}
                 <div className="aspect-video bg-[#1a1a2e] flex items-center justify-center relative overflow-hidden stitch-canvas-grid">
-                  {project.image_url ? (
-                    <img src={project.image_url} alt={project.name} className="w-full h-full object-contain" />
-                  ) : (
-                    <Folder className="w-10 h-10 text-[#2a2d3a]" />
-                  )}
+                  <ProjectThumb url={project.image_url} name={project.name} />
                   <div className="absolute top-2 right-2">
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${STATUS_COLORS[project.status] || STATUS_COLORS.draft}`}>
                       {project.status || 'draft'}
