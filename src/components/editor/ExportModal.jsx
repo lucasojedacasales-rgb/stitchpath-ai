@@ -13,6 +13,7 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
   const [speed, setSpeed] = useState(800);
   const [cuts, setCuts] = useState(0);
   const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState(null);
 
   const config = project?.config || {};
   const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
@@ -21,11 +22,15 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
   const widthMm  = config.width_mm  || 100;
   const heightMm = config.height_mm || 100;
 
-  // Count critical issues for CTA label
-  const hasErrors = regions.some(r => (r.density || 0) > 2.0);
+  // Critical issues: density out of safe embroidery range (0.25–0.65mm) or missing geometry
+  const hasErrors = regions.some(r =>
+    (r.density != null && (r.density < 0.25 || r.density > 0.65)) ||
+    !r.path_points || r.path_points.length < 3
+  );
 
   const handleExport = async () => {
     setExporting(true);
+    setExportError(null);
     try {
       const res = await base44.functions.invoke('generateEmbroideryFile', {
         regions,
@@ -38,6 +43,7 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
         project_name: project?.name || 'design'
       });
       const { file_base64, file_name } = res.data;
+      if (!file_base64) throw new Error('El servidor no devolvió un archivo válido');
       const byteStr = atob(file_base64);
       const bytes = new Uint8Array(byteStr.length);
       for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
@@ -49,6 +55,7 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
       onClose();
     } catch (e) {
       console.error(e);
+      setExportError(e.message || 'Error al exportar el diseño');
     } finally {
       setExporting(false);
     }
@@ -180,12 +187,19 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
               <button onClick={() => setStep('preflight')} className="px-4 py-2.5 rounded-lg border border-[#2a2d3a] text-slate-400 text-sm hover:text-white transition-colors">
                 ← Atrás
               </button>
-              <button onClick={handleExport} disabled={exporting}
-                className="flex-1 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-sm font-bold transition-colors flex items-center justify-center gap-2">
-                {exporting
-                  ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>
-                  : <><Download className="w-4 h-4" /> Confirmar y exportar</>}
-              </button>
+              <div className="flex-1 space-y-2">
+                {exportError && (
+                  <div className="text-[11px] text-red-400 bg-red-900/20 border border-red-500/30 rounded-lg px-3 py-2">
+                    {exportError}
+                  </div>
+                )}
+                <button onClick={handleExport} disabled={exporting}
+                  className="w-full py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-sm font-bold transition-colors flex items-center justify-center gap-2">
+                  {exporting
+                    ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>
+                    : <><Download className="w-4 h-4" /> Confirmar y exportar</>}
+                </button>
+              </div>
             </>
           )}
         </div>

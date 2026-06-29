@@ -33,8 +33,12 @@ export default function Dashboard() {
   };
 
   const createProject = async () => {
-    const p = await base44.entities.Project.create({ name: 'Nuevo diseño', step: 1, status: 'draft' });
-    navigate(`/editor/${p.id}`);
+    try {
+      const p = await base44.entities.Project.create({ name: 'Nuevo diseño', step: 1, status: 'draft' });
+      navigate(`/editor/${p.id}`);
+    } catch (e) {
+      console.error('createProject:', e);
+    }
   };
 
   const deleteProject = async (e, id) => {

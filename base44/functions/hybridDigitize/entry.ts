@@ -1,11 +1,36 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
-// Fetch image and re-upload via Base44 UploadFile so Claude Vision can access it
+// Fetch image and re-upload via Base44 UploadFile so Claude Vision can access it.
+// SSRF guard: reject non-HTTP(S) protocols and private/loopback addresses.
 async function reuploadForClaude(imageUrl, base44) {
-  const res = await fetch(imageUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  let url: URL;
+  try {
+    url = new URL(imageUrl);
+  } catch {
+    throw new Error('image_url is not a valid URL');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('image_url must be http or https');
+  }
+  // Block obvious internal addresses (SSRF mitigation)
+  const host = url.hostname.toLowerCase();
+  if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' ||
+      host.startsWith('10.') || host.startsWith('172.') || host.startsWith('192.168.') ||
+      host.endsWith('.local') || host.endsWith('.internal')) {
+    throw new Error('image_url must be a publicly accessible URL');
+  }
+
+  const res = await fetch(url.href, { headers: { 'User-Agent': 'Mozilla/5.0' } });
   if (!res.ok) throw new Error(`HTTP ${res.status} fetching image`);
   const contentType = res.headers.get('content-type') || 'image/png';
+  if (!contentType.startsWith('image/')) {
+    throw new Error(`Expected image content-type, got ${contentType}`);
+  }
   const buffer = await res.arrayBuffer();
+  // Guard: reject files > 25MB (avoid memory exhaustion)
+  if (buffer.byteLength > 25 * 1024 * 1024) {
+    throw new Error('Image exceeds 25MB limit');
+  }
   const ext = contentType.includes('png') ? 'png' : contentType.includes('gif') ? 'gif' : contentType.includes('webp') ? 'webp' : 'jpg';
   const file = new File([buffer], `image.${ext}`, { type: contentType });
   const uploaded = await base44.asServiceRole.integrations.Core.UploadFile({ file });

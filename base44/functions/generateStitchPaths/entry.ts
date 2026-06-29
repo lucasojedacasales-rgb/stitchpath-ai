@@ -153,7 +153,7 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('Stitch generation error:', error);
-    return Response.json({ error: error.message, stack: error.stack }, { status: 500 });
+    return Response.json({ error: error.message }, { status: 500 });
   }
 });
 
@@ -621,11 +621,12 @@ function twoOptImprove(paths) {
 // TIE-ON / TIE-OFF  (anclajes de hilo — estándar pyembroidery / ink-stitch)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Adds 3 short back-stitches at the start of a path to lock the thread.
+// Adds short back-stitches at the start of a path to lock the thread.
 // Standard tie-on: 3 tiny stitches near the first point (±0.3mm each).
 function addTieOn(points) {
-  if (points.length === 0) return points;
+  if (!points || points.length === 0) return points || [];
   const [x0, y0] = points[0];
+  if (x0 == null || y0 == null) return points; // guard: invalid first point
   const tieOff = 0.3; // mm — sub-fabric lock stitch
   return [
     [x0 + tieOff, y0],
@@ -636,10 +637,11 @@ function addTieOn(points) {
   ];
 }
 
-// Adds 3 short back-stitches at the end to lock off the thread.
+// Adds short back-stitches at the end to lock off the thread.
 function addTieOff(points) {
-  if (points.length === 0) return points;
+  if (!points || points.length === 0) return points || [];
   const [xN, yN] = points[points.length - 1];
+  if (xN == null || yN == null) return points; // guard: invalid last point
   const tieOff = 0.3;
   return [
     ...points,

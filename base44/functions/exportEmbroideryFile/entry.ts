@@ -70,7 +70,8 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    return Response.json({ error: error.message, stack: error.stack }, { status: 500 });
+    console.error('Export error:', error);
+    return Response.json({ error: error.message }, { status: 500 });
   }
 });
 

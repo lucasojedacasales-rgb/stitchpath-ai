@@ -92,6 +92,7 @@ export async function runStages(ctx, stageIds, opts = {}) {
     } catch (err) {
       logStage(ctx, stage.id, performance.now() - t0, false);
       console.error(`[Pipeline] Stage "${stage.id}" failed:`, err);
+      ctx.stageLog[ctx.stageLog.length - 1].error = err.message;
     }
   }
 

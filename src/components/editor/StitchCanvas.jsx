@@ -44,8 +44,6 @@ function drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCac
     const { stitches, totalStitches } = generateTatamiFill(polygon, densityMm, 2.5, angleDeg, pxPerMm);
     cached = { stitches, totalStitches, drawW, drawH, angleDeg, densityMm };
     stitchCache.set(cacheKey, cached);
-    // Surface real stitch count back onto the region object for the panel
-    region._computed_stitches = totalStitches;
   }
 
   const { stitches } = cached;
@@ -470,7 +468,7 @@ export default function StitchCanvas({
                 tooltip.region.stitch_type === 'fill' ? 'badge-fill' :
                 tooltip.region.stitch_type === 'satin' ? 'badge-satin' : 'badge-run'
               }`}>{tooltip.region.stitch_type}</span>
-              <span>{(tooltip.region._computed_stitches || tooltip.region.stitch_count || 0).toLocaleString()} ptos</span>
+              <span>{(stitchCache.current.get(tooltip.region.id)?.totalStitches || tooltip.region.stitch_count || 0).toLocaleString()} ptos</span>
             </div>
           </div>
         )}

@@ -85,10 +85,18 @@ function loadImageSource(source) {
     }
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('No se pudo cargar la imagen'));
+    let objectUrl = null;
+    img.onload = () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl); // prevent blob URL leak
+      resolve(img);
+    };
+    img.onerror = () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      reject(new Error('No se pudo cargar la imagen'));
+    };
     if (source instanceof File) {
-      img.src = URL.createObjectURL(source);
+      objectUrl = URL.createObjectURL(source);
+      img.src = objectUrl;
     } else if (typeof source === 'string') {
       img.src = source;
     } else if (source instanceof HTMLImageElement) {

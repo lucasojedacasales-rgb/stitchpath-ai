@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Save, Download, Zap, ChevronRight, ArrowLeft } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
@@ -82,7 +82,10 @@ export default function Editor() {
   const [showDecisionPanel, setShowDecisionPanel] = useState(false);
   // ═════════════════════════════
 
-  useEffect(() => {if (id) loadProject();}, [id]);
+  useEffect(() => {if (id) loadProject();}, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cleanup: clear processing timer on unmount to prevent memory leak / stale setState
+  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
 
   const loadProject = async () => {
     setLoading(true);
@@ -93,20 +96,39 @@ export default function Editor() {
       setRegions(p.regions || []);
       setImageUrl(p.image_url || null);
       setStep(p.step || 1);
-    } catch (e) {navigate('/');} finally
-    {setLoading(false);}
+    } catch (e) {navigate('/');}
+    finally {setLoading(false);}
   };
 
   const saveProject = async (overrides = {}) => {
     if (!project) return;
     setSaving(true);
     try {
-      const updated = await base44.entities.Project.update(project.id, {
-        config, regions, image_url: imageUrl, step,
-        total_stitches: regions.reduce((s, r) => s + (r.stitch_count || 0), 0),
-        color_count: new Set(regions.map((r) => r.color)).size,
-        ...overrides
+      // Read latest state via functional updates to avoid stale closures
+      const payload = await new Promise((resolve) => {
+        setRegions(currentRegions => {
+          setConfig(currentConfig => {
+            setStep(currentStep => {
+              setImageUrl(currentImage => {
+                resolve({
+                  config: currentConfig,
+                  regions: currentRegions,
+                  image_url: currentImage,
+                  step: currentStep,
+                  total_stitches: currentRegions.reduce((s, r) => s + (r.stitch_count || 0), 0),
+                  color_count: new Set(currentRegions.map((r) => r.color)).size,
+                  ...overrides,
+                });
+                return currentImage;
+              });
+              return currentStep;
+            });
+            return currentConfig;
+          });
+          return currentRegions;
+        });
       });
+      const updated = await base44.entities.Project.update(project.id, payload);
       setProject(updated);
     } finally {setSaving(false);}
   };
@@ -125,6 +147,8 @@ export default function Editor() {
         setShowDecisionPanel(true);
         await analyze(file);
       }
+    } catch (err) {
+      console.error('[handleImageUpload]', err);
     } finally {setUploadingImage(false);}
   };
 
@@ -137,7 +161,6 @@ export default function Editor() {
 
     try {
       const ctx = await runPipeline(imageUrl, config, {
-        onProgress: (pct) => setProcessingElapsed((s) => s), // timer drives UI
         initialCtx: aiStrategy ? { aiStrategy } : {},
       });
 
@@ -189,12 +212,16 @@ export default function Editor() {
     } finally {setApplyingMask(false);}
   };
 
-  const handleRegionClick = (regionId) => setSelectedRegionId(regionId);
-  const handleRegionsUpdate = (updated) => setRegions(updated);
-  const handleRename = async (name) => {if (!project || !name.trim()) return;const updated = await base44.entities.Project.update(id, { name: name.trim() });setProject(updated);};
+  const handleRegionClick = useCallback((regionId) => setSelectedRegionId(regionId), []);
+  const handleRegionsUpdate = useCallback((updated) => setRegions(updated), []);
+  const handleRename = useCallback(async (name) => {
+    if (!project || !name.trim()) return;
+    const updated = await base44.entities.Project.update(id, { name: name.trim() });
+    setProject(updated);
+  }, [project, id]);
 
-  const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
-  const colorsUsed = new Set(regions.map((r) => r.color)).size;
+  const totalStitches = useMemo(() => regions.reduce((s, r) => s + (r.stitch_count || 0), 0), [regions]);
+  const colorsUsed = useMemo(() => new Set(regions.map((r) => r.color)).size, [regions]);
 
   if (loading) return <div className="min-h-screen bg-[#0d0f14] flex items-center justify-center"><div className="w-8 h-8 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" /></div>;
 
