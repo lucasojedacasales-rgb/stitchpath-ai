@@ -26,6 +26,9 @@ const DEFAULTS = {
   gapCloseThreshold:  8.0,    // px — auto-close gaps smaller than this
   minAreaPx:          120,    // px² — minimum blob area (raised from 48: filters JPEG noise blobs)
   maxBgCoverage:      0.40,   // fraction — blob touching all 4 borders + covering >40% = background → drop
+  // Stability knobs
+  kmeansMaxSamples:   200000, // cap on pixels fed to k-means (subsample above this) — prevents UI hangs on large images
+  imageLoadTimeoutMs: 30000,  // abort image fetch after this — surfaces load failures instead of hanging forever
 };
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -37,22 +40,24 @@ const DEFAULTS = {
 export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
   const cfg = { ...DEFAULTS, ...options };
 
-  const img = await loadImage(imageUrl);
-  const scale = Math.min(cfg.analysisSize / img.width, cfg.analysisSize / img.height);
-  const W = Math.round(img.width * scale);
-  const H = Math.round(img.height * scale);
+  // Load pixels with CORS fallback + timeout: a tainted canvas (remote image
+  // without CORS headers) makes getImageData throw and the whole pipeline reject.
+  // We retry without crossOrigin as a last resort; if both fail we reject so the
+  // caller surfaces a clear error instead of hanging.
+  const { pixels, W, H, srcWidth, srcHeight } = await loadImageData(imageUrl, cfg);
 
-  const canvas = document.createElement('canvas');
-  canvas.width = W; canvas.height = H;
-  const cx = canvas.getContext('2d');
-  cx.drawImage(img, 0, 0, W, H);
-  const { data: pixels } = cx.getImageData(0, 0, W, H);
-
-  // 1. K-means++ quantization
-  const samples = [];
+  // 1. K-means++ quantization — cap sample count so large images don't hang
+  // the UI (a uniform subsample preserves color distribution quality).
+  let samples = [];
   for (let i = 0; i < W * H; i++) {
     if (pixels[i * 4 + 3] < 128) continue;
     samples.push([pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]]);
+  }
+  if (samples.length > cfg.kmeansMaxSamples) {
+    const stride = Math.ceil(samples.length / cfg.kmeansMaxSamples);
+    const capped = [];
+    for (let i = 0; i < samples.length; i += stride) capped.push(samples[i]);
+    samples = capped;
   }
   const k = Math.min(maxColors, Math.max(1, samples.length));
   const palette = kMeansPP(samples, k, 24);
@@ -97,6 +102,13 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
 
       // 8. Remove short segments
       pts = removeShortSegments(pts, cfg.minSegmentPx);
+      if (pts.length < 3) continue;
+
+      // 8b. Deduplicate consecutive identical points — mooreTrace can push the
+      // same pixel twice on thin shapes; zero-length segments break the fill
+      // engine and leave open contours. Also drops a trailing copy of the first
+      // point so the explicit closure below produces a clean closed polygon.
+      pts = dedupConsecutive(pts);
       if (pts.length < 3) continue;
 
       // 9. Cubic Bézier handles for smooth sections
@@ -159,7 +171,7 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
   // Sort largest first
   regions.sort((a, b) => b.pixelCount - a.pixelCount);
 
-  return { regions, imageWidth: img.width, imageHeight: img.height, analysisW: W, analysisH: H };
+  return { regions, imageWidth: srcWidth, imageHeight: srcHeight, analysisW: W, analysisH: H };
 }
 
 // ─── Step 4: Sub-pixel refinement ────────────────────────────────────────────
@@ -320,6 +332,23 @@ function removeShortSegments(pts, minPx) {
   return result.length >= 3 ? result : pts;
 }
 
+// Remove consecutive duplicate points. Also drops a trailing point identical to
+// the first so the explicit closure step produces a clean closed polygon
+// (no zero-length closing edge).
+function dedupConsecutive(pts) {
+  if (pts.length < 2) return pts;
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const p = out[out.length - 1];
+    if (pts[i][0] !== p[0] || pts[i][1] !== p[1]) out.push(pts[i]);
+  }
+  if (out.length > 1) {
+    const f = out[0], l = out[out.length - 1];
+    if (f[0] === l[0] && f[1] === l[1]) out.pop();
+  }
+  return out;
+}
+
 // ─── Step 9: Cubic Bézier handles ─────────────────────────────────────────────
 
 /**
@@ -386,6 +415,19 @@ function autoCloseGaps(regions, maxGapNorm) {
 
 // ─── Moore-neighbor contour tracer ────────────────────────────────────────────
 
+// Moore-neighbor boundary tracing with Jacob's stopping criterion.
+//
+// Why the old version left contours open: it stopped as soon as the trace
+// returned to the start PIXEL, regardless of the entering direction. On shapes
+// where the boundary passes through the start pixel more than once (very
+// common for thin bridges and notches), this terminated early and produced a
+// half-drawn, unclosed polygon. The fill engine then closed it with a straight
+// chord across the gap, visibly distorting the region.
+//
+// Jacob's criterion stops only when we return to the start pixel AND the
+// backtrack direction matches the one we had when first leaving it — i.e. we
+// completed the full loop. A hard step cap prevents runaway loops on
+// pathological masks.
 function mooreTrace(mask, W, H) {
   let start = -1;
   for (let i = 0; i < mask.length; i++) {
@@ -393,25 +435,48 @@ function mooreTrace(mask, W, H) {
   }
   if (start === -1) return [];
 
+  // 8 directions, clockwise: E, SE, S, SW, W, NW, N, NE
   const dirs = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
   const contour = [];
   let cx = start % W, cy = Math.floor(start / W);
   const sx = cx, sy = cy;
-  let dir = 0;
 
-  for (let step = 0; step < W * H; step++) {
+  // The start pixel is the leftmost pixel of the topmost blob row, so we
+  // "entered" it from the west. Backtrack direction = west = index 4.
+  let back = 4;
+  const startBack = 4;
+  let movedAway = false;
+
+  const maxSteps = W * H * 2;
+  for (let step = 0; step < maxSteps; step++) {
     contour.push([cx, cy]);
-    let moved = false;
-    for (let d = 0; d < 8; d++) {
-      const nd = (dir + 6 + d) % 8;
-      const nx = cx + dirs[nd][0], ny = cy + dirs[nd][1];
+
+    // Scan clockwise starting one step past the backtrack direction.
+    let found = false;
+    for (let k = 1; k <= 8; k++) {
+      const d = (back + k) % 8;
+      const nx = cx + dirs[d][0], ny = cy + dirs[d][1];
       if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
       if (mask[ny * W + nx]) {
-        dir = nd; cx = nx; cy = ny; moved = true; break;
+        // New backtrack = direction pointing back to the current pixel from the
+        // new one, i.e. opposite of d.
+        back = (d + 4) % 8;
+        cx = nx; cy = ny;
+        movedAway = true;
+        found = true;
+        break;
       }
     }
-    if (!moved) break;
-    if (step > 3 && cx === sx && cy === sy) break;
+    if (!found) break; // isolated single-pixel blob
+
+    // Jacob stopping criterion: back at start with the original entering dir.
+    if (movedAway && cx === sx && cy === sy && back === startBack) break;
+  }
+
+  // Guarantee a closed polygon regardless of how tracing ended.
+  if (contour.length > 1) {
+    const f = contour[0], l = contour[contour.length - 1];
+    if (f[0] !== l[0] || f[1] !== l[1]) contour.push([f[0], f[1]]);
   }
   return contour;
 }
@@ -559,12 +624,83 @@ function rgbToHex([r, g, b]) {
   return '#' + [r, g, b].map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
 }
 
-function loadImage(url) {
+// Loads an image with a timeout so a stalled/failed fetch rejects promptly
+// instead of hanging the whole pipeline (the #1 cause of "contours fail to load").
+function loadImage(url, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      img.src = '';
+      reject(new Error('Image load timed out'));
+    }, timeoutMs);
     img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = reject;
+    img.onload = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(img); };
+    img.onerror = () => { if (settled) return; settled = true; clearTimeout(timer); reject(new Error('Image load error')); };
+    img.src = url;
+  });
+}
+
+// Loads image pixels into an ImageData, with a CORS fallback. If reading pixels
+// from a CORS-anonymous canvas throws (tainted canvas — server sends no
+// Access-Control-Allow-Origin), we retry without crossOrigin. That still works
+// for same-origin/blob/data URLs; for truly cross-origin non-CORS images pixel
+// reading is impossible, so we surface a clear error instead of a silent hang.
+async function loadImageData(url, cfg) {
+  let img;
+  try {
+    img = await loadImage(url, cfg.imageLoadTimeoutMs);
+  } catch (e) {
+    // Retry once without crossOrigin (covers same-origin/blob/data URLs that
+    // some proxies mishandle when crossOrigin is set).
+    img = await loadImageNoCors(url, cfg.imageLoadTimeoutMs);
+  }
+
+  const s = Math.min(cfg.analysisSize / img.width, cfg.analysisSize / img.height);
+  const W = Math.max(1, Math.round(img.width * s));
+  const H = Math.max(1, Math.round(img.height * s));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const cx = canvas.getContext('2d');
+  cx.drawImage(img, 0, 0, W, H);
+
+  try {
+    const { data: pixels } = cx.getImageData(0, 0, W, H);
+    return { pixels, W, H, srcWidth: img.width, srcHeight: img.height };
+  } catch (e) {
+    // Tainted canvas — retry without crossOrigin (for blob/data/same-origin URLs).
+    if (img.crossOrigin) {
+      const img2 = await loadImageNoCors(url, cfg.imageLoadTimeoutMs);
+      const c2 = document.createElement('canvas');
+      c2.width = W; c2.height = H;
+      const cx2 = c2.getContext('2d');
+      cx2.drawImage(img2, 0, 0, W, H);
+      try {
+        const { data: pixels } = cx2.getImageData(0, 0, W, H);
+        return { pixels, W, H, srcWidth: img2.width, srcHeight: img2.height };
+      } catch (e2) {
+        throw new Error('Cannot read image pixels (CORS-restricted): ' + url);
+      }
+    }
+    throw new Error('Cannot read image pixels: ' + e.message);
+  }
+}
+
+function loadImageNoCors(url, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      img.src = '';
+      reject(new Error('Image load timed out'));
+    }, timeoutMs);
+    img.onload = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(img); };
+    img.onerror = () => { if (settled) return; settled = true; clearTimeout(timer); reject(new Error('Image load error')); };
     img.src = url;
   });
 }
