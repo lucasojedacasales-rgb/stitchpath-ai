@@ -26,8 +26,18 @@ export async function runContourEngine(ctx) {
   const sourceUrl  = ctx.enhanced?.enhancedUrl || ctx.imageUrl;
   const colorCount = strategy.vectorizer?.color_count || ctx.config.color_count || 8;
 
-  // Fast mode still runs — using lower-quality preset instead of skipping
-  const modeOpts = MODE_OPTIONS[strategy.id] || MODE_OPTIONS.hybrid;
+  const modeOpts = { ...(MODE_OPTIONS[strategy.id] || MODE_OPTIONS.hybrid) };
+
+  // Adaptive RDP epsilon: denser edges → tighter epsilon to preserve detail.
+  // edgeDensityMap is a 2D grid of Sobel density [0,1]. Compute the mean.
+  if (ctx.analysis?.edgeDensityMap) {
+    const grid = ctx.analysis.edgeDensityMap;
+    const flatMean = grid.flat().reduce((s, v) => s + v, 0) / (grid.length * grid[0].length);
+    // High edge density (complex image) → tighten epsilon by up to 40%
+    // Low edge density (simple image) → relax epsilon by up to 20%
+    const edgeFactor = 1.0 - (flatMean - 0.3) * 0.8; // 0.3 = neutral threshold
+    modeOpts.rdpBaseEpsilon = +(modeOpts.rdpBaseEpsilon * Math.max(0.55, Math.min(1.25, edgeFactor))).toFixed(3);
+  }
 
   ctx.contours = await traceContoursProf(sourceUrl, colorCount, modeOpts);
 }

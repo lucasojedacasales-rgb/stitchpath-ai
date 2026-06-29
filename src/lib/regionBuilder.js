@@ -311,7 +311,7 @@ function computeQuality(region, stitchType, skeletonMetrics, convexity, complexi
 /**
  * Enriquece una única región con todas las métricas y recomendaciones.
  */
-export function enrichRegion(region, allRegions = [], designWidthMm = 100, designHeightMm = 100, fabricType = 'Algodón') {
+export function enrichRegion(region, allRegions = [], designWidthMm = 100, designHeightMm = 100, fabricType = 'Algodón', useAdaptive = true) {
   const pts = region.path_points || [];
   if (pts.length < 3) return region;
 
@@ -331,6 +331,34 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
   const skeletonMetrics = computeSkeletonMetrics(scaled, orientation);
 
   // ── Adaptive Engine — all parameters derived from geometry ──────────────────
+  // Skip when useAdaptive=false (fast mode) and the region already has a stitch_type
+  if (!useAdaptive && region.stitch_type) {
+    const originalColor = region.color || region.hex || '#888888';
+    const threadRec = recommendThread(originalColor);
+    const stitch_count = region.stitch_count || estimateStitchCount(
+      { stitch_type: region.stitch_type, area_mm2, perimeter_mm },
+      region.density || 0.4
+    );
+    return {
+      ...region,
+      area_mm2, perimeter_mm, orientation, convexity, concavity,
+      skeleton_length_mm: skeletonMetrics.skeleton_length_mm,
+      mean_width_mm: skeletonMetrics.mean_width_mm,
+      max_width_mm: skeletonMetrics.max_width_mm,
+      min_width_mm: skeletonMetrics.min_width_mm,
+      mean_curvature, holes, complexity,
+      color: originalColor,
+      recommended_thread: threadRec,
+      stitch_count,
+      estimatedTime: estimateTime(stitch_count),
+      estimatedThread: estimateThread(stitch_count),
+      priority: region.priority || 1,
+      quality_score: 70,
+      quality_issues: [],
+      adaptive: false,
+    };
+  }
+
   const geoMetrics = {
     area_mm2,
     perimeter_mm,
@@ -418,8 +446,8 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
 /**
  * Enriquece todas las regiones y asigna travelOrder (secuencia greedy por prioridad + proximidad).
  */
-export function enrichAllRegions(regions, designWidthMm = 100, designHeightMm = 100, fabricType = 'Algodón') {
-  const enriched = regions.map(r => enrichRegion(r, regions, designWidthMm, designHeightMm, fabricType));
+export function enrichAllRegions(regions, designWidthMm = 100, designHeightMm = 100, fabricType = 'Algodón', useAdaptive = true) {
+  const enriched = regions.map(r => enrichRegion(r, regions, designWidthMm, designHeightMm, fabricType, useAdaptive));
 
   // Greedy travel order: menor prioridad primero (capas base/fondo), mayor prioridad al final (detalles encima).
   // This ensures fills are drawn before satin outlines, and satin before running_stitch details.

@@ -5,12 +5,18 @@
  */
 
 import { enrichAllRegions } from '../../regionBuilder.js';
+import { getModeStrategy } from '../../digitizeModes.js';
 
 export async function runRegionBuilder(ctx) {
   if (!ctx.vectorRegions || ctx.vectorRegions.length === 0) {
     ctx.regions = [];
     return;
   }
+
+  const strategy = getModeStrategy(ctx.config.mode || 'hybrid');
+  // Fast mode skips the Adaptive Engine to keep processing time low.
+  // All other modes use it for geometry-driven parameter resolution.
+  ctx._useAdaptiveEngine = strategy.stitchStrategy?.useAdaptiveEngine !== false;
 
   const { width_mm = 100, height_mm = 100, fabric_type = 'Algodón' } = ctx.config;
 
@@ -31,12 +37,14 @@ export async function runRegionBuilder(ctx) {
         object:         sem.label,
         object_group:   sem.object_group,
         geometry:       sem.geometry,
-        complexity:     sem.complexity,
-        curvature:      sem.curvature,
-        orientation:    sem.orientation,
-        stitch_type:    sem.stitch_type,
+        // complexity/curvature from semantic are LLM estimates — only use if we don't have computed values
+        complexity:     r.complexity || sem.complexity,
+        curvature:      r.curvature  || sem.curvature,
+        // orientation from LLM is unreliable — let Adaptive Engine compute from PCA
+        stitch_type:    sem.stitch_type,   // LLM has visual context we don't — respect it
         stitch_notes:   sem.stitch_notes,
         priority:       Math.max(sem.priority || 1, r.priority || r.layer_order || 1),
+        // DO NOT spread sem.orientation — PCA from contourTracer is more accurate
       } : {}),
       // Restore color after semantic spread (belt-and-suspenders guard)
       color: originalColor,
@@ -44,7 +52,7 @@ export async function runRegionBuilder(ctx) {
     };
   });
 
-  ctx.regions = enrichAllRegions(named, width_mm, height_mm, fabric_type);
+  ctx.regions = enrichAllRegions(named, width_mm, height_mm, fabric_type, ctx._useAdaptiveEngine);
 }
 
 // ─── Semantic matching ────────────────────────────────────────────────────────

@@ -44,53 +44,60 @@ const LAYER_ORDER = {
 };
 
 // ─── Clasificador de región ───────────────────────────────────────────────────
+// When the Adaptive Engine has already processed the region (region.adaptive === true),
+// we trust its stitch_type, fill_angle, density, stitch_length_mm, and priority directly.
+// This function is only called as a fallback for regions that bypassed the engine.
 
 function classifyRegion(region) {
+  // Adaptive Engine result — use it directly, no re-classification
+  if (region.adaptive) {
+    return {
+      type:       region.stitch_type,
+      reason:     region.stitch_rationale || 'Adaptive Engine classification.',
+      confidence: region.stitch_confidence || 0.90,
+    };
+  }
+
   const area    = region.area_mm2    || 0;
   const perim   = region.perimeter_mm || 1;
-  const compactness = (perim * perim) / Math.max(area, 0.1); // 4π para círculo ≈ 12.6
+  const compactness = (perim * perim) / Math.max(area, 0.1);
   const avgWidth = area / perim;
   const color   = (region.color || '').toLowerCase();
   const name    = (region.name  || '').toLowerCase();
 
-  // Contornos explícitos
   if (name.includes('contour') || color === '#000000' || color === '#1a1a1a') {
     return { type: 'running_stitch', reason: 'Contorno detectado — pespunte perimetral', confidence: 0.95 };
   }
-
-  // Formas muy delgadas → satin
   if (avgWidth < 4 && area < 150) {
     return { type: 'satin', reason: `Forma estrecha (ancho medio ${avgWidth.toFixed(1)} mm) — satén columnar`, confidence: 0.88 };
   }
-
-  // Áreas muy pequeñas → running
   if (area < 8) {
     return { type: 'running_stitch', reason: 'Área mínima — pespunte simple', confidence: 0.85 };
   }
-
-  // Áreas grandes y compactas → fill
   if (area >= STITCH_RULES.fill.minAreaMm2 && compactness < 60) {
     return { type: 'fill', reason: `Zona amplia (${area.toFixed(0)} mm², compacidad ${compactness.toFixed(0)}) — relleno Tatami`, confidence: 0.92 };
   }
-
-  // Áreas medianas con alta esbeltez → satin
   if (area < 200 && avgWidth < 8) {
     return { type: 'satin', reason: `Forma de grosor medio (${avgWidth.toFixed(1)} mm) — satén`, confidence: 0.80 };
   }
-
-  // Default: fill
   return { type: 'fill', reason: `Forma genérica — relleno Tatami por defecto`, confidence: 0.70 };
 }
 
-// ─── Cálculo de ángulo óptimo por PCA ────────────────────────────────────────
+// ─── Ángulo óptimo ────────────────────────────────────────────────────────────
+// Prefer fill_angle from the Adaptive Engine / contourTracer (PCA already computed).
+// Only recompute PCA here as a last resort for regions without it.
 
-function computeOptimalAngle(pathPoints) {
-  if (!pathPoints || pathPoints.length < 3) return 45;
-  const n = pathPoints.length;
-  const cx = pathPoints.reduce((s, p) => s + p[0], 0) / n;
-  const cy = pathPoints.reduce((s, p) => s + p[1], 0) / n;
+function resolveAngle(region) {
+  // Adaptive Engine or contourTracer already computed this — respect it
+  if (region.fill_angle != null) return region.fill_angle;
+  if (region.angle      != null) return region.angle;
+  if (!region.path_points || region.path_points.length < 3) return 45;
+  const pts = region.path_points;
+  const n = pts.length;
+  const cx = pts.reduce((s, p) => s + p[0], 0) / n;
+  const cy = pts.reduce((s, p) => s + p[1], 0) / n;
   let sxx = 0, sxy = 0, syy = 0;
-  for (const [x, y] of pathPoints) {
+  for (const [x, y] of pts) {
     const dx = x - cx, dy = y - cy;
     sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
   }
@@ -253,24 +260,43 @@ export function generateStitchPlan(regions, config = {}) {
   const { width_mm = 100, height_mm = 100, fabric_type = 'Algodón' } = config;
 
   // 1. Clasificar y enriquecer cada región
+  // When region.adaptive === true, the Adaptive Engine has already resolved
+  // stitch_type, fill_angle, density, stitch_length_mm, pull_compensation, and underlay.
+  // We consume those values directly and skip redundant re-computation.
   const regionPlans = regions
     .filter(r => r.path_points?.length >= 3)
     .map(region => {
       const classification = classifyRegion(region);
-      const angle   = computeOptimalAngle(region.path_points);
-      const underlay = recommendUnderlay(region, classification.type);
 
-      // Estimar puntadas
-      const area  = region.area_mm2  || 0;
+      // Angle: trust Adaptive Engine / contourTracer PCA, fallback to recompute
+      const angle = resolveAngle(region);
+
+      // Underlay: trust Adaptive Engine's recommended_underlay when available
+      const underlay = region.recommended_underlay?.enabled
+        ? region.recommended_underlay
+        : recommendUnderlay(region, classification.type);
+
+      // Density: use adaptive value, fallback to stitch rule default
+      const density = region.density
+        || STITCH_RULES[classification.type]?.typicalDensityMm
+        || 0.4;
+
+      // Stitch length: use adaptive value, fallback to sensible default per type
+      const stitchLenMm = region.stitch_length_mm
+        || (classification.type === 'satin' ? region.mean_width_mm || 3.0 : 3.0);
+
+      // Estimate stitches using canonical formula (matches hybridDigitize)
+      const area  = region.area_mm2     || 0;
       const perim = region.perimeter_mm || 1;
-      let estimatedStitches = 0;
-      if (classification.type === 'fill') {
-        estimatedStitches = Math.round(area * 6.25); // ~2.5 pts/mm² a 0.4mm
-      } else if (classification.type === 'satin') {
-        const w = Math.max(1, area / perim);
-        estimatedStitches = Math.round(perim / 2.5 * (w / 0.5));
-      } else {
-        estimatedStitches = Math.round(perim / 1.5);
+      let estimatedStitches = region.stitch_count || 0;
+      if (!estimatedStitches) {
+        if (classification.type === 'fill') {
+          estimatedStitches = Math.round(area * 2.5 * (1 / Math.max(0.25, density)));
+        } else if (classification.type === 'satin') {
+          estimatedStitches = Math.round(perim * 2 * (area / Math.max(1, perim)));
+        } else {
+          estimatedStitches = Math.round(perim / 1.5);
+        }
       }
 
       return {
@@ -282,9 +308,13 @@ export function generateStitchPlan(regions, config = {}) {
         reason:            classification.reason,
         confidence:        classification.confidence,
         optimalAngle:      angle,
+        density,
+        stitchLenMm,
+        pullCompensation:  region.pull_compensation || 0,
         underlay,
         estimatedStitches,
         layerOrder:        LAYER_ORDER[classification.type] || 0,
+        adaptive:          region.adaptive || false,
       };
     });
 

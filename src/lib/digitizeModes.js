@@ -47,10 +47,11 @@ export const DIGITIZE_MODES = {
 
     // Stitch strategy
     stitchStrategy: {
-      preferFillOverSatin: true,  // fills are faster to compute
+      preferFillOverSatin: true,
       underlayEnabled: false,
       adaptiveAngles: false,
       travelOptimize: false,
+      useAdaptiveEngine: false,   // fast mode: skip engine for speed
     },
 
     badge: null,
@@ -99,6 +100,7 @@ export const DIGITIZE_MODES = {
       underlayEnabled: true,
       adaptiveAngles: false,
       travelOptimize: false,
+      useAdaptiveEngine: true,
     },
 
     badge: null,
@@ -145,8 +147,9 @@ export const DIGITIZE_MODES = {
     stitchStrategy: {
       preferFillOverSatin: false,
       underlayEnabled: true,
-      adaptiveAngles: true,      // PCA angle per region
+      adaptiveAngles: true,
       travelOptimize: true,
+      useAdaptiveEngine: true,
     },
 
     badge: null,
@@ -195,6 +198,7 @@ export const DIGITIZE_MODES = {
       underlayEnabled: true,
       adaptiveAngles: true,
       travelOptimize: false,
+      useAdaptiveEngine: true,
     },
 
     badge: 'Recomendado',
@@ -242,9 +246,10 @@ export const DIGITIZE_MODES = {
       preferFillOverSatin: false,
       underlayEnabled: true,
       adaptiveAngles: true,
-      travelOptimize: true,      // full TSP optimization
-      bezierFitting: true,       // smooth curves
+      travelOptimize: true,
+      bezierFitting: true,
       subpixelRefine: true,
+      useAdaptiveEngine: true,
     },
 
     badge: 'Ultra',

@@ -217,11 +217,11 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
 
       if (effectiveType === 'fill') {
         // Obtener o generar puntadas Tatami
-        const density  = region.tatami_density || region.density_mm || 0.38;
+        const density  = region.density || region.tatami_density || region.density_mm || 0.38;
         const angle    = region.fill_angle ?? region.angle ?? region.orientation ?? 45;
-        // Stitch length: 3.0mm is professional standard for fill
-        const stitchLenMm = region.stitch_length_mm || 3.0;
-        const cacheKey = `${region.id}_${drawW.toFixed(0)}_${drawH.toFixed(0)}_${angle}_${density.toFixed(2)}_${stitchLenMm}_${region.color}`;
+        // stitch_length_mm is set by the Adaptive Engine per-region; no fixed fallback
+        const stitchLenMm = region.stitch_length_mm ?? 3.0;
+        const cacheKey = `${region.id}_${drawW.toFixed(0)}_${drawH.toFixed(0)}_${angle}_${density.toFixed(3)}_${stitchLenMm}_${region.color}`;
         let cached = stitchCacheRef.current.get(cacheKey);
         if (!cached) {
           const polygon = pts.map(p => [(p[0] - 0.5) * drawW, (p[1] - 0.5) * drawH]);
