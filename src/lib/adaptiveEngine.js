@@ -92,40 +92,49 @@ export function adaptStitchType(geo) {
 
 /**
  * Computes row/column spacing in mm.
- * Physical minimum = thread diameter (full coverage).
- * Scales with complexity, shape regularity and stitch type.
  *
- * Returns density in mm (lower → denser, more stitches).
+ * Fill ranges   : 0.3 (dense/badges) → 0.4–0.5 (standard) → 0.6+ (light fabrics)
+ * Satin ranges  : 0.3 (dense/elevated) → 0.4 (standard) → 0.5 (light)
+ * Running stitch: not applicable (returns 0)
+ *
+ * Returns density in mm (lower → denser).
  */
-export function adaptDensity(geo, stitchType) {
+export function adaptDensity(geo, stitchType, fabricType = 'Algodón') {
   const { area_mm2, mean_width_mm, complexity, convexity, mean_curvature } = geo;
 
-  if (stitchType === 'running_stitch') return 0; // not applicable
+  if (stitchType === 'running_stitch') return 0;
 
   if (stitchType === 'satin') {
-    // Satin spacing = thread diameter × coverage factor
-    // Wider satin columns need slightly looser spacing to avoid puckering
-    const widthFactor = mean_width_mm > 5 ? 1.10 : 1.0;
-    return +(THREAD_D_SATIN * 0.92 * widthFactor).toFixed(3); // ~0.32–0.35
+    // Standard satin: 0.4mm. Dense (narrow/elevated): 0.3mm. Light (wide): 0.5mm.
+    let d = 0.40;
+    if (mean_width_mm < 3)  d = 0.30; // dense — small elevated column
+    if (mean_width_mm > 6)  d = 0.50; // light — wide satin risks separation
+    // Stretch fabrics need denser satin to compensate distortion
+    if (fabricType === 'Lycra' || fabricType === 'Mezcla') d = Math.min(d, 0.35);
+    return +d.toFixed(2);
   }
 
-  // Fill — base density from thread diameter, modified by shape signals
-  let d = THREAD_D_FILL * 1.05; // ~0.40mm base
+  // Fill — 0.4mm standard base
+  let d = 0.40;
 
-  // Denser for complex shapes (more overlap needed to cover irregular edges)
-  d -= complexity.score * 0.08;
+  // Dense fill for small/detail regions (badges, patches effect)
+  if (area_mm2 < 30)  d = 0.32;
+  else if (area_mm2 < 80) d = 0.36;
 
-  // Denser for concave/jagged shapes (better edge coverage)
-  d -= (1 - convexity) * 0.05;
+  // Complex / highly curved shapes need more coverage
+  d -= complexity.score * 0.06;
+  d -= (1 - convexity) * 0.04;
+  d -= Math.min(0.04, mean_curvature * 0.03);
 
-  // Denser for high-curvature contours
-  d -= Math.min(0.05, mean_curvature * 0.04);
-
-  // Looser for large simple shapes (avoid over-stitching flat areas)
-  if (area_mm2 > 300 && complexity.level === 'simple') d += 0.05;
+  // Light fill for large simple areas on fine fabrics
+  if (area_mm2 > 300 && complexity.level === 'simple') d += 0.06;
   if (area_mm2 > 600 && complexity.level === 'simple') d += 0.04;
+  if (fabricType === 'Seda' || fabricType === 'Lino')  d = Math.max(d, 0.50); // light on delicate fabrics
 
-  return +Math.max(THREAD_D_FILL, Math.min(0.55, d)).toFixed(3);
+  // Dense for stretch fabrics (must lock threads tightly)
+  if (fabricType === 'Lycra') d = Math.min(d, 0.32);
+
+  return +Math.max(0.28, Math.min(0.65, d)).toFixed(3);
 }
 
 
@@ -184,22 +193,28 @@ export function adaptStitchLength(geo, stitchType) {
 export function adaptCompensation(geo, stitchType, fabricType = 'Algodón') {
   if (stitchType === 'running_stitch') return 0;
 
-  const { mean_width_mm, area_mm2, complexity } = geo;
+  const { mean_width_mm, area_mm2, skeleton_length_mm, complexity } = geo;
   const ff = FABRIC_PULL[fabricType] || 0.28;
 
-  let comp = ff;
+  let comp = 0;
 
   if (stitchType === 'satin') {
-    // Satin pulls more due to dense parallel columns
-    comp *= 1.25;
-    // Wider satin = more pull
-    if (mean_width_mm > 5) comp += 0.05;
+    // Pull compensation formula: +0.15mm @ 2mm width, +0.30mm @ 7mm width
+    // Interpolated linearly; scaled by fabric elasticity factor
+    const widthBase = 0.15 + ((mean_width_mm - 2) / 5) * 0.15; // 0.15–0.30 across 2–7mm
+    comp = Math.max(0.10, widthBase) * (1 + ff);
+    // Denim: minimal compensation (low stretch)
+    if (fabricType === 'Denim') comp *= 0.6;
+    // Lycra/stretch: maximum compensation
+    if (fabricType === 'Lycra' || fabricType === 'Mezcla') comp *= 1.4;
   } else {
-    // Fill: larger areas accumulate more pull
-    if (area_mm2 > 200) comp += 0.06;
-    if (area_mm2 > 500) comp += 0.05;
-    // Complex shapes distort more
-    comp += complexity.score * 0.08;
+    // Fill: base from fabric, scaled by area and complexity
+    comp = ff * 0.8; // fills distort less than satin
+    if (area_mm2 > 200) comp += 0.05;
+    if (area_mm2 > 500) comp += 0.04;
+    comp += complexity.score * 0.06;
+    // Push compensation for long satin-like fill columns
+    if (skeleton_length_mm > 20) comp -= 0.03; // shorten long columns slightly
   }
 
   return +Math.max(0, Math.min(0.60, comp)).toFixed(3);
@@ -214,51 +229,63 @@ export function adaptCompensation(geo, stitchType, fabricType = 'Algodón') {
  *
  * Returns { enabled, type, density_mm, angle_deg, rationale }
  */
-export function adaptUnderlay(geo, stitchType) {
-  const { area_mm2, mean_width_mm, skeleton_length_mm, complexity, convexity } = geo;
+export function adaptUnderlay(geo, stitchType, fabricType = 'Algodón') {
+  const { area_mm2, mean_width_mm, complexity } = geo;
 
   if (stitchType === 'running_stitch') {
     return { enabled: false, type: null, density_mm: 0, angle_deg: 0,
       rationale: 'Running stitch no requiere underlay.' };
   }
 
+  // Pile fabrics (fleece-like) need full coverage underlay regardless of size
+  const isPileFabric = fabricType === 'Otro'; // proxy for terry/fleece until fabric types expand
+
   if (stitchType === 'satin') {
     if (mean_width_mm < 2.5) {
-      // Very thin satin — single run underlay
-      return { enabled: true, type: 'single_run', density_mm: 0, angle_deg: 0,
-        rationale: `Satin estrecho (${mean_width_mm.toFixed(1)}mm): underlay run perimetral.` };
+      // Thin satin: centre walk — 1 central line prevents sinking
+      return { enabled: true, type: 'centre_walk', density_mm: 0, angle_deg: 0,
+        rationale: `Satin estrecho (${mean_width_mm.toFixed(1)}mm): centre walk central.` };
     }
     if (mean_width_mm > 5) {
-      // Wide satin — zigzag center underlay for stability
-      const d = +(mean_width_mm * 0.25).toFixed(2);
-      return { enabled: true, type: 'zigzag_center', density_mm: d, angle_deg: 90,
-        rationale: `Satin ancho (${mean_width_mm.toFixed(1)}mm): underlay zigzag central, densidad ${d}mm.` };
+      // Wide satin: zigzag underlay for lateral stability
+      const d = +(mean_width_mm * 0.22).toFixed(2);
+      return { enabled: true, type: 'zigzag', density_mm: d, angle_deg: 90,
+        rationale: `Satin ancho (${mean_width_mm.toFixed(1)}mm): zigzag underlay, densidad ${d}mm.` };
     }
-    return { enabled: true, type: 'single_run', density_mm: 0, angle_deg: 0,
-      rationale: `Satin ${mean_width_mm.toFixed(1)}mm: underlay run perimetral estándar.` };
+    // Standard satin: centre walk
+    return { enabled: true, type: 'centre_walk', density_mm: 0, angle_deg: 0,
+      rationale: `Satin ${mean_width_mm.toFixed(1)}mm: centre walk estándar.` };
   }
 
   // Fill underlay
   if (area_mm2 < 12) {
     return { enabled: false, type: null, density_mm: 0, angle_deg: 0,
-      rationale: 'Fill micro (<12mm²): underlay omitido, evita abultamiento.' };
+      rationale: 'Fill micro (<12mm²): underlay omitido.' };
   }
 
+  // Pile/texture fabrics: full coverage underlay to flatten nap
+  if (isPileFabric && area_mm2 > 30) {
+    const d = +(THREAD_D_FILL * 1.8).toFixed(2);
+    return { enabled: true, type: 'full_coverage', density_mm: d, angle_deg: 45,
+      rationale: `Tejido de pelo: full coverage underlay, densidad ${d}mm.` };
+  }
+
+  // Large or complex fills: zigzag underlay (flattens fabric, perpendicular to fill)
   if (area_mm2 > 120 || (complexity.level === 'alta' && area_mm2 > 40)) {
-    // Large or complex fills: grid underlay at 90° to main fill direction
     const d = +(THREAD_D_FILL * 2.5).toFixed(2);
-    return { enabled: true, type: 'grid_90deg', density_mm: d, angle_deg: 90,
-      rationale: `Fill grande/complejo (${area_mm2.toFixed(0)}mm², ${complexity.level}): underlay cuadrícula 90°, densidad ${d}mm.` };
+    return { enabled: true, type: 'zigzag', density_mm: d, angle_deg: 90,
+      rationale: `Fill grande/complejo (${area_mm2.toFixed(0)}mm²): zigzag underlay 90°, densidad ${d}mm.` };
   }
 
+  // Medium fills: edge walk (complements pull compensation around perimeter)
   if (area_mm2 > 30) {
-    const d = +(THREAD_D_FILL * 2.0).toFixed(2);
-    return { enabled: true, type: 'single_run', density_mm: d, angle_deg: 45,
-      rationale: `Fill mediano (${area_mm2.toFixed(0)}mm²): underlay perimetral diagonal, densidad ${d}mm.` };
+    return { enabled: true, type: 'edge_walk', density_mm: 0, angle_deg: 0,
+      rationale: `Fill mediano (${area_mm2.toFixed(0)}mm²): edge walk perimetral.` };
   }
 
+  // Small fills: edge walk minimal
   return { enabled: true, type: 'edge_walk', density_mm: 0, angle_deg: 0,
-    rationale: 'Fill pequeño: underlay edge-walk perimetral mínimo.' };
+    rationale: 'Fill pequeño: edge walk mínimo.' };
 }
 
 
@@ -371,7 +398,7 @@ export function adaptRegion(geo, overrides = {}, fabricType = 'Algodón') {
   // --- Density ---
   const density = overrides.density != null
     ? overrides.density
-    : adaptDensity(geo, stitch_type);
+    : adaptDensity(geo, stitch_type, fabricType);
 
   // --- Stitch length ---
   const stitch_length_mm = adaptStitchLength(geo, stitch_type);
@@ -382,7 +409,7 @@ export function adaptRegion(geo, overrides = {}, fabricType = 'Algodón') {
     : adaptCompensation(geo, stitch_type, fabricType);
 
   // --- Underlay ---
-  const underlay = adaptUnderlay(geo, stitch_type);
+  const underlay = adaptUnderlay(geo, stitch_type, fabricType);
 
   // --- Direction ---
   const fill_angle = overrides.angle != null
