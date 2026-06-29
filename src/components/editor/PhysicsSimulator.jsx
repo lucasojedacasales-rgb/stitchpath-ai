@@ -183,7 +183,7 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
         const angle    = region.fill_angle ?? region.angle ?? region.orientation ?? 45;
         // Stitch length: 3.0mm is professional standard for fill
         const stitchLenMm = region.stitch_length_mm || 3.0;
-        const cacheKey = `${region.id}_${drawW.toFixed(0)}_${drawH.toFixed(0)}_${angle}_${density.toFixed(2)}_${stitchLenMm}_${pts.length}`;
+        const cacheKey = `${region.id}_${drawW.toFixed(0)}_${drawH.toFixed(0)}_${angle}_${density.toFixed(2)}_${stitchLenMm}`;
         let cached = stitchCacheRef.current.get(cacheKey);
         if (!cached) {
           const polygon = pts.map(p => [(p[0] - 0.5) * drawW, (p[1] - 0.5) * drawH]);
