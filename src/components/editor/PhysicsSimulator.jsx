@@ -221,11 +221,13 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
       const color = region.color || '#ffffff';
       // Stale stored regions: solid dark fill reclassified to running_stitch by
       // an older regionBuilder → restore to fill so it renders as a solid area.
+      // Trust the engine's stitch_type — the Adaptive Engine / regionBuilder already
+      // reclassifies thin dark outlines to running_stitch at enrichment time, so the
+      // renderer must NOT override an explicit fill/satin into a dashed outline
+      // (that was turning every fill into a faint dashed skeleton).
       const isStaleDarkFill = region.stitch_type === 'running_stitch' &&
         isContourColor(region.color) && !isThinOutline(region);
-      const effectiveType = isContourRegion(region)
-        ? 'running_stitch'
-        : (isStaleDarkFill ? 'fill' : region.stitch_type);
+      const effectiveType = isStaleDarkFill ? 'fill' : (region.stitch_type || 'fill');
       const layerDepth = Math.min(layerIdx / sorted.length * 2, 1.5);
 
       const regionParams = { ...baseParams, layerDepth, stitchType: effectiveType };

@@ -203,11 +203,13 @@ export default function StitchCanvas({
       // Stale stored regions: a solid dark fill may have been reclassified to
       // running_stitch by an older regionBuilder. Restore it to fill so it
       // renders as a solid area instead of empty dashes (missing details).
+      // Trust the engine's stitch_type — the Adaptive Engine / regionBuilder already
+      // reclassifies thin dark outlines to running_stitch at enrichment time, so the
+      // renderer must NOT override an explicit fill/satin into a dashed outline
+      // (that was turning every fill into a faint dashed skeleton).
       const isStaleDarkFill = region.stitch_type === 'running_stitch' &&
         isContourColor(region.color) && !isThinOutline(region);
-      const effectiveType = isContourRegion(region)
-        ? 'running_stitch'
-        : (isStaleDarkFill ? 'fill' : region.stitch_type);
+      const effectiveType = isStaleDarkFill ? 'fill' : (region.stitch_type || 'fill');
 
       if (effectiveType === 'fill' && !showFill) continue;
       if ((effectiveType === 'running_stitch' || effectiveType === 'satin') && !showContour) continue;
