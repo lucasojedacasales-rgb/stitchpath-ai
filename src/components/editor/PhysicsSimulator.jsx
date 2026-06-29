@@ -30,10 +30,19 @@ function isContourColor(hex) {
   return (0.299 * r + 0.587 * g + 0.114 * b) < 30;
 }
 
+function isThinOutline(region) {
+  if (region.mean_width_mm > 0 && region.mean_width_mm < 2.5) return true;
+  if (region.area_mm2 && region.perimeter_mm) {
+    return (region.area_mm2 / (region.perimeter_mm * region.perimeter_mm)) < 0.05;
+  }
+  return false;
+}
+
 function isContourRegion(region) {
   if (!region) return false;
   if ((region.name || '').toLowerCase().includes('contour_')) return true;
-  return isContourColor(region.color);
+  // Thin shapes are outlines; solid dark fills stay as fill.
+  return isThinOutline(region);
 }
 
 function getDrawSize(imageEl, W, H) {
@@ -210,7 +219,13 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
       const region = sorted[layerIdx];
       const pts = region.path_points;
       const color = region.color || '#ffffff';
-      const effectiveType = isContourRegion(region) ? 'running_stitch' : region.stitch_type;
+      // Stale stored regions: solid dark fill reclassified to running_stitch by
+      // an older regionBuilder → restore to fill so it renders as a solid area.
+      const isStaleDarkFill = region.stitch_type === 'running_stitch' &&
+        isContourColor(region.color) && !isThinOutline(region);
+      const effectiveType = isContourRegion(region)
+        ? 'running_stitch'
+        : (isStaleDarkFill ? 'fill' : region.stitch_type);
       const layerDepth = Math.min(layerIdx / sorted.length * 2, 1.5);
 
       const regionParams = { ...baseParams, layerDepth, stitchType: effectiveType };

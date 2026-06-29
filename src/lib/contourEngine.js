@@ -424,11 +424,14 @@ function mooreTrace(mask, W, H) {
  * outline merges with the dark background into one frame-spanning mega-blob.
  */
 function isBackgroundBlob(blob, W, H, maxCoverage) {
+  const coverage = blob.pixelCount / (W * H);
+  // Any single blob covering >55% of the frame is background, regardless of
+  // border contact (a hoop-filling color is never a real design region).
+  if (coverage > 0.55) return true;
   const touchesAllBorders =
     blob.bbox.minX <= 1 && blob.bbox.maxX >= W - 2 &&
     blob.bbox.minY <= 1 && blob.bbox.maxY >= H - 2;
-  if (!touchesAllBorders) return false;
-  return (blob.pixelCount / (W * H)) > maxCoverage;
+  return touchesAllBorders && coverage > maxCoverage;
 }
 
 function findBlobs(labels, W, H, colorIdx, minPixels) {

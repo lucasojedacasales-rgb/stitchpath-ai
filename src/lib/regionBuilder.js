@@ -349,10 +349,12 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
   if (!useAdaptive && region.stitch_type) {
     const originalColor = region.color || region.hex || '#888888';
     const threadRec = recommendThread(originalColor);
-    // Near-black fills are outlines — reclassify to running stitch.
-    const effectiveStitchType = (isNearBlackColor(originalColor) && region.stitch_type === 'fill')
-      ? 'running_stitch'
-      : region.stitch_type;
+    // Near-black THIN fills are outlines — reclassify to running stitch.
+    // Solid dark fills (Mickey's head) stay as fill.
+    const meanWidth = skeletonMetrics.mean_width_mm || 0;
+    const isThinDark = isNearBlackColor(originalColor) && region.stitch_type === 'fill'
+      && meanWidth > 0 && meanWidth < 2.5;
+    const effectiveStitchType = isThinDark ? 'running_stitch' : region.stitch_type;
     const stitch_count = region.stitch_count || estimateStitchCount(
       { stitch_type: effectiveStitchType, area_mm2, perimeter_mm },
       region.density || 0.4
@@ -403,13 +405,16 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
 
   const adapted = adaptRegion(geoMetrics, overrides, fabricType);
 
-  // Near-black regions are outlines/contours — reclassify a dark fill as running
-  // stitch so it renders and exports as a dashed outline instead of an opaque
-  // black fill that covers the entire design.
+  // Near-black THIN regions are outlines → running stitch. But solid dark fills
+  // (Mickey's head, Yoshi's body) must stay as fill — reclassifying them makes
+  // them render as empty dashed lines and the design looks missing.
   if (isNearBlackColor(region.color || region.hex || '#888888') && adapted.stitch_type === 'fill') {
-    adapted.stitch_type = 'running_stitch';
-    adapted.stitch_rationale = 'Contorno oscuro reclasificado a running stitch (color near-black).';
-    adapted.underlay = { enabled: false, type: 'none' };
+    const meanWidth = skeletonMetrics.mean_width_mm || 0;
+    if (meanWidth > 0 && meanWidth < 2.5) {
+      adapted.stitch_type = 'running_stitch';
+      adapted.stitch_rationale = 'Contorno oscuro fino reclasificado a running stitch.';
+      adapted.underlay = { enabled: false, type: 'none' };
+    }
   }
 
   const threadRec = recommendThread(region.color || '#888888');

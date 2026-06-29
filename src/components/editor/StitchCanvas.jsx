@@ -16,16 +16,22 @@ function isContourColor(hex) {
   return (0.299 * r + 0.587 * g + 0.114 * b) < 30;
 }
 
+// A thin outline: narrow mean width, or low area-to-perimeter² ratio (ring/line).
+// Used to classify contours by GEOMETRY, not color — solid dark fills (Mickey's
+// head, Yoshi's body) are NOT thin, so they stay as fill and render correctly.
+function isThinOutline(region) {
+  if (region.mean_width_mm > 0 && region.mean_width_mm < 2.5) return true;
+  if (region.area_mm2 && region.perimeter_mm) {
+    return (region.area_mm2 / (region.perimeter_mm * region.perimeter_mm)) < 0.05;
+  }
+  return false;
+}
+
 function isContourRegion(region) {
   if (!region) return false;
   if ((region.name || '').toLowerCase().includes('contour_')) return true;
-  if (isContourColor(region.color)) return true;
-  if (region.area_mm2 && region.perimeter_mm) {
-    const ratio = region.area_mm2 / (region.perimeter_mm * region.perimeter_mm);
-    if (ratio < 0.05) return true;
-  }
-  if (Array.isArray(region.neighbors) && region.neighbors.length >= 3) return true;
-  return false;
+  // Thin shapes (narrow width or low area-to-perimeter²) are outlines.
+  return isThinOutline(region);
 }
 
 function getDrawSize(imageEl, W, H) {
@@ -194,7 +200,14 @@ export default function StitchCanvas({
       const pts = region.path_points;
       if (!pts || pts.length < 3) continue;
 
-      const effectiveType = isContourRegion(region) ? 'running_stitch' : region.stitch_type;
+      // Stale stored regions: a solid dark fill may have been reclassified to
+      // running_stitch by an older regionBuilder. Restore it to fill so it
+      // renders as a solid area instead of empty dashes (missing details).
+      const isStaleDarkFill = region.stitch_type === 'running_stitch' &&
+        isContourColor(region.color) && !isThinOutline(region);
+      const effectiveType = isContourRegion(region)
+        ? 'running_stitch'
+        : (isStaleDarkFill ? 'fill' : region.stitch_type);
 
       if (effectiveType === 'fill' && !showFill) continue;
       if ((effectiveType === 'running_stitch' || effectiveType === 'satin') && !showContour) continue;
