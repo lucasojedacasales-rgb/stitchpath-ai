@@ -1,19 +1,23 @@
 import { useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle, XCircle, Zap, RefreshCw, Clock, DollarSign, Palette, Maximize2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle, XCircle, Zap, RefreshCw, Clock, DollarSign, Palette, Maximize2, ChevronDown, ChevronRight, Scissors, Layers, Activity } from 'lucide-react';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const MAX_DENSITY    = 2.0;   // pts/mm — needle break risk
-const MAX_STITCH_MM  = 12.1;  // mm — machine limit
-const MAX_JUMP_MM    = 12.1;  // mm — will become trim
-const OVERLAP_THRESH = 0.10;  // 10% bounding-box overlap
-const SPOOL_METERS   = 1000;  // metres per standard spool
-const COST_PER_SPOOL = 5.0;   // USD
-const STAB_COST_M2   = 4.0;   // USD per m²
-const MACHINE_SPM    = 800;
-const EFFICIENCY     = 0.70;
-const COLOR_CHANGE_S = 30;
+const MAX_DENSITY      = 2.0;   // pts/mm — needle break risk
+const MIN_DENSITY      = 0.25;  // pts/mm — too loose
+const MAX_STITCH_MM    = 12.1;  // mm — machine limit
+const OVERLAP_THRESH   = 0.10;  // 10% bounding-box overlap
+const SPOOL_METERS     = 1000;  // metres per standard spool
+const COST_PER_SPOOL   = 5.0;   // USD
+const STAB_COST_M2     = 4.0;   // USD per m²
+const MACHINE_SPM      = 800;
+const EFFICIENCY       = 0.70;
+const COLOR_CHANGE_S   = 30;
+const MIN_AREA_MM2     = 3;     // below this: likely lost detail
+const SATIN_MAX_MM     = 8;     // max satin width before fill is better
+const MIN_STITCHES     = 10;    // region too sparse
+const MAX_JUMP_MM      = 15;    // long jump → trim command
 
-// ── Thread color names DB (small) ─────────────────────────────────────────────
+// ── Thread color names DB ─────────────────────────────────────────────────────
 const COLOR_NAMES = [
   { name: 'Negro',    hex: '#000000', code: 'BLK-001' },
   { name: 'Blanco',   hex: '#ffffff', code: 'WHT-002' },
@@ -59,61 +63,107 @@ function bboxOverlap(a, b) {
   return ox * oy;
 }
 
+// ── Score helpers ─────────────────────────────────────────────────────────────
+function computeReadinessScore(issues, warnings, infos, regions) {
+  if (!regions?.length) return 0;
+  let score = 100;
+  score -= issues.length * 20;
+  score -= warnings.length * 8;
+  score -= infos.filter(i => i.demerit).length * 2;
+  return Math.max(0, Math.min(100, score));
+}
+
 // ── Checks ────────────────────────────────────────────────────────────────────
 function runChecks(regions, config) {
-  const issues = [];
+  const issues   = [];
   const warnings = [];
-  const infos = [];
+  const infos    = [];
 
   const visible = (regions || []).filter(r => r.visible !== false);
+  if (!visible.length) {
+    issues.push({ id: 'no_regions', label: 'No hay regiones visibles', detail: 'Procesa la imagen primero para generar regiones de bordado.' });
+    return { issues, warnings, infos };
+  }
 
-  // 1. Density
-  const densityViolators = visible.filter(r => (r.density || 0) > MAX_DENSITY);
-  if (densityViolators.length) {
+  // 1. Density too high
+  const densityHigh = visible.filter(r => (r.density || 0) > MAX_DENSITY);
+  if (densityHigh.length) {
     issues.push({
-      id: 'density',
-      label: `Densidad excesiva (${densityViolators.length} región${densityViolators.length > 1 ? 'es' : ''})`,
-      detail: `Max ${MAX_DENSITY} pts/mm. Riesgo de rotura de aguja.`,
-      regions: densityViolators.map(r => r.name || r.id),
-      fix: 'Reducir densidad a ≤ 2.0'
+      id: 'density_high',
+      label: `Densidad excesiva (${densityHigh.length} región${densityHigh.length > 1 ? 'es' : ''})`,
+      detail: `Máximo recomendado: ${MAX_DENSITY} pts/mm. Riesgo de rotura de aguja y distorsión del tejido.`,
+      regions: densityHigh.map(r => r.name || r.id),
+      fix: 'Reducir a ≤ 2.0 pts/mm',
+      fixId: 'density_high',
     });
   }
 
-  // 2. Long stitches (estimate from region perimeter / stitch_count ratio)
-  const longStitch = visible.filter(r => {
-    if (!r.perimeter_mm || !r.stitch_count) return false;
-    const avgLen = r.perimeter_mm / Math.max(1, r.stitch_count / 10);
-    return avgLen > MAX_STITCH_MM;
-  });
-  if (longStitch.length) {
+  // 2. Density too low
+  const densityLow = visible.filter(r => (r.density || 0) > 0 && (r.density || 0) < MIN_DENSITY && r.stitch_type === 'fill');
+  if (densityLow.length) {
     warnings.push({
-      id: 'long_stitch',
-      label: `Puntadas largas estimadas (${longStitch.length} región${longStitch.length > 1 ? 'es' : ''})`,
-      detail: `Límite máquina: ${MAX_STITCH_MM}mm. Se dividirán automáticamente.`,
-      regions: longStitch.map(r => r.name || r.id),
-      fix: 'Auto-dividir puntadas largas'
+      id: 'density_low',
+      label: `Densidad muy baja (${densityLow.length} fill${densityLow.length > 1 ? 's' : ''})`,
+      detail: `Mínimo recomendado: ${MIN_DENSITY} pts/mm. Rellenos quedarán sueltos o transparentes.`,
+      regions: densityLow.map(r => r.name || r.id),
+      fix: 'Ajustar a ≥ 0.25 pts/mm',
+      fixId: 'density_low',
     });
   }
 
-  // 3. Color changes
+  // 3. Too-small regions (likely detail loss)
+  const tinyRegions = visible.filter(r => (r.area_mm2 || 0) < MIN_AREA_MM2);
+  if (tinyRegions.length) {
+    warnings.push({
+      id: 'tiny',
+      label: `${tinyRegions.length} región${tinyRegions.length > 1 ? 'es' : ''} muy pequeña${tinyRegions.length > 1 ? 's' : ''} (<${MIN_AREA_MM2}mm²)`,
+      detail: 'El detalle puede perderse en máquina. Considera eliminar o fusionar con regiones adyacentes.',
+      regions: tinyRegions.map(r => r.name || r.id),
+    });
+  }
+
+  // 4. Satin too wide
+  const satinWide = visible.filter(r => r.stitch_type === 'satin' && (r.max_width_mm || 0) > SATIN_MAX_MM);
+  if (satinWide.length) {
+    warnings.push({
+      id: 'satin_wide',
+      label: `Satin muy ancho (${satinWide.length} región${satinWide.length > 1 ? 'es' : ''})`,
+      detail: `Puntada satin >8mm causa holgura y tensión irregular. Recomendado: tatami/fill.`,
+      regions: satinWide.map(r => `${r.name || r.id} (${(r.max_width_mm||0).toFixed(1)}mm)`),
+      fix: 'Convertir a fill',
+      fixId: 'satin_wide',
+    });
+  }
+
+  // 5. Too few stitches per region
+  const sparseRegions = visible.filter(r => (r.stitch_count || 0) > 0 && (r.stitch_count || 0) < MIN_STITCHES);
+  if (sparseRegions.length) {
+    warnings.push({
+      id: 'sparse',
+      label: `${sparseRegions.length} región${sparseRegions.length > 1 ? 'es' : ''} con <${MIN_STITCHES} puntadas`,
+      detail: 'Regiones con muy pocas puntadas no se registrarán bien en máquina.',
+      regions: sparseRegions.map(r => r.name || r.id),
+    });
+  }
+
+  // 6. Color changes
   const colorOrder = visible.map(r => r.color);
   let colorChanges = 0;
-  for (let i = 1; i < colorOrder.length; i++) {
-    if (colorOrder[i] !== colorOrder[i-1]) colorChanges++;
-  }
+  for (let i = 1; i < colorOrder.length; i++) if (colorOrder[i] !== colorOrder[i-1]) colorChanges++;
   const colorChangeTime = Math.round(colorChanges * COLOR_CHANGE_S / 60);
-  if (colorChanges > 8) {
+  if (colorChanges > 10) {
     warnings.push({
       id: 'color_changes',
-      label: `${colorChanges} cambios de color`,
-      detail: `Tiempo adicional estimado: ~${colorChangeTime} min. Considera reordenar por color.`,
-      fix: 'Optimizar ruta por color'
+      label: `${colorChanges} cambios de color (+ ~${colorChangeTime} min)`,
+      detail: 'Considera reordenar regiones por color para minimizar cambios y tiempo de producción.',
+      fix: 'Optimizar por color',
+      fixId: 'color_changes',
     });
   } else {
     infos.push({ id: 'color_changes', label: `${colorChanges} cambios de color (+${colorChangeTime} min)` });
   }
 
-  // 4. Overlapping same-color regions
+  // 7. Overlapping same-color regions
   const bboxes = visible.map(r => ({ r, b: bboxOf(r.path_points) })).filter(x => x.b);
   const overlaps = [];
   for (let i = 0; i < bboxes.length; i++) {
@@ -129,43 +179,69 @@ function runChecks(regions, config) {
   if (overlaps.length) {
     warnings.push({
       id: 'overlap',
-      label: `${overlaps.length} superposición${overlaps.length > 1 ? 'es' : ''} mismo color`,
-      detail: `Regiones que se solapan > 10%. Pueden crear bultos.`,
+      label: `${overlaps.length} superposición${overlaps.length > 1 ? 'es' : ''} del mismo color`,
+      detail: 'Regiones del mismo color que se solapan >10% pueden crear bultos y exceso de hilo.',
       regions: overlaps.map(p => `${p[0]} ↔ ${p[1]}`),
     });
   }
 
-  // 5. Regions without underlay (large fills)
+  // 8. Missing underlay on large fills
   const missingUnderlay = visible.filter(r => r.stitch_type === 'fill' && (r.area_mm2 || 0) > 100 && !r.underlay);
   if (missingUnderlay.length) {
     warnings.push({
       id: 'underlay',
-      label: `Sin underlay en ${missingUnderlay.length} relleno${missingUnderlay.length > 1 ? 's' : ''} grande${missingUnderlay.length > 1 ? 's' : ''}`,
-      detail: 'Fills > 100mm² sin underlay pueden quedar flojos en tela.',
+      label: `Sin underlay: ${missingUnderlay.length} relleno${missingUnderlay.length > 1 ? 's' : ''} grande${missingUnderlay.length > 1 ? 's' : ''}`,
+      detail: 'Fills >100mm² sin underlay quedan flojos, especialmente en telas elásticas.',
       regions: missingUnderlay.map(r => r.name || r.id),
-      fix: 'Añadir underlay automático'
+      fix: 'Añadir underlay',
+      fixId: 'underlay',
     });
   }
 
-  // 6. Hoop check
+  // 9. Regions with quality issues from EIE
+  const eieIssues = visible.filter(r => r.quality_issues?.length > 0);
+  if (eieIssues.length) {
+    const totalIssues = eieIssues.reduce((s, r) => s + r.quality_issues.length, 0);
+    infos.push({
+      id: 'eie_quality',
+      label: `EIE detectó ${totalIssues} problema${totalIssues > 1 ? 's' : ''} en ${eieIssues.length} región${eieIssues.length > 1 ? 'es' : ''}`,
+      detail: eieIssues.slice(0,3).flatMap(r => r.quality_issues).join(' • '),
+      regions: eieIssues.map(r => r.name || r.id),
+      demerit: true,
+    });
+  }
+
+  // 10. Hoop check
   const w = config?.width_mm || 100, h = config?.height_mm || 100;
   if (w > 300 || h > 300) {
-    warnings.push({ id: 'hoop', label: `Diseño grande: ${w}×${h}mm`, detail: 'Puede requerir aro jumbo (>300mm).' });
+    warnings.push({ id: 'hoop', label: `Diseño grande: ${w}×${h}mm`, detail: 'Requiere aro jumbo (>300mm). Confirma compatibilidad con tu máquina.' });
   } else if (w > 200 || h > 200) {
     infos.push({ id: 'hoop', label: `Aro grande necesario (200–300mm)` });
   }
 
-  // 7. Thread estimate
+  // 11. Thread estimate
   const totalStitches = visible.reduce((s, r) => s + (r.stitch_count || 0), 0);
   const metersNeeded = totalStitches * 2.5 / 1000;
   if (metersNeeded > SPOOL_METERS * 0.8) {
     warnings.push({
       id: 'thread',
-      label: `Hilo insuficiente en 1 carrete (${metersNeeded.toFixed(0)}m estimados)`,
-      detail: `1 carrete = ${SPOOL_METERS}m. Prepara ${Math.ceil(metersNeeded / SPOOL_METERS)} carrete${metersNeeded / SPOOL_METERS > 1 ? 's' : ''}.`,
+      label: `Hilo: ${metersNeeded.toFixed(0)}m — prepara ${Math.ceil(metersNeeded / SPOOL_METERS)} carrete${metersNeeded / SPOOL_METERS > 1 ? 's' : ''}`,
+      detail: `1 carrete estándar = ${SPOOL_METERS}m.`,
     });
   } else {
     infos.push({ id: 'thread', label: `Hilo estimado: ${metersNeeded.toFixed(0)}m (< 1 carrete)` });
+  }
+
+  // 12. Low-confidence regions
+  const lowConf = visible.filter(r => r.adaptive && r.stitch_confidence != null && r.stitch_confidence < 0.55);
+  if (lowConf.length) {
+    infos.push({
+      id: 'low_conf',
+      label: `${lowConf.length} región${lowConf.length > 1 ? 'es' : ''} con baja confianza EIE (<55%)`,
+      detail: 'La decisión de tipo de puntada es incierta. Revisa manualmente o aplica el EIE de nuevo.',
+      regions: lowConf.map(r => `${r.name || r.id} (${Math.round((r.stitch_confidence||0)*100)}%)`),
+      demerit: true,
+    });
   }
 
   return { issues, warnings, infos };
@@ -182,49 +258,61 @@ function buildReport(regions, config) {
 
   const stitchSecs = totalStitches / (MACHINE_SPM * EFFICIENCY);
   const changeSecs = colorChanges * COLOR_CHANGE_S;
-  const totalMins = (stitchSecs + changeSecs) / 60;
+  const totalMins  = (stitchSecs + changeSecs) / 60;
 
   const metersNeeded = totalStitches * 2.5 / 1000 + colorChanges * 2;
-  const threadCost = (metersNeeded / SPOOL_METERS) * COST_PER_SPOOL;
+  const threadCost   = (metersNeeded / SPOOL_METERS) * COST_PER_SPOOL;
 
   const w = (config?.width_mm || 100) / 1000, h = (config?.height_mm || 100) / 1000;
-  const stabCost = w * h * STAB_COST_M2;
+  const stabCost  = w * h * STAB_COST_M2;
   const totalCost = threadCost + stabCost;
 
   const uniqueColors = [...new Set(visible.map(r => r.color))];
   const threads = uniqueColors.map(hex => ({ hex, ...closestThread(hex) }));
 
-  return { totalStitches, colorChanges, totalMins, threadCost, stabCost, totalCost, threads, metersNeeded };
+  // Per-type stitch breakdown
+  const byType = visible.reduce((acc, r) => {
+    const t = r.stitch_type || 'fill';
+    acc[t] = (acc[t] || 0) + (r.stitch_count || 0);
+    return acc;
+  }, {});
+
+  return { totalStitches, colorChanges, totalMins, threadCost, stabCost, totalCost, threads, metersNeeded, byType };
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 function IssueRow({ item, severity }) {
   const [open, setOpen] = useState(false);
-  const icon = severity === 'error'   ? <XCircle    className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
-             : severity === 'warning' ? <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
-             :                          <CheckCircle  className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />;
-  const border = severity === 'error' ? 'border-red-500/20 bg-red-950/20'
+  const hasDetail = !!(item.detail || item.regions?.length);
+  const icon = severity === 'error'   ? <XCircle       className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
+             : severity === 'warning' ? <AlertTriangle  className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
+             :                          <CheckCircle    className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />;
+  const border = severity === 'error'   ? 'border-red-500/20 bg-red-950/20'
                : severity === 'warning' ? 'border-amber-500/20 bg-amber-950/10'
                : 'border-[#1e2130] bg-[#0a0c12]';
 
   return (
     <div className={`rounded-lg border ${border} overflow-hidden`}>
-      <button onClick={() => item.detail && setOpen(o => !o)} className="w-full flex items-start gap-2 px-3 py-2 text-left">
+      <button
+        onClick={() => hasDetail && setOpen(o => !o)}
+        className="w-full flex items-start gap-2 px-3 py-2 text-left"
+      >
         {icon}
-        <div className="flex-1 min-w-0">
-          <span className={`text-[11px] font-medium ${severity === 'error' ? 'text-red-300' : severity === 'warning' ? 'text-amber-300' : 'text-slate-400'}`}>
-            {item.label}
-          </span>
-        </div>
-        {item.fix && <span className="text-[10px] text-violet-400 flex-shrink-0 hover:underline">{item.fix}</span>}
+        <span className={`flex-1 text-[11px] font-medium ${severity === 'error' ? 'text-red-300' : severity === 'warning' ? 'text-amber-300' : 'text-slate-400'}`}>
+          {item.label}
+        </span>
+        {hasDetail && (open
+          ? <ChevronDown className="w-3 h-3 text-slate-600 flex-shrink-0 mt-0.5" />
+          : <ChevronRight className="w-3 h-3 text-slate-600 flex-shrink-0 mt-0.5" />
+        )}
       </button>
-      {open && item.detail && (
-        <div className="px-3 pb-2 text-[10px] text-slate-500 border-t border-[#1e2130] pt-1.5">
-          {item.detail}
+      {open && hasDetail && (
+        <div className="px-3 pb-2.5 text-[10px] text-slate-500 border-t border-[#1e2130] pt-2 space-y-1.5">
+          {item.detail && <p>{item.detail}</p>}
           {item.regions?.length > 0 && (
-            <div className="mt-1 flex flex-wrap gap-1">
-              {item.regions.slice(0,5).map((r,i) => (
-                <span key={i} className="px-1.5 py-0.5 rounded bg-[#161a23] border border-[#2a2d3a] text-slate-500">{r}</span>
+            <div className="flex flex-wrap gap-1">
+              {item.regions.slice(0, 5).map((r, i) => (
+                <span key={i} className="px-1.5 py-0.5 rounded bg-[#161a23] border border-[#2a2d3a] text-slate-400">{r}</span>
               ))}
               {item.regions.length > 5 && <span className="text-slate-600">+{item.regions.length - 5} más</span>}
             </div>
@@ -241,27 +329,47 @@ function fmtMins(m) {
   return `${Math.floor(m/60)}h ${Math.round(m%60)}min`;
 }
 
+function ReadinessGauge({ score }) {
+  const color = score >= 85 ? '#34d399' : score >= 60 ? '#fbbf24' : '#f87171';
+  const pct   = Math.max(0, Math.min(100, score));
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <div className="relative w-16 h-16">
+        <svg viewBox="0 0 64 64" className="w-full h-full -rotate-90">
+          <circle cx="32" cy="32" r="26" fill="none" stroke="#1e2130" strokeWidth="7" />
+          <circle cx="32" cy="32" r="26" fill="none" stroke={color} strokeWidth="7"
+            strokeDasharray={`${2 * Math.PI * 26 * pct / 100} ${2 * Math.PI * 26 * (1 - pct / 100)}`}
+            strokeLinecap="round" style={{ transition: 'stroke-dasharray 0.6s ease' }} />
+        </svg>
+        <span className="absolute inset-0 flex items-center justify-center text-sm font-bold" style={{ color }}>{pct}</span>
+      </div>
+      <span className="text-[9px] text-slate-500 uppercase tracking-wider">Readiness</span>
+    </div>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function PreflightPanel({ regions, config, onAutoFix, onOptimizeRoute }) {
   const { issues, warnings, infos } = useMemo(() => runChecks(regions, config), [regions, config]);
-  const report = useMemo(() => buildReport(regions, config), [regions, config]);
+  const report  = useMemo(() => buildReport(regions, config), [regions, config]);
+  const score   = useMemo(() => computeReadinessScore(issues, warnings, infos, regions), [issues, warnings, infos, regions]);
 
-  const canExport = issues.length === 0;
+  const canExport     = issues.length === 0;
   const totalProblems = issues.length + warnings.length;
 
   const handleAutoFix = () => {
-    // Apply underlay to large fills, reduce density violations
     const fixed = (regions || []).map(r => {
-      let upd = { ...r };
+      const upd = { ...r };
       if ((r.density || 0) > MAX_DENSITY) upd.density = MAX_DENSITY;
+      if ((r.density || 0) > 0 && r.density < MIN_DENSITY && r.stitch_type === 'fill') upd.density = MIN_DENSITY;
       if (r.stitch_type === 'fill' && (r.area_mm2 || 0) > 100 && !r.underlay) upd.underlay = true;
+      if (r.stitch_type === 'satin' && (r.max_width_mm || 0) > SATIN_MAX_MM) upd.stitch_type = 'fill';
       return upd;
     });
     onAutoFix?.(fixed);
   };
 
   const handleOptimize = () => {
-    // Sort regions by color to minimize color changes
     const sorted = [...(regions || [])].sort((a, b) => {
       if (a.color < b.color) return -1;
       if (a.color > b.color) return 1;
@@ -270,40 +378,57 @@ export default function PreflightPanel({ regions, config, onAutoFix, onOptimizeR
     onOptimizeRoute?.(sorted);
   };
 
+  const visible = (regions || []).filter(r => r.visible !== false);
+
   return (
     <div className="space-y-4">
-      {/* Status banner */}
-      <div className={`flex items-center gap-3 rounded-lg px-4 py-3 border ${
+
+      {/* Status banner + gauge */}
+      <div className={`flex items-center gap-4 rounded-lg px-4 py-3 border ${
         canExport && totalProblems === 0 ? 'bg-emerald-950/30 border-emerald-500/30' :
         canExport ? 'bg-amber-950/20 border-amber-500/20' :
         'bg-red-950/20 border-red-500/20'
       }`}>
-        {canExport && totalProblems === 0
-          ? <CheckCircle className="w-5 h-5 text-emerald-400 flex-shrink-0" />
-          : canExport
-          ? <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0" />
-          : <XCircle className="w-5 h-5 text-red-400 flex-shrink-0" />}
-        <div>
+        <ReadinessGauge score={score} />
+        <div className="flex-1 min-w-0">
           <div className={`text-sm font-bold ${canExport && totalProblems === 0 ? 'text-emerald-300' : canExport ? 'text-amber-300' : 'text-red-300'}`}>
-            {canExport && totalProblems === 0 ? '¡Diseño listo para exportar!' :
+            {canExport && totalProblems === 0 ? '¡Listo para exportar!' :
              canExport ? `${warnings.length} advertencia${warnings.length > 1 ? 's' : ''} — puedes exportar` :
-             `${issues.length} error${issues.length > 1 ? 'es' : ''} crítico${issues.length > 1 ? 's' : ''} — corrige antes de exportar`}
+             `${issues.length} error${issues.length > 1 ? 'es' : ''} crítico${issues.length > 1 ? 's' : ''} — corrige primero`}
           </div>
-          <div className="text-[11px] text-slate-500">{(regions || []).filter(r => r.visible !== false).length} regiones • {report.totalStitches.toLocaleString()} puntadas</div>
+          <div className="text-[11px] text-slate-500 mt-0.5">
+            {visible.length} regiones · {report.totalStitches.toLocaleString()} puntadas · {fmtMins(report.totalMins)}
+          </div>
+          {/* Stitch type breakdown */}
+          {visible.length > 0 && (
+            <div className="flex gap-2 mt-1.5">
+              {Object.entries(report.byType).map(([type, count]) => (
+                <span key={type} className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+                  type === 'fill' ? 'bg-violet-900/30 text-violet-400 border border-violet-500/20' :
+                  type === 'satin' ? 'bg-cyan-900/20 text-cyan-400 border border-cyan-500/20' :
+                  'bg-slate-800/50 text-slate-400 border border-slate-600/20'
+                }`}>
+                  {type === 'fill' ? 'Tatami' : type === 'satin' ? 'Satin' : 'Running'}: {count.toLocaleString()}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Issues */}
+      {/* Issues list */}
       {(issues.length > 0 || warnings.length > 0 || infos.length > 0) && (
         <div className="space-y-1.5">
-          <div className="text-[10px] text-slate-600 uppercase tracking-wider font-semibold px-1">Validaciones</div>
+          <div className="text-[10px] text-slate-600 uppercase tracking-wider font-semibold px-1">
+            Validaciones ({issues.length + warnings.length + infos.length})
+          </div>
           {issues.map(i   => <IssueRow key={i.id} item={i} severity="error" />)}
           {warnings.map(w => <IssueRow key={w.id} item={w} severity="warning" />)}
           {infos.map(i   => <IssueRow key={i.id} item={i} severity="info" />)}
         </div>
       )}
 
-      {/* Auto-fix + Optimize buttons */}
+      {/* Action buttons */}
       {(issues.length > 0 || warnings.length > 0) && (
         <div className="flex gap-2">
           <button onClick={handleAutoFix}
@@ -319,22 +444,22 @@ export default function PreflightPanel({ regions, config, onAutoFix, onOptimizeR
 
       {/* Report */}
       <div className="space-y-2">
-        <div className="text-[10px] text-slate-600 uppercase tracking-wider font-semibold px-1">Reporte</div>
+        <div className="text-[10px] text-slate-600 uppercase tracking-wider font-semibold px-1">Reporte de producción</div>
 
         {/* Time + cost */}
         <div className="grid grid-cols-2 gap-2">
           <div className="bg-[#0a0c12] border border-[#1e2130] rounded-lg p-3">
             <div className="flex items-center gap-1.5 mb-1.5">
               <Clock className="w-3.5 h-3.5 text-violet-400" />
-              <span className="text-[10px] text-slate-500 uppercase tracking-wider">Tiempo bordado</span>
+              <span className="text-[10px] text-slate-500 uppercase tracking-wider">Tiempo</span>
             </div>
             <div className="text-lg font-bold text-violet-300">{fmtMins(report.totalMins)}</div>
-            <div className="text-[10px] text-slate-600">{report.colorChanges} cambios de color</div>
+            <div className="text-[10px] text-slate-600">{report.colorChanges} cambios color</div>
           </div>
           <div className="bg-[#0a0c12] border border-[#1e2130] rounded-lg p-3">
             <div className="flex items-center gap-1.5 mb-1.5">
               <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="text-[10px] text-slate-500 uppercase tracking-wider">Costo materiales</span>
+              <span className="text-[10px] text-slate-500 uppercase tracking-wider">Materiales</span>
             </div>
             <div className="text-lg font-bold text-emerald-300">${report.totalCost.toFixed(2)}</div>
             <div className="text-[10px] text-slate-600">Hilo + estabilizador</div>
@@ -345,7 +470,7 @@ export default function PreflightPanel({ regions, config, onAutoFix, onOptimizeR
         <div className="bg-[#0a0c12] border border-[#1e2130] rounded-lg px-3 py-2 space-y-1">
           {[
             ['Hilo', `${report.metersNeeded.toFixed(0)}m`, `$${report.threadCost.toFixed(2)}`],
-            ['Estabilizador', `${((config?.width_mm||100)*(config?.height_mm||100)/1e6).toFixed(4)} m²`, `$${report.stabCost.toFixed(2)}`],
+            ['Estabilizador', `${((config?.width_mm||100)*(config?.height_mm||100)/1e6).toFixed(4)}m²`, `$${report.stabCost.toFixed(2)}`],
           ].map(([label, qty, cost]) => (
             <div key={label} className="flex items-center text-[10px]">
               <span className="text-slate-500 flex-1">{label}</span>
@@ -359,7 +484,7 @@ export default function PreflightPanel({ regions, config, onAutoFix, onOptimizeR
         <div className="bg-[#0a0c12] border border-[#1e2130] rounded-lg p-3">
           <div className="flex items-center gap-1.5 mb-2">
             <Palette className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="text-[10px] text-slate-500 uppercase tracking-wider">Hilos necesarios ({report.threads.length})</span>
+            <span className="text-[10px] text-slate-500 uppercase tracking-wider">Hilos ({report.threads.length})</span>
           </div>
           <div className="space-y-1.5 max-h-36 overflow-y-auto">
             {report.threads.map((t, i) => (
@@ -375,10 +500,10 @@ export default function PreflightPanel({ regions, config, onAutoFix, onOptimizeR
         {/* Hoop */}
         {(() => {
           const w = config?.width_mm || 100, h = config?.height_mm || 100;
-          const hoop = w <= 100 && h <= 100 ? '100×100mm (Pequeño)' :
-                       w <= 150 && h <= 150 ? '150×150mm (Estándar)' :
-                       w <= 200 && h <= 200 ? '200×200mm (Mediano)' :
-                       w <= 300 && h <= 300 ? '300×300mm (Grande)' : 'Aro jumbo requerido';
+          const hoop  = w <= 100 && h <= 100 ? '100×100mm (Pequeño)' :
+                        w <= 150 && h <= 150 ? '150×150mm (Estándar)' :
+                        w <= 200 && h <= 200 ? '200×200mm (Mediano)' :
+                        w <= 300 && h <= 300 ? '300×300mm (Grande)' : 'Aro jumbo requerido';
           const color = (w > 300 || h > 300) ? 'text-amber-400' : 'text-slate-300';
           return (
             <div className="bg-[#0a0c12] border border-[#1e2130] rounded-lg px-3 py-2 flex items-center gap-2">
