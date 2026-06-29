@@ -84,30 +84,6 @@ export default function Editor() {
 
   useEffect(() => {if (id) loadProject();}, [id]);
 
-  // ── Keyboard shortcuts ──────────────────────────────────────────────────
-  useEffect(() => {
-    const handler = (e) => {
-      // Ctrl+S / Cmd+S — save
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault();
-        saveProject();
-        return;
-      }
-      // Escape — close export modal
-      if (e.key === 'Escape' && showExport) {
-        setShowExport(false);
-        return;
-      }
-      // Ctrl+Enter — trigger processing
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && imageUrl && !processing) {
-        e.preventDefault();
-        startProcessing();
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [showExport, imageUrl, processing, saveProject]);
-
   const loadProject = async () => {
     setLoading(true);
     try {
@@ -212,6 +188,27 @@ export default function Editor() {
       maskCanvasRef.current.clearMask();setMaskedPixelCount(0);setActiveTab('editor');
     } finally {setApplyingMask(false);}
   };
+
+  // ── Keyboard shortcuts ──────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveProject();
+        return;
+      }
+      if (e.key === 'Escape' && showExport) {
+        setShowExport(false);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && imageUrl && !processing) {
+        e.preventDefault();
+        startProcessing();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [showExport, imageUrl, processing, saveProject]);
 
   const handleRegionClick = (regionId) => setSelectedRegionId(regionId);
   const handleRegionsUpdate = (updated) => setRegions(updated);
