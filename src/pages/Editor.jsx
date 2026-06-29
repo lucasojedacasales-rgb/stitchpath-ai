@@ -345,7 +345,7 @@ export default function Editor() {
 
         <div className="w-64 flex-shrink-0 border-l border-[#1e2130] overflow-hidden flex flex-col">
           <div className="flex-1 overflow-hidden min-h-0">
-            <RegionsPanel regions={regions} selectedId={selectedRegionId} onSelect={setSelectedRegionId} onUpdate={handleRegionsUpdate} fabricType={config.fabric_type} widthMm={config.width_mm} heightMm={config.height_mm} />
+            <RegionsPanel regions={regions} selectedId={selectedRegionId} onSelect={setSelectedRegionId} onUpdate={handleRegionsUpdate} />
           </div>
           {selectedRegionId && regions.find(r => r.id === selectedRegionId)?.stitch_type === 'fill' && (
             <div className="border-t border-[#1e2130] overflow-y-auto max-h-[45%] bg-[#0a0c12]">

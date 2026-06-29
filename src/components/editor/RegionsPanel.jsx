@@ -48,14 +48,12 @@ function getRelativePosition(region, allRegions) {
 
 function isContourRegion(region) {
   if ((region.name || '').toLowerCase().includes('contour_')) return true;
-  if (region.stitch_type === 'running_stitch') return false;
   const hex = (region.color || '').toLowerCase();
-  const isBlack = hex === '#000000' || hex === '#1a1a1a' || hex === '#111111';
-  if (isBlack && region.area_mm2 && region.perimeter_mm) {
-    const ratio = region.area_mm2 / (region.perimeter_mm * region.perimeter_mm);
-    if (ratio < 0.03) return true;
+  if (hex === '#000000' || hex === '#1a1a1a') return true;
+  if (region.area_mm2 && region.perimeter_mm) {
+    if (region.area_mm2 / (region.perimeter_mm * region.perimeter_mm) < 0.05) return true;
   }
-  return false;
+  return Array.isArray(region.neighbors) && region.neighbors.length >= 3;
 }
 
 function isEyeRegion(region, allRegions) {
@@ -220,7 +218,7 @@ function ActionBtn({ onClick, children, title, accent }) {
 
 const FILTER_OPTS = ['Todas', 'Fill', 'Satin', 'Run'];
 
-function RegionInspectorPanel({ region, allRegions, fabricType, widthMm, heightMm }) {
+function RegionInspectorPanel({ region, allRegions }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="border-t border-violet-500/20 bg-[#0a0c12]">
@@ -235,12 +233,12 @@ function RegionInspectorPanel({ region, allRegions, fabricType, widthMm, heightM
           {open ? <ChevronDown className="w-3 h-3 text-slate-600" /> : <ChevronRight className="w-3 h-3 text-slate-600" />}
         </div>
       </button>
-      {open && <RegionInspector region={region} allRegions={allRegions} fabricType={fabricType} widthMm={widthMm || 100} heightMm={heightMm || 100} />}
+      {open && <RegionInspector region={region} allRegions={allRegions} />}
     </div>
   );
 }
 
-export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate, fabricType, widthMm, heightMm }) {
+export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate }) {
   const [filter, setFilter] = useState('Todas');
   const [batchMode, setBatchMode] = useState(false);
   const [selected, setSelected] = useState([]);
@@ -439,7 +437,7 @@ export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate, 
       {selectedId && !batchMode && (() => {
         const sel = allRegions.find(r => r.id === selectedId);
         return sel ? (
-          <RegionInspectorPanel region={sel} allRegions={allRegions} fabricType={fabricType} widthMm={widthMm} heightMm={heightMm} />
+          <RegionInspectorPanel region={sel} allRegions={allRegions} />
         ) : null;
       })()}
 

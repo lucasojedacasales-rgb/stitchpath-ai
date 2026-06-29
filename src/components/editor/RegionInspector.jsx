@@ -41,10 +41,10 @@ function QualityBar({ score }) {
   );
 }
 
-export default function RegionInspector({ region, allRegions, widthMm, heightMm, fabricType }) {
+export default function RegionInspector({ region, allRegions, widthMm, heightMm }) {
   const r = useMemo(
-    () => enrichRegion(region, allRegions || [], widthMm || 100, heightMm || 100, fabricType || 'Algodón'),
-    [region, allRegions, widthMm, heightMm, fabricType]
+    () => enrichRegion(region, allRegions || [], widthMm || 100, heightMm || 100),
+    [region, allRegions, widthMm, heightMm]
   );
 
   if (!r) return null;
@@ -65,7 +65,7 @@ export default function RegionInspector({ region, allRegions, widthMm, heightMm,
 
   return (
     <div className="p-3 text-xs">
-      <QualityBar score={r.quality_score || 0} />
+      <QualityBar score={r.qualityScore || 0} />
 
       <Section title="Identificación">
         <Row label="ID" value={r.id?.slice(0, 12) + '…'} mono />
@@ -83,7 +83,7 @@ export default function RegionInspector({ region, allRegions, widthMm, heightMm,
         <Row label="Perímetro" value={`${(r.perimeter_mm || 0).toFixed(1)} mm`} />
         <Row label="Orientación" value={`${r.orientation ?? '—'}°`} color="text-cyan-300" />
         <Row label="Convexidad" value={`${((r.convexity || 0) * 100).toFixed(0)}%`} color={convexityColor} />
-        <Row label="Curvatura" value={(r.mean_curvature || 0).toFixed(3)} />
+        <Row label="Curvatura" value={(r.curvature || 0).toFixed(3)} />
         <Row label="Agujeros" value={r.holes ?? 0} color={r.holes > 0 ? 'text-amber-400' : 'text-slate-400'} />
         <Row label="Complejidad" value={r.complexity?.level || '—'} color={complexityColor} />
       </Section>
@@ -92,15 +92,8 @@ export default function RegionInspector({ region, allRegions, widthMm, heightMm,
         <Row label="Puntadas est." value={(r.stitch_count || 0).toLocaleString('es-ES')} color="text-violet-400" />
         <Row label="Densidad" value={r.density || 0.7} />
         <Row label="Ángulo" value={`${r.angle || 0}°`} />
-        <Row
-          label="Underlay"
-          value={r.recommended_underlay?.enabled ? r.recommended_underlay.type : 'No'}
-          color={r.recommended_underlay?.enabled ? 'text-emerald-400' : 'text-slate-500'}
-        />
-        {r.recommended_underlay?.enabled && (
-          <Row label="Ángulo underlay" value={`${r.recommended_underlay.angle_deg ?? 0}°`} color="text-cyan-300" />
-        )}
-        <Row label="Pull comp." value={`${r.recommended_compensation || r.pull_compensation || 0} mm`} />
+        <Row label="Underlay" value={r.underlay ? 'Sí' : 'No'} color={r.underlay ? 'text-emerald-400' : 'text-slate-500'} />
+        <Row label="Pull comp." value={`${r.pull_compensation || 0} mm`} />
       </Section>
 
       <Section title="Producción">
