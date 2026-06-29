@@ -18,13 +18,13 @@
 
 const DEFAULTS = {
   analysisSize:       1024,   // px — higher = more sub-pixel accuracy
-  minSegmentPx:       4.0,    // px — remove segments shorter than this
-  cornerAngleDeg:     150,    // deg — angle below this threshold = corner
-  rdpBaseEpsilon:     1.2,    // px — base RDP simplification tolerance (raised: was 0.9, caused micro-fragments)
+  minSegmentPx:       6.0,    // px — remove segments shorter than this (raised from 4: removes JPEG micro-segments)
+  cornerAngleDeg:     135,    // deg — only real sharp corners (lowered from 150: 150° over-detected gentle curves → fragmentation)
+  rdpBaseEpsilon:     1.6,    // px — base RDP simplification tolerance (raised from 1.2: aggressive smooth-section simplification)
   rdpCornerFactor:    0.3,    // multiplier — tighter epsilon near corners
   chaikinPasses:      2,      // iterations of Chaikin subdivision
-  gapCloseThreshold:  8.0,    // px — auto-close gaps smaller than this
-  minAreaPx:          120,    // px² — minimum blob area (raised from 48: filters JPEG noise blobs)
+  gapCloseThreshold:  10.0,   // px — auto-close gaps smaller than this (raised from 8: merges more quantization gaps)
+  minAreaPx:          200,    // px² — minimum blob area (raised from 120: stronger noise filter, still captures eye-sized details at 1024px)
 };
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -63,8 +63,9 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
     labels[i] = nearestIdx([pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]], palette);
   }
 
-  // Relative floor raised to 0.0003 (was 0.00005) — prevents micro-blobs from JPEG artifacts
-  const minPixels = Math.max(cfg.minAreaPx, Math.floor(W * H * 0.0003));
+  // Relative floor raised to 0.0005 (was 0.0003) — 0.05% of image area.
+  // At 1024px: ~524px minimum — filters quantization noise while keeping real small details.
+  const minPixels = Math.max(cfg.minAreaPx, Math.floor(W * H * 0.0005));
   const regions = [];
 
   for (let ci = 0; ci < palette.length; ci++) {
@@ -412,6 +413,10 @@ function mooreTrace(mask, W, H) {
 // ─── Connected-component blob detection ───────────────────────────────────────
 
 function findBlobs(labels, W, H, colorIdx, minPixels) {
+  // 8-connectivity: merges same-color regions connected diagonally.
+  // JPEG quantization often inserts single-pixel color gaps that split a coherent
+  // shape into 2+ blobs under 4-connectivity. 8-connectivity preserves geometric
+  // coherence by treating diagonal adjacency as connected.
   const visited = new Uint8Array(W * H);
   const blobs   = [];
 
@@ -430,10 +435,18 @@ function findBlobs(labels, W, H, colorIdx, minPixels) {
       const x = idx % W, y = Math.floor(idx / W);
       if (x < minX) minX = x; if (x > maxX) maxX = x;
       if (y < minY) minY = y; if (y > maxY) maxY = y;
-      if (x > 0)     stack.push(idx - 1);
-      if (x < W - 1) stack.push(idx + 1);
-      if (y > 0)     stack.push(idx - W);
-      if (y < H - 1) stack.push(idx + W);
+
+      // 8-neighbour scan (includes diagonals)
+      for (let dy = -1; dy <= 1; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= H) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          if (nx < 0 || nx >= W) continue;
+          stack.push(ny * W + nx);
+        }
+      }
     }
 
     if (count >= minPixels) blobs.push({ mask, pixelCount: count, bbox: { minX, maxX, minY, maxY } });

@@ -12,13 +12,15 @@
 import { traceContoursProf } from '../../contourEngine.js';
 import { getModeStrategy }   from '../../digitizeModes.js';
 
-// Per-mode quality presets — map strategy knobs to contourEngine options
+// Per-mode quality presets — map strategy knobs to contourEngine options.
+// RDP epsilons raised across all modes to prevent sub-pixel micro-segmentation
+// while preserving real geometric detail. minSegmentPx raised to filter noise.
 const MODE_OPTIONS = {
-  fast:      { analysisSize: 512,  chaikinPasses: 1, rdpBaseEpsilon: 1.5, minSegmentPx: 5 },
-  standard:  { analysisSize: 800,  chaikinPasses: 2, rdpBaseEpsilon: 1.0, minSegmentPx: 4 },
-  precision: { analysisSize: 1200, chaikinPasses: 3, rdpBaseEpsilon: 0.6, minSegmentPx: 2 },
-  hybrid:    { analysisSize: 1024, chaikinPasses: 2, rdpBaseEpsilon: 0.8, minSegmentPx: 3 },
-  ultra:     { analysisSize: 1600, chaikinPasses: 3, rdpBaseEpsilon: 0.4, minSegmentPx: 2 },
+  fast:      { analysisSize: 512,  chaikinPasses: 1, rdpBaseEpsilon: 2.0, minSegmentPx: 6 },
+  standard:  { analysisSize: 800,  chaikinPasses: 2, rdpBaseEpsilon: 1.4, minSegmentPx: 5 },
+  precision: { analysisSize: 1200, chaikinPasses: 3, rdpBaseEpsilon: 0.9, minSegmentPx: 3 },
+  hybrid:    { analysisSize: 1024, chaikinPasses: 2, rdpBaseEpsilon: 1.2, minSegmentPx: 4 },
+  ultra:     { analysisSize: 1600, chaikinPasses: 3, rdpBaseEpsilon: 0.7, minSegmentPx: 3 },
 };
 
 export async function runContourEngine(ctx) {
@@ -33,10 +35,11 @@ export async function runContourEngine(ctx) {
   if (ctx.analysis?.edgeDensityMap) {
     const grid = ctx.analysis.edgeDensityMap;
     const flatMean = grid.flat().reduce((s, v) => s + v, 0) / (grid.length * grid[0].length);
-    // Adaptive RDP epsilon: clamp tightening to 75% of base (was 55% — caused sub-pixel micro-segments)
-    // Max tightening: 25%, max loosening: 20% — conservative range to prevent oversegmentation
-    const edgeFactor = 1.0 - (flatMean - 0.3) * 0.5; // reduced from 0.8 → gentler adaptation
-    modeOpts.rdpBaseEpsilon = +(modeOpts.rdpBaseEpsilon * Math.max(0.75, Math.min(1.20, edgeFactor))).toFixed(3);
+    // Conservative adaptation: max tightening 15%, max loosening 15%.
+    // High edge density often correlates with JPEG noise, not real detail —
+    // over-tightening there causes micro-segmentation of smooth contours.
+    const edgeFactor = 1.0 - (flatMean - 0.3) * 0.3;
+    modeOpts.rdpBaseEpsilon = +(modeOpts.rdpBaseEpsilon * Math.max(0.85, Math.min(1.15, edgeFactor))).toFixed(3);
   }
 
   ctx.contours = await traceContoursProf(sourceUrl, colorCount, modeOpts);
