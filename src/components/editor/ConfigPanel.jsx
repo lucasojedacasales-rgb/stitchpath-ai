@@ -88,11 +88,8 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
           </div>
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="text-[11px] text-slate-500 uppercase tracking-wider">
-                Optimizador de colores
-                <span className="ml-1 cursor-help" title="Número máximo de colores de hilo. Menos colores = menos cambios de hilo.">ⓘ</span>
-              </label>
-              <span className="text-xs font-bold text-violet-400">{cfg.color_count || 6} colores</span>
+              <label className="text-[11px] text-slate-500 uppercase tracking-wider">Optimizador de colores</label>
+              <span className="text-xs font-bold text-violet-400">{cfg.color_count || 6}</span>
             </div>
             <input
               type="range" min="2" max="12" step="1"
@@ -101,7 +98,7 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
               className="w-full accent-violet-600"
             />
             <div className="flex justify-between text-[10px] text-slate-600 mt-0.5">
-              <span>2 (menos cambios)</span><span>12 (más colores)</span>
+              <span>2</span><span>12</span>
             </div>
           </div>
         </div>
@@ -260,10 +257,7 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
           <Toggle label="Remover fondo (auto-limpieza)" value={cfg.remove_bg || false} onChange={v => set('remove_bg', v)} />
           <Toggle label="Secuenciación AI-aware" value={cfg.ai_sequence || false} onChange={v => set('ai_sequence', v)} />
           <div className="py-1.5">
-            <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-1 block">
-              Compensación de tensión
-              <span className="ml-1 cursor-help" title="Ajuste global de pull compensation (0=ninguna, 1=normal, 2=máxima). Compensa el encogimiento del tejido al tensar el hilo.">ⓘ</span>
-            </label>
+            <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-1 block">Compensación de tensión</label>
             <input
               type="number" min="0" max="2" step="0.1"
               value={cfg.tension_comp || 0.5}
