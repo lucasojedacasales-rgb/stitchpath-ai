@@ -21,7 +21,8 @@ const OPTIMIZATION_WEIGHTS = {
 
 function getCentroid(region) {
   if (region.centroid) return region.centroid;
-  if (region.path_points?.length === 0) return [0.5, 0.5];
+  // Guard: undefined/empty path_points must NOT fall through to .reduce()
+  if (!region.path_points || region.path_points.length === 0) return [0.5, 0.5];
   const pts = region.path_points;
   const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
   const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
