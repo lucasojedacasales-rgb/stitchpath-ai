@@ -255,6 +255,52 @@ export const DIGITIZE_MODES = {
     badge: 'Ultra',
     recommended_for: ['retratos detallados', 'arte complejo', 'producción profesional'],
   },
+
+  ai: {
+    id: 'ai',
+    name: 'AI Mode',
+    icon: '🧠',
+    tagline: 'Segmentación inteligente',
+    description: 'IA detecta regiones automáticamente, clasifica tipos de puntada y optimiza la paleta de colores.',
+    color: 'violet',
+    preprocess: {
+      enabled: true,
+      gaussianRadius: 1,
+      contrastBoost: 1.5,
+      saturationBoost: 1.8,
+      sharpenEdges: true,
+      sharpenStrength: 1.0,
+      outputSize: 1024,
+      posterizeColors: true,
+      posterizeLevels: 8,
+      morphologyCleanup: true,
+    },
+    vectorizer: { color_count: 8, rdpEpsilon: 0.003, minPixelArea: 120, smoothPasses: 2 },
+    backend: {
+      mode: 'hybrid',
+      use_ia_vision: true,
+      use_full_bg: false,
+      vector_engine: 'hybrid',
+      tatami_density: 0.4,
+      max_regions: 150,
+    },
+    stitchStrategy: {
+      preferFillOverSatin: false,
+      underlayEnabled: true,
+      adaptiveAngles: true,
+      travelOptimize: true,
+      useAdaptiveEngine: true,
+    },
+    params: {
+      ai_segmentation: true,
+      auto_stitch_classification: true,
+      color_optimization: true,
+      smart_sequencing: true,
+      confidence_threshold: 0.8,
+    },
+    badge: 'New',
+    recommended_for: ['Automático', 'Análisis visual', 'Optimización IA'],
+  },
 };
 
 /** Returns the strategy object for a given mode id */

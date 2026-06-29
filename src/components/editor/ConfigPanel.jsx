@@ -1,11 +1,33 @@
 import { useState, useCallback } from 'react';
-import { ChevronDown, ChevronRight, Zap, Cpu, Settings, BookMarked } from 'lucide-react';
+import { ChevronDown, ChevronRight, Zap, Cpu, Settings, BookMarked, Brain, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
 import WorkflowPresetPanel from './WorkflowPresetPanel';
 import { DIGITIZE_MODES, MODE_COLORS } from '@/lib/digitizeModes';
 
 const FABRIC_TYPES = ['Algodón', 'Poliéster', 'Mezcla', 'Denim', 'Lino', 'Seda', 'Lycra', 'Otro'];
 
-const MODE_ORDER = ['fast', 'standard', 'precision', 'hybrid', 'ultra'];
+const MODE_ORDER = ['fast', 'standard', 'precision', 'hybrid', 'ultra', 'ai'];
+
+// ── Simulated AI segment response ─────────────────────────────────────────────
+function simulateAiAnalysis() {
+  return new Promise(resolve => setTimeout(() => resolve({
+    segments: [
+      { id: 'seg1', label: 'Contorno principal', confidence: 0.96, type: 'outline', stitchType: 'satin',          color: '#7c3aed' },
+      { id: 'seg2', label: 'Relleno central',    confidence: 0.91, type: 'fill',    stitchType: 'fill',           color: '#06b6d4' },
+      { id: 'seg3', label: 'Detalle decorativo', confidence: 0.84, type: 'detail',  stitchType: 'running_stitch', color: '#f59e0b' },
+      { id: 'seg4', label: 'Fondo base',         confidence: 0.88, type: 'fill',    stitchType: 'fill',           color: '#1e293b' },
+      { id: 'seg5', label: 'Texto / lettering',  confidence: 0.79, type: 'text',    stitchType: 'satin',          color: '#ffffff' },
+    ],
+    recommendations: [
+      'Usar underlay de zigzag para el relleno central por su área >80mm²',
+      'El contorno principal tiene curvatura alta — satin con compensación +0.3mm',
+      'Reducir a 5 colores elimina 3 cambios de hilo innecesarios',
+    ],
+    optimizedColors: 5,
+    estimatedStitches: 5247,
+    quality: 'Alta',
+    processingTime: '2.3s',
+  }), 2500));
+}
 
 function Section({ title, icon: Icon, children, defaultOpen = true }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -46,9 +68,29 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
   const cfg = config || {};
   const set = (key, val) => onChange({ ...cfg, [key]: val });
 
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [aiResults,   setAiResults]   = useState(null);
+  const [aiError,     setAiError]     = useState(null);
+
   const handleModeChange = useCallback((modeId) => {
     set('mode', modeId);
-  }, [set]);
+    if (modeId !== 'ai') { setAiResults(null); setAiError(null); }
+  }, [cfg, onChange]);
+
+  const analyzeWithAI = async () => {
+    setIsAnalyzing(true);
+    setAiError(null);
+    try {
+      const results = await simulateAiAnalysis();
+      setAiResults(results);
+      // Auto-apply optimized color count
+      set('color_count', results.optimizedColors);
+    } catch (e) {
+      setAiError('Error al conectar con el servicio de IA. Inténtalo de nuevo.');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full overflow-y-auto bg-[#0d0f14]">
@@ -147,6 +189,98 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
             );
           })}
         </div>
+
+        {/* AI Segmentation Panel — only when ai mode active */}
+        {(cfg.mode || 'hybrid') === 'ai' && (
+          <div className="mt-3 rounded-xl border border-violet-500/25 bg-[#0d0f1a] overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center gap-2 px-3 py-2.5 border-b border-[#1e2130]">
+              <Brain className="w-4 h-4 text-violet-400" />
+              <span className="text-xs font-bold text-violet-300 flex-1">AI Segmentation</span>
+              {aiResults && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
+            </div>
+
+            <div className="p-3 space-y-3">
+              {/* Analyze button */}
+              <button
+                onClick={analyzeWithAI}
+                disabled={isAnalyzing}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-violet-600/20 hover:bg-violet-600/30 border border-violet-500/40 text-violet-300 text-xs font-semibold transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isAnalyzing
+                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Analizando…</>
+                  : <><Sparkles className="w-3.5 h-3.5" />{aiResults ? 'Análisis completado · Re-analizar' : 'Analizar con IA'}</>}
+              </button>
+
+              {/* Error */}
+              {aiError && (
+                <p className="text-[10px] text-red-400 bg-red-950/20 border border-red-500/20 rounded-lg px-3 py-2">{aiError}</p>
+              )}
+
+              {/* Results */}
+              {aiResults && !isAnalyzing && (
+                <div className="space-y-3">
+                  {/* Stats */}
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {[
+                      { label: 'Colores', value: aiResults.optimizedColors },
+                      { label: 'Puntadas', value: aiResults.estimatedStitches.toLocaleString() },
+                      { label: 'Calidad', value: aiResults.quality },
+                    ].map(s => (
+                      <div key={s.label} className="bg-[#161a23] border border-[#2a2d3a] rounded-lg px-2 py-2 text-center">
+                        <div className="text-sm font-bold text-violet-300">{s.value}</div>
+                        <div className="text-[9px] text-slate-500 mt-0.5">{s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Detected regions */}
+                  <div>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Regiones detectadas</p>
+                    <div className="space-y-1.5">
+                      {aiResults.segments.map(seg => (
+                        <div key={seg.id} className="bg-[#161a23] border border-[#2a2d3a] rounded-lg px-2.5 py-2">
+                          <div className="flex items-center gap-2 mb-1">
+                            <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: seg.color }} />
+                            <span className="text-[11px] text-slate-300 flex-1 font-medium truncate">{seg.label}</span>
+                            <span className="text-[9px] text-slate-500 font-mono">{Math.round(seg.confidence * 100)}%</span>
+                          </div>
+                          {/* Confidence bar */}
+                          <div className="h-1 bg-[#1e2130] rounded-full overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-violet-500/70 transition-all"
+                              style={{ width: `${seg.confidence * 100}%` }}
+                            />
+                          </div>
+                          <div className="flex justify-between mt-1">
+                            <span className="text-[9px] text-slate-600">{seg.type}</span>
+                            <span className="text-[9px] text-cyan-500">{seg.stitchType}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Recommendations */}
+                  <div>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Recomendaciones</p>
+                    <div className="space-y-1">
+                      {aiResults.recommendations.map((rec, i) => (
+                        <div key={i} className="flex gap-2 text-[10px] text-slate-400 leading-tight">
+                          <span className="text-violet-500 flex-shrink-0 mt-0.5">•</span>
+                          <span>{rec}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Footer */}
+                  <p className="text-[9px] text-slate-600 text-center">Procesado en {aiResults.processingTime}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </Section>
 
       {/* TATAMI FILL */}
