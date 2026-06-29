@@ -19,9 +19,13 @@ export async function runRegionBuilder(ctx) {
 
   const named = ctx.vectorRegions.map((r, i) => {
     const sem = findSemanticForRegion(r, semanticObjects);
+    // Preserve the pixel-accurate color from the vector engine — never overwrite it.
+    // LLM semantic color guesses (sem.color_hex) are unreliable and cause color mismatches.
+    const originalColor = r.color || r.hex || '#888888';
     return {
       ...r,
-      // Semantic enrichment: override stitch_type and priority if LLM is confident
+      color: originalColor,
+      // Semantic enrichment: override stitch/geometry params only — never color.
       ...(sem ? {
         object:         sem.label,
         object_group:   sem.object_group,
@@ -32,9 +36,9 @@ export async function runRegionBuilder(ctx) {
         stitch_type:    sem.stitch_type,
         stitch_notes:   sem.stitch_notes,
         priority:       sem.priority,
-        // NOTE: never overwrite color from semantic — LLM color guesses are unreliable.
-        // The real color comes from pixel analysis in the vector engine.
       } : {}),
+      // Restore color after semantic spread (belt-and-suspenders guard)
+      color: originalColor,
       name: r.name || (sem ? sem.label : autoName(r, i)),
     };
   });

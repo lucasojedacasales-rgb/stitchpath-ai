@@ -420,6 +420,9 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
     stitchType, skeletonMetrics, convexity, complexity, holes, density
   );
 
+  // Capture color before spread — enrichRegion must NEVER lose the original pixel color
+  const originalColor = region.color || region.hex || '#888888';
+
   return {
     ...region,
     // Geometría
@@ -435,8 +438,8 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
     mean_curvature,
     holes,
     complexity,
-    // Color / hilo
-    color:                    region.color || '#888888',
+    // Color / hilo — always the original pixel-accurate color, never overwritten
+    color:                    originalColor,
     recommended_thread:       threadRec,
     recommended_stitch:       stitchRec.type,
     stitch_rationale:         stitchRec.rationale,
