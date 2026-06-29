@@ -4,34 +4,17 @@ import { generateTatamiFill } from '@/lib/tatamiFill';
 
 // ── Contour detection helpers ─────────────────────────────────────────────────
 
-// Near-black / very dark colors are outlines in embroidery — detect by luminance,
-// not exact hex match. #090406 (the merged outline+background blob) has L≈6.
-function isContourColor(hex) {
-  const h = (hex || '').toLowerCase();
-  if (!h.startsWith('#') || h.length < 7) return false;
-  const r = parseInt(h.slice(1, 3), 16);
-  const g = parseInt(h.slice(3, 5), 16);
-  const b = parseInt(h.slice(5, 7), 16);
-  if (isNaN(r) || isNaN(g) || isNaN(b)) return false;
-  return (0.299 * r + 0.587 * g + 0.114 * b) < 30;
-}
-
-// A thin outline: narrow mean width, or low area-to-perimeter² ratio (ring/line).
-// Used to classify contours by GEOMETRY, not color — solid dark fills (Mickey's
-// head, Yoshi's body) are NOT thin, so they stay as fill and render correctly.
-function isThinOutline(region) {
-  if (region.mean_width_mm > 0 && region.mean_width_mm < 2.5) return true;
-  if (region.area_mm2 && region.perimeter_mm) {
-    return (region.area_mm2 / (region.perimeter_mm * region.perimeter_mm)) < 0.05;
-  }
-  return false;
-}
-
 function isContourRegion(region) {
   if (!region) return false;
   if ((region.name || '').toLowerCase().includes('contour_')) return true;
-  // Thin shapes (narrow width or low area-to-perimeter²) are outlines.
-  return isThinOutline(region);
+  const hex = (region.color || '').toLowerCase();
+  if (hex === '#000000' || hex === '#1a1a1a') return true;
+  if (region.area_mm2 && region.perimeter_mm) {
+    const ratio = region.area_mm2 / (region.perimeter_mm * region.perimeter_mm);
+    if (ratio < 0.05) return true;
+  }
+  if (Array.isArray(region.neighbors) && region.neighbors.length >= 3) return true;
+  return false;
 }
 
 function getDrawSize(imageEl, W, H) {
@@ -175,39 +158,18 @@ export default function StitchCanvas({
     ctx.translate(offset.x + W / 2, offset.y + H / 2);
     ctx.scale(zoom, zoom);
 
+    const canvasArea = drawW * drawH;
+    const validRegions = regions.filter(r => (r.area_mm2 || 0) <= canvasArea * 0.9);
+
     const outlineOnly = viewMode === 'outline';
     const alpha = stitchOpacity / 100;
 
-    // Painter's algorithm: sort by area descending so the largest region (background)
-    // is painted first and smaller detail regions are painted on top.
-    // Without this, a large background region drawn later covers everything (black blob).
-    // Fallback: compute area from path_points bbox if area_mm2 is missing (un-enriched regions).
-    const sortKey = (r) => {
-      if (r.area_mm2 && r.area_mm2 > 0) return r.area_mm2;
-      if (r.path_points && r.path_points.length >= 3) {
-        const xs = r.path_points.map(p => p[0]);
-        const ys = r.path_points.map(p => p[1]);
-        return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
-      }
-      return 0;
-    };
-    const sortedRegions = [...regions]
-      .filter(r => r.path_points && r.path_points.length >= 3)
-      .sort((a, b) => sortKey(b) - sortKey(a));
-
-    for (const region of sortedRegions) {
+    for (const region of validRegions) {
       if (!region.visible) continue;
       const pts = region.path_points;
       if (!pts || pts.length < 3) continue;
 
-      // Stale stored regions: a solid dark fill may have been reclassified to
-      // running_stitch by an older regionBuilder. Restore it to fill so it
-      // renders as a solid area instead of empty dashes (missing details).
-      const isStaleDarkFill = region.stitch_type === 'running_stitch' &&
-        isContourColor(region.color) && !isThinOutline(region);
-      const effectiveType = isContourRegion(region)
-        ? 'running_stitch'
-        : (isStaleDarkFill ? 'fill' : region.stitch_type);
+      const effectiveType = isContourRegion(region) ? 'running_stitch' : region.stitch_type;
 
       if (effectiveType === 'fill' && !showFill) continue;
       if ((effectiveType === 'running_stitch' || effectiveType === 'satin') && !showContour) continue;

@@ -19,30 +19,11 @@ import {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// Near-black / very dark colors are outlines — detect by luminance, not exact hex.
-function isContourColor(hex) {
-  const h = (hex || '').toLowerCase();
-  if (!h.startsWith('#') || h.length < 7) return false;
-  const r = parseInt(h.slice(1, 3), 16);
-  const g = parseInt(h.slice(3, 5), 16);
-  const b = parseInt(h.slice(5, 7), 16);
-  if (isNaN(r) || isNaN(g) || isNaN(b)) return false;
-  return (0.299 * r + 0.587 * g + 0.114 * b) < 30;
-}
-
-function isThinOutline(region) {
-  if (region.mean_width_mm > 0 && region.mean_width_mm < 2.5) return true;
-  if (region.area_mm2 && region.perimeter_mm) {
-    return (region.area_mm2 / (region.perimeter_mm * region.perimeter_mm)) < 0.05;
-  }
-  return false;
-}
-
 function isContourRegion(region) {
   if (!region) return false;
   if ((region.name || '').toLowerCase().includes('contour_')) return true;
-  // Thin shapes are outlines; solid dark fills stay as fill.
-  return isThinOutline(region);
+  const hex = (region.color || '').toLowerCase();
+  return hex === '#000000' || hex === '#1a1a1a';
 }
 
 function getDrawSize(imageEl, W, H) {
@@ -219,13 +200,7 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
       const region = sorted[layerIdx];
       const pts = region.path_points;
       const color = region.color || '#ffffff';
-      // Stale stored regions: solid dark fill reclassified to running_stitch by
-      // an older regionBuilder → restore to fill so it renders as a solid area.
-      const isStaleDarkFill = region.stitch_type === 'running_stitch' &&
-        isContourColor(region.color) && !isThinOutline(region);
-      const effectiveType = isContourRegion(region)
-        ? 'running_stitch'
-        : (isStaleDarkFill ? 'fill' : region.stitch_type);
+      const effectiveType = isContourRegion(region) ? 'running_stitch' : region.stitch_type;
       const layerDepth = Math.min(layerIdx / sorted.length * 2, 1.5);
 
       const regionParams = { ...baseParams, layerDepth, stitchType: effectiveType };

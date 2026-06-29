@@ -44,20 +44,6 @@ const THREAD_MM_PER_STITCH = 5.5;
 const MACHINE_SPM_DEFAULT  = 800;
 const MM_PER_GRAM          = 220;
 
-// Near-black colors (luminance < 45) are outlines/contours in embroidery.
-// When the vectorizer merges a dark outline with the background into one large
-// connected blob, it must be treated as a running-stitch contour, not an opaque
-// fill — otherwise a single dark region covers the whole design.
-function isNearBlackColor(hex) {
-  const h = (hex || '').toLowerCase();
-  if (!h.startsWith('#') || h.length < 7) return false;
-  const r = parseInt(h.slice(1, 3), 16);
-  const g = parseInt(h.slice(3, 5), 16);
-  const b = parseInt(h.slice(5, 7), 16);
-  if (isNaN(r) || isNaN(g) || isNaN(b)) return false;
-  return (0.299 * r + 0.587 * g + 0.114 * b) < 30;
-}
-
 // ─── Geometría básica ──────────────────────────────────────────────────────────
 
 function polygonArea(pts) {
@@ -349,14 +335,8 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
   if (!useAdaptive && region.stitch_type) {
     const originalColor = region.color || region.hex || '#888888';
     const threadRec = recommendThread(originalColor);
-    // Near-black THIN fills are outlines — reclassify to running stitch.
-    // Solid dark fills (Mickey's head) stay as fill.
-    const meanWidth = skeletonMetrics.mean_width_mm || 0;
-    const isThinDark = isNearBlackColor(originalColor) && region.stitch_type === 'fill'
-      && meanWidth > 0 && meanWidth < 2.5;
-    const effectiveStitchType = isThinDark ? 'running_stitch' : region.stitch_type;
     const stitch_count = region.stitch_count || estimateStitchCount(
-      { stitch_type: effectiveStitchType, area_mm2, perimeter_mm },
+      { stitch_type: region.stitch_type, area_mm2, perimeter_mm },
       region.density || 0.4
     );
     return {
@@ -369,7 +349,6 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
       mean_curvature, holes, complexity,
       color: originalColor,
       recommended_thread: threadRec,
-      stitch_type: effectiveStitchType,
       stitch_count,
       estimatedTime: estimateTime(stitch_count),
       estimatedThread: estimateThread(stitch_count),
@@ -404,18 +383,6 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
   if (region.priority != null && region.priority > 0) overrides.priority = region.priority;
 
   const adapted = adaptRegion(geoMetrics, overrides, fabricType);
-
-  // Near-black THIN regions are outlines → running stitch. But solid dark fills
-  // (Mickey's head, Yoshi's body) must stay as fill — reclassifying them makes
-  // them render as empty dashed lines and the design looks missing.
-  if (isNearBlackColor(region.color || region.hex || '#888888') && adapted.stitch_type === 'fill') {
-    const meanWidth = skeletonMetrics.mean_width_mm || 0;
-    if (meanWidth > 0 && meanWidth < 2.5) {
-      adapted.stitch_type = 'running_stitch';
-      adapted.stitch_rationale = 'Contorno oscuro fino reclasificado a running stitch.';
-      adapted.underlay = { enabled: false, type: 'none' };
-    }
-  }
 
   const threadRec = recommendThread(region.color || '#888888');
 
