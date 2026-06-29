@@ -7,7 +7,7 @@
  */
 
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { ZoomIn, ZoomOut, Maximize2, Download, Sun, Sliders } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize2, Download, Sliders } from 'lucide-react';
 import { generateTatamiFill } from '@/lib/tatamiFill';
 import {
   drawFabricTexture,
@@ -38,6 +38,7 @@ function getDrawSize(imageEl, W, H) {
 export default function PhysicsSimulator({ imageUrl, regions, config }) {
   const fabricCanvasRef  = useRef(null);
   const stitchCanvasRef  = useRef(null);
+  const postCanvasRef    = useRef(null);   // post-processing: vignette + color grading
   const containerRef     = useRef(null);
   const imageRef         = useRef(null);
   const stitchCacheRef   = useRef(new Map());
@@ -51,13 +52,13 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
   const fabricType = config?.fabric_type || 'Algodón';
   const fabricPreset = FABRIC_SIM_PARAMS[fabricType] || FABRIC_SIM_PARAMS['Algodón'];
 
-  // Controles de simulación (sobreescribibles por el usuario)
+  // Controles de simulación — threadScale es un multiplicador (1.0 = físicamente correcto)
   const [simParams, setSimParams] = useState({
-    threadThicknessPx: 3.5, // user-facing control; actual render uses physical mm calculation
-    tension:           fabricPreset.tensionBase,
-    glossiness:        fabricPreset.glossiness,
-    lightAngleDeg:     fabricPreset.lightAngleDeg,
-    showUnderlay:      true,
+    threadScale:   1.0,    // multiplicador de grosor (1.0 = diámetro físico real)
+    tension:       fabricPreset.tensionBase,
+    glossiness:    fabricPreset.glossiness,
+    lightAngleDeg: fabricPreset.lightAngleDeg,
+    showUnderlay:  true,
   });
 
   // Actualizar parámetros cuando cambia el tejido
@@ -98,13 +99,13 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
   }, [imageUrl]);
 
   // Redraw on param/region/zoom changes
-  useEffect(() => { drawFabric(); drawStitches(); }, [regions, zoom, offset, simParams]);
+  useEffect(() => { drawFabric(); drawStitches(); drawPostProcess(); }, [regions, zoom, offset, simParams]);
 
   function resizeCanvases() {
     const el = containerRef.current;
     if (!el) return;
     const W = el.clientWidth, H = el.clientHeight;
-    for (const ref of [fabricCanvasRef, stitchCanvasRef]) {
+    for (const ref of [fabricCanvasRef, stitchCanvasRef, postCanvasRef]) {
       if (ref.current) { ref.current.width = W; ref.current.height = H; }
     }
   }
@@ -117,6 +118,34 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
     const W = canvas.width, H = canvas.height;
     drawFabricTexture(ctx, W, H, fabricType);
   }, [fabricType]);
+
+  // ── Layer 3: Post-processing fotográfico ─────────────────────────────────────
+  const drawPostProcess = useCallback(() => {
+    const canvas = postCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    // Viñeta fotográfica — oscurece los bordes como una lente real
+    const vignette = ctx.createRadialGradient(W * 0.5, H * 0.5, Math.min(W, H) * 0.30, W * 0.5, H * 0.5, Math.max(W, H) * 0.72);
+    vignette.addColorStop(0, 'rgba(0,0,0,0)');
+    vignette.addColorStop(0.7, 'rgba(0,0,0,0)');
+    vignette.addColorStop(1,   'rgba(0,0,0,0.38)');
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, W, H);
+
+    // Micro-grain fotográfico (simula ruido de sensor de cámara real)
+    const imageData = ctx.getImageData(0, 0, W, H);
+    const data = imageData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const noise = (Math.random() - 0.5) * 6;
+      data[i]   = Math.max(0, Math.min(255, data[i]   + noise));
+      data[i+1] = Math.max(0, Math.min(255, data[i+1] + noise));
+      data[i+2] = Math.max(0, Math.min(255, data[i+2] + noise));
+    }
+    ctx.putImageData(imageData, 0, 0);
+  }, []);
 
   // ── Layer 2: Puntadas físicas ───────────────────────────────────────────────
   const drawStitches = useCallback(() => {
@@ -157,13 +186,13 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
     const designHeightMm = config?.height_mm || 100;
     const pxPerMm = Math.min(drawW / designWidthMm, drawH / designHeightMm);
 
-    // Thread thickness: a real 40wt embroidery thread is ~0.35mm diameter
-    // At screen resolution we scale this: threadPx = 0.35mm * pxPerMm * zoom * fabricMult
-    const threadMult    = FABRIC_SIM_PARAMS[fabricType]?.threadMult || 1;
-    const physicalThreadPx = 0.38 * pxPerMm * threadMult; // 0.38mm = standard 40wt
+    // Grosor físico real: 40wt = 0.38mm. Escalado a px * multiplicador de tejido * control usuario.
+    const threadMult        = FABRIC_SIM_PARAMS[fabricType]?.threadMult || 1;
+    const physicalThreadPx  = 0.38 * pxPerMm * threadMult * (simParams.threadScale || 1.0);
+    const threadThicknessPx = Math.max(1.0, physicalThreadPx);
     const baseParams = {
       ...simParams,
-      threadThicknessPx: Math.max(1.2, Math.min(physicalThreadPx, simParams.threadThicknessPx)),
+      threadThicknessPx,
       zoom,
     };
 
@@ -276,10 +305,11 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
 
     ctx.restore(); // transform
 
-    // Zoom badge
+    // Badge de info
     ctx.save();
     ctx.font = 'bold 11px Inter, sans-serif';
-    const text = `${Math.round(zoom * 100)}%  ·  ${fabricType}`;
+    const stitchCount = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
+    const text = `${Math.round(zoom * 100)}%  ·  ${fabricType}  ·  ${stitchCount.toLocaleString()} pts`;
     const tw = ctx.measureText(text).width;
     const bw = tw + 16, bh = 22, bx = W - bw - 12, by = 12;
     ctx.fillStyle = 'rgba(13,15,20,0.85)';
@@ -288,6 +318,9 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
     ctx.fillStyle = '#94a3b8';
     ctx.fillText(text, bx + 8, by + 15);
     ctx.restore();
+
+    // Post-process después de las puntadas
+    drawPostProcess();
   }, [regions, zoom, offset, simParams, fabricType]);
 
   // ── Interacción ──────────────────────────────────────────────────────────────
@@ -310,12 +343,13 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
     const ctx = tmp.getContext('2d');
     if (fabricCanvasRef.current) ctx.drawImage(fabricCanvasRef.current, 0, 0);
     if (stitchCanvasRef.current) ctx.drawImage(stitchCanvasRef.current, 0, 0);
-    const a = document.createElement('a'); a.download = 'physics-preview.png'; a.href = tmp.toDataURL(); a.click();
+    if (postCanvasRef.current)   ctx.drawImage(postCanvasRef.current,   0, 0);
+    const a = document.createElement('a'); a.download = 'physics-preview.png'; a.href = tmp.toDataURL('image/png', 0.95); a.click();
   };
 
   const set = (key, val) => {
     setSimParams(prev => ({ ...prev, [key]: val }));
-    stitchCacheRef.current.clear();
+    if (key === 'threadScale') stitchCacheRef.current.clear();
   };
 
   return (
@@ -351,9 +385,9 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
       {showControls && (
         <div className="flex-shrink-0 bg-[#0a0c12] border-b border-[#1e2130] px-4 py-3">
           <div className="grid grid-cols-2 gap-x-6 gap-y-2.5">
-            <SimSlider label="Grosor de hilo" value={simParams.threadThicknessPx} min={1} max={6} step={0.1}
-              onChange={v => set('threadThicknessPx', v)}
-              display={v => `${v.toFixed(1)}px`} color="text-violet-400" />
+            <SimSlider label="Escala de hilo" value={simParams.threadScale} min={0.5} max={2.5} step={0.05}
+              onChange={v => set('threadScale', v)}
+              display={v => v === 1.0 ? '1× físico' : `${v.toFixed(2)}×`} color="text-violet-400" />
             <SimSlider label="Tensión del hilo" value={simParams.tension} min={0} max={1} step={0.05}
               onChange={v => set('tension', v)}
               display={v => v < 0.4 ? 'Flojo' : v < 0.7 ? 'Normal' : 'Tenso'} color="text-cyan-400" />
@@ -377,7 +411,7 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
             <button
               onClick={() => {
                 const p = FABRIC_SIM_PARAMS[fabricType] || FABRIC_SIM_PARAMS['Algodón'];
-                setSimParams(prev => ({ ...prev, tension: p.tensionBase, glossiness: p.glossiness, lightAngleDeg: p.lightAngleDeg }));
+                setSimParams(prev => ({ ...prev, tension: p.tensionBase, glossiness: p.glossiness, lightAngleDeg: p.lightAngleDeg, threadScale: 1.0 }));
                 stitchCacheRef.current.clear();
               }}
               className="ml-auto text-xs text-slate-500 hover:text-slate-300 transition-colors"
@@ -401,6 +435,7 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
       >
         <canvas ref={fabricCanvasRef}  className="absolute inset-0 w-full h-full" />
         <canvas ref={stitchCanvasRef}  className="absolute inset-0 w-full h-full" />
+        <canvas ref={postCanvasRef}    className="absolute inset-0 w-full h-full pointer-events-none" />
 
         {(!regions || regions.length === 0) && (
           <div className="absolute inset-0 flex items-center justify-center">
