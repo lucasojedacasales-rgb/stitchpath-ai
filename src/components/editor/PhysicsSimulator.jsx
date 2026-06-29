@@ -19,11 +19,21 @@ import {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// Near-black / very dark colors are outlines — detect by luminance, not exact hex.
+function isContourColor(hex) {
+  const h = (hex || '').toLowerCase();
+  if (!h.startsWith('#') || h.length < 7) return false;
+  const r = parseInt(h.slice(1, 3), 16);
+  const g = parseInt(h.slice(3, 5), 16);
+  const b = parseInt(h.slice(5, 7), 16);
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return false;
+  return (0.299 * r + 0.587 * g + 0.114 * b) < 30;
+}
+
 function isContourRegion(region) {
   if (!region) return false;
   if ((region.name || '').toLowerCase().includes('contour_')) return true;
-  const hex = (region.color || '').toLowerCase();
-  return hex === '#000000' || hex === '#1a1a1a';
+  return isContourColor(region.color);
 }
 
 function getDrawSize(imageEl, W, H) {

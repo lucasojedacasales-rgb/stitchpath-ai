@@ -4,11 +4,22 @@ import { generateTatamiFill } from '@/lib/tatamiFill';
 
 // ── Contour detection helpers ─────────────────────────────────────────────────
 
+// Near-black / very dark colors are outlines in embroidery — detect by luminance,
+// not exact hex match. #090406 (the merged outline+background blob) has L≈6.
+function isContourColor(hex) {
+  const h = (hex || '').toLowerCase();
+  if (!h.startsWith('#') || h.length < 7) return false;
+  const r = parseInt(h.slice(1, 3), 16);
+  const g = parseInt(h.slice(3, 5), 16);
+  const b = parseInt(h.slice(5, 7), 16);
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return false;
+  return (0.299 * r + 0.587 * g + 0.114 * b) < 30;
+}
+
 function isContourRegion(region) {
   if (!region) return false;
   if ((region.name || '').toLowerCase().includes('contour_')) return true;
-  const hex = (region.color || '').toLowerCase();
-  if (hex === '#000000' || hex === '#1a1a1a') return true;
+  if (isContourColor(region.color)) return true;
   if (region.area_mm2 && region.perimeter_mm) {
     const ratio = region.area_mm2 / (region.perimeter_mm * region.perimeter_mm);
     if (ratio < 0.05) return true;

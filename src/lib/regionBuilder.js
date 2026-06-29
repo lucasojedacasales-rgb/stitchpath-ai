@@ -44,6 +44,20 @@ const THREAD_MM_PER_STITCH = 5.5;
 const MACHINE_SPM_DEFAULT  = 800;
 const MM_PER_GRAM          = 220;
 
+// Near-black colors (luminance < 45) are outlines/contours in embroidery.
+// When the vectorizer merges a dark outline with the background into one large
+// connected blob, it must be treated as a running-stitch contour, not an opaque
+// fill — otherwise a single dark region covers the whole design.
+function isNearBlackColor(hex) {
+  const h = (hex || '').toLowerCase();
+  if (!h.startsWith('#') || h.length < 7) return false;
+  const r = parseInt(h.slice(1, 3), 16);
+  const g = parseInt(h.slice(3, 5), 16);
+  const b = parseInt(h.slice(5, 7), 16);
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return false;
+  return (0.299 * r + 0.587 * g + 0.114 * b) < 30;
+}
+
 // ─── Geometría básica ──────────────────────────────────────────────────────────
 
 function polygonArea(pts) {
@@ -335,8 +349,12 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
   if (!useAdaptive && region.stitch_type) {
     const originalColor = region.color || region.hex || '#888888';
     const threadRec = recommendThread(originalColor);
+    // Near-black fills are outlines — reclassify to running stitch.
+    const effectiveStitchType = (isNearBlackColor(originalColor) && region.stitch_type === 'fill')
+      ? 'running_stitch'
+      : region.stitch_type;
     const stitch_count = region.stitch_count || estimateStitchCount(
-      { stitch_type: region.stitch_type, area_mm2, perimeter_mm },
+      { stitch_type: effectiveStitchType, area_mm2, perimeter_mm },
       region.density || 0.4
     );
     return {
@@ -349,6 +367,7 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
       mean_curvature, holes, complexity,
       color: originalColor,
       recommended_thread: threadRec,
+      stitch_type: effectiveStitchType,
       stitch_count,
       estimatedTime: estimateTime(stitch_count),
       estimatedThread: estimateThread(stitch_count),
@@ -383,6 +402,15 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
   if (region.priority != null && region.priority > 0) overrides.priority = region.priority;
 
   const adapted = adaptRegion(geoMetrics, overrides, fabricType);
+
+  // Near-black regions are outlines/contours — reclassify a dark fill as running
+  // stitch so it renders and exports as a dashed outline instead of an opaque
+  // black fill that covers the entire design.
+  if (isNearBlackColor(region.color || region.hex || '#888888') && adapted.stitch_type === 'fill') {
+    adapted.stitch_type = 'running_stitch';
+    adapted.stitch_rationale = 'Contorno oscuro reclasificado a running stitch (color near-black).';
+    adapted.underlay = { enabled: false, type: 'none' };
+  }
 
   const threadRec = recommendThread(region.color || '#888888');
 
