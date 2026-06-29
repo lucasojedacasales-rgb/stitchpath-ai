@@ -134,13 +134,22 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
     ctx.translate(offset.x + W / 2, offset.y + H / 2);
     ctx.scale(zoom, zoom);
 
-    // Ordenar regiones por capa (underlay primero, contornos al final)
+    // Sort regions: use travelOrder/priority from region builder when available.
+    // Contour/outline regions always go last regardless of priority.
+    // Falls back to stitch_type ordering for regions without computed priority.
     const sorted = [...regions]
       .filter(r => r.path_points?.length >= 3 && r.visible !== false)
       .sort((a, b) => {
-        const la = isContourRegion(a) ? 10 : (a.stitch_type === 'fill' ? 1 : 2);
-        const lb = isContourRegion(b) ? 10 : (b.stitch_type === 'fill' ? 1 : 2);
-        return la - lb;
+        const aContour = isContourRegion(a);
+        const bContour = isContourRegion(b);
+        if (aContour && !bContour) return 1;
+        if (!aContour && bContour) return -1;
+        // Use travelOrder if both have it (most accurate — computed by enrichAllRegions)
+        if (a.travelOrder != null && b.travelOrder != null) return a.travelOrder - b.travelOrder;
+        // Fall back to priority (higher priority = drawn first = lower layer)
+        const pa = a.priority ?? (a.stitch_type === 'fill' ? 5 : 3);
+        const pb = b.priority ?? (b.stitch_type === 'fill' ? 5 : 3);
+        return pb - pa; // higher priority drawn first
       });
 
     // pxPerMm based on actual design size in mm
@@ -183,7 +192,7 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
         const angle    = region.fill_angle ?? region.angle ?? region.orientation ?? 45;
         // Stitch length: 3.0mm is professional standard for fill
         const stitchLenMm = region.stitch_length_mm || 3.0;
-        const cacheKey = `${region.id}_${drawW.toFixed(0)}_${drawH.toFixed(0)}_${angle}_${density.toFixed(2)}_${stitchLenMm}`;
+        const cacheKey = `${region.id}_${drawW.toFixed(0)}_${drawH.toFixed(0)}_${angle}_${density.toFixed(2)}_${stitchLenMm}_${region.color}`;
         let cached = stitchCacheRef.current.get(cacheKey);
         if (!cached) {
           const polygon = pts.map(p => [(p[0] - 0.5) * drawW, (p[1] - 0.5) * drawH]);

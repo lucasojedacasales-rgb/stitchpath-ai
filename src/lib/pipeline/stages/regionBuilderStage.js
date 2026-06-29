@@ -32,6 +32,8 @@ export async function runRegionBuilder(ctx) {
         stitch_type:    sem.stitch_type,
         stitch_notes:   sem.stitch_notes,
         priority:       sem.priority,
+        // NOTE: never overwrite color from semantic — LLM color guesses are unreliable.
+        // The real color comes from pixel analysis in the vector engine.
       } : {}),
       name: r.name || (sem ? sem.label : autoName(r, i)),
     };
