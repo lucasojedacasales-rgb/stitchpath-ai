@@ -25,6 +25,7 @@ const DEFAULTS = {
   chaikinPasses:      2,      // iterations of Chaikin subdivision
   gapCloseThreshold:  8.0,    // px — auto-close gaps smaller than this
   minAreaPx:          120,    // px² — minimum blob area (raised from 48: filters JPEG noise blobs)
+  maxBgCoverage:      0.40,   // fraction — blob touching all 4 borders + covering >40% = background → drop
 };
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -71,6 +72,12 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
     const blobs = findBlobs(labels, W, H, ci, minPixels);
 
     for (const blob of blobs) {
+      // Drop background blobs: k-means merges a near-black outline with the dark
+      // image background into one giant blob covering the whole frame. Detect by
+      // bbox touching all 4 borders + high coverage, and skip it — otherwise it
+      // renders as a huge dashed rectangle that obscures the real design.
+      if (isBackgroundBlob(blob, W, H, cfg.maxBgCoverage)) continue;
+
       // 3. Moore-neighbor integer trace
       let pts = mooreTrace(blob.mask, W, H);
       if (pts.length < 6) continue;
@@ -410,6 +417,19 @@ function mooreTrace(mask, W, H) {
 }
 
 // ─── Connected-component blob detection ───────────────────────────────────────
+
+/**
+ * A background blob: its bbox touches all 4 image borders AND it covers a large
+ * fraction of the frame. This catches the k-means artifact where a near-black
+ * outline merges with the dark background into one frame-spanning mega-blob.
+ */
+function isBackgroundBlob(blob, W, H, maxCoverage) {
+  const touchesAllBorders =
+    blob.bbox.minX <= 1 && blob.bbox.maxX >= W - 2 &&
+    blob.bbox.minY <= 1 && blob.bbox.maxY >= H - 2;
+  if (!touchesAllBorders) return false;
+  return (blob.pixelCount / (W * H)) > maxCoverage;
+}
 
 function findBlobs(labels, W, H, colorIdx, minPixels) {
   const visited = new Uint8Array(W * H);
