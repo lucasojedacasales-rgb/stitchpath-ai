@@ -158,13 +158,27 @@ export default function StitchCanvas({
     ctx.translate(offset.x + W / 2, offset.y + H / 2);
     ctx.scale(zoom, zoom);
 
-    const canvasArea = drawW * drawH;
-    const validRegions = regions.filter(r => (r.area_mm2 || 0) <= canvasArea * 0.9);
-
     const outlineOnly = viewMode === 'outline';
     const alpha = stitchOpacity / 100;
 
-    for (const region of validRegions) {
+    // Painter's algorithm: sort by area descending so the largest region (background)
+    // is painted first and smaller detail regions are painted on top.
+    // Without this, a large background region drawn later covers everything (black blob).
+    // Fallback: compute area from path_points bbox if area_mm2 is missing (un-enriched regions).
+    const sortKey = (r) => {
+      if (r.area_mm2 && r.area_mm2 > 0) return r.area_mm2;
+      if (r.path_points && r.path_points.length >= 3) {
+        const xs = r.path_points.map(p => p[0]);
+        const ys = r.path_points.map(p => p[1]);
+        return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+      }
+      return 0;
+    };
+    const sortedRegions = [...regions]
+      .filter(r => r.path_points && r.path_points.length >= 3)
+      .sort((a, b) => sortKey(b) - sortKey(a));
+
+    for (const region of sortedRegions) {
       if (!region.visible) continue;
       const pts = region.path_points;
       if (!pts || pts.length < 3) continue;
