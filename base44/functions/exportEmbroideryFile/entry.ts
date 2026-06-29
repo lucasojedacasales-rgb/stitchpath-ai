@@ -274,8 +274,10 @@ function encodeDST(stitches, ms) {
     } else if (s.type === 'colorChange') {
       encodeRecord(0, 0, 0xC3);
     } else if (s.type === 'trim') {
-      // Trim en DST: color change + jump (0xC3 = colorChange|jump|stitch)
-      encodeRecord(0, 0, 0xC3);
+      // Trim en DST: 3 jump records at position 0,0 (Tajima trim sequence)
+      encodeRecord(0, 0, 0x83);
+      encodeRecord(0, 0, 0x83);
+      encodeRecord(0, 0, 0x83);
     } else if (s.type === 'jump') {
       encodeRecord(dx, dy, 0x83);
     } else {

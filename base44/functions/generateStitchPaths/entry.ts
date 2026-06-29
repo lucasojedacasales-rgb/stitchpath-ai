@@ -88,14 +88,17 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Main stitches
+      // Main stitches — wrap with tie-on / tie-off anchors
       if (mainPoints.length > 0) {
+        const withTieOn  = addTieOn(mainPoints);
+        const withTieOff = addTieOff(withTieOn);
         stitchPaths.push({
           regionId: region.id,
           type,
           color,
           layerOrder,
-          points: mainPoints,
+          priority: region.priority || layerOrder,
+          points: withTieOff,
           isUnderlay: false,
         });
       }
@@ -185,17 +188,68 @@ function generateContour(poly, type, sp) {
 }
 
 function generateUnderlay(poly, type, sp, region) {
+  // Use adaptive engine underlay type when available
+  const underlayConfig = region.recommended_underlay || region.underlay_data || {};
+  const underlayType = underlayConfig.type || (type === 'satin' ? 'centre_walk' : 'zigzag');
+
   if (type === 'fill') {
-    // Underlay de fill: ángulo perpendicular, más espaciado
-    const mainAngle = sp.fillAngle !== null ? sp.fillAngle : 
+    const mainAngle = sp.fillAngle !== null ? sp.fillAngle :
                       (region.fill_angle !== undefined ? region.fill_angle : 45);
-    const underlayAngle = mainAngle + 90;
-    return generateTatamiFill(poly, sp.tatamiDensityMm * 2, sp.underlayStitchLength, underlayAngle, sp.pullCompensation * 0.5);
+
+    switch (underlayType) {
+      case 'edge_walk':
+        // Perimeter running stitch only — no fill
+        return generateRunningStitch(poly, sp.underlayStitchLength, 0);
+
+      case 'full_coverage':
+        // Two-pass grid: main angle + perpendicular (fleece/terry)
+        const pass1 = generateTatamiFill(poly, sp.tatamiDensityMm * 1.5, sp.underlayStitchLength, mainAngle, 0);
+        const pass2 = generateTatamiFill(poly, sp.tatamiDensityMm * 1.5, sp.underlayStitchLength, (mainAngle + 90) % 180, 0);
+        return [...pass1, ...pass2];
+
+      case 'zigzag':
+      default:
+        // Standard tatami at perpendicular angle, looser density
+        return generateTatamiFill(poly, sp.tatamiDensityMm * 2, sp.underlayStitchLength, (mainAngle + 90) % 180, sp.pullCompensation * 0.4);
+    }
   } else if (type === 'satin') {
-    // Underlay de satin: zig-zag centrado, más espaciado
-    return generateSatinZigZag(poly, sp.satinWidth * 0.5, sp.pullCompensation * 0.3);
+    switch (underlayType) {
+      case 'centre_walk':
+        // Single line down the centre axis (prevents sinking)
+        return generateCentreWalk(poly, sp.underlayStitchLength);
+      case 'zigzag':
+        // Zigzag underlay for wide satin columns
+        return generateSatinZigZag(poly, sp.satinWidth * 0.5, sp.pullCompensation * 0.3);
+      default:
+        return generateCentreWalk(poly, sp.underlayStitchLength);
+    }
   }
   return [];
+}
+
+// Centre walk: single running stitch along the medial axis of a satin region
+function generateCentreWalk(poly, stitchLength) {
+  const cx = poly.reduce((s, p) => s + p[0], 0) / poly.length;
+  const cy = poly.reduce((s, p) => s + p[1], 0) / poly.length;
+  const angle = dominantAngle(poly);
+  const axisDir = [Math.cos(angle), Math.sin(angle)];
+
+  const projections = poly.map(p => (p[0] - cx) * axisDir[0] + (p[1] - cy) * axisDir[1]);
+  const tMin = Math.min(...projections);
+  const tMax = Math.max(...projections);
+
+  const points = [];
+  for (let t = tMin; t <= tMax; t += stitchLength) {
+    points.push([
+      parseFloat((cx + t * axisDir[0]).toFixed(3)),
+      parseFloat((cy + t * axisDir[1]).toFixed(3)),
+    ]);
+  }
+  points.push([
+    parseFloat((cx + tMax * axisDir[0]).toFixed(3)),
+    parseFloat((cy + tMax * axisDir[1]).toFixed(3)),
+  ]);
+  return points;
 }
 
 // ── TATAMI FILL MEJORADO ──────────────────────────────────────────────────
@@ -453,8 +507,12 @@ function generateSatinContour(poly, width, pullComp) {
 function sequencePathsOptimized(paths, mode, trimThreshold) {
   if (paths.length <= 1) return paths;
 
-  // Paso 1: Ordenar por layerOrder
-  const sorted = [...paths].sort((a, b) => (a.layerOrder || 999) - (b.layerOrder || 999));
+  // Paso 1: Ordenar por priority (adaptive engine) then layerOrder as fallback
+  const sorted = [...paths].sort((a, b) => {
+    const pa = a.priority ?? a.layerOrder ?? 999;
+    const pb = b.priority ?? b.layerOrder ?? 999;
+    return pa - pb;
+  });
 
   if (mode === 'layerOrder') {
     return sorted;
@@ -557,6 +615,39 @@ function twoOptImprove(paths) {
   }
 
   return paths;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TIE-ON / TIE-OFF  (anclajes de hilo — estándar pyembroidery / ink-stitch)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Adds 3 short back-stitches at the start of a path to lock the thread.
+// Standard tie-on: 3 tiny stitches near the first point (±0.3mm each).
+function addTieOn(points) {
+  if (points.length === 0) return points;
+  const [x0, y0] = points[0];
+  const tieOff = 0.3; // mm — sub-fabric lock stitch
+  return [
+    [x0 + tieOff, y0],
+    [x0, y0],
+    [x0 + tieOff, y0],
+    [x0, y0],
+    ...points,
+  ];
+}
+
+// Adds 3 short back-stitches at the end to lock off the thread.
+function addTieOff(points) {
+  if (points.length === 0) return points;
+  const [xN, yN] = points[points.length - 1];
+  const tieOff = 0.3;
+  return [
+    ...points,
+    [xN + tieOff, yN],
+    [xN, yN],
+    [xN + tieOff, yN],
+    [xN, yN],
+  ];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
