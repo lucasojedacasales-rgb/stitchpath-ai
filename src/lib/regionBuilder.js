@@ -37,6 +37,7 @@
  */
 
 import { adaptRegion } from './adaptiveEngine.js';
+import { eieOptimizeTravelOrder } from './stitchIntelligence.js';
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 
@@ -449,28 +450,7 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
 export function enrichAllRegions(regions, designWidthMm = 100, designHeightMm = 100, fabricType = 'Algodón', useAdaptive = true) {
   const enriched = regions.map(r => enrichRegion(r, regions, designWidthMm, designHeightMm, fabricType, useAdaptive));
 
-  // Greedy travel order: menor prioridad primero (capas base/fondo), mayor prioridad al final (detalles encima).
-  // This ensures fills are drawn before satin outlines, and satin before running_stitch details.
-  const ordered = [];
-  const visited = new Set();
-  let cx = 0.5, cy = 0.5;
-  const pool = [...enriched].sort((a, b) => (a.priority || 1) - (b.priority || 1));
-
-  while (ordered.length < pool.length) {
-    const topPrio = pool.find(r => !visited.has(r.id))?.priority || 1;
-    const cands   = pool.filter(r => !visited.has(r.id) && (r.priority || 1) === topPrio);
-    let best = cands[0], bestDist = Infinity;
-    for (const r of cands) {
-      const [rx, ry] = r.centroid || [0.5, 0.5];
-      const d = Math.hypot(rx - cx, ry - cy);
-      if (d < bestDist) { bestDist = d; best = r; }
-    }
-    if (!best) break;
-    visited.add(best.id);
-    const [rx, ry] = best.centroid || [0.5, 0.5];
-    cx = rx; cy = ry;
-    ordered.push({ ...best, travelOrder: ordered.length + 1 });
-  }
-
-  return ordered;
+  // EIE 2-opt optimized travel order: priority-grouped + nearest-neighbour + 2-opt improvement.
+  // Ensures fills are drawn before satin outlines, and satin before running_stitch details.
+  return eieOptimizeTravelOrder(enriched, fabricType);
 }

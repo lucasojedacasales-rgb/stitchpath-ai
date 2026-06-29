@@ -9,6 +9,7 @@ import ConfigPanel from '@/components/editor/ConfigPanel';
 import RegionsPanel from '@/components/editor/RegionsPanel';
 import SubpixelMetricsPanel from '@/components/editor/SubpixelMetricsPanel.jsx';
 import StitchPlannerPanel from '@/components/editor/StitchPlannerPanel.jsx';
+import IntelligencePanel from '@/components/editor/IntelligencePanel.jsx';
 import TravelOptimizerPanel from '@/components/editor/TravelOptimizerPanel.jsx';
 import PhysicsSimulator from '@/components/editor/PhysicsSimulator.jsx';
 import ExportModal from '@/components/editor/ExportModal';
@@ -371,22 +372,21 @@ export default function Editor() {
         </div>
 
         <div className="w-64 flex-shrink-0 border-l border-[#1e2130] overflow-hidden flex flex-col">
-          <div className="flex-1 overflow-hidden min-h-0">
-            <RegionsPanel regions={regions} selectedId={selectedRegionId} onSelect={setSelectedRegionId} onUpdate={handleRegionsUpdate} />
-          </div>
-          {selectedRegionId && regions.find(r => r.id === selectedRegionId)?.stitch_type === 'fill' && (
-            <div className="border-t border-[#1e2130] overflow-y-auto max-h-[45%] bg-[#0a0c12]">
-              <div className="px-3 py-2 border-b border-[#1a1d27] flex items-center gap-2">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Métricas sub-pixel</span>
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-900/30 border border-violet-500/30 text-violet-400">β</span>
-              </div>
-              <div className="p-3">
-                <SubpixelMetricsPanel
-                  region={regions.find(r => r.id === selectedRegionId)}
-                  widthMm={config.width_mm}
-                  heightMm={config.height_mm}
-                />
-              </div>
+          {/* Right panel tab switcher */}
+          {selectedRegionId ? (() => {
+            const selRegion = regions.find(r => r.id === selectedRegionId);
+            return (
+              <RightPanelTabs
+                region={selRegion}
+                regions={regions}
+                config={config}
+                onUpdate={handleRegionsUpdate}
+                onSelect={setSelectedRegionId}
+              />
+            );
+          })() : (
+            <div className="flex-1 overflow-hidden min-h-0">
+              <RegionsPanel regions={regions} selectedId={selectedRegionId} onSelect={setSelectedRegionId} onUpdate={handleRegionsUpdate} />
             </div>
           )}
         </div>
@@ -416,6 +416,53 @@ function SliderControl({ label, value, onChange, color }) {
 function FilterToggle({ label, active, onChange, color }) {
   const accent = color === 'violet' ? 'border-violet-500/50 bg-violet-900/20 text-violet-300' : 'border-cyan-500/50 bg-cyan-900/20 text-cyan-300';
   return <button onClick={() => onChange(!active)} className={`text-[10px] px-2 py-1 rounded border transition-colors font-medium ${active ? accent : 'border-[#2a2d3a] text-slate-600 hover:text-slate-400'}`}>{label}</button>;
+}
+
+function RightPanelTabs({ region, regions, config, onUpdate, onSelect }) {
+  const [tab, setTab] = useState('regions');
+  const TABS = [
+    { id: 'regions', label: 'Regiones' },
+    { id: 'eie',     label: '🧠 EIE' },
+    { id: 'sub',     label: 'Métricas' },
+  ];
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex border-b border-[#1e2130] flex-shrink-0">
+        {TABS.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`flex-1 px-2 py-1.5 text-[10px] font-medium transition-colors border-b-2 ${
+              tab === t.id
+                ? 'border-violet-500 text-violet-300'
+                : 'border-transparent text-slate-600 hover:text-slate-400'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex-1 overflow-y-auto min-h-0">
+        {tab === 'regions' && (
+          <RegionsPanel regions={regions} selectedId={region?.id} onSelect={onSelect} onUpdate={onUpdate} />
+        )}
+        {tab === 'eie' && (
+          <div className="p-3">
+            <IntelligencePanel region={region} config={config} allRegions={regions} />
+          </div>
+        )}
+        {tab === 'sub' && (
+          <div className="p-3">
+            <SubpixelMetricsPanel
+              region={region}
+              widthMm={config.width_mm}
+              heightMm={config.height_mm}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function UploadZone({ onUpload, fileInputRef, uploading }) {
