@@ -130,8 +130,8 @@ export const DIGITIZE_MODES = {
 
     vectorizer: {
       color_count: 10,
-      rdpEpsilon: 0.002,         // fine simplification
-      minPixelArea: 60,          // catch small details
+      rdpEpsilon: 0.003,         // fine simplification (raised from 0.002 — prevents micro-fragments)
+      minPixelArea: 150,         // raised from 60 — filters noise while keeping real small details
       smoothPasses: 3,
     },
 
@@ -180,7 +180,7 @@ export const DIGITIZE_MODES = {
     vectorizer: {
       color_count: 8,
       rdpEpsilon: 0.003,
-      minPixelArea: 80,
+      minPixelArea: 120,         // raised from 80 — aligns with contourEngine default minAreaPx
       smoothPasses: 2,
     },
 
@@ -228,9 +228,9 @@ export const DIGITIZE_MODES = {
 
     vectorizer: {
       color_count: 12,
-      rdpEpsilon: 0.001,         // very fine — minimal simplification
-      minPixelArea: 30,          // catch micro-details
-      smoothPasses: 4,           // extra smooth passes
+      rdpEpsilon: 0.002,         // fine — raised from 0.001 (sub-pixel epsilon → oversegmentation)
+      minPixelArea: 80,          // raised from 30 — micro-detail threshold that doesn't pass noise
+      smoothPasses: 3,           // reduced from 4 — 3 passes sufficient, 4th adds no visual quality
     },
 
     backend: {

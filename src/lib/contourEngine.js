@@ -18,13 +18,13 @@
 
 const DEFAULTS = {
   analysisSize:       1024,   // px — higher = more sub-pixel accuracy
-  minSegmentPx:       3.0,    // px — remove segments shorter than this
+  minSegmentPx:       4.0,    // px — remove segments shorter than this
   cornerAngleDeg:     150,    // deg — angle below this threshold = corner
-  rdpBaseEpsilon:     0.9,    // px — base RDP simplification tolerance
-  rdpCornerFactor:    0.25,   // multiplier — tighter epsilon near corners
+  rdpBaseEpsilon:     1.2,    // px — base RDP simplification tolerance (raised: was 0.9, caused micro-fragments)
+  rdpCornerFactor:    0.3,    // multiplier — tighter epsilon near corners
   chaikinPasses:      2,      // iterations of Chaikin subdivision
   gapCloseThreshold:  8.0,    // px — auto-close gaps smaller than this
-  minAreaPx:          48,     // px² — minimum blob area to keep (noise removal)
+  minAreaPx:          120,    // px² — minimum blob area (raised from 48: filters JPEG noise blobs)
 };
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -63,7 +63,8 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
     labels[i] = nearestIdx([pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]], palette);
   }
 
-  const minPixels = Math.max(cfg.minAreaPx, Math.floor(W * H * 0.00005));
+  // Relative floor raised to 0.0003 (was 0.00005) — prevents micro-blobs from JPEG artifacts
+  const minPixels = Math.max(cfg.minAreaPx, Math.floor(W * H * 0.0003));
   const regions = [];
 
   for (let ci = 0; ci < palette.length; ci++) {

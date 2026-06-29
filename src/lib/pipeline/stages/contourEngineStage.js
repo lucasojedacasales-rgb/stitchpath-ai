@@ -33,10 +33,10 @@ export async function runContourEngine(ctx) {
   if (ctx.analysis?.edgeDensityMap) {
     const grid = ctx.analysis.edgeDensityMap;
     const flatMean = grid.flat().reduce((s, v) => s + v, 0) / (grid.length * grid[0].length);
-    // High edge density (complex image) → tighten epsilon by up to 40%
-    // Low edge density (simple image) → relax epsilon by up to 20%
-    const edgeFactor = 1.0 - (flatMean - 0.3) * 0.8; // 0.3 = neutral threshold
-    modeOpts.rdpBaseEpsilon = +(modeOpts.rdpBaseEpsilon * Math.max(0.55, Math.min(1.25, edgeFactor))).toFixed(3);
+    // Adaptive RDP epsilon: clamp tightening to 75% of base (was 55% — caused sub-pixel micro-segments)
+    // Max tightening: 25%, max loosening: 20% — conservative range to prevent oversegmentation
+    const edgeFactor = 1.0 - (flatMean - 0.3) * 0.5; // reduced from 0.8 → gentler adaptation
+    modeOpts.rdpBaseEpsilon = +(modeOpts.rdpBaseEpsilon * Math.max(0.75, Math.min(1.20, edgeFactor))).toFixed(3);
   }
 
   ctx.contours = await traceContoursProf(sourceUrl, colorCount, modeOpts);
