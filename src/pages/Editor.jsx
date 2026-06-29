@@ -448,7 +448,7 @@ function RightPanelTabs({ region, regions, config, onUpdate, onSelect }) {
         )}
         {tab === 'eie' && (
           <div className="p-3">
-            <IntelligencePanel region={region} config={config} allRegions={regions} />
+            <IntelligencePanel region={region} config={config} allRegions={regions} onUpdate={onUpdate} />
           </div>
         )}
         {tab === 'sub' && (
