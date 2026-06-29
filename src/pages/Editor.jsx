@@ -84,6 +84,30 @@ export default function Editor() {
 
   useEffect(() => {if (id) loadProject();}, [id]);
 
+  // ── Keyboard shortcuts ──────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e) => {
+      // Ctrl+S / Cmd+S — save
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveProject();
+        return;
+      }
+      // Escape — close export modal
+      if (e.key === 'Escape' && showExport) {
+        setShowExport(false);
+        return;
+      }
+      // Ctrl+Enter — trigger processing
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && imageUrl && !processing) {
+        e.preventDefault();
+        startProcessing();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [showExport, imageUrl, processing, saveProject]);
+
   const loadProject = async () => {
     setLoading(true);
     try {
@@ -97,7 +121,7 @@ export default function Editor() {
     {setLoading(false);}
   };
 
-  const saveProject = async (overrides = {}) => {
+  const saveProject = useCallback(async (overrides = {}) => {
     if (!project) return;
     setSaving(true);
     try {
@@ -109,7 +133,7 @@ export default function Editor() {
       });
       setProject(updated);
     } finally {setSaving(false);}
-  };
+  }, [project, config, regions, imageUrl, step]);
 
   const handleImageUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -211,8 +235,8 @@ export default function Editor() {
           <AIProgressIndicator active={processing} elapsed={processingElapsed} />
           <div className="flex items-center gap-1.5">
             <NavButton onClick={() => setShowExport(true)} icon={Download} label="Exportar" accent />
-            <NavButton onClick={() => startProcessing()} icon={Zap} label="Procesar" disabled={!imageUrl || processing} />
-            <NavButton onClick={() => saveProject()} icon={Save} label={saving ? '...' : 'Guardar'} />
+            <NavButton onClick={() => startProcessing()} icon={Zap} label="Procesar" disabled={!imageUrl || processing} title="Procesar imagen (Ctrl+Enter)" />
+            <NavButton onClick={() => saveProject()} icon={Save} label={saving ? '...' : 'Guardar'} title="Guardar (Ctrl+S)" />
           </div>
         </div>
         <div className="flex items-center justify-between px-4 py-1.5 border-t border-[#1a1d27]">
@@ -378,8 +402,8 @@ function ProjectNameInput({ name, onSave }) {
   return <button onClick={() => setEditing(true)} className="text-sm font-semibold text-slate-200 hover:text-white truncate max-w-[160px]">{name}</button>;
 }
 
-function NavButton({ onClick, icon: Icon, label, accent, disabled }) {
-  return <button onClick={onClick} disabled={disabled} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${accent ? 'bg-violet-600 hover:bg-violet-500 text-white' : 'bg-[#161a23] border border-[#2a2d3a] text-slate-400 hover:text-white hover:bg-[#1e2130]'}`}><Icon className="w-3.5 h-3.5" /> {label}</button>;
+function NavButton({ onClick, icon: Icon, label, accent, disabled, title }) {
+  return <button onClick={onClick} disabled={disabled} title={title} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${accent ? 'bg-violet-600 hover:bg-violet-500 text-white' : 'bg-[#161a23] border border-[#2a2d3a] text-slate-400 hover:text-white hover:bg-[#1e2130]'}`}><Icon className="w-3.5 h-3.5" /> {label}</button>;
 }
 
 function SliderControl({ label, value, onChange, color }) {

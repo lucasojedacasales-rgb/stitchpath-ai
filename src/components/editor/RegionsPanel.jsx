@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Eye, EyeOff, Edit2, Check, Layers, Focus, ChevronDown, ChevronRight } from 'lucide-react';
+import { Eye, EyeOff, Edit2, Check, Layers, Focus, ChevronDown, ChevronRight, Search } from 'lucide-react';
 import RegionEditModal from './RegionEditModal';
 import RegionInspector from './RegionInspector.jsx';
 
@@ -240,6 +240,7 @@ function RegionInspectorPanel({ region, allRegions }) {
 
 export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate }) {
   const [filter, setFilter] = useState('Todas');
+  const [search, setSearch] = useState('');
   const [batchMode, setBatchMode] = useState(false);
   const [selected, setSelected] = useState([]);
   const [editingId, setEditingId] = useState(null);
@@ -257,8 +258,13 @@ export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate }
     if (filter === 'Fill')  return r.stitch_type === 'fill';
     if (filter === 'Satin') return r.stitch_type === 'satin';
     if (filter === 'Run')   return r.stitch_type === 'running_stitch';
+    if (search) {
+      const q = search.toLowerCase();
+      const name = (r.name || generateRegionName(r, allRegions)).toLowerCase();
+      return name.includes(q) || (r.color || '').toLowerCase().includes(q);
+    }
     return true;
-  }), [allRegions, filter, isolatedId]);
+  }), [allRegions, filter, isolatedId, search]);
 
   // Group by closest color name
   const groups = useMemo(() => {
@@ -347,9 +353,21 @@ export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate }
           </div>
         </div>
 
+        {/* Search */}
+        <div className="relative mb-1.5">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-600 pointer-events-none" />
+          <input
+            type="text"
+            placeholder="Buscar región..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full bg-[#161a23] border border-[#2a2d3a] rounded pl-6 pr-2 py-1.5 text-[11px] text-slate-300 placeholder-slate-600 focus:outline-none focus:border-violet-500/60 transition-colors"
+          />
+        </div>
+
         {/* Summary */}
         <div className="text-[10px] text-slate-600 mb-1.5">
-          {fmtPts(totalStitches)} puntadas totales
+          {fmtPts(totalStitches)} puntadas{search ? ` · "${search}"` : ''}
         </div>
 
         {/* Filters */}
