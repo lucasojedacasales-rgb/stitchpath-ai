@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react';
-import { Eye, EyeOff, Edit2, Check, Layers, Focus, ChevronDown, ChevronRight } from 'lucide-react';
+import { Eye, EyeOff, Edit2, Check, Layers, Focus, ChevronDown, ChevronRight, Brain, Zap } from 'lucide-react';
 import RegionEditModal from './RegionEditModal';
 import RegionInspector from './RegionInspector.jsx';
+import { enrichAllRegions } from '@/lib/regionBuilder.js';
 
 // ── Color naming ──────────────────────────────────────────────────────────────
 
@@ -180,8 +181,24 @@ function RegionItem({ region, allRegions, isSelected, isBatch, isChecked, onSele
           <span className="text-[11px] text-slate-200 truncate font-medium">{smartName}</span>
           <StitchBadge type={region.stitch_type} />
         </div>
-        <div className="text-[10px] text-slate-500 mt-0.5">
-          {fmtPts(region.stitch_count)} pts • {region.density || 0}d • {region.angle || 0}°
+        <div className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-1.5">
+          <span>{fmtPts(region.stitch_count)} pts</span>
+          <span>·</span>
+          <span>{region.density || 0}d</span>
+          <span>·</span>
+          <span>{region.angle || 0}°</span>
+          {region.adaptive && region.stitch_confidence != null && (
+            <span className={`text-[9px] font-bold px-1 rounded ${
+              region.stitch_confidence >= 0.8 ? 'text-emerald-400 bg-emerald-900/20' :
+              region.stitch_confidence >= 0.6 ? 'text-amber-400 bg-amber-900/20' :
+              'text-red-400 bg-red-900/20'
+            }`}>
+              {Math.round(region.stitch_confidence * 100)}%
+            </span>
+          )}
+          {region.quality_issues?.length > 0 && (
+            <span title={region.quality_issues.join('\n')} className="text-[9px] text-amber-500 cursor-help">⚠{region.quality_issues.length}</span>
+          )}
         </div>
       </div>
 
@@ -238,9 +255,10 @@ function RegionInspectorPanel({ region, allRegions }) {
   );
 }
 
-export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate }) {
+export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate, config }) {
   const [filter, setFilter] = useState('Todas');
   const [batchMode, setBatchMode] = useState(false);
+  const [applyingEIE, setApplyingEIE] = useState(false);
   const [selected, setSelected] = useState([]);
   const [editingId, setEditingId] = useState(null);
   const [batchTech, setBatchTech] = useState('fill');
@@ -251,6 +269,18 @@ export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate }
   const [isolatedId, setIsolatedId] = useState(null);
 
   const allRegions = regions || [];
+
+  const applyEIEToAll = () => {
+    if (!allRegions.length) return;
+    setApplyingEIE(true);
+    setTimeout(() => {
+      const { width_mm = 100, height_mm = 100, fabric_type = 'Algodón' } = config || {};
+      // Re-enrich all regions through the EIE — resets adaptive params from geometry
+      const enriched = enrichAllRegions(allRegions, width_mm, height_mm, fabric_type, true);
+      onUpdate(enriched);
+      setApplyingEIE(false);
+    }, 50);
+  };
 
   const filtered = useMemo(() => allRegions.filter(r => {
     if (isolatedId && r.id !== isolatedId) return false;
@@ -331,6 +361,15 @@ export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate }
             )}
           </div>
           <div className="flex items-center gap-1">
+            <button
+              onClick={applyEIEToAll}
+              disabled={applyingEIE || allRegions.length === 0}
+              title="Aplicar EIE a todas las regiones"
+              className="flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-violet-500/40 bg-violet-900/20 text-violet-300 hover:bg-violet-900/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {applyingEIE ? <span className="w-3 h-3 border border-violet-400 border-t-transparent rounded-full animate-spin inline-block" /> : <Brain className="w-3 h-3" />}
+              EIE
+            </button>
             <button
               onClick={() => setGroupByColor(g => !g)}
               title="Agrupar por color"

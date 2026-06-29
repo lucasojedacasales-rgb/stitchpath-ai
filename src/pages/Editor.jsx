@@ -386,7 +386,7 @@ export default function Editor() {
             );
           })() : (
             <div className="flex-1 overflow-hidden min-h-0">
-              <RegionsPanel regions={regions} selectedId={selectedRegionId} onSelect={setSelectedRegionId} onUpdate={handleRegionsUpdate} />
+              <RegionsPanel regions={regions} selectedId={selectedRegionId} onSelect={setSelectedRegionId} onUpdate={handleRegionsUpdate} config={config} />
             </div>
           )}
         </div>
@@ -444,7 +444,7 @@ function RightPanelTabs({ region, regions, config, onUpdate, onSelect }) {
       </div>
       <div className="flex-1 overflow-y-auto min-h-0">
         {tab === 'regions' && (
-          <RegionsPanel regions={regions} selectedId={region?.id} onSelect={onSelect} onUpdate={onUpdate} />
+          <RegionsPanel regions={regions} selectedId={region?.id} onSelect={onSelect} onUpdate={onUpdate} config={config} />
         )}
         {tab === 'eie' && (
           <div className="p-3">
