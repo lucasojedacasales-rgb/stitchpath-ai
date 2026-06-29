@@ -301,6 +301,51 @@ export const DIGITIZE_MODES = {
     badge: 'New',
     recommended_for: ['Automático', 'Análisis visual', 'Optimización IA'],
   },
+
+  intelligent: {
+    id: 'intelligent',
+    name: 'Modo Inteligente',
+    icon: '✨',
+    tagline: 'Motor adaptativo automático',
+    description: 'Analiza tu diseño y aplica el motor óptimo para cada región: rápido para bordes simples, precisión para detalles finos, IA para regiones complejas.',
+    color: 'violet',
+    preprocess: {
+      enabled: true,
+      gaussianRadius: 1,
+      contrastBoost: 1.5,
+      saturationBoost: 1.8,
+      sharpenEdges: true,
+      sharpenStrength: 1.0,
+      outputSize: 1024,
+      posterizeColors: true,
+      posterizeLevels: 8,
+      morphologyCleanup: true,
+    },
+    vectorizer: { color_count: 8, rdpEpsilon: 0.003, minPixelArea: 120, smoothPasses: 2 },
+    backend: {
+      mode: 'hybrid',
+      use_ia_vision: true,
+      use_full_bg: false,
+      vector_engine: 'hybrid',
+      tatami_density: 0.4,
+      max_regions: 150,
+    },
+    stitchStrategy: {
+      preferFillOverSatin: false,
+      underlayEnabled: true,
+      adaptiveAngles: true,
+      travelOptimize: true,
+      useAdaptiveEngine: true,
+    },
+    params: {
+      adaptive: true,
+      auto_select_engine: true,
+      region_analysis: true,
+      smart_merge: true,
+    },
+    badge: 'Smart',
+    recommended_for: ['Automático', 'Máxima calidad', 'Sin configurar'],
+  },
 };
 
 /** Returns the strategy object for a given mode id */

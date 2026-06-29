@@ -2,10 +2,11 @@ import { useState, useCallback } from 'react';
 import { ChevronDown, ChevronRight, Zap, Cpu, Settings, BookMarked, Brain, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
 import WorkflowPresetPanel from './WorkflowPresetPanel';
 import { DIGITIZE_MODES, MODE_COLORS } from '@/lib/digitizeModes';
+import { generateProcessingPlan } from '@/lib/intelligentEngine';
 
 const FABRIC_TYPES = ['Algodón', 'Poliéster', 'Mezcla', 'Denim', 'Lino', 'Seda', 'Lycra', 'Otro'];
 
-const MODE_ORDER = ['fast', 'standard', 'precision', 'hybrid', 'ultra', 'ai'];
+const MODE_ORDER = ['fast', 'standard', 'precision', 'hybrid', 'ultra', 'ai', 'intelligent'];
 
 // ── Simulated AI segment response ─────────────────────────────────────────────
 function simulateAiAnalysis() {
@@ -68,13 +69,37 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
   const cfg = config || {};
   const set = (key, val) => onChange({ ...cfg, [key]: val });
 
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [aiResults,   setAiResults]   = useState(null);
-  const [aiError,     setAiError]     = useState(null);
+  const [isAnalyzing,     setIsAnalyzing]     = useState(false);
+  const [aiResults,       setAiResults]       = useState(null);
+  const [aiError,         setAiError]         = useState(null);
+  const [intelligentPlan, setIntelligentPlan] = useState(null);
+  const [isPlanning,      setIsPlanning]      = useState(false);
+  const [planExpanded,    setPlanExpanded]    = useState(false);
 
   const handleModeChange = useCallback((modeId) => {
     set('mode', modeId);
-    if (modeId !== 'ai') { setAiResults(null); setAiError(null); }
+    if (modeId !== 'ai')          { setAiResults(null); setAiError(null); }
+    if (modeId !== 'intelligent') { setIntelligentPlan(null); }
+  }, [cfg, onChange]);
+
+  const analyzeIntelligent = useCallback(async () => {
+    setIsPlanning(true);
+    setIntelligentPlan(null);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      const mockRegions = [
+        { id: 'r1', area: 12000, vertices: 45,  colors: ['#000'] },
+        { id: 'r2', area: 800,   vertices: 320, colors: ['#E91E63', '#9C27B0'] },
+        { id: 'r3', area: 450,   vertices: 580, colors: ['#2196F3', '#03A9F4', '#00BCD4'] },
+        { id: 'r4', area: 2500,  vertices: 120, colors: ['#FF5722'] },
+        { id: 'r5', area: 6000,  vertices: 80,  colors: ['#4CAF50', '#8BC34A'] },
+      ];
+      const { plan, stats } = generateProcessingPlan(mockRegions);
+      setIntelligentPlan({ plan, stats });
+      onChange({ ...cfg, mode: 'intelligent', intelligent_plan: plan, ai_optimized: true });
+    } finally {
+      setIsPlanning(false);
+    }
   }, [cfg, onChange]);
 
   const analyzeWithAI = async () => {
@@ -276,6 +301,110 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
 
                   {/* Footer */}
                   <p className="text-[9px] text-slate-600 text-center">Procesado en {aiResults.processingTime}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Intelligent Mode Panel */}
+        {cfg.mode === 'intelligent' && (
+          <div className="mt-3 rounded-xl border border-violet-500/30 bg-[#0d0f1a] overflow-hidden">
+            <div className="flex items-center gap-2 px-3 py-2.5 bg-violet-900/20 border-b border-violet-500/20">
+              <Sparkles className="w-4 h-4 text-violet-400" />
+              <span className="text-xs font-bold text-violet-300 flex-1">Motor Inteligente Adaptativo</span>
+              {intelligentPlan && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
+            </div>
+
+            <div className="p-3 space-y-3">
+              <button
+                onClick={analyzeIntelligent}
+                disabled={isPlanning}
+                className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold transition-all ${
+                  isPlanning
+                    ? 'bg-violet-800/50 text-violet-300 cursor-not-allowed'
+                    : intelligentPlan
+                      ? 'bg-emerald-600/20 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-600/30'
+                      : 'bg-violet-600 hover:bg-violet-500 text-white'
+                }`}
+              >
+                {isPlanning ? (
+                  <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Analizando diseño...</>
+                ) : intelligentPlan ? (
+                  <><CheckCircle2 className="w-3.5 h-3.5" /> Plan generado · Reanalizar</>
+                ) : (
+                  <><Sparkles className="w-3.5 h-3.5" /> Analizar y generar plan óptimo</>
+                )}
+              </button>
+
+              {isPlanning && (
+                <div className="space-y-2">
+                  <div className="h-1.5 bg-[#1a1d27] rounded-full overflow-hidden">
+                    <div className="h-full bg-violet-500 rounded-full animate-pulse w-3/4" />
+                  </div>
+                  <p className="text-[10px] text-slate-500 text-center">
+                    Analizando regiones · Calculando complejidad · Seleccionando motores óptimos
+                  </p>
+                </div>
+              )}
+
+              {intelligentPlan && !isPlanning && (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {['fast', 'precision', 'hybrid', 'ai'].map(engine => (
+                      <div key={engine} className="bg-[#161a23] rounded-lg p-2 text-center border border-[#2a2d3a]">
+                        <div className="text-base font-bold text-violet-400">{intelligentPlan.stats[engine]}</div>
+                        <div className="text-[9px] text-slate-500 capitalize">{engine}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center justify-between text-[10px] text-slate-500 px-1">
+                    <span>{intelligentPlan.stats.totalRegions} regiones totales</span>
+                    <span>~{intelligentPlan.stats.estimatedTotalTime.toFixed(1)}s</span>
+                  </div>
+
+                  <button
+                    onClick={() => setPlanExpanded(v => !v)}
+                    className="w-full flex items-center justify-between px-2 py-1.5 rounded bg-[#1a1d27] text-[11px] text-slate-400 hover:text-slate-300 transition-colors"
+                  >
+                    <span>Ver plan detallado por región</span>
+                    {planExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                  </button>
+
+                  {planExpanded && (
+                    <div className="space-y-1.5">
+                      {intelligentPlan.plan.map((item, i) => (
+                        <div key={item.regionId} className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-[#161a23] border border-[#2a2d3a]">
+                          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                            item.engine === 'fast'      ? 'bg-amber-400'   :
+                            item.engine === 'precision' ? 'bg-emerald-400' :
+                            item.engine === 'ai'        ? 'bg-violet-400'  : 'bg-cyan-400'
+                          }`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[11px] font-medium text-slate-300">Región {i + 1}</span>
+                              <span className={`text-[9px] px-1 rounded border ${
+                                item.engine === 'fast'      ? 'bg-amber-900/20 text-amber-300 border-amber-500/30'     :
+                                item.engine === 'precision' ? 'bg-emerald-900/20 text-emerald-300 border-emerald-500/30' :
+                                item.engine === 'ai'        ? 'bg-violet-900/20 text-violet-300 border-violet-500/30'  :
+                                'bg-cyan-900/20 text-cyan-300 border-cyan-500/30'
+                              }`}>{item.engine}</span>
+                            </div>
+                            <p className="text-[9px] text-slate-500 truncate">{item.reason}</p>
+                          </div>
+                          <span className="text-[9px] text-slate-600 flex-shrink-0">{item.estimatedTime}s</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={() => onChange({ ...cfg, mode: 'intelligent', intelligent_applied: true, vector_engine: 'hybrid' })}
+                    className="w-full py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors"
+                  >
+                    Aplicar plan inteligente
+                  </button>
                 </div>
               )}
             </div>
