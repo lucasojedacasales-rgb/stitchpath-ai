@@ -52,7 +52,7 @@ export function generateTatamiFill(polygon, densityMm = 0.4, stitchLenMm = 3.0, 
 
     for (let si = 0; si < xs.length - 1; si += 2) {
       const xL = xs[si], xR = xs[si + 1];
-      if (xR - xL < stitchPitchPx * 0.4) { rowIdx++; continue; }
+      if (xR - xL < stitchPitchPx * 0.4) continue;
 
       // Build needle penetration points for this span
       // Start at left edge, place needle points every stitchPitch with brick offset
