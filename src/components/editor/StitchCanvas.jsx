@@ -42,36 +42,42 @@ function getDrawSize(imageEl, W, H) {
 }
 
 // ── Tatami fill renderer ──────────────────────────────────────────────────────
-// Draws each stitch as a 2px oriented line using the tatamiFill engine.
-// stitchCache: Map<regionId, {stitches, drawW, drawH, angle, density}>
+// Generates each region's stitches ONCE in a fixed reference space, then scales
+// the cached path to the current canvas size at draw time. This is critical:
+// with 60+ regions, regenerating tatami fills on every canvas resize / image-load
+// invalidates the cache (drawW/drawH changed) and blocks the main thread long
+// enough to trigger the browser's "page unresponsive" dialog.
+
+const FILL_REF_SIZE = 1000;     // stable reference canvas for generation
+const FILL_REF_PXPERMM = 10;    // 1000px ÷ 100mm design — matches prior drawW/100 assumption
 
 function drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCache) {
   const color = region.color || '#ffffff';
   const angleDeg = region.angle || 0;
   const densityMm = region.tatami_density || region.density_mm || 0.4;
 
-  // Cache key: recompute only if drawSize or region params change
-  const cacheKey = region.id;
+  // Cache key: stable — independent of canvas size. Each region is generated
+  // exactly once; subsequent resizes/zoom only re-stroke the cached path.
+  const cacheKey = `${region.id}_${angleDeg}_${densityMm}`;
   let cached = stitchCache.get(cacheKey);
-  if (!cached || cached.drawW !== drawW || cached.drawH !== drawH || cached.angleDeg !== angleDeg || cached.densityMm !== densityMm) {
-    // Convert normalized path_points → canvas px
-    const polygon = pts.map(p => [(p[0] - 0.5) * drawW, (p[1] - 0.5) * drawH]);
-    // pxPerMm: drawW spans 100mm by default
-    const pxPerMm = drawW / 100;
-    const { stitches, totalStitches } = generateTatamiFill(polygon, densityMm, 2.5, angleDeg, pxPerMm);
-    cached = { stitches, totalStitches, drawW, drawH, angleDeg, densityMm };
+  if (!cached) {
+    const polygonRef = pts.map(p => [(p[0] - 0.5) * FILL_REF_SIZE, (p[1] - 0.5) * FILL_REF_SIZE]);
+    const { stitches, totalStitches } = generateTatamiFill(polygonRef, densityMm, 2.5, angleDeg, FILL_REF_PXPERMM);
+    cached = { stitches, totalStitches };
     stitchCache.set(cacheKey, cached);
-    // Surface real stitch count back onto the region object for the panel
     region._computed_stitches = totalStitches;
   }
 
   const { stitches } = cached;
   if (!stitches.length) return;
 
-  // Row spacing in design px — line width equals it so adjacent rows abut and the
-  // fill reads as solid instead of a sparse wireframe of separate parallel lines.
-  const pxPerMm = drawW / 100;
-  const rowSpacingPx = Math.max(1.5, densityMm * pxPerMm);
+  // Scale reference-space stitches → current draw space
+  const sx = drawW / FILL_REF_SIZE;
+  const sy = drawH / FILL_REF_SIZE;
+
+  // Row spacing in current draw px — line width equals it so adjacent rows abut
+  // and the fill reads as solid instead of a sparse wireframe of parallel lines.
+  const rowSpacingPx = Math.max(1.5, densityMm * (drawW / 100));
 
   ctx.globalAlpha = alpha * 0.92;
   ctx.strokeStyle = color;
@@ -80,8 +86,8 @@ function drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCac
 
   ctx.beginPath();
   for (const [x0, y0, x1, y1] of stitches) {
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(x1, y1);
+    ctx.moveTo(x0 * sx, y0 * sy);
+    ctx.lineTo(x1 * sx, y1 * sy);
   }
   ctx.stroke();
 }
