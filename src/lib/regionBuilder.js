@@ -36,6 +36,8 @@
  *   quality_issues    — string[] lista de problemas detectados
  */
 
+import { adaptRegion } from './adaptiveEngine.js';
+
 // ─── Constantes ────────────────────────────────────────────────────────────────
 
 const THREAD_MM_PER_STITCH = 5.5;
@@ -212,66 +214,7 @@ function estimateHoles(region, allRegions) {
   return holes;
 }
 
-// ─── Recomendaciones de bordado ───────────────────────────────────────────────
-
-/**
- * Recomienda el tipo de puntada basándose en métricas geométricas reales.
- * Respeta el tipo semántico si viene del LLM (alta confianza).
- */
-function recommendStitch(region, skeletonMetrics, convexity) {
-  // Si el LLM ya clasificó con alta confianza, respetarlo
-  if (region.semantic?.stitch_type && (region.semantic?.confidence || 0) > 0.5) {
-    return { type: region.semantic.stitch_type, rationale: region.semantic.stitch_notes || 'Clasificado por análisis semántico.' };
-  }
-
-  const area      = region.area_mm2    || 0;
-  const meanW     = skeletonMetrics.mean_width_mm;
-  const maxW      = skeletonMetrics.max_width_mm;
-  const skelLen   = skeletonMetrics.skeleton_length_mm;
-
-  // Running stitch: formas muy pequeñas o líneas delgadas
-  if (area < 3 || (meanW < 1.5 && skelLen > meanW * 3)) {
-    return { type: 'running_stitch', rationale: `Área (${area.toFixed(1)}mm²) o grosor (${meanW.toFixed(1)}mm) muy reducidos; running stitch es la única opción viable.` };
-  }
-
-  // Satin: formas estrechas y elongadas con ancho ≤ 8mm (límite práctico de máquina)
-  if (maxW <= 8 && meanW <= 6 && convexity > 0.55) {
-    return { type: 'satin', rationale: `Forma elongada con ancho máximo ${maxW.toFixed(1)}mm ≤ 8mm y convexidad ${convexity.toFixed(2)}; columnas satin dan cobertura óptima.` };
-  }
-
-  // Fill tatami: todo lo demás
-  return { type: 'fill', rationale: `Área ${area.toFixed(1)}mm² con ancho medio ${meanW.toFixed(1)}mm; tatami fill garantiza cobertura uniforme.` };
-}
-
-function recommendUnderlay(stitchType, area_mm2, mean_width_mm) {
-  if (stitchType === 'running_stitch') return { enabled: false, type: null, rationale: 'Running stitch no requiere underlay.' };
-  if (stitchType === 'satin') {
-    const type = mean_width_mm > 4 ? 'zigzag_center' : 'single_run';
-    return { enabled: true, type, rationale: `Satin sobre ${mean_width_mm.toFixed(1)}mm de ancho: underlay ${type} estabiliza la tela.` };
-  }
-  // Fill
-  if (area_mm2 > 80) return { enabled: true, type: 'grid_90deg', rationale: 'Fill grande (>80mm²): underlay cuadrícula 90° para máxima estabilidad.' };
-  if (area_mm2 > 20) return { enabled: true, type: 'single_run', rationale: 'Fill mediano (>20mm²): underlay perimetral reduce desplazamiento de tela.' };
-  return { enabled: false, type: null, rationale: 'Fill pequeño; underlay opcional.' };
-}
-
-function recommendDensity(stitchType, mean_width_mm, complexity) {
-  // En mm entre filas. Menor = más denso = más puntadas.
-  if (stitchType === 'running_stitch') return 0;
-  if (stitchType === 'satin') return +(0.30 + (mean_width_mm > 5 ? 0.05 : 0)).toFixed(2);
-  // Fill: más denso en áreas complejas o pequeñas
-  const base = complexity.level === 'alta' ? 0.35 : complexity.level === 'media' ? 0.40 : 0.45;
-  return base;
-}
-
-function recommendCompensation(stitchType, mean_width_mm, fabricType) {
-  // Pull compensation en mm (cuánto encoger la puntada para compensar el tirón del hilo)
-  if (stitchType === 'running_stitch') return 0;
-  const fabricFactor = { 'Lycra': 0.5, 'Mezcla': 0.35, 'Algodón': 0.25, 'Denim': 0.20, 'Lino': 0.20, 'Poliéster': 0.15, 'Seda': 0.10, 'Otro': 0.25 };
-  const ff = fabricFactor[fabricType] || 0.25;
-  if (stitchType === 'satin') return +(ff * 1.2).toFixed(2);
-  return +ff.toFixed(2);
-}
+// ─── (Legacy recommend* functions replaced by lib/adaptiveEngine.js) ─────────
 
 // ─── Hilo recomendado (match de color simplificado) ───────────────────────────
 
@@ -363,19 +306,6 @@ function computeQuality(region, stitchType, skeletonMetrics, convexity, complexi
   return { quality_score: Math.max(0, Math.min(100, Math.round(score))), quality_issues: issues };
 }
 
-// ─── Prioridad ────────────────────────────────────────────────────────────────
-
-function computePriority(region, stitchType) {
-  if (stitchType === 'running_stitch') return 1;
-  const area = region.area_mm2 || 0;
-  if (area > 500) return 10;
-  if (area > 200) return 8;
-  if (area > 80)  return 6;
-  if (area > 30)  return 4;
-  if (area > 8)   return 2;
-  return 1;
-}
-
 // ─── API principal ────────────────────────────────────────────────────────────
 
 /**
@@ -400,31 +330,48 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
 
   const skeletonMetrics = computeSkeletonMetrics(scaled, orientation);
 
-  // ── Recomendaciones ──
-  const stitchRec       = recommendStitch({ ...region, area_mm2 }, skeletonMetrics, convexity);
-  const stitchType      = region.stitch_type || stitchRec.type; // respetar override manual
-  const underlayRec     = recommendUnderlay(stitchType, area_mm2, skeletonMetrics.mean_width_mm);
-  const density         = region.density || recommendDensity(stitchType, skeletonMetrics.mean_width_mm, complexity);
-  const compensation    = recommendCompensation(stitchType, skeletonMetrics.mean_width_mm, fabricType);
-  const threadRec       = recommendThread(region.color || '#888888');
+  // ── Adaptive Engine — all parameters derived from geometry ──────────────────
+  const geoMetrics = {
+    area_mm2,
+    perimeter_mm,
+    orientation,
+    convexity,
+    concavity,
+    skeleton_length_mm: skeletonMetrics.skeleton_length_mm,
+    mean_width_mm:      skeletonMetrics.mean_width_mm,
+    max_width_mm:       skeletonMetrics.max_width_mm,
+    min_width_mm:       skeletonMetrics.min_width_mm,
+    mean_curvature,
+    complexity,
+    holes,
+  };
+
+  // Overrides: only explicit values from backend/user (never defaults)
+  const overrides = {};
+  if (region.stitch_type) overrides.stitch_type = region.stitch_type;
+  if (region.density > 0) overrides.density = region.density;
+  if (region.pull_compensation > 0) overrides.pull_compensation = region.pull_compensation;
+  if (region.angle != null) overrides.angle = region.angle;
+  if (region.priority != null && region.priority > 0) overrides.priority = region.priority;
+
+  const adapted = adaptRegion(geoMetrics, overrides, fabricType);
+
+  const threadRec = recommendThread(region.color || '#888888');
 
   // ── Producción ──
-  const stitch_count    = (region.stitch_count > 0) ? region.stitch_count : estimateStitchCount({ ...region, stitch_type: stitchType, area_mm2, perimeter_mm }, density);
+  const stitch_count    = (region.stitch_count > 0)
+    ? region.stitch_count
+    : estimateStitchCount({ stitch_type: adapted.stitch_type, area_mm2, perimeter_mm }, adapted.density);
   const estimatedTime   = estimateTime(stitch_count);
   const estimatedThread = estimateThread(stitch_count);
-  // Respect priority already set by backend (hybridDigitize layer_order mapping).
-  // Only compute from area when no priority is provided.
-  const priority        = (region.priority != null && region.priority > 0)
-    ? region.priority
-    : computePriority({ area_mm2 }, stitchType);
 
   // ── Calidad ──
   const { quality_score, quality_issues } = computeQuality(
-    { ...region, area_mm2, perimeter_mm, underlay_data: underlayRec },
-    stitchType, skeletonMetrics, convexity, complexity, holes, density
+    { area_mm2, perimeter_mm, underlay_data: adapted.underlay },
+    adapted.stitch_type, skeletonMetrics, convexity, complexity, holes, adapted.density
   );
 
-  // Capture color before spread — enrichRegion must NEVER lose the original pixel color
+  // Preserve original pixel color — never overwrite
   const originalColor = region.color || region.hex || '#888888';
 
   return {
@@ -435,31 +382,36 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
     orientation,
     convexity,
     concavity,
-    skeleton_length_mm:    skeletonMetrics.skeleton_length_mm,
-    mean_width_mm:         skeletonMetrics.mean_width_mm,
-    max_width_mm:          skeletonMetrics.max_width_mm,
-    min_width_mm:          skeletonMetrics.min_width_mm,
+    skeleton_length_mm: skeletonMetrics.skeleton_length_mm,
+    mean_width_mm:      skeletonMetrics.mean_width_mm,
+    max_width_mm:       skeletonMetrics.max_width_mm,
+    min_width_mm:       skeletonMetrics.min_width_mm,
     mean_curvature,
     holes,
     complexity,
-    // Color / hilo — always the original pixel-accurate color, never overwritten
-    color:                    originalColor,
-    recommended_thread:       threadRec,
-    recommended_stitch:       stitchRec.type,
-    stitch_rationale:         stitchRec.rationale,
-    recommended_underlay:     underlayRec,
-    recommended_density:      +density.toFixed(2),
-    recommended_compensation: compensation,
-    // Stitch type efectivo (puede diferir si el usuario lo sobrescribió)
-    stitch_type:     stitchType,
-    density:         +density.toFixed(2),
-    // Producción
+    // Color — never overwritten
+    color:               originalColor,
+    recommended_thread:  threadRec,
+    // Adaptive parameters (computed from geometry)
+    stitch_type:         adapted.stitch_type,
+    stitch_confidence:   adapted.stitch_confidence,
+    stitch_rationale:    adapted.stitch_rationale,
+    density:             adapted.density,
+    stitch_length_mm:    adapted.stitch_length_mm,
+    pull_compensation:   adapted.pull_compensation,
+    recommended_underlay: adapted.underlay,
+    underlay:            adapted.underlay.enabled,
+    fill_angle:          adapted.fill_angle,
+    angle:               adapted.fill_angle,
+    priority:            adapted.priority,
+    // Production
     stitch_count,
     estimatedTime,
     estimatedThread,
-    priority,
     quality_score,
     quality_issues,
+    // Marker
+    adaptive:            true,
   };
 }
 
