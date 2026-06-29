@@ -121,10 +121,13 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
         parseFloat((y / H).toFixed(5)),
       ]);
 
-      // Ensure closed polygon
+      // Ensure PERFECTLY closed polygon: last vertex must equal the first exactly.
+      // A threshold-based check leaves a micro-gap when the last point happens to
+      // fall near (but not on) the first — exact equality guarantees the fill
+      // engine sees a watertight loop.
       const first = normalized[0], last = normalized[normalized.length - 1];
-      if (Math.hypot(first[0] - last[0], first[1] - last[1]) > 0.0001) {
-        normalized.push([...first]);
+      if (last[0] !== first[0] || last[1] !== first[1]) {
+        normalized.push([first[0], first[1]]);
       }
 
       // 12. Geometric metrics
@@ -165,8 +168,8 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
     }
   }
 
-  // 10. Auto gap closing across same-color regions
-  autoCloseGaps(regions, cfg.gapCloseThreshold / Math.max(W, H));
+  // 10. Defensive closure re-assert (each region stays a watertight loop)
+  autoCloseGaps(regions);
 
   // Sort largest first
   regions.sort((a, b) => b.pixelCount - a.pixelCount);
@@ -374,42 +377,21 @@ function computeBezierHandles(pts, corners) {
 // ─── Step 10: Auto gap closing ────────────────────────────────────────────────
 
 /**
- * Snaps nearby contour endpoints of same-color regions to their midpoint,
- * closing small gaps that result from quantization or rounding.
+ * Defensive closure pass. Every region is already closed exactly (last vertex
+ * === first vertex) in the main loop, so this only re-asserts that invariant.
+ *
+ * The previous cross-region "gap closing" is intentionally removed: it moved an
+ * endpoint to a shared midpoint, which broke the last===first equality and
+ * reopened the polygon — the exact "paths don't close" defect. Merging distinct
+ * same-color regions by snapping endpoints also fuses shapes that should stay
+ * separate for embroidery, so it was both unsafe and unnecessary.
  */
-function autoCloseGaps(regions, maxGapNorm) {
-  for (let i = 0; i < regions.length; i++) {
-    const pi = regions[i].path_points;
-    if (pi.length < 3) continue;
-
-    // Self-close check
-    const selfD = Math.hypot(pi[0][0] - pi[pi.length-1][0], pi[0][1] - pi[pi.length-1][1]);
-    if (selfD < maxGapNorm && selfD > 0) {
-      pi[pi.length - 1] = [...pi[0]];
-      continue;
-    }
-
-    // Cross-region gap closing (same color only)
-    for (let j = i + 1; j < regions.length; j++) {
-      if (regions[j].hex !== regions[i].hex) continue;
-      const pj = regions[j].path_points;
-      if (pj.length < 3) continue;
-
-      const endI   = pi[pi.length - 1], startI = pi[0];
-      const endJ   = pj[pj.length - 1], startJ = pj[0];
-      const pairs  = [[endI, startJ, 0], [endI, endJ, 1], [startI, startJ, 2], [startI, endJ, 3]];
-
-      for (const [p1, p2, mode] of pairs) {
-        if (Math.hypot(p1[0] - p2[0], p1[1] - p2[1]) < maxGapNorm) {
-          const mid = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
-          if (mode === 0) { pi[pi.length - 1] = mid; pj[0] = mid; }
-          if (mode === 1) { pi[pi.length - 1] = mid; pj[pj.length - 1] = mid; }
-          if (mode === 2) { pi[0] = mid; pj[0] = mid; }
-          if (mode === 3) { pi[0] = mid; pj[pj.length - 1] = mid; }
-          break;
-        }
-      }
-    }
+function autoCloseGaps(regions) {
+  for (const r of regions) {
+    const p = r.path_points;
+    if (p.length < 3) continue;
+    const f = p[0], l = p[p.length - 1];
+    if (l[0] !== f[0] || l[1] !== f[1]) p.push([f[0], f[1]]);
   }
 }
 
