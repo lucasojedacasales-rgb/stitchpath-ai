@@ -126,31 +126,50 @@ export function mapContoursToSemantics(contourRegions, semanticMap) {
 
 function findBestMatch(region, objects) {
   const [cx, cy] = region.centroid || [0.5, 0.5];
+  // Also use region color for color-aware matching
+  const regionHex = (region.hex || region.color || '').toLowerCase();
   let best = null, bestScore = -Infinity;
 
   for (const obj of objects) {
     const { x, y, w, h } = obj.bbox;
-    const score = bboxScore(cx, cy, x, y, w, h);
+    let score = bboxScore(cx, cy, x, y, w, h);
+
+    // Color similarity bonus: if LLM color_hex is close to region's pixel color, boost score
+    if (regionHex && obj.color_hex) {
+      const colorSim = hexColorSimilarity(regionHex, obj.color_hex);
+      score += colorSim * 0.3; // up to +0.3 boost for exact color match
+    }
+
     if (score > bestScore) { bestScore = score; best = { ...obj, _confidence: score }; }
   }
 
-  // Reject weak matches (centroid is far outside bbox)
-  return bestScore > 0.1 ? best : null;
+  // Stricter threshold: require centroid clearly inside bbox OR strong color+spatial match
+  // 0.4 = centroid must be inside bbox (score starts at 0.5 for inside)
+  return bestScore >= 0.4 ? best : null;
 }
 
 function bboxScore(cx, cy, bx, by, bw, bh) {
-  // Inside bbox = high score, outside = distance penalty
   const inside = cx >= bx && cx <= bx + bw && cy >= by && cy <= by + bh;
   if (inside) {
-    // Prefer matches where the region fills more of the bbox
+    // Score by how centered the point is within the bbox (more centered = better match)
     const overlapX = Math.min(cx - bx, bx + bw - cx) / (bw / 2 + 1e-9);
     const overlapY = Math.min(cy - by, by + bh - cy) / (bh / 2 + 1e-9);
     return 0.5 + (overlapX + overlapY) * 0.25;
   }
-  // Outside: score by proximity to bbox center
-  const bcx = bx + bw / 2, bcy = by + bh / 2;
-  const dist = Math.hypot(cx - bcx, cy - bcy);
-  return Math.max(0, 0.4 - dist);
+  // Outside bbox: no match — LLM bbox estimates are too imprecise to trust outside hits
+  return 0;
+}
+
+/** Returns 0–1 similarity between two hex colors (1 = identical) */
+function hexColorSimilarity(hexA, hexB) {
+  const parse = h => {
+    const c = h.replace('#', '');
+    return [parseInt(c.slice(0,2),16)||0, parseInt(c.slice(2,4),16)||0, parseInt(c.slice(4,6),16)||0];
+  };
+  const [r1,g1,b1] = parse(hexA);
+  const [r2,g2,b2] = parse(hexB);
+  const dist = Math.sqrt((r1-r2)**2 + (g1-g2)**2 + (b1-b2)**2);
+  return Math.max(0, 1 - dist / 441.67); // 441.67 = max possible RGB distance
 }
 
 // ─── Prompt builder ───────────────────────────────────────────────────────────

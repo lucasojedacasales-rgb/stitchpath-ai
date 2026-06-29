@@ -25,7 +25,8 @@ export async function runRegionBuilder(ctx) {
     return {
       ...r,
       color: originalColor,
-      // Semantic enrichment: override stitch/geometry params only — never color.
+      // Semantic enrichment: override geometry/stitch params only — never color or layer_order.
+      // priority: take the MAX of semantic and vector engine so foreground details always win.
       ...(sem ? {
         object:         sem.label,
         object_group:   sem.object_group,
@@ -35,7 +36,7 @@ export async function runRegionBuilder(ctx) {
         orientation:    sem.orientation,
         stitch_type:    sem.stitch_type,
         stitch_notes:   sem.stitch_notes,
-        priority:       sem.priority,
+        priority:       Math.max(sem.priority || 1, r.priority || r.layer_order || 1),
       } : {}),
       // Restore color after semantic spread (belt-and-suspenders guard)
       color: originalColor,
