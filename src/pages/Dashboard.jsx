@@ -39,8 +39,13 @@ export default function Dashboard() {
 
   const deleteProject = async (e, id) => {
     e.stopPropagation();
-    await base44.entities.Project.delete(id);
     setProjects(ps => ps.filter(p => p.id !== id));
+    try {
+      await base44.entities.Project.delete(id);
+    } catch (err) {
+      // Already deleted or not found — UI already updated, no action needed
+      console.warn('deleteProject:', err.message);
+    }
   };
 
   const filtered = projects.filter(p => p.name?.toLowerCase().includes(search.toLowerCase()));
