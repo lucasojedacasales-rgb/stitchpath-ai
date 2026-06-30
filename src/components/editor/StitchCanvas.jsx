@@ -58,32 +58,17 @@ function drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCac
   ctx.lineCap     = 'round';
   ctx.lineJoin    = 'round';
 
-  // ── Render as a CONTINUOUS boustrophedon path ────────────────────────────────
-  // Each stitch is [x0,y0,x1,y1]. The tatami engine already orders them
-  // boustrophedon (row0 L→R, row1 R→L, …). We connect consecutive needle
-  // penetrations with lineTo so the fill renders as dense parallel lines
-  // instead of isolated segments.
-  //
-  // Row-change detection: when x1,y1 of stitch[i] ≠ x0,y0 of stitch[i+1]
-  // the engine made a row jump — draw a hairline travel connector so the
-  // visual stays connected but the row boundary remains visible.
+  // ── Render as a CONTINUOUS path ──────────────────────────────────────────────
+  // The tatami engine emits ordered segments [x0,y0,x1,y1] where consecutive
+  // segments share endpoints (boustrophedon + intra-row connectors included).
+  // We build a single polyline: moveTo first point, then lineTo every endpoint.
+  // This produces dense parallel fill lines with no floating/disconnected dots.
 
   ctx.beginPath();
   ctx.moveTo(stitches[0][0], stitches[0][1]);
 
-  for (let i = 0; i < stitches.length; i++) {
-    const [x0, y0, x1, y1] = stitches[i];
-
-    // Connect start of this stitch to where we are (handles row transitions)
-    if (i > 0) {
-      const prev = stitches[i - 1];
-      const px = prev[2], py = prev[3];
-      if (Math.abs(px - x0) > 0.5 || Math.abs(py - y0) > 0.5) {
-        // Row-change connector: move without stroke gap (keeps path continuous)
-        ctx.lineTo(x0, y0);
-      }
-    }
-
+  for (const [x0, y0, x1, y1] of stitches) {
+    ctx.lineTo(x0, y0);
     ctx.lineTo(x1, y1);
   }
 
