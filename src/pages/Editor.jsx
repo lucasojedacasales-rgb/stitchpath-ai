@@ -8,6 +8,7 @@ import StitchCanvas from '@/components/editor/StitchCanvas';
 import ConfigPanel from '@/components/editor/ConfigPanel';
 import RegionsPanel from '@/components/editor/RegionsPanel';
 import SubpixelMetricsPanel from '@/components/editor/SubpixelMetricsPanel.jsx';
+import QualityAnalysisPanel from '@/components/editor/QualityAnalysisPanel.jsx';
 import StitchPlannerPanel from '@/components/editor/StitchPlannerPanel.jsx';
 import IntelligencePanel from '@/components/editor/IntelligencePanel.jsx';
 import TravelOptimizerPanel from '@/components/editor/TravelOptimizerPanel.jsx';
@@ -266,6 +267,7 @@ export default function Editor() {
       <div className="flex-1 flex overflow-hidden">
         <div className="w-64 flex-shrink-0 border-r border-[#1e2130] overflow-y-auto space-y-4 p-4">
           <ConfigPanel config={config} onChange={setConfig} regions={regions} selectedRegionIds={selectedRegionId ? [selectedRegionId] : []} onRegionsUpdate={handleRegionsUpdate} />
+          <QualityAnalysisPanel projectId={project?.id} onAnalysisComplete={(analysis) => console.log('Quality:', analysis)} />
           <PreprocessingPanel settings={preprocessSettings} onChange={setPreprocessSettings} />
           <NeedlePathPanel regions={regions} pathMetrics={pathMetrics} config={config} />
         </div>
