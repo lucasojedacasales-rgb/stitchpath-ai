@@ -6,7 +6,7 @@
  * Only runs when the mode strategy enables travelOptimize.
  */
 
-import { optimizeTravelPath } from '../../travelOptimizer.js';
+import { optimizeStitchSequence } from '../../stitchSequenceOptimizer.js';
 import { getModeStrategy } from '../../digitizeModes.js';
 
 export async function runStitchOptimizer(ctx) {
@@ -22,21 +22,16 @@ export async function runStitchOptimizer(ctx) {
     return;
   }
 
-  // Pass design dimensions so the optimizer uses real mm² scale for metrics
-  const travelConfig = {
-    ...ctx.config,
+  const result = optimizeStitchSequence(ctx.regions, {
     width_mm:  ctx.config.width_mm  || 100,
     height_mm: ctx.config.height_mm || 100,
-    speedSpm:  ctx.config.machine_speed || 800,
-  };
+    speed_spm: ctx.config.machine_speed || 800,
+  });
 
-  ctx.optimized = optimizeTravelPath(ctx.regions, travelConfig);
+  // Store full result for downstream consumers (NeedlePathPanel, metrics bar)
+  ctx.optimized = result;
 
-  // Only apply the reordered sequence when the optimizer produced a valid result.
-  // The optimizer already sorts by priority first (fills→satins→runs) then by
-  // proximity within each layer, so this never inverts the build order.
-  const seq = ctx.optimized?.optimizedSequence;
-  if (Array.isArray(seq) && seq.length > 0) {
-    ctx.regions = seq;
+  if (Array.isArray(result.optimizedSequence) && result.optimizedSequence.length > 0) {
+    ctx.regions = result.optimizedSequence;
   }
 }
