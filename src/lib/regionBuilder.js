@@ -38,6 +38,7 @@
 
 import { adaptRegion } from './adaptiveEngine.js';
 import { applyProfessionalStrategy } from './embroideryStrategy.js';
+import { partitionRegions } from './regionPartitioner.js';
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 
@@ -478,7 +479,9 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
  * Enriquece todas las regiones y asigna travelOrder (secuencia greedy por prioridad + proximidad).
  */
 export function enrichAllRegions(regions, designWidthMm = 100, designHeightMm = 100, fabricType = 'Algodón', useAdaptive = true) {
-  const enriched = regions.map(r => enrichRegion(r, regions, designWidthMm, designHeightMm, fabricType, useAdaptive));
+  // FASE 4: Partición automática de regiones irregulares (antes de enriquecer)
+  const partitioned = partitionRegions(regions, designWidthMm, designHeightMm);
+  const enriched = partitioned.map(r => enrichRegion(r, partitioned, designWidthMm, designHeightMm, fabricType, useAdaptive));
 
   // EIE v3.0 — Professional Strategy Engine:
   // Adjacency graph → layering fix → angle harmony → sewing order → jump routing → deformation prevention
