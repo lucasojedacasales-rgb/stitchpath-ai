@@ -5,15 +5,18 @@ import { generateTatamiFill } from '@/lib/tatamiFill';
 // ── Contour detection helpers ─────────────────────────────────────────────────
 
 function isContourRegion(region) {
+  // Only override stitch_type for regions explicitly flagged as contours.
+  // Never override based on color — dark fill regions (e.g. black body) are valid fills.
   if (!region) return false;
-  if ((region.name || '').toLowerCase().includes('contour_')) return true;
-  const hex = (region.color || '').toLowerCase();
-  if (hex === '#000000' || hex === '#1a1a1a') return true;
+  // Explicit flag set by the digitizing pipeline
+  if (region.is_auto_contour === true) return true;
+  // Name pattern: contour_ prefix (strict, not just "borde")
+  if (/^contour_/i.test(region.name || '')) return true;
+  // Geometric: very thin ring-like shapes (area/perimeter² < 0.02 = very elongated)
   if (region.area_mm2 && region.perimeter_mm) {
     const ratio = region.area_mm2 / (region.perimeter_mm * region.perimeter_mm);
-    if (ratio < 0.05) return true;
+    if (ratio < 0.02) return true;
   }
-  if (Array.isArray(region.neighbors) && region.neighbors.length >= 3) return true;
   return false;
 }
 
@@ -29,9 +32,9 @@ function getDrawSize(imageEl, W, H) {
 // stitchCache: Map<regionId, {stitches, drawW, drawH, angle, density}>
 
 function drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCache) {
-  const color     = region.color || '#ffffff';
-  const angleDeg  = region.angle ?? region.fill_angle ?? 0;
-  const densityMm = region.tatami_density || region.density || region.density_mm || 0.4;
+  const color       = region.color || '#ffffff';
+  const angleDeg    = region.angle ?? region.fill_angle ?? 0;
+  const densityMm   = region.tatami_density || region.density || 0.4;
   const stitchLenMm = region.stitch_length_mm || 2.5;
 
   const cacheKey = region.id;
@@ -42,9 +45,18 @@ function drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCac
     cached.angleDeg !== angleDeg || cached.densityMm !== densityMm ||
     cached.stitchLenMm !== stitchLenMm
   ) {
-    const polygon  = pts.map(p => [(p[0] - 0.5) * drawW, (p[1] - 0.5) * drawH]);
-    const pxPerMm  = drawW / 100;
-    const { stitches, totalStitches } = generateTatamiFill(polygon, densityMm, stitchLenMm, angleDeg, pxPerMm);
+    // Convert normalized path_points → canvas pixels
+    const polygon = pts.map(p => [(p[0] - 0.5) * drawW, (p[1] - 0.5) * drawH]);
+
+    // pxPerMm: how many canvas pixels = 1mm.
+    // The design fills ~75% of the canvas (getDrawSize uses 0.75 factor).
+    // Design dimensions come from region metadata if available, else assume 100mm.
+    const designW = 100; // mm — standard assumption matching config
+    const pxPerMm = drawW / designW;
+
+    const { stitches, totalStitches } = generateTatamiFill(
+      polygon, densityMm, stitchLenMm, angleDeg, pxPerMm
+    );
     cached = { stitches, totalStitches, drawW, drawH, angleDeg, densityMm, stitchLenMm };
     stitchCache.set(cacheKey, cached);
   }
@@ -52,27 +64,48 @@ function drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCac
   const { stitches } = cached;
   if (!stitches.length) return;
 
+  // Thread width: physical 40wt thread ~0.35mm diameter → in pixels
+  // At zoom=1: lineWidth = 0.35 * pxPerMm. Clamp to [0.8, 2.5] for readability.
+  const pxPerMm   = drawW / 100;
+  const threadPx  = Math.max(0.8, Math.min(2.5, 0.35 * pxPerMm / zoom));
+
+  ctx.save();
   ctx.globalAlpha = alpha * 0.92;
   ctx.strokeStyle = color;
-  ctx.lineWidth   = Math.max(0.7, 1.4 / zoom);
-  ctx.lineCap     = 'round';
+  ctx.lineWidth   = threadPx;
+  ctx.lineCap     = 'round'; // round caps give a softer thread-like appearance
   ctx.lineJoin    = 'round';
 
-  // ── Render as a CONTINUOUS path ──────────────────────────────────────────────
-  // The tatami engine emits ordered segments [x0,y0,x1,y1] where consecutive
-  // segments share endpoints (boustrophedon + intra-row connectors included).
-  // We build a single polyline: moveTo first point, then lineTo every endpoint.
-  // This produces dense parallel fill lines with no floating/disconnected dots.
+  // ── Draw each row as a separate path so row gaps are visible ─────────────────
+  // We group stitches by row (detecting row changes by Y coordinate jump).
+  // Each row is drawn as a single polyline. This preserves the visual gap
+  // between adjacent rows that makes the fill look like parallel thread rows
+  // rather than a solid filled area.
+
+  // Detect row changes: consecutive segments whose start Y differs by > rowThreshold
+  // are on different rows. We use a simple heuristic: if x0,y0 of segment[i]
+  // equals x1,y1 of segment[i-1] → same row; otherwise → new row.
+
+  const EPS = 0.5; // px tolerance for endpoint matching
+
+  let inPath = false;
+  let px = 0, py = 0; // previous segment endpoint
 
   ctx.beginPath();
-  ctx.moveTo(stitches[0][0], stitches[0][1]);
-
   for (const [x0, y0, x1, y1] of stitches) {
-    ctx.lineTo(x0, y0);
-    ctx.lineTo(x1, y1);
+    const sameChain = inPath && Math.abs(x0 - px) < EPS && Math.abs(y0 - py) < EPS;
+    if (sameChain) {
+      ctx.lineTo(x1, y1);
+    } else {
+      // Start new sub-path at x0,y0 then draw to x1,y1
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+      inPath = true;
+    }
+    px = x1; py = y1;
   }
-
   ctx.stroke();
+  ctx.restore();
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
