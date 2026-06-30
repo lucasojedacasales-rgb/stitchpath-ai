@@ -29,11 +29,17 @@ const TATAMI_PHASES = [0, 0.25, 0.5, 0.75];
 export function generateTatamiFill(polygon, densityMm = 0.4, stitchLenMm = 3.0, angleDeg = 0, pxPerMm = 5) {
   if (!polygon || polygon.length < 3) return { stitches: [], totalStitches: 0 };
 
-  const safePx       = Math.max(0.5, pxPerMm);
-  // Row spacing: physical density → pixels. Minimum 2px so rows are visually distinct.
+  const safePx = Math.max(1.0, pxPerMm);
+
+  // Row spacing in px: physical density → pixels.
+  // Minimum 2px — below this, sub-pixel aliasing creates moiré at zoom=1.
+  // At pxPerMm=5.25, densityMm=0.4 → 2.1px → clamped to 2.0px.
   const rowSpacingPx = Math.max(2.0, densityMm * safePx);
-  // Stitch pitch: length of each individual stitch. Minimum 4px so stitches are visible.
-  const pitchPx      = Math.max(4.0, stitchLenMm * safePx);
+
+  // Stitch pitch: physical length → pixels.
+  // Cap at 8× row spacing to prevent visual moiré from long stitches crossing many rows.
+  const rawPitchPx = Math.max(2.0, stitchLenMm * safePx);
+  const pitchPx    = Math.min(rawPitchPx, rowSpacingPx * 8);
 
   // ── Rotation to fill-space (rows become horizontal) ───────────────────────────
   const rad  = (angleDeg * Math.PI) / 180;
@@ -49,8 +55,8 @@ export function generateTatamiFill(polygon, densityMm = 0.4, stitchLenMm = 3.0, 
   const minX = Math.min(...rp.map(p => p[0]));
   const maxX = Math.max(...rp.map(p => p[0]));
 
-  // Guard: polygon must have real extent
-  if (maxY - minY < rowSpacingPx || maxX - minX < pitchPx * 0.5) {
+  // Guard: needs at least one scanline row and one stitch
+  if (maxY - minY < 0.5 || maxX - minX < 0.5) {
     return { stitches: [], totalStitches: 0 };
   }
 

@@ -64,16 +64,21 @@ function drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCac
   const { stitches } = cached;
   if (!stitches.length) return;
 
-  // Thread width: physical 40wt thread ~0.35mm diameter → in pixels
-  // At zoom=1: lineWidth = 0.35 * pxPerMm. Clamp to [0.8, 2.5] for readability.
-  const pxPerMm   = drawW / 100;
-  const threadPx  = Math.max(0.8, Math.min(2.5, 0.35 * pxPerMm / zoom));
+  // Thread width: 40wt polyester thread is physically ~0.35mm diameter.
+  // We render it at its physical size in canvas pixels, clamped for readability.
+  // This gives crisp individual thread lines with clear separation between rows.
+  const pxPerMm  = drawW / 100;
+  // Physical thread in px, scaled by zoom. 0.35mm * pxPerMm gives the real size.
+  // At zoom=1 on a 100mm design: 0.35 * 5.25 ≈ 1.84px — good but slightly heavy.
+  // 0.32mm gives a clear, readable thread line at zoom=1 (≈1.68px at 5.25px/mm)
+  // that is clearly thinner than the 2.5px row gap, producing distinct thread rows.
+  const threadPx = Math.max(0.7, (0.32 * pxPerMm) / zoom);
 
   ctx.save();
-  ctx.globalAlpha = alpha * 0.92;
+  ctx.globalAlpha = alpha; // full opacity — partial alpha washes out light-coloured threads
   ctx.strokeStyle = color;
   ctx.lineWidth   = threadPx;
-  ctx.lineCap     = 'round'; // round caps give a softer thread-like appearance
+  ctx.lineCap     = 'round';
   ctx.lineJoin    = 'round';
 
   // ── Draw each row as a separate path so row gaps are visible ─────────────────
@@ -174,9 +179,21 @@ export default function StitchCanvas({
     const W = canvas.width, H = canvas.height;
 
     ctx.clearRect(0, 0, W, H);
-    // Dark grey background so any thread color is visible
-    ctx.fillStyle = '#2a2a2a';
+    // Fabric-neutral background: #4a4040 (warm dark, like dark linen/cotton).
+    // Provides enough contrast for white thread (lightens) and black thread (darkens)
+    // while looking like a real embroidery backing cloth.
+    ctx.fillStyle = '#2e2e2e';
     ctx.fillRect(0, 0, W, H);
+    // Subtle fabric-grain texture overlay — very fine noise to simulate weave
+    ctx.save();
+    ctx.globalAlpha = 0.04;
+    ctx.fillStyle = '#ffffff';
+    for (let gx = 0; gx < W; gx += 2) {
+      for (let gy = (gx % 4 === 0 ? 0 : 1); gy < H; gy += 2) {
+        ctx.fillRect(gx, gy, 1, 1);
+      }
+    }
+    ctx.restore();
 
     if (!imageRef.current || imageOpacity <= 0) return;
 
