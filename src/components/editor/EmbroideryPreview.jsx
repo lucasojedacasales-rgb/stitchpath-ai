@@ -22,11 +22,7 @@ export default function EmbroideryPreview({ regions, config }) {
 
   // ─── Build stitches array from regions (memoizado) ──────────────────────────────
   // Solo recalcula si regions o config cambian; progress no afecta la construcción
-  const stitchCacheRef = useRef(createStitchCache());
-  // Clear cache when regions change identity (new project / reprocess)
-  useEffect(() => { stitchCacheRef.current.clear(); }, [regions]);
-
-  const stitches = useMemo(() => buildStitchesFromRegions(regions, config, stitchCacheRef.current), [regions, config]);
+  const stitches = useMemo(() => buildStitchesFromRegions(regions, config), [regions, config]);
   const visibleStitches = useMemo(() => stitches.slice(0, Math.ceil((progress / 100) * stitches.length)), [stitches, progress]);
 
   // ─── Playback animation loop ────────────────────────────────────────────
@@ -305,10 +301,9 @@ export default function EmbroideryPreview({ regions, config }) {
  * cada vez que se actualiza el estado (zoom, progress, opacity, etc).
  * Solo recalcula si region.id, density, angle, o config cambian.
  */
-// Cache is per-component-instance via closure — cleared when component unmounts
-function createStitchCache() { return new Map(); }
+const _stitchCache = new Map(); // regionId → {hash, stitches}
 
-function buildStitchesFromRegions(regions, config, _stitchCache) {
+function buildStitchesFromRegions(regions, config) {
   const stitches = [];
   const designW = config.width_mm || 100;
   const designH = config.height_mm || 100;
@@ -317,12 +312,16 @@ function buildStitchesFromRegions(regions, config, _stitchCache) {
   // SECUENCIADO CORRECTO: FASE 1 → FASE 2 → FASE 3
   // ═══════════════════════════════════════════════════════════════════════════════
   
-  // FASE 1: RELLENOS (fills) — Todos los fills, siempre primero (base del bordado)
+  // FASE 1: RELLENOS (fills) — Ordenados por prioridad (1-5 = fills)
+  // Esto forma la BASE del bordado. La prioridad es asignada por EIE/enrichRegion
   const fillRegions = regions
     .filter(r => r.visible && r.path_points && r.path_points.length >= 3 && r.stitch_type === 'fill')
     .sort((a, b) => {
-      const pd = (a.priority || 999) - (b.priority || 999);
-      if (pd !== 0) return pd;
+      // Primero por prioridad (menor = primero) — EIE asigna 1-5 a fills
+      if ((a.priority || 999) !== (b.priority || 999)) {
+        return (a.priority || 999) - (b.priority || 999);
+      }
+      // Luego por área (grande a pequeño) dentro de la misma prioridad
       return (b.area_mm2 || 0) - (a.area_mm2 || 0);
     });
 
@@ -349,10 +348,13 @@ function buildStitchesFromRegions(regions, config, _stitchCache) {
     stitches.push(...fillStitches);
   }
 
-  // FASE 2: RUNNING STITCH — Detalles de línea, van después de todos los fills
+  // FASE 2: DETALLES INTERNOS (run, small fills) — Orden por prioridad (6-9 = detalles)
   const detailRegions = regions
-    .filter(r => r.visible && r.path_points && r.path_points.length >= 3 && r.stitch_type === 'running_stitch')
-    .sort((a, b) => (a.priority || 999) - (b.priority || 999));
+    .filter(r => r.visible && r.path_points && r.path_points.length >= 3 && (r.stitch_type === 'running_stitch' || (r.area_mm2 || 0) < 50))
+    .sort((a, b) => {
+      // Orden por prioridad (EIE asigna 6-9 a detalles)
+      return (a.priority || 999) - (b.priority || 999);
+    });
 
   for (const region of detailRegions) {
     const color = region.color || '#ffffff';
@@ -384,14 +386,14 @@ function buildStitchesFromRegions(regions, config, _stitchCache) {
     }
   }
 
-  // FASE 3: CONTORNOS SATIN — Siempre AL FINAL, encima de todos los fills
-  // Garantiza que los bordes satinados nunca queden enterrados bajo rellenos posteriores
+  // FASE 3: CONTORNOS SATIN (bordes) — ÚLTIMO (define los bordes limpios)
+  // CRÍTICO: Esto va al FINAL para que cierre el bordado sobre los rellenos
+  // EIE asigna prioridad 5-8 a satins, pero dentro de Fase 3 van todos después de fills
   const satinRegions = regions
     .filter(r => r.visible && r.path_points && r.path_points.length >= 3 && r.stitch_type === 'satin')
     .sort((a, b) => {
-      const pd = (a.priority || 999) - (b.priority || 999);
-      if (pd !== 0) return pd;
-      return (b.area_mm2 || 0) - (a.area_mm2 || 0);
+      // Orden por prioridad (EIE asigna 5-8 a satins)
+      return (a.priority || 999) - (b.priority || 999);
     });
 
   for (const region of satinRegions) {
@@ -531,10 +533,97 @@ function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regi
     }
   }
 
-  // The 15% overlap factor (adjustedDensity = realDensity * 0.85) already guarantees coverage.
-  // calculateFillCoverage was O(n²) and caused UI freezes — removed.
+  // DEFECTO 6 FIX: Pase de relleno de huecos — agregar filas intermedias si hay gaps detectados
+  // Detectar cobertura y añadir filas intermedias donde falte
+  const coverage = calculateFillCoverage(polygon, stitches);
+  if (coverage < 0.95) {
+    // Si cobertura < 95%, agregar filas intermedias
+    for (let y = rMinY + adjustedDensity * 0.5; y <= rMaxY; y += adjustedDensity) {
+      const intersections = [];
+      for (let i = 0; i < rotatedPoly.length; i++) {
+        const [x1, y1] = rotatedPoly[i];
+        const [x2, y2] = rotatedPoly[(i + 1) % rotatedPoly.length];
+        if (Math.abs(y2 - y1) < 1e-6) continue;
+        if ((y1 <= y && y <= y2) || (y2 <= y && y <= y1)) {
+          const t = Math.abs(y2 - y1) > 1e-6 ? (y - y1) / (y2 - y1) : 0;
+          const x = x1 + t * (x2 - x1);
+          intersections.push(x);
+        }
+      }
+      if (intersections.length < 2) continue;
+      
+      intersections.sort((a, b) => a - b);
+      for (let i = 0; i < intersections.length - 1; i += 2) {
+        let x1 = intersections[i];
+        let x2 = intersections[i + 1];
+        x1 -= 0.12;
+        x2 += 0.12;
+
+        const unrotate = (x, y) => [x * cosA - y * sinA, x * sinA + y * cosA];
+        const [ox1, oy1] = unrotate(x1, y);
+        const [ox2, oy2] = unrotate(x2, y);
+
+        const dx = ox2 - ox1;
+        const dy = oy2 - oy1;
+        const len = Math.hypot(dx, dy);
+        const steps = Math.max(6, Math.ceil(len / 0.8));
+
+        for (let s = 0; s <= steps; s++) {
+          const t = steps > 0 ? s / steps : 0;
+          const x = ox1 + dx * t;
+          const y = oy1 + dy * t;
+          
+          if (isPointInPolygon([x, y], polygon)) {
+            stitches.push({
+              x, y,
+              type: 'fill',
+              regionId,
+              color,
+              isJump: false,
+              threadWidth: 0.42,
+            });
+          }
+        }
+      }
+    }
+  }
 
   return stitches;
+}
+
+/**
+ * Calcula el porcentaje de cobertura del relleno dentro del polígono
+ * Usa grid-based sampling para detectar huecos
+ */
+function calculateFillCoverage(polygon, stitches) {
+  if (stitches.length === 0 || polygon.length === 0) return 0;
+
+  // Calcular bounds
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const [x, y] of polygon) {
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+
+  // Grid sampling — puntos en una grilla cada 0.3mm
+  const gridSpacing = 0.3;
+  let sampledInside = 0;
+  let totalSamples = 0;
+
+  for (let x = minX; x <= maxX; x += gridSpacing) {
+    for (let y = minY; y <= maxY; y += gridSpacing) {
+      if (isPointInPolygon([x, y], polygon)) {
+        totalSamples++;
+        // Verificar si hay stitch dentro de distancia de 0.5mm (radio de thread)
+        const covered = stitches.some(s => Math.hypot(s.x - x, s.y - y) < 0.5);
+        if (covered) sampledInside++;
+      }
+    }
+  }
+
+  return totalSamples > 0 ? sampledInside / totalSamples : 0;
 }
 
 /**
@@ -681,6 +770,61 @@ function generateSatinFillLines(polygon, angle, density, stitchLen, color, regio
             fillPattern: 'satin',
             threadWidth: 0.45,
           });
+        }
+      }
+    }
+  }
+
+  // DEFECTO 6 FIX: Pase de relleno de huecos para satin también
+  const coverage = calculateFillCoverage(polygon, stitches);
+  if (coverage < 0.95) {
+    for (let x = rMinX + adjustedDensity * 0.5; x <= rMaxX; x += adjustedDensity) {
+      const intersections = [];
+      for (let i = 0; i < rotatedPoly.length; i++) {
+        const [x1, y1] = rotatedPoly[i];
+        const [x2, y2] = rotatedPoly[(i + 1) % rotatedPoly.length];
+        if (Math.abs(x2 - x1) < 1e-6) continue;
+        if ((x1 <= x && x <= x2) || (x2 <= x && x <= x1)) {
+          const t = Math.abs(x2 - x1) > 1e-6 ? (x - x1) / (x2 - x1) : 0;
+          const y = y1 + t * (y2 - y1);
+          intersections.push(y);
+        }
+      }
+      if (intersections.length < 2) continue;
+      
+      intersections.sort((a, b) => a - b);
+      for (let i = 0; i < intersections.length - 1; i += 2) {
+        let y1 = intersections[i];
+        let y2 = intersections[i + 1];
+        y1 -= 0.12;
+        y2 += 0.12;
+
+        const unrotate = (x, y) => [x * cosA - y * sinA, x * sinA + y * cosA];
+        const [ox1, oy1] = unrotate(x, y1);
+        const [ox2, oy2] = unrotate(x, y2);
+
+        const dx = ox2 - ox1;
+        const dy = oy2 - oy1;
+        const len = Math.hypot(dx, dy);
+        const steps = Math.max(6, Math.ceil(len / 0.8));
+
+        for (let s = 0; s <= steps; s++) {
+          const t = steps > 0 ? s / steps : 0;
+          const px = ox1 + dx * t;
+          const py = oy1 + dy * t;
+          
+          if (isPointInPolygon([px, py], polygon)) {
+            stitches.push({
+              x: px,
+              y: py,
+              type: 'fill',
+              regionId,
+              color,
+              isJump: false,
+              fillPattern: 'satin',
+              threadWidth: 0.45,
+            });
+          }
         }
       }
     }

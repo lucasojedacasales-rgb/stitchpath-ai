@@ -77,154 +77,84 @@ Deno.serve(async (req) => {
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  FLATTEN & OPTIMIZE
-//  KEY FIX: Group ALL paths by color FIRST, then emit at most MAX_COLORS
-//  color-change events — not one per path.
 // ═══════════════════════════════════════════════════════════════════════════
-
-const MAX_COLORS = 15;
 
 function flattenAndOptimize(stitchPaths, ms) {
   const [offX, offY] = ms.designOffset || [0, 0];
-
-  // ── Step 1: Collect unique colors in appearance order ───────────────────
-  const colorOrderMap = new Map(); // color → index
-  for (const path of stitchPaths) {
-    const c = (path.color || '#000000').toLowerCase();
-    if (!colorOrderMap.has(c)) colorOrderMap.set(c, colorOrderMap.size);
-  }
-
-  // Quantize to MAX_COLORS if needed (merge by nearest)
-  const uniqueColors = [...colorOrderMap.keys()];
-  let colorPalette = uniqueColors;
-  if (uniqueColors.length > MAX_COLORS) {
-    colorPalette = kMeansColorReduce(uniqueColors, MAX_COLORS);
-  }
-
-  // Build color → palette color mapping
-  const colorToGroup = new Map();
-  for (const c of uniqueColors) {
-    colorToGroup.set(c, nearestPaletteColor(c, colorPalette));
-  }
-
-  // ── Step 2: Group all paths by palette color, preserving order ───────────
-  const groupOrder = [];
-  const groups = new Map(); // paletteColor → [{ path, pts }]
-
-  for (const path of stitchPaths) {
-    const rawColor = (path.color || '#000000').toLowerCase();
-    const groupColor = colorToGroup.get(rawColor) || rawColor;
-    if (!groups.has(groupColor)) {
-      groups.set(groupColor, []);
-      groupOrder.push(groupColor);
-    }
-    if ((path.points || []).length > 0) {
-      groups.get(groupColor).push({ path, pts: path.points });
-    }
-  }
-
-  // ── Step 3: Emit stitches group by group ─────────────────────────────────
   const all = [];
+  let prevColor = null;
   let prevX = 0, prevY = 0;
-  let firstGroup = true;
 
-  for (const groupColor of groupOrder) {
-    const pathsInGroup = groups.get(groupColor) || [];
-    if (pathsInGroup.length === 0) continue;
+  for (let pi = 0; pi < stitchPaths.length; pi++) {
+    const path = stitchPaths[pi];
+    const pts = path.points || [];
+    if (pts.length === 0) continue;
 
-    // ONE color change per group (not per path)
-    if (!firstGroup) {
-      all.push({ x: prevX, y: prevY, type: 'colorChange', color: groupColor });
+    const pathColor = path.color || '#000000';
+
+    // Color change
+    if (prevColor !== null && pathColor !== prevColor) {
+      all.push({ x: prevX, y: prevY, type: 'colorChange', color: pathColor });
     }
-    firstGroup = false;
+    prevColor = pathColor;
 
-    for (const { pts } of pathsInGroup) {
-      if (!pts || pts.length === 0) continue;
-
-      for (let i = 0; i < pts.length; i++) {
-        const x = (typeof pts[i] === 'object' && !Array.isArray(pts[i]))
-          ? pts[i].x + offX
-          : pts[i][0] + offX;
-        const y = (typeof pts[i] === 'object' && !Array.isArray(pts[i]))
-          ? pts[i].y + offY
-          : pts[i][1] + offY;
-
-        if (i === 0) {
-          const dist = Math.hypot(x - prevX, y - prevY);
-          if (all.length > 0 && dist > ms.maxJumpLength) {
-            const steps = Math.ceil(dist / ms.maxJumpLength);
-            for (let s = 1; s <= steps; s++) {
-              all.push({
-                x: prevX + (x - prevX) * s / steps,
-                y: prevY + (y - prevY) * s / steps,
-                type: 'jump',
-                color: groupColor,
-              });
-            }
-          } else if (all.length > 0 && dist > 0.3) {
-            all.push({ x, y, type: 'jump', color: groupColor });
-          } else {
-            all.push({ x, y, type: 'stitch', color: groupColor });
-          }
-        } else {
-          const lastStitch = all[all.length - 1];
-          const dist = Math.hypot(x - lastStitch.x, y - lastStitch.y);
-          if (dist > ms.maxStitchLength) {
-            const steps = Math.ceil(dist / ms.maxStitchLength);
-            for (let s = 1; s < steps; s++) {
-              all.push({
-                x: lastStitch.x + (x - lastStitch.x) * s / steps,
-                y: lastStitch.y + (y - lastStitch.y) * s / steps,
-                type: 'stitch',
-                color: groupColor,
-              });
-            }
-          }
-          all.push({ x, y, type: 'stitch', color: groupColor });
-        }
-
-        prevX = x;
-        prevY = y;
+    // Trim check: mismo color pero distancia grande
+    if (pi > 0 && pathColor === prevColor) {
+      const dist = Math.hypot(pts[0][0] - prevX, pts[0][1] - prevY);
+      if (dist > ms.trimThreshold) {
+        all.push({ x: prevX, y: prevY, type: 'trim', color: pathColor });
       }
     }
+
+    for (let i = 0; i < pts.length; i++) {
+      const x = pts[i][0] + offX;
+      const y = pts[i][1] + offY;
+
+      if (i === 0) {
+        const dist = Math.hypot(x - prevX, y - prevY);
+        if (all.length > 0 && dist > ms.maxJumpLength) {
+          // Break into sub-jumps
+          const steps = Math.ceil(dist / ms.maxJumpLength);
+          for (let s = 1; s <= steps; s++) {
+            const jx = prevX + (x - prevX) * s / steps;
+            const jy = prevY + (y - prevY) * s / steps;
+            all.push({ x: jx, y: jy, type: 'jump', color: pathColor });
+          }
+        } else if (all.length > 0 && dist > 0.5) {
+          all.push({ x, y, type: 'jump', color: pathColor });
+        } else {
+          all.push({ x, y, type: 'stitch', color: pathColor });
+        }
+      } else {
+        // Stitch with length breaking
+        const lastStitch = all[all.length - 1];
+        const dist = Math.hypot(x - lastStitch.x, y - lastStitch.y);
+
+        if (dist > ms.maxStitchLength) {
+          const steps = Math.ceil(dist / ms.maxStitchLength);
+          for (let s = 1; s < steps; s++) {
+            const sx = lastStitch.x + (x - lastStitch.x) * s / steps;
+            const sy = lastStitch.y + (y - lastStitch.y) * s / steps;
+            all.push({ x: sx, y: sy, type: 'stitch', color: pathColor });
+          }
+        }
+        all.push({ x, y, type: 'stitch', color: pathColor });
+      }
+
+      prevX = x;
+      prevY = y;
+    }
   }
 
-  // End stitch
-  const last = all.length > 0 ? all[all.length - 1] : { x: 0, y: 0 };
-  all.push({ x: last.x, y: last.y, type: 'end', color: null });
+  // End
+  if (all.length > 0) {
+    const last = all[all.length - 1];
+    all.push({ x: last.x, y: last.y, type: 'end', color: null });
+  } else {
+    all.push({ x: 0, y: 0, type: 'end', color: null });
+  }
 
   return all;
-}
-
-// ── Color quantization helpers ──────────────────────────────────────────────
-
-function hexToRgbArr(hex) {
-  const h = (hex || '#000000').replace('#', '');
-  return [parseInt(h.slice(0,2),16)||0, parseInt(h.slice(2,4),16)||0, parseInt(h.slice(4,6),16)||0];
-}
-
-function colorDist(a, b) {
-  const [r1,g1,b1] = hexToRgbArr(a);
-  const [r2,g2,b2] = hexToRgbArr(b);
-  return Math.hypot(r1-r2, g1-g2, b1-b2);
-}
-
-function nearestPaletteColor(color, palette) {
-  let best = palette[0], bestD = Infinity;
-  for (const p of palette) {
-    const d = colorDist(color, p);
-    if (d < bestD) { bestD = d; best = p; }
-  }
-  return best;
-}
-
-function kMeansColorReduce(colors, k) {
-  // Simple: pick k evenly-spaced colors from the sorted list as centroids
-  const step = Math.max(1, Math.floor(colors.length / k));
-  const palette = [];
-  for (let i = 0; i < k && i * step < colors.length; i++) {
-    palette.push(colors[i * step]);
-  }
-  return palette;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -253,188 +183,111 @@ function validateStitches(stitches, ms) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  DST ENCODER (Tajima) — CORRECTED
-//
-//  DST units = 0.1mm.  Stitches arrive in mm → multiply by 10.
-//  Max delta per record = ±121 DST units (±12.1mm).
-//  If a move is larger, split into JUMP records.
-//  Header: 512-byte ASCII block with fields like "LA:name\r\nST:nnn\r\n..."
+//  DST ENCODER (Tajima)
 // ═══════════════════════════════════════════════════════════════════════════
 
 function encodeDST(stitches, ms) {
-  // ── 1. Compute bounding box from ALL actual stitch coords (in mm) ────────
-  let minXmm = Infinity, maxXmm = -Infinity;
-  let minYmm = Infinity, maxYmm = -Infinity;
-  let stitchCount = 0;
-  let colorChanges = 0;
+  const header = new Uint8Array(512);
+  const label = 'StitchPath';
+  for (let i = 0; i < label.length && i < 512; i++) header[i] = label.charCodeAt(i);
 
-  for (const s of stitches) {
-    if (s.type === 'stitch' || s.type === 'jump') {
-      minXmm = Math.min(minXmm, s.x); maxXmm = Math.max(maxXmm, s.x);
-      minYmm = Math.min(minYmm, s.y); maxYmm = Math.max(maxYmm, s.y);
-    }
-    if (s.type === 'stitch') stitchCount++;
-    if (s.type === 'colorChange') colorChanges++;
-  }
-  if (minXmm === Infinity) { minXmm = 0; maxXmm = 0; minYmm = 0; maxYmm = 0; }
-
-  const widthMm  = maxXmm - minXmm;
-  const heightMm = maxYmm - minYmm;
-
-  // DST stores bounds in 0.1mm units (integer, signed)
-  const axMm = (maxXmm + minXmm) / 2;  // center of design
-  const ayMm = (maxYmm + minYmm) / 2;
-
-  // ── 2. Build 512-byte ASCII header ──────────────────────────────────────
-  // Format: "FIELD:VALUE\r\n" lines, padded with spaces to 512 bytes.
-  // Required fields: LA (label), ST (stitches), CO (color changes),
-  //   +X,-X,+Y,-Y (extent from center in 0.1mm), AX,AY (last needle pos),
-  //   MX,MY (machine offset), PD (unknown, use +00000).
-  const halfW = Math.round(widthMm / 2 * 10);
-  const halfH = Math.round(heightMm / 2 * 10);
-  const axU = Math.round(axMm * 10);
-  const ayU = Math.round(ayMm * 10);
-
-  function dstNum(v) {
-    // DST signed number: sign + 5 digits, e.g. "+00267" or "-00123"
-    const abs = Math.abs(Math.round(v));
-    return (v >= 0 ? '+' : '-') + String(abs).padStart(5, '0');
-  }
-
-  const designName = 'STITCHPATH';
-  const headerLines = [
-    `LA:${designName.substring(0, 16).padEnd(16, ' ')}`,
-    `ST:${String(stitchCount).padStart(7, ' ')}`,
-    `CO:${String(Math.min(colorChanges, 99)).padStart(3, ' ')}`,
-    `+X:${dstNum(halfW)}`,
-    `-X:${dstNum(halfW)}`,
-    `+Y:${dstNum(halfH)}`,
-    `-Y:${dstNum(halfH)}`,
-    `AX:${dstNum(axU)}`,
-    `AY:${dstNum(ayU)}`,
-    `MX:${dstNum(0)}`,
-    `MY:${dstNum(0)}`,
-    `PD:******`,
-  ];
-
-  const headerStr = headerLines.join('\r\n') + '\r\n';
-  const header = new Uint8Array(512).fill(0x20); // fill with spaces
-  for (let i = 0; i < headerStr.length && i < 512; i++) {
-    header[i] = headerStr.charCodeAt(i);
-  }
-  header[511] = 0x1A; // Ctrl-Z end marker (standard DST)
-
-  // ── 3. Encode body records ───────────────────────────────────────────────
-  // Each stitch = 3 bytes. Delta in DST units (0.1mm). Max ±121 per record.
   const records = [];
+  let cx = 0, cy = 0;
+  const UNIT = 0.1; // mm per DST unit
 
-  // Encode one DST record with given dx, dy (in DST units) and flag byte.
-  // Uses the standard Tajima bit layout.
-  const encodeDSTRecord = (dx, dy, flag) => {
-    // Clamp to ±121
-    dx = Math.max(-121, Math.min(121, dx));
-    dy = Math.max(-121, Math.min(121, dy));
+  const encodeRecord = (dx, dy, flags) => {
+    dx = Math.max(-121, Math.min(121, Math.round(dx)));
+    dy = Math.max(-121, Math.min(121, Math.round(dy)));
 
-    let b0 = 0, b1 = 0, b2 = flag & 0x0F; // low nibble of flag
+    let b0 = 0, b1 = 0, b2 = flags;
+    const y = dy, x = dx;
 
-    // ── Y bits into b0, X bits into b1, overflow into b2 ──
-    // Tajima encoding: positive Y = bits at positions 0,1,2,(skip3,4=neg),5,6,7
-    // Negative Y: complement bits shifted
-
-    // Positive Y
-    if (dy > 0) {
-      if (dy & 1)  b0 |= 0x01;
-      if (dy & 2)  b0 |= 0x02;
-      if (dy & 4)  b0 |= 0x04;
-      // bit 3 of b0 unused for +Y
-      if (dy & 8)  b2 |= 0x40; // overflow
-      if (dy & 16) b0 |= 0x10;
-      if (dy & 32) b0 |= 0x20;
-      if (dy & 64) b0 |= 0x40;
-    } else if (dy < 0) {
-      const d = -dy;
-      if (d & 1)  b0 |= 0x08;
-      if (d & 2)  b0 |= 0x10;
-      if (d & 4)  b0 |= 0x20;
-      if (d & 8)  b2 |= 0x80; // overflow
-      if (d & 16) b0 |= 0x01;
-      if (d & 32) b0 |= 0x02;
-      if (d & 64) b0 |= 0x04;
+    // Y encoding (byte 0)
+    if (y > 0) {
+      if (y & 1)   b0 |= 0x01;
+      if (y & 2)   b0 |= 0x02;
+      if (y & 4)   b0 |= 0x04;
+      if (y & 16)  b0 |= 0x10;
+      if (y & 32)  b0 |= 0x20;
+      if (y & 64)  b0 |= 0x40;
+      if (y & 128) b0 |= 0x80;
+    } else if (y < 0) {
+      const d = -y;
+      if (d & 1)   b0 |= 0x08;
+      if (d & 2)   b0 |= 0x10;
+      if (d & 4)   b0 |= 0x20;
+      if (d & 16)  b0 |= 0x01;
+      if (d & 32)  b0 |= 0x02;
+      if (d & 64)  b0 |= 0x04;
+      if (d & 128) b0 |= 0x80;
     }
 
-    // Positive X
-    if (dx > 0) {
-      if (dx & 1)  b1 |= 0x01;
-      if (dx & 2)  b1 |= 0x02;
-      if (dx & 4)  b1 |= 0x04;
-      if (dx & 8)  b2 |= 0x10; // overflow
-      if (dx & 16) b1 |= 0x10;
-      if (dx & 32) b1 |= 0x20;
-      if (dx & 64) b1 |= 0x40;
-    } else if (dx < 0) {
-      const d = -dx;
-      if (d & 1)  b1 |= 0x08;
-      if (d & 2)  b1 |= 0x10;
-      if (d & 4)  b1 |= 0x20;
-      if (d & 8)  b2 |= 0x20; // overflow
-      if (d & 16) b1 |= 0x01;
-      if (d & 32) b1 |= 0x02;
-      if (d & 64) b1 |= 0x04;
+    // X encoding (byte 1)
+    if (x > 0) {
+      if (x & 1)   b1 |= 0x01;
+      if (x & 2)   b1 |= 0x02;
+      if (x & 4)   b1 |= 0x04;
+      if (x & 16)  b1 |= 0x10;
+      if (x & 32)  b1 |= 0x20;
+      if (x & 64)  b1 |= 0x40;
+      if (x & 128) b1 |= 0x80;
+    } else if (x < 0) {
+      const d = -x;
+      if (d & 1)   b1 |= 0x08;
+      if (d & 2)   b1 |= 0x10;
+      if (d & 4)   b1 |= 0x20;
+      if (d & 16)  b1 |= 0x01;
+      if (d & 32)  b1 |= 0x02;
+      if (d & 64)  b1 |= 0x04;
+      if (d & 128) b1 |= 0x80;
+    }
+
+    // Overflow bits (byte 2)
+    if (y > 0) {
+      if (y & 8)   b2 |= 0x40;
+      if (y & 128) b2 |= 0x80;
+    } else if (y < 0) {
+      const d = -y;
+      if (d & 8)   b2 |= 0x40;
+      if (d & 128) b2 |= 0x80;
+    }
+    if (x > 0) {
+      if (x & 8)   b2 |= 0x10;
+      if (x & 128) b2 |= 0x20;
+    } else if (x < 0) {
+      const d = -x;
+      if (d & 8)   b2 |= 0x10;
+      if (d & 128) b2 |= 0x20;
     }
 
     records.push(b0, b1, b2);
   };
 
-  // Emit a move (possibly > 121 DST units) as a series of JUMP records
-  // followed by the final record with the given endFlag.
-  const emitMove = (dxUnits, dyUnits, endFlag) => {
-    const MAX_DELTA = 121;
-    let remX = dxUnits, remY = dyUnits;
-
-    while (Math.abs(remX) > MAX_DELTA || Math.abs(remY) > MAX_DELTA) {
-      const stepX = Math.max(-MAX_DELTA, Math.min(MAX_DELTA, remX));
-      const stepY = Math.max(-MAX_DELTA, Math.min(MAX_DELTA, remY));
-      encodeDSTRecord(stepX, stepY, 0x83); // JUMP flag
-      remX -= stepX;
-      remY -= stepY;
-    }
-    encodeDSTRecord(remX, remY, endFlag);
-  };
-
-  // Walk stitches; cx/cy track current needle position in DST units
-  let cx = 0, cy = 0;
-
   for (const s of stitches) {
+    const tx = Math.round(s.x / UNIT);
+    const ty = Math.round(s.y / UNIT);
+    const dx = tx - cx;
+    const dy = ty - cy;
+
     if (s.type === 'end') {
-      // DST end record: 0x00 0x00 0xF3
       records.push(0x00, 0x00, 0xF3);
       break;
-    }
-
-    if (s.type === 'colorChange') {
-      // Color change: encode at current position with flag 0xC3
-      encodeDSTRecord(0, 0, 0xC3);
-      continue; // do NOT update cx/cy — needle stays put
-    }
-
-    // Convert mm → DST units (0.1mm), round to nearest integer
-    const tx = Math.round(s.x * 10);
-    const ty = Math.round(s.y * 10);
-    const dxUnits = tx - cx;
-    const dyUnits = ty - cy;
-
-    if (s.type === 'jump') {
-      emitMove(dxUnits, dyUnits, 0x83); // JUMP
+    } else if (s.type === 'colorChange') {
+      encodeRecord(0, 0, 0xC3);
+    } else if (s.type === 'trim') {
+      // Trim en DST: 3 jump records at position 0,0 (Tajima trim sequence)
+      encodeRecord(0, 0, 0x83);
+      encodeRecord(0, 0, 0x83);
+      encodeRecord(0, 0, 0x83);
+    } else if (s.type === 'jump') {
+      encodeRecord(dx, dy, 0x83);
     } else {
-      // Normal stitch — if distance > MAX_DELTA, break into jumps + final stitch
-      emitMove(dxUnits, dyUnits, 0x03); // STITCH
+      encodeRecord(dx, dy, 0x03);
     }
 
-    cx = tx;
-    cy = ty;
+    cx = tx; cy = ty;
   }
 
-  // ── 4. Assemble final buffer ─────────────────────────────────────────────
   const buf = new Uint8Array(512 + records.length);
   buf.set(header, 0);
   buf.set(new Uint8Array(records), 512);

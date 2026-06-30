@@ -61,14 +61,7 @@ export async function runVectorEngine(ctx) {
     stitch_strategy:  strategy.stitchStrategy,
   };
 
-  const TIMEOUT_MS = 90_000;
-  const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('hybridDigitize timeout after 90s')), TIMEOUT_MS)
-  );
-  const res = await Promise.race([
-    base44.functions.invoke('hybridDigitize', payload),
-    timeoutPromise,
-  ]);
+  const res = await base44.functions.invoke('hybridDigitize', payload);
 
   if (!res.data?.success) {
     throw new Error(res.data?.error || 'hybridDigitize returned no success');
