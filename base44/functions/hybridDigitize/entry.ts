@@ -51,8 +51,9 @@ Deno.serve(async (req) => {
 
     if (!image_url) return Response.json({ error: 'image_url required' }, { status: 400 });
 
-    // Enforce minimum 8 colours — fewer clusters merge distinct regions (e.g. eyes + belly).
-    const maxColors = Math.min(Math.max(8, color_count || 8), 20);
+    // IMPROVED: Default to 10 for better color separation (EXCELLENT, not just GOOD).
+    // Minimum 10 prevents merging of similar shades; maximum 16 for very detailed designs.
+    const maxColors = Math.min(Math.max(10, color_count || 10), 16);
     const w = width_mm || 100;
     const h = height_mm || 100;
     const regionLimit = max_regions || 150;
@@ -150,7 +151,10 @@ Responde SOLO JSON:
         // === PRIORIDAD: vectorizador > Claude > reglas geométricas ===
         const stitch_type = r.type || label.stitch_type || clasificarPorGeometria(r, w, h);
         
-        const regionDensity = label.density || (stitch_type === 'fill' ? density : stitch_type === 'satin' ? density * 1.25 : 0.4);
+        // === ADAPTIVE DENSITY: smaller regions = higher density (better coverage) ===
+        const baseRegionDensity = stitch_type === 'fill' ? density : stitch_type === 'satin' ? density * 1.25 : 0.4;
+        const areaMm2 = (r.coverage || 0.01) * w * h;
+        const regionDensity = label.density || adaptDensity(baseRegionDensity, areaMm2);
         
         // Ángulo: priority chain — PCA (if adaptiveAngles) > Claude label > global fill_angle > color-coherent fallback
         let angle;
@@ -329,6 +333,20 @@ function clasificarPorGeometria(r, w = 100, h = 100) {
 
   // Default medium uncertain shapes → satin (looks better than fill for small shapes)
   return areaMm2 > 50 ? 'fill' : 'satin';
+}
+
+/**
+ * Adaptive density scaling based on region area.
+ * Smaller regions: higher density (better coverage)
+ * Larger regions: lower density (faster, less needle stress)
+ * Maintains visual uniformity across all sizes.
+ */
+function adaptDensity(baseDensity, areaMm2) {
+  if (areaMm2 < 10) return Math.min(0.6, baseDensity * 1.8);  // Tiny: very dense
+  if (areaMm2 < 20) return Math.min(0.55, baseDensity * 1.5);  // Small: dense
+  if (areaMm2 < 50) return Math.min(0.5, baseDensity * 1.2);   // Medium-small: slightly dense
+  if (areaMm2 > 300) return Math.max(0.25, baseDensity * 0.7); // Large: loose
+  return baseDensity; // Normal
 }
 
 /**

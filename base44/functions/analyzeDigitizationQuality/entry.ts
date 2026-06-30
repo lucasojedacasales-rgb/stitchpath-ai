@@ -28,9 +28,9 @@ Deno.serve(async (req) => {
       layer_integrity: analyzeLayerIntegrity(regions),
       // Distribución de puntos de stitch
       stitch_distribution: analyzeStitchDistribution(regions),
-      // Rating general
-      overall_rating: 0,
     };
+    // Calculate overall rating AFTER all metrics are set
+    analysis.overall_rating = calculateOverallRating(analysis);
 
     // === ANÁLISIS 2: Parámetros que funcionan bien ===
     const working_parameters = {
@@ -193,9 +193,16 @@ function analyzeColorSeparation(regions) {
     colorCounts.set(c, (colorCounts.get(c) || 0) + 1);
   }
   const duplicates = [...colorCounts.values()].filter(c => c > 1).length;
-  if (duplicates === 0) return 'EXCELLENT'; // all unique colors
-  if (duplicates < colorCounts.size * 0.2) return 'EXCELLENT';
-  return 'GOOD';
+  const totalColors = colorCounts.size;
+  
+  // EXCELLENT: all unique OR very few duplicates (< 15% of palette)
+  if (duplicates === 0) return 'EXCELLENT';
+  if (duplicates <= 2) return 'EXCELLENT'; // up to 2 duplicated colors is professional
+  if (duplicates < totalColors * 0.15) return 'EXCELLENT';
+  // GOOD: moderate duplicates (15-30% of palette)
+  if (duplicates < totalColors * 0.3) return 'GOOD';
+  // POOR: heavy duplicates (>30%)
+  return 'POOR';
 }
 
 function analyzeLayerIntegrity(regions) {
@@ -210,14 +217,27 @@ function analyzeLayerIntegrity(regions) {
 }
 
 function analyzeStitchDistribution(regions) {
-  const areas = regions.map(r => r.area_mm2 || 0).filter(a => a > 0);
-  if (areas.length === 0) return 'BALANCED';
-  const avg = areas.reduce((s, a) => s + a, 0) / areas.length;
-  const variance = areas.reduce((s, a) => s + (a - avg) ** 2, 0) / areas.length;
-  const cv = Math.sqrt(variance) / avg; // coefficient of variation
-  if (cv < 1) return 'BALANCED'; // low variance = even distribution
-  if (cv < 2) return 'ACCEPTABLE';
-  return 'UNEVEN';
+  // Analyze stitch density proportionality (stitches per mm² of area)
+  // This is more meaningful than raw stitch counts which vary by area
+  const densities = regions
+    .filter(r => r.area_mm2 > 0 && r.stitch_count > 0)
+    .map(r => (r.stitch_count || 1) / (r.area_mm2 || 1));
+  
+  if (densities.length === 0) return 'BALANCED';
+  
+  const avg = densities.reduce((s, d) => s + d, 0) / densities.length;
+  const variance = densities.reduce((s, d) => s + (d - avg) ** 2, 0) / densities.length;
+  const stdDev = Math.sqrt(variance);
+  const cv = stdDev / avg; // coefficient of variation of stitch density
+  
+  // Interpret: CV of stitch density tells us how uniform the stitching is
+  // Low CV = all regions have similar stitch density (even distribution)
+  // High CV = some regions dense, others sparse (uneven)
+  
+  if (cv < 0.5) return 'BALANCED';       // very tight, professional uniformity
+  if (cv < 0.9) return 'ACCEPTABLE';     // moderate variation, acceptable
+  if (cv < 1.5) return 'UNEVEN';         // notable variance in density
+  return 'UNEVEN';                        // high variance, noticeable imbalance
 }
 
 function assessRegionQuality(region, allRegions) {
@@ -236,25 +256,34 @@ function assessRegionQuality(region, allRegions) {
 }
 
 function calculateOverallRating(analysis) {
+  // Calculate overall rating (0-10) from four metrics
+  // Each metric weighted equally; each score 0-3, then multiply by 10/3
   const scores = {
+    // detail_visibility
     HIGH: 3,
-    EXCELLENT: 3,
-    PERFECT: 3,
-    BALANCED: 3,
     MEDIUM: 2,
+    LOW: 0,
+    // color_separation
+    EXCELLENT: 3,
     GOOD: 2,
-    ACCEPTABLE: 1,
-    UNEVEN: 1,
-    ISSUES: 0,
     POOR: 0,
+    // layer_integrity
+    PERFECT: 3,
+    GOOD: 2,
+    ISSUES: 0,
+    // stitch_distribution
+    BALANCED: 3,
+    ACCEPTABLE: 2,
+    UNEVEN: 1,
   };
   const parts = [
-    scores[analysis.detail_visibility] || 2,
-    scores[analysis.color_separation] || 2,
-    scores[analysis.layer_integrity] || 2,
-    scores[analysis.stitch_distribution] || 2,
+    scores[analysis.detail_visibility] || 1,
+    scores[analysis.color_separation] || 1,
+    scores[analysis.layer_integrity] || 1,
+    scores[analysis.stitch_distribution] || 1,
   ];
-  return Math.round((parts.reduce((s, p) => s + p, 0) / parts.length) * 3.33); // scale 0-10
+  const avgScore = parts.reduce((s, p) => s + p, 0) / 4;
+  return Math.round((avgScore / 3) * 10); // scale to 0-10
 }
 
 function generateRecommendations(analysis, regions) {
