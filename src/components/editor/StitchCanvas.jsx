@@ -1,23 +1,57 @@
-import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import { ZoomIn, ZoomOut, Maximize2, Download, Layers, AlignJustify } from 'lucide-react';
 import { generateTatamiFill } from '@/lib/tatamiFill';
+import { drawRunning, drawSatinContour, drawSatinFill, drawOutline } from '@/lib/contourRenderer';
 
-// ── Contour detection helpers ─────────────────────────────────────────────────
+// ── Region classification helpers ─────────────────────────────────────────────
 
-function isContourRegion(region) {
-  // Only override stitch_type for regions explicitly flagged as contours.
-  // Never override based on color — dark fill regions (e.g. black body) are valid fills.
-  if (!region) return false;
-  // Explicit flag set by the digitizing pipeline
-  if (region.is_auto_contour === true) return true;
-  // Name pattern: contour_ prefix (strict, not just "borde")
-  if (/^contour_/i.test(region.name || '')) return true;
-  // Geometric: very thin ring-like shapes (area/perimeter² < 0.02 = very elongated)
+/**
+ * Determines the effective render type for a region.
+ * Returns: 'fill' | 'satin_contour' | 'satin_fill' | 'running'
+ *
+ * Priority order:
+ *  1. Explicit is_auto_contour flag → satin_contour
+ *  2. Explicit stitch_type from pipeline (running_stitch, satin, fill)
+ *  3. Geometric heuristic for very thin/elongated shapes → satin_contour
+ */
+function getEffectiveRenderType(region) {
+  if (!region) return 'fill';
+
+  // Explicit contour flag from pipeline
+  if (region.is_auto_contour === true) return 'satin_contour';
+  if (/^contour_/i.test(region.name || '')) return 'satin_contour';
+
+  const type = region.stitch_type;
+
+  // Explicit running stitch from pipeline (e.g. small details)
+  if (type === 'running_stitch') return 'running';
+
+  // Satin: classify by geometric compactness into three rendering modes.
+    // compacidad = 4π·area / perimeter² (circle=1, thin strip≈0).
+    // mean_width = area / skeleton_length — true physical width of the shape.
+    if (type === 'satin') {
+      const meanW     = region.mean_width_mm || 0;
+      const compact   = region.compacidad    || 0;  // 0=very elongated, 1=circle
+      const areaMm2   = region.area_mm2      || 0;
+      const perimMm   = region.perimeter_mm  || 1;
+      // Compute true compactness from raw values (most reliable)
+      const trueCompact = (4 * Math.PI * areaMm2) / (perimMm * perimMm);
+
+      // Very compact + wide (compact > 0.3, mean > 6mm): wide body satin fill
+      if (trueCompact > 0.3 && meanW > 4) return 'satin_fill';
+      // Compact medium (compact > 0.15, mean > 3mm): medium satin fill
+      if (trueCompact > 0.15 && meanW > 3) return 'satin_fill';
+      // Everything else (elongated, ring-shaped, thin): satin contour columns
+      return 'satin_contour';
+    }
+
+  // Geometric fallback: compactness ratio — very elongated rings are contours
   if (region.area_mm2 && region.perimeter_mm) {
     const ratio = region.area_mm2 / (region.perimeter_mm * region.perimeter_mm);
-    if (ratio < 0.02) return true;
+    if (ratio < 0.015) return 'satin_contour'; // very thin ring
   }
-  return false;
+
+  return 'fill';
 }
 
 function getDrawSize(imageEl, W, H) {
@@ -222,49 +256,86 @@ export default function StitchCanvas({
     const outlineOnly = viewMode === 'outline';
     const alpha = stitchOpacity / 100;
 
-    for (const region of validRegions) {
-      if (!region.visible) continue;
-      const pts = region.path_points;
-      if (!pts || pts.length < 3) continue;
+    // ── Separate fill vs contour regions for correct draw order ──────────────
+    // Fill regions are drawn first (base layer), then contour/satin on top.
+    // This matches real machine order: fill first, border stitches last.
+    const fillRegions    = validRegions.filter(r => getEffectiveRenderType(r) === 'fill');
+    const contourRegions = validRegions.filter(r => getEffectiveRenderType(r) !== 'fill');
 
-      const effectiveType = isContourRegion(region) ? 'running_stitch' : region.stitch_type;
+    // ── PASS 1: Fill regions (clipped to polygon) ────────────────────────────
+    if (showFill) {
+      for (const region of fillRegions) {
+        if (!region.visible) continue;
+        const pts = region.path_points;
+        if (!pts || pts.length < 3) continue;
+        const color = region.color || '#ffffff';
 
-      if (effectiveType === 'fill' && !showFill) continue;
-      if ((effectiveType === 'running_stitch' || effectiveType === 'satin') && !showContour) continue;
+        ctx.save();
+        // Clip fill inside polygon
+        ctx.beginPath();
+        ctx.moveTo((pts[0][0] - 0.5) * drawW, (pts[0][1] - 0.5) * drawH);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo((pts[i][0] - 0.5) * drawW, (pts[i][1] - 0.5) * drawH);
+        ctx.closePath();
+        ctx.clip();
 
-      const color = region.color || '#ffffff';
-
-      // Clip to region polygon
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo((pts[0][0] - 0.5) * drawW, (pts[0][1] - 0.5) * drawH);
-      for (let i = 1; i < pts.length; i++) {
-        ctx.lineTo((pts[i][0] - 0.5) * drawW, (pts[i][1] - 0.5) * drawH);
-      }
-      ctx.closePath();
-      ctx.clip();
-
-      if (effectiveType === 'fill') {
         if (outlineOnly) {
-          // Outline-only mode: just draw filled polygon silhouette
           ctx.globalAlpha = alpha * 0.35;
           ctx.fillStyle = color;
           ctx.fill();
-          ctx.globalAlpha = alpha;
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 1.5 / zoom;
-          ctx.stroke();
         } else {
-          // Full fill: tatami engine — real stitches, cached per region
           drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCache.current);
         }
-      } else if (effectiveType === 'satin') {
-        drawSatinLines(ctx, pts, region, drawW, drawH, zoom, color, alpha);
-      } else {
-        drawRunningStitch(ctx, pts, region, drawW, drawH, zoom, color, alpha);
+        ctx.restore();
       }
+    }
 
-      ctx.restore();
+    // ── PASS 2: Satin fill regions (wide satin bodies, clipped) ─────────────
+    const satinFillRegions = validRegions.filter(r => getEffectiveRenderType(r) === 'satin_fill');
+    if (showContour || showFill) {
+      for (const region of satinFillRegions) {
+        if (!region.visible) continue;
+        const pts = region.path_points;
+        if (!pts || pts.length < 3) continue;
+        const color = region.color || '#ffffff';
+
+        ctx.save();
+        // Clip satin fill inside polygon
+        ctx.beginPath();
+        ctx.moveTo((pts[0][0] - 0.5) * drawW, (pts[0][1] - 0.5) * drawH);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo((pts[i][0] - 0.5) * drawW, (pts[i][1] - 0.5) * drawH);
+        ctx.closePath();
+        ctx.clip();
+
+        if (outlineOnly) {
+          drawOutline(ctx, pts, drawW, drawH, zoom, color, alpha);
+        } else {
+          drawSatinFill(ctx, pts, region, drawW, drawH, zoom, color, alpha);
+        }
+        ctx.restore();
+      }
+    }
+
+    // ── PASS 3: Contour regions — NO clip, drawn over fills ──────────────────
+    // Satin contours and running stitches draw on top of fills.
+    // CRITICAL: do NOT clip contours — half the stroke falls outside the polygon
+    // and clipping would erase it, making contours invisible on the outer edge.
+    if (showContour) {
+      for (const region of contourRegions) {
+        if (!region.visible) continue;
+        const pts = region.path_points;
+        if (!pts || pts.length < 3) continue;
+        const color  = region.color || '#ffffff';
+        const rtype  = getEffectiveRenderType(region);
+
+        if (outlineOnly) {
+          drawOutline(ctx, pts, drawW, drawH, zoom, color, alpha);
+        } else if (rtype === 'satin_contour') {
+          drawSatinContour(ctx, pts, region, drawW, drawH, zoom, color, alpha);
+        } else {
+          // running
+          drawRunning(ctx, pts, region, drawW, drawH, zoom, color, alpha);
+        }
+      }
     }
 
     ctx.restore();
@@ -312,54 +383,6 @@ export default function StitchCanvas({
 
     ctx.restore();
   }, [regions, selectedRegionId, hoveredRegion, zoom, offset]);
-
-  // ── Stitch helpers ──────────────────────────────────────────────────────────
-
-  function drawSatinLines(ctx, pts, region, drawW, drawH, zoom, color, alpha) {
-    const angle = ((region.angle || 45) * Math.PI) / 180;
-    const density = region.density || 0.8;
-    const spacing = Math.max(1.5, 6 / density) / zoom;
-
-    ctx.globalAlpha = alpha * 0.85;
-    const xs = pts.map(p => (p[0] - 0.5) * drawW);
-    const ys = pts.map(p => (p[1] - 0.5) * drawH);
-    const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
-    const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
-    const diagLen = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) + spacing * 2;
-
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(angle);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 0.9 / zoom;
-    ctx.lineCap = 'round';
-    for (let y = -diagLen; y < diagLen; y += spacing) {
-      ctx.beginPath();
-      ctx.moveTo(-diagLen, y);
-      ctx.lineTo(diagLen, y);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  function drawRunningStitch(ctx, pts, region, drawW, drawH, zoom, color, alpha) {
-    if (pts.length < 2) return;
-    const dashLen = Math.max(1.5, 3.0 / zoom);
-    const gapLen  = Math.max(1.0, 2.0 / zoom);
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.2 / zoom;
-    ctx.lineCap = 'round';
-    ctx.setLineDash([dashLen, gapLen]);
-    ctx.beginPath();
-    ctx.moveTo((pts[0][0] - 0.5) * drawW, (pts[0][1] - 0.5) * drawH);
-    for (let i = 1; i < pts.length; i++) ctx.lineTo((pts[i][0] - 0.5) * drawW, (pts[i][1] - 0.5) * drawH);
-    ctx.closePath();
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.restore();
-  }
 
   function drawZoomBadge(ctx, W, H, zoom) {
     const text = `${Math.round(zoom * 100)}%`;
