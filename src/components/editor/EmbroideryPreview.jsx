@@ -312,16 +312,12 @@ function buildStitchesFromRegions(regions, config) {
   // SECUENCIADO CORRECTO: FASE 1 → FASE 2 → FASE 3
   // ═══════════════════════════════════════════════════════════════════════════════
   
-  // FASE 1: RELLENOS (fills) — Ordenados por prioridad (1-5 = fills)
-  // Esto forma la BASE del bordado. La prioridad es asignada por EIE/enrichRegion
+  // FASE 1: RELLENOS (fills) — Todos los fills, siempre primero (base del bordado)
   const fillRegions = regions
     .filter(r => r.visible && r.path_points && r.path_points.length >= 3 && r.stitch_type === 'fill')
     .sort((a, b) => {
-      // Primero por prioridad (menor = primero) — EIE asigna 1-5 a fills
-      if ((a.priority || 999) !== (b.priority || 999)) {
-        return (a.priority || 999) - (b.priority || 999);
-      }
-      // Luego por área (grande a pequeño) dentro de la misma prioridad
+      const pd = (a.priority || 999) - (b.priority || 999);
+      if (pd !== 0) return pd;
       return (b.area_mm2 || 0) - (a.area_mm2 || 0);
     });
 
@@ -348,13 +344,10 @@ function buildStitchesFromRegions(regions, config) {
     stitches.push(...fillStitches);
   }
 
-  // FASE 2: DETALLES INTERNOS (run, small fills) — Orden por prioridad (6-9 = detalles)
+  // FASE 2: RUNNING STITCH — Detalles de línea, van después de todos los fills
   const detailRegions = regions
-    .filter(r => r.visible && r.path_points && r.path_points.length >= 3 && (r.stitch_type === 'running_stitch' || (r.area_mm2 || 0) < 50))
-    .sort((a, b) => {
-      // Orden por prioridad (EIE asigna 6-9 a detalles)
-      return (a.priority || 999) - (b.priority || 999);
-    });
+    .filter(r => r.visible && r.path_points && r.path_points.length >= 3 && r.stitch_type === 'running_stitch')
+    .sort((a, b) => (a.priority || 999) - (b.priority || 999));
 
   for (const region of detailRegions) {
     const color = region.color || '#ffffff';
@@ -386,14 +379,14 @@ function buildStitchesFromRegions(regions, config) {
     }
   }
 
-  // FASE 3: CONTORNOS SATIN (bordes) — ÚLTIMO (define los bordes limpios)
-  // CRÍTICO: Esto va al FINAL para que cierre el bordado sobre los rellenos
-  // EIE asigna prioridad 5-8 a satins, pero dentro de Fase 3 van todos después de fills
+  // FASE 3: CONTORNOS SATIN — Siempre AL FINAL, encima de todos los fills
+  // Garantiza que los bordes satinados nunca queden enterrados bajo rellenos posteriores
   const satinRegions = regions
     .filter(r => r.visible && r.path_points && r.path_points.length >= 3 && r.stitch_type === 'satin')
     .sort((a, b) => {
-      // Orden por prioridad (EIE asigna 5-8 a satins)
-      return (a.priority || 999) - (b.priority || 999);
+      const pd = (a.priority || 999) - (b.priority || 999);
+      if (pd !== 0) return pd;
+      return (b.area_mm2 || 0) - (a.area_mm2 || 0);
     });
 
   for (const region of satinRegions) {

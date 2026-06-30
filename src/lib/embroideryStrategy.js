@@ -182,36 +182,39 @@ function harmonizeFillAngles(regions, adjacency) {
 /**
  * Professional sewing order = 4 levels of optimization:
  *
- * Level A — Priority bands (structural correctness):
- *   fills_base (prio 1-3) → fills_mid (prio 4-5) → satins (prio 6-7) →
- *   detail_fills → running_stitch
+ * Level A — Strict type bands (structural correctness):
+ *   ALL fills (any priority, large→small) →
+ *   ALL satins (contour borders, sorted by priority) →
+ *   ALL running_stitch (hair lines, details)
  *
- * Level B — Color grouping within bands (minimize thread changes):
- *   Most-used color first, then nearest to current position.
+ *   This guarantees satin contours NEVER get buried under subsequent fills.
+ *   Within fills and satins, priority sub-ordering is preserved.
  *
- * Level C — Spatial nearest-neighbor within color groups (minimize jumps):
- *   Greedy nearest-neighbor from current needle position.
- *
- * Level D — Same-color region chaining:
- *   Regions of the same color that are spatially connected are chained
- *   so the needle never lifts between them.
+ * Level B — Color grouping within bands (minimize thread changes)
+ * Level C — Spatial nearest-neighbor within color groups (minimize jumps)
  */
 function planSewingOrder(regions, fabricType) {
   if (!regions.length) return regions;
 
-  // Band assignment
+  // Band assignment — type is the primary gate, priority is secondary within band
   const getBand = r => {
-    const p = r.priority || 5;
     const t = r.stitch_type;
-    if (t === 'fill' && p <= 3) return 0;
-    if (t === 'fill' && p <= 5) return 1;
-    if (t === 'satin'         ) return 2;
-    if (t === 'fill'          ) return 3;
-    return 4; // running_stitch
+    if (t === 'fill')           return 0; // ALL fills first — no exceptions
+    if (t === 'satin')          return 1; // ALL satins after ALL fills
+    return 2;                             // running_stitch last
   };
 
-  const bands = [[], [], [], [], []];
+  const bands = [[], [], []];
   for (const r of regions) bands[getBand(r)].push(r);
+
+  // Within each band, sort by EIE priority (lower = earlier) then by area (larger = earlier)
+  for (const band of bands) {
+    band.sort((a, b) => {
+      const pd = (a.priority || 5) - (b.priority || 5);
+      if (pd !== 0) return pd;
+      return (b.area_mm2 || 0) - (a.area_mm2 || 0);
+    });
+  }
 
   const ordered = [];
   let cx = 0, cy = 0, prevColor = null;
