@@ -102,13 +102,6 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
     img.src = imageUrl;
   }, [imageUrl]);
 
-  // Keep refs current so ResizeObserver always calls the latest version
-  useEffect(() => { drawFabricRef.current  = drawFabric;  }, [drawFabric]);
-  useEffect(() => { drawStitchesRef.current = drawStitches; }, [drawStitches]);
-
-  // Redraw on param/region/zoom changes
-  useEffect(() => { drawFabric(); drawStitches(); drawPostProcess(); }, [regions, zoom, offset, simParams]); // eslint-disable-line react-hooks/exhaustive-deps
-
   function resizeCanvases() {
     const el = containerRef.current;
     if (!el) return;
@@ -330,6 +323,13 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
     // Post-process después de las puntadas
     drawPostProcess();
   }, [regions, zoom, offset, simParams, fabricType]);
+
+  // Keep refs current so ResizeObserver always calls the latest version
+  useEffect(() => { drawFabricRef.current  = drawFabric;  }, [drawFabric]);
+  useEffect(() => { drawStitchesRef.current = drawStitches; }, [drawStitches]);
+
+  // Redraw on param/region/zoom changes
+  useEffect(() => { drawFabric(); drawStitches(); drawPostProcess(); }, [regions, zoom, offset, simParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Interacción ──────────────────────────────────────────────────────────────
   const handleWheel = (e) => {
