@@ -90,23 +90,7 @@ export default function Editor() {
   // Cleanup: clear processing timer on unmount to prevent memory leak / stale setState
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handler = (e) => {
-      // Ctrl+S / Cmd+S — save
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault();
-        saveProject();
-      }
-      // Escape — close export modal or deselect region
-      if (e.key === 'Escape') {
-        if (showExport) setShowExport(false);
-        else if (selectedRegionId) setSelectedRegionId(null);
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [saveProject, showExport, selectedRegionId]);
+
 
   const loadProject = async () => {
     setLoading(true);
@@ -242,6 +226,22 @@ export default function Editor() {
 
   const totalStitches = useMemo(() => regions.reduce((s, r) => s + (r.stitch_count || 0), 0), [regions]);
   const colorsUsed = useMemo(() => new Set(regions.map((r) => r.color)).size, [regions]);
+
+  // Keyboard shortcuts — defined after saveProject to avoid TDZ error
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveProject();
+      }
+      if (e.key === 'Escape') {
+        if (showExport) setShowExport(false);
+        else if (selectedRegionId) setSelectedRegionId(null);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [saveProject, showExport, selectedRegionId]);
 
   if (loading) return <div className="min-h-screen bg-[#0d0f14] flex items-center justify-center"><div className="w-8 h-8 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" /></div>;
 
