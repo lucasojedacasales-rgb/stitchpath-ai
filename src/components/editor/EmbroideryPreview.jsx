@@ -347,7 +347,7 @@ function buildStitchesFromRegions(regions, config) {
 
 /**
  * Generate tatami fill lines — parallel lines rotated by angle, clipped to polygon
- * Returns array of stitch objects with proper fill line segments
+ * CRITICAL: Generate DENSE scanlines so fill is visibly full, not sparse
  */
 function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regionId) {
   const stitches = [];
@@ -381,8 +381,12 @@ function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regi
     rMaxY = Math.max(rMaxY, y);
   }
 
+  // CRITICAL: Use REAL density (mm between rows, not mm between stitches)
+  // Professional embroidery: 0.3-0.5mm density = ~2-3 rows per mm = DENSE visual
+  const realDensity = Math.max(0.25, Math.min(density, 0.6)); // clamp to professional range
+
   // Generate horizontal scanlines in fill-space, spaced by density
-  for (let y = rMinY; y < rMaxY; y += density) {
+  for (let y = rMinY; y < rMaxY; y += realDensity) {
     // Find intersections with polygon edges at this Y
     const intersections = [];
     for (let i = 0; i < rotatedPoly.length; i++) {
@@ -412,11 +416,11 @@ function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regi
       const [ox1, oy1] = unrotate(x1, y);
       const [ox2, oy2] = unrotate(x2, y);
 
-      // Generate stitches along this fill line
+      // Generate stitches along this fill line with short spacing for visibility
       const dx = ox2 - ox1;
       const dy = oy2 - oy1;
       const len = Math.hypot(dx, dy);
-      const steps = Math.max(2, Math.ceil(len / stitchLen));
+      const steps = Math.max(3, Math.ceil(len / 1.5)); // shorter stitch = more points = denser rendering
 
       for (let s = 0; s < steps; s++) {
         const t = s / steps;
@@ -427,7 +431,7 @@ function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regi
           regionId,
           color,
           isJump: false,
-          threadWidth: 0.35,
+          threadWidth: 0.4, // slightly thicker to be visible
         });
       }
     }
@@ -482,24 +486,48 @@ function drawAllStitches(ctx, stitches, toScreenX, toScreenY, showTravel) {
   const fillStitches = stitches.filter(s => s.type === 'fill');
   const contourStitches = stitches.filter(s => s.type === 'contour' || s.type === 'satin');
 
-  // === Draw FILL first (base layer, dense) ===
+  // === Draw FILL first (base layer, dense parallel lines) ===
   const fillByColor = {};
   for (const s of fillStitches) {
     if (!fillByColor[s.color]) fillByColor[s.color] = [];
     fillByColor[s.color].push(s);
   }
 
-  ctx.setLineDash([3, 1]); // stitch pattern
-  ctx.lineWidth = 1.8;
+  ctx.setLineDash([]);
+  ctx.lineWidth = 1.5;
+  ctx.globalAlpha = 1;
 
   for (const [color, colorStitches] of Object.entries(fillByColor)) {
+    if (colorStitches.length < 2) continue;
     ctx.strokeStyle = color;
-    for (let i = 0; i < colorStitches.length - 1; i++) {
+
+    // Draw as row-by-row polylines
+    let currentPath = [colorStitches[0]];
+    for (let i = 1; i < colorStitches.length; i++) {
+      const s0 = colorStitches[i - 1];
       const s1 = colorStitches[i];
-      const s2 = colorStitches[i + 1];
+      const dist = Math.hypot(s1.x - s0.x, s1.y - s0.y);
+      
+      if (dist < 3) {
+        currentPath.push(s1);
+      } else {
+        if (currentPath.length > 1) {
+          ctx.beginPath();
+          ctx.moveTo(toScreenX(currentPath[0].x), toScreenY(currentPath[0].y));
+          for (let j = 1; j < currentPath.length; j++) {
+            ctx.lineTo(toScreenX(currentPath[j].x), toScreenY(currentPath[j].y));
+          }
+          ctx.stroke();
+        }
+        currentPath = [s1];
+      }
+    }
+    if (currentPath.length > 1) {
       ctx.beginPath();
-      ctx.moveTo(toScreenX(s1.x), toScreenY(s1.y));
-      ctx.lineTo(toScreenX(s2.x), toScreenY(s2.y));
+      ctx.moveTo(toScreenX(currentPath[0].x), toScreenY(currentPath[0].y));
+      for (let j = 1; j < currentPath.length; j++) {
+        ctx.lineTo(toScreenX(currentPath[j].x), toScreenY(currentPath[j].y));
+      }
       ctx.stroke();
     }
   }
@@ -538,26 +566,55 @@ function drawStitchesSequential(ctx, visibleStitches, allStitches, toScreenX, to
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
 
-  // === PASS 1: Draw FILL stitches (dense, with dash pattern) ===
+  // === PASS 1: Draw FILL stitches (dense parallel lines) ===
   const fillByColor = {};
   for (const s of fillStitches) {
     if (!fillByColor[s.color]) fillByColor[s.color] = [];
     fillByColor[s.color].push(s);
   }
 
+  ctx.globalAlpha = 1; // full opacity for fills
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
   for (const [color, stitches] of Object.entries(fillByColor)) {
+    if (stitches.length < 2) continue;
+
     ctx.strokeStyle = color;
-    ctx.lineWidth = 2; // visible fill lines
-    ctx.setLineDash([3, 1]); // stitch-like pattern
-    ctx.globalAlpha = 0.95; // nearly opaque
+    ctx.lineWidth = 1.5; // thin lines to show individual rows
+    ctx.setLineDash([]); // solid lines (not dashed)
 
-    for (let i = 0; i < stitches.length - 1; i++) {
+    // Draw fill lines as continuous paths per row
+    // Group by proximity to detect row changes
+    let currentPath = [stitches[0]];
+    for (let i = 1; i < stitches.length; i++) {
+      const s0 = stitches[i - 1];
       const s1 = stitches[i];
-      const s2 = stitches[i + 1];
-
+      const dist = Math.hypot(s1.x - s0.x, s1.y - s0.y);
+      
+      if (dist < 3) {
+        // Same row, continue path
+        currentPath.push(s1);
+      } else {
+        // New row, draw current path and start fresh
+        if (currentPath.length > 1) {
+          ctx.beginPath();
+          ctx.moveTo(toScreenX(currentPath[0].x), toScreenY(currentPath[0].y));
+          for (let j = 1; j < currentPath.length; j++) {
+            ctx.lineTo(toScreenX(currentPath[j].x), toScreenY(currentPath[j].y));
+          }
+          ctx.stroke();
+        }
+        currentPath = [s1];
+      }
+    }
+    // Draw last path
+    if (currentPath.length > 1) {
       ctx.beginPath();
-      ctx.moveTo(toScreenX(s1.x), toScreenY(s1.y));
-      ctx.lineTo(toScreenX(s2.x), toScreenY(s2.y));
+      ctx.moveTo(toScreenX(currentPath[0].x), toScreenY(currentPath[0].y));
+      for (let j = 1; j < currentPath.length; j++) {
+        ctx.lineTo(toScreenX(currentPath[j].x), toScreenY(currentPath[j].y));
+      }
       ctx.stroke();
     }
   }
@@ -620,18 +677,39 @@ function drawStitchesByLayer(ctx, regions, allStitches, progress, toScreenX, toS
     const fillStitches = allStitches.filter((s) => s.regionId === region.id && s.type === 'fill');
     const contourStitches = allStitches.filter((s) => s.regionId === region.id && s.type === 'contour');
 
-    // Draw fill first
+    // Draw fill first (as dense parallel rows)
     if (fillStitches.length > 0) {
       ctx.strokeStyle = region.color || '#ffffff';
-      ctx.lineWidth = 1.8;
-      ctx.setLineDash([3, 1]);
-      
-      for (let j = 0; j < fillStitches.length - 1; j++) {
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+
+      let currentPath = [fillStitches[0]];
+      for (let j = 1; j < fillStitches.length; j++) {
+        const s0 = fillStitches[j - 1];
         const s1 = fillStitches[j];
-        const s2 = fillStitches[j + 1];
+        const dist = Math.hypot(s1.x - s0.x, s1.y - s0.y);
+        
+        if (dist < 3) {
+          currentPath.push(s1);
+        } else {
+          if (currentPath.length > 1) {
+            ctx.beginPath();
+            ctx.moveTo(toScreenX(currentPath[0].x), toScreenY(currentPath[0].y));
+            for (let k = 1; k < currentPath.length; k++) {
+              ctx.lineTo(toScreenX(currentPath[k].x), toScreenY(currentPath[k].y));
+            }
+            ctx.stroke();
+          }
+          currentPath = [s1];
+        }
+      }
+      if (currentPath.length > 1) {
         ctx.beginPath();
-        ctx.moveTo(toScreenX(s1.x), toScreenY(s1.y));
-        ctx.lineTo(toScreenX(s2.x), toScreenY(s2.y));
+        ctx.moveTo(toScreenX(currentPath[0].x), toScreenY(currentPath[0].y));
+        for (let k = 1; k < currentPath.length; k++) {
+          ctx.lineTo(toScreenX(currentPath[k].x), toScreenY(currentPath[k].y));
+        }
         ctx.stroke();
       }
     }
