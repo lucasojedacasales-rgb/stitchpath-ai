@@ -47,7 +47,10 @@ const THREAD = {
 // stabiliser_need: 0 (minimal) → 3 (heavy) — advisory only
 
 export const FABRIC_MODEL = {
-  'Lycra':     { pull_factor: 2.20, push_factor: 1.80, density_adj: -0.07, stabiliser_need: 3 },
+  // MEJORA 2: Lycra necesita MÁS densidad (density_adj positivo = filas más juntas = más cobertura)
+  // porque la tela elástica estira entre puntadas, dejando huecos visibles con densidades bajas.
+  // Valor anterior: -0.07 (incorrecto — abría el espaciado). Corregido a +0.07.
+  'Lycra':     { pull_factor: 2.20, push_factor: 1.80, density_adj: +0.07, stabiliser_need: 3 },
   'Mezcla':    { pull_factor: 1.35, push_factor: 1.20, density_adj: -0.03, stabiliser_need: 2 },
   'Algodón':   { pull_factor: 1.00, push_factor: 1.00, density_adj:  0.00, stabiliser_need: 1 },
   'Denim':     { pull_factor: 0.78, push_factor: 0.85, density_adj:  0.05, stabiliser_need: 1 },
@@ -111,6 +114,18 @@ export function eieStitchType(geo) {
       type: 'fill', confidence: +conf.toFixed(2),
       rationale: `Fill forzado: área=${area_mm2.toFixed(0)}mm² > 120mm² (satin width would exceed 8mm limit).`,
       signals: [{ id: 'fill_area_gate', weight: 1.0, fired: true }],
+    };
+  }
+
+  // ── MEJORA 1: Gate intermedio — concavidad alta + área media → fill ───────────
+  // Regiones con convexity < 0.4 y area > 40mm² generarían satins con solapamientos
+  // internos imposibles de bordar. El fill cubre estas formas cóncavas correctamente.
+  // Solo aplica si no hay override explícito de stitch_type (el usuario manda).
+  if (convexity < 0.40 && area_mm2 > 40) {
+    return {
+      type: 'fill', confidence: 0.88,
+      rationale: `Fill forzado: convexidad=${convexity.toFixed(2)} < 0.40 con área=${area_mm2.toFixed(0)}mm² — satin generaría solapamientos internos irrecuperables.`,
+      signals: [{ id: 'fill_concavity_gate', weight: 1.0, fired: true }],
     };
   }
 

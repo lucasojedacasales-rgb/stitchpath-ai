@@ -145,6 +145,126 @@ function placeNeedles(xL, xR, pitch, brickOff, forward) {
   return forward ? out : out.reverse();
 }
 
+// ── MEJORA 3: generateTatamiFillV2 ───────────────────────────────────────────
+// Nueva función desacoplada que corrige el placement del primer needle en bordes.
+// Problema original: cuando pitchPx es pequeño (densidades altas), el primer punto
+// interior puede quedar < 0.5px del borde → descartado por deduplicación → hueco en borde.
+// Solución: calcular el primer needle como (xL + phase) pero garantizando que la
+// phase no coloca el needle fuera del span antes de descartar.
+// No sustituye generateTatamiFill — puede eliminarse sin afectar nada.
+
+/**
+ * Versión mejorada de generateTatamiFill con corrección de placement en bordes.
+ * API idéntica a generateTatamiFill — intercambiable como drop-in replacement.
+ *
+ * @param {Array<[number,number]>} polygon   - canvas px coords
+ * @param {number} densityMm   - row spacing in mm (0.35–0.6)
+ * @param {number} stitchLenMm - stitch length in mm (2.0–4.0)
+ * @param {number} angleDeg    - fill angle in degrees
+ * @param {number} pxPerMm     - canvas pixels per mm
+ * @returns {{ stitches: number[][], totalStitches: number }}
+ */
+export function generateTatamiFillV2(polygon, densityMm = 0.4, stitchLenMm = 3.0, angleDeg = 0, pxPerMm = 5) {
+  if (!polygon || polygon.length < 3) return { stitches: [], totalStitches: 0 };
+
+  const safePx = Math.max(1.0, pxPerMm);
+  const rowSpacingPx = Math.max(2.0, densityMm * safePx);
+  const rawPitchPx = Math.max(2.0, stitchLenMm * safePx);
+  const pitchPx = Math.min(rawPitchPx, rowSpacingPx * 8);
+
+  const rad = (angleDeg * Math.PI) / 180;
+  const cF = Math.cos(-rad), sF = Math.sin(-rad);
+  const cB = Math.cos(rad),  sB = Math.sin(rad);
+  const toF = (x, y) => [x * cF - y * sF, x * sF + y * cF];
+  const toW = (x, y) => [x * cB - y * sB, x * sB + y * cB];
+
+  const rp = polygon.map(([x, y]) => toF(x, y));
+  const minY = Math.min(...rp.map(p => p[1]));
+  const maxY = Math.max(...rp.map(p => p[1]));
+  const minX = Math.min(...rp.map(p => p[0]));
+  const maxX = Math.max(...rp.map(p => p[0]));
+
+  if (maxY - minY < 0.5 || maxX - minX < 0.5) return { stitches: [], totalStitches: 0 };
+
+  const stitches = [];
+  let rowIdx = 0;
+
+  for (let ry = minY + rowSpacingPx * 0.5; ry < maxY; ry += rowSpacingPx) {
+    const xs = edgeIntersections(rp, ry);
+    if (xs.length < 2) { rowIdx++; continue; }
+    xs.sort((a, b) => a - b);
+
+    const spans = [];
+    for (let i = 0; i + 1 < xs.length; i += 2) {
+      const xL = xs[i], xR = xs[i + 1];
+      if (xR - xL < 1.0) continue;
+      spans.push([xL, xR]);
+    }
+    if (spans.length === 0) { rowIdx++; continue; }
+
+    const forward = (rowIdx % 2) === 0;
+    const brickOff = TATAMI_PHASES[rowIdx % 4] * pitchPx;
+    if (!forward) spans.reverse();
+
+    let lastX = null, lastY = null;
+
+    for (const [xL, xR] of spans) {
+      // FIX: placeNeedlesV2 garantiza que el primer punto interior no sea descartado
+      const needles = placeNeedlesV2(xL, xR, pitchPx, brickOff, forward);
+      if (needles.length < 2) continue;
+
+      if (lastX !== null) {
+        const [nx, ny] = toW(needles[0], ry);
+        stitches.push([lastX, lastY, nx, ny]);
+      }
+
+      for (let i = 0; i < needles.length - 1; i++) {
+        const [ax, ay] = toW(needles[i], ry);
+        const [bx, by] = toW(needles[i + 1], ry);
+        stitches.push([ax, ay, bx, by]);
+      }
+
+      const last = needles[needles.length - 1];
+      [lastX, lastY] = toW(last, ry);
+    }
+
+    rowIdx++;
+  }
+
+  return { stitches, totalStitches: stitches.length };
+}
+
+/**
+ * placeNeedlesV2: corrige el primer punto interior.
+ * El primer needle interior usa modulo correcto para evitar
+ * quedar < 1px del borde izquierdo (y ser descartado por deduplicación).
+ */
+function placeNeedlesV2(xL, xR, pitch, brickOff, forward) {
+  const phase = ((brickOff % pitch) + pitch) % pitch;
+  const needles = [xL];
+
+  // FIX: si phase es casi 0, el primer interior caería en xL + ~0 → descartado.
+  // Usamos max(phase, pitch * 0.1) para garantizar separación mínima del 10% del pitch.
+  const minSep = Math.max(1.0, pitch * 0.10);
+  let nx = xL + Math.max(phase, minSep);
+  if (nx <= xL + minSep * 0.5) nx += pitch;
+
+  while (nx < xR - minSep * 0.5) {
+    needles.push(nx);
+    nx += pitch;
+  }
+
+  needles.push(xR);
+
+  // Deduplicate — separación mínima 1.0px
+  const out = [needles[0]];
+  for (let i = 1; i < needles.length; i++) {
+    if (needles[i] - out[out.length - 1] > 1.0) out.push(needles[i]);
+  }
+
+  return forward ? out : out.reverse();
+}
+
 // ── Edge intersection (even-odd scanline) ────────────────────────────────────
 // Returns all X coordinates where Y=ry crosses a polygon edge.
 // Top-inclusive rule prevents double-counting shared vertices.

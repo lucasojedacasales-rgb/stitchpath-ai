@@ -207,12 +207,18 @@ function planSewingOrder(regions, fabricType) {
   const bands = [[], [], []];
   for (const r of regions) bands[getBand(r)].push(r);
 
-  // Within each band, sort by EIE priority (lower = earlier) then by area (larger = earlier)
+  // MEJORA 4: Dentro de cada banda, ordenar por prioridad → área DESC → color (para minimizar cambios)
+  // El desempate por área garantiza que el fondo más grande se borda primero dentro del mismo nivel,
+  // evitando que capas superiores queden enterradas bajo fills posteriores de mayor superficie.
   for (const band of bands) {
     band.sort((a, b) => {
       const pd = (a.priority || 5) - (b.priority || 5);
       if (pd !== 0) return pd;
-      return (b.area_mm2 || 0) - (a.area_mm2 || 0);
+      // Desempate 1: área descendente — el fill más grande primero (es el fondo)
+      const ad = (b.area_mm2 || 0) - (a.area_mm2 || 0);
+      if (Math.abs(ad) > 1) return ad;
+      // Desempate 2: agrupar por color para reducir cambios de hilo dentro del mismo nivel
+      return (a.color || '').localeCompare(b.color || '');
     });
   }
 
