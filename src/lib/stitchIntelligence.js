@@ -60,13 +60,23 @@ export const FABRIC_MODEL = {
   'Otro':      { pull_factor: 1.20, push_factor: 1.10, density_adj:  0.00, stabiliser_need: 2 },
 };
 
-// ─── Stitch type thresholds (professional consensus) ─────────────────────────
+// ─── Stitch type thresholds (FASE 2 — clasificación automática refinada) ──────
+//
+//  REGLA 1: Muy pequeña  → running_stitch  (area < 6mm² ó width < 1.5mm)
+//  REGLA 2: Estrecha     → satin           (width 1.5–7mm, convexa, area < 150mm²)
+//  REGLA 3: Grande       → fill            (area >= 80mm² ó width > 7mm)
+//  REGLA 4: Extrema      → fill dividido   (area >= 600mm² → flag split_fill)
+//  NUNCA satin si width > SATIN_WIDTH_HARD  (puckering irreversible)
+//  NUNCA fill si width < FILL_WIDTH_MIN     (huecos entre filas visibles)
 
-const SATIN_WIDTH_MAX      = 8.0;   // mm — above this, satin puckers fabric
-const SATIN_WIDTH_IDEAL    = 5.5;   // mm — sweet spot for highest quality
-const FILL_AREA_MIN        = 12.0;  // mm² — smaller regions can't hold tatami reliably
-const RUNNING_AREA_MAX     = 4.0;   // mm² — micro regions → running stitch only
+const SATIN_WIDTH_MAX      = 7.0;   // mm — BAJADO de 8→7: margen de seguridad extra
+const SATIN_WIDTH_HARD     = 7.0;   // mm — límite absoluto: por encima → fill siempre
+const SATIN_WIDTH_IDEAL    = 4.5;   // mm — sweet spot para mayor calidad
+const FILL_AREA_MIN        = 10.0;  // mm² — fill mínimo viable (filas completas)
+const FILL_WIDTH_MIN       = 2.5;   // mm — NUNCA fill en zonas más estrechas que esto
+const RUNNING_AREA_MAX     = 6.0;   // mm² — SUBIDO de 4→6: más micro-regiones → run
 const RUNNING_WIDTH_MAX    = 1.5;   // mm — hairlines → running stitch
+const SPLIT_FILL_AREA      = 600.0; // mm² — fill extremadamente grande → flag para división
 
 // ─── 1. Stitch Type ───────────────────────────────────────────────────────────
 
@@ -88,99 +98,144 @@ export function eieStitchType(geo) {
   const elongation = skeleton_length_mm / Math.max(0.1, mean_width_mm);
   const signals = [];
 
-  // S1 — Hairline
-  if (mean_width_mm <= RUNNING_WIDTH_MAX && elongation > 3) {
+  // ═══════════════════════════════════════════════════════════════════════
+  // FASE 2 — Árbol de decisión determinista con gates absolutos
+  // Orden: Running → Satin → Fill → Fill grande → Fill dividido
+  // Los overrides de usuario se aplican en eieAnalyzeRegion, no aquí.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // ── GATE R1: Filamento / hairline → running_stitch ───────────────────────
+  // Forma demasiado estrecha para sostener una fila de fill completa.
+  if (mean_width_mm <= RUNNING_WIDTH_MAX && elongation > 2) {
     return {
       type: 'running_stitch', confidence: 0.97,
-      rationale: `Filamento (${mean_width_mm.toFixed(1)}mm × ${elongation.toFixed(0)}× elongación): running stitch obligatorio.`,
-      signals: [{ id: 'S1_hairline', weight: 1.0, fired: true }],
+      rationale: `Filamento: ancho=${mean_width_mm.toFixed(1)}mm ≤ ${RUNNING_WIDTH_MAX}mm, elon=${elongation.toFixed(1)}× → running obligatorio.`,
+      signals: [{ id: 'R1_hairline', weight: 1.0, fired: true }],
     };
   }
 
-  // S2 — Micro area
+  // ── GATE R2: Micro-área → running_stitch ────────────────────────────────
+  // Área demasiado pequeña para tatami o satin con cobertura aceptable.
   if (area_mm2 < RUNNING_AREA_MAX) {
     return {
       type: 'running_stitch', confidence: 0.95,
-      rationale: `Micro-área ${area_mm2.toFixed(1)}mm² < ${RUNNING_AREA_MAX}mm²: running stitch único viable.`,
-      signals: [{ id: 'S2_micro', weight: 1.0, fired: true }],
+      rationale: `Micro-área: ${area_mm2.toFixed(1)}mm² < ${RUNNING_AREA_MAX}mm² → running stitch único viable.`,
+      signals: [{ id: 'R2_micro', weight: 1.0, fired: true }],
     };
   }
 
-  // ── Hard rule: large areas always fill (satin >8mm wide puckers fabric) ──────
-  // This gate runs BEFORE scoring so no satin signal can override it.
-  if (area_mm2 > 120) {
-    const conf = Math.min(0.95, 0.70 + Math.min(0.25, (area_mm2 - 120) / 2000));
+  // ── GATE F1: Ancho máximo supera límite absoluto de satin → fill ─────────
+  // NUNCA usar satin en zonas más anchas que SATIN_WIDTH_HARD.
+  // El satin ancho puckerea la tela de forma irreversible.
+  if (max_width_mm > SATIN_WIDTH_HARD) {
+    const isSplit = area_mm2 >= SPLIT_FILL_AREA;
+    return {
+      type: 'fill', confidence: 0.96,
+      rationale: `Fill forzado: ancho máximo ${max_width_mm.toFixed(1)}mm > ${SATIN_WIDTH_HARD}mm (límite satin absoluto).${isSplit ? ' [split_fill recomendado]' : ''}`,
+      signals: [{ id: 'F1_width_hard', weight: 1.0, fired: true }],
+      split_fill: isSplit,
+    };
+  }
+
+  // ── GATE F2: Área extremadamente grande → fill (con flag de división) ────
+  // Fill > 600mm²: en bordado físico produce distorsión severa si no se divide.
+  // Se pasa split_fill=true para que el digitizador pueda subdividir la región.
+  if (area_mm2 >= SPLIT_FILL_AREA) {
+    return {
+      type: 'fill', confidence: 0.95,
+      rationale: `Fill dividido: área=${area_mm2.toFixed(0)}mm² ≥ ${SPLIT_FILL_AREA}mm² — región extrema, requiere subdivisión para prevenir distorsión.`,
+      signals: [{ id: 'F2_split_fill', weight: 1.0, fired: true }],
+      split_fill: true,
+    };
+  }
+
+  // ── GATE F3: Área grande → fill directo ──────────────────────────────────
+  // Por encima de 80mm² el satin no puede cubrir la región sin puckering.
+  if (area_mm2 >= 80) {
+    const conf = Math.min(0.95, 0.75 + Math.min(0.20, (area_mm2 - 80) / 1000));
     return {
       type: 'fill', confidence: +conf.toFixed(2),
-      rationale: `Fill forzado: área=${area_mm2.toFixed(0)}mm² > 120mm² (satin width would exceed 8mm limit).`,
-      signals: [{ id: 'fill_area_gate', weight: 1.0, fired: true }],
+      rationale: `Fill: área=${area_mm2.toFixed(0)}mm² ≥ 80mm² — satin causaría puckering en zona ancha.`,
+      signals: [{ id: 'F3_large_area', weight: 1.0, fired: true }],
     };
   }
 
-  // ── MEJORA 1: Gate intermedio — concavidad alta + área media → fill ───────────
-  // Regiones con convexity < 0.4 y area > 40mm² generarían satins con solapamientos
-  // internos imposibles de bordar. El fill cubre estas formas cóncavas correctamente.
-  // Solo aplica si no hay override explícito de stitch_type (el usuario manda).
-  if (convexity < 0.40 && area_mm2 > 40) {
+  // ── GATE F4: Concavidad alta + área media → fill ─────────────────────────
+  // Convexity < 0.40: forma cóncava — satin generaría solapamientos internos.
+  // (preservado de Mejora 1 — sigue siendo correcto)
+  if (convexity < 0.40 && area_mm2 > 30) {
     return {
       type: 'fill', confidence: 0.88,
-      rationale: `Fill forzado: convexidad=${convexity.toFixed(2)} < 0.40 con área=${area_mm2.toFixed(0)}mm² — satin generaría solapamientos internos irrecuperables.`,
-      signals: [{ id: 'fill_concavity_gate', weight: 1.0, fired: true }],
+      rationale: `Fill forzado: convexidad=${convexity.toFixed(2)} < 0.40 con área=${area_mm2.toFixed(0)}mm² — satin crearía solapamientos irrecuperables.`,
+      signals: [{ id: 'F4_concave', weight: 1.0, fired: true }],
     };
   }
 
-  // Score each candidate type with weighted signals
+  // ── GATE F5: Zona demasiado estrecha para fill → satin o running ──────────
+  // NUNCA fill si mean_width < FILL_WIDTH_MIN: las filas de tatami no caben,
+  // dejando huecos visibles entre filas.
+  if (mean_width_mm < FILL_WIDTH_MIN) {
+    // Si además es muy pequeña → running; si no → satin
+    if (area_mm2 < 15 || elongation > 5) {
+      return {
+        type: 'running_stitch', confidence: 0.90,
+        rationale: `Running: ancho=${mean_width_mm.toFixed(1)}mm < ${FILL_WIDTH_MIN}mm (fill inviable) + área pequeña/elongada.`,
+        signals: [{ id: 'F5_narrow_run', weight: 1.0, fired: true }],
+      };
+    }
+    return {
+      type: 'satin', confidence: 0.88,
+      rationale: `Satin forzado: ancho=${mean_width_mm.toFixed(1)}mm < ${FILL_WIDTH_MIN}mm — fill dejaría huecos entre filas.`,
+      signals: [{ id: 'F5_narrow_satin', weight: 1.0, fired: true }],
+    };
+  }
+
+  // ── ZONA SATIN: width 2.5–7mm, area < 80mm², convexa ────────────────────
+  // Aquí la región puede ser satin O fill según geometría.
+  // Usar scoring para decidir con evidencia múltiple.
   let satinScore = 0, fillScore = 0;
 
-  // — Satin signals —
-  // max_width must be within satin limits — hard negative if exceeded
-  const satinWidthOk   = max_width_mm <= SATIN_WIDTH_MAX;
-  const satinMeanOk    = mean_width_mm <= 6.0;
-  const satinConvex    = convexity > 0.55;
-  const satinSimple    = complexity.score < 0.55;
-  // Elongation or narrow width are strong satin indicators
-  const satinElongated = elongation > 2.0;
-  const satinNarrow    = mean_width_mm < 5.0;
-  const noHoles        = holes === 0;
+  const satinWidthOk   = mean_width_mm <= SATIN_WIDTH_MAX;    // ancho dentro del límite
+  const satinConvex    = convexity > 0.55;                     // forma convexa
+  const satinSimple    = complexity.score < 0.55;              // geometría simple
+  const satinElongated = elongation > 1.8;                     // forma alargada = columna típica
+  const satinNarrow    = mean_width_mm < 5.0;                  // ancho ideal satin
+  const noHoles        = holes === 0;                          // sin agujeros internos
 
-  // Positive evidence (max realistic total without width bonus: 0.85)
-  if (satinWidthOk)   { satinScore += 0.25; signals.push({ id: 'satin_width_ok',  weight: 0.25, fired: true }); }
-  if (satinMeanOk)    { satinScore += 0.10; signals.push({ id: 'satin_mean_ok',   weight: 0.10, fired: true }); }
-  if (satinConvex)    { satinScore += 0.20; signals.push({ id: 'satin_convex',    weight: 0.20, fired: true }); }
-  if (satinSimple)    { satinScore += 0.15; signals.push({ id: 'satin_simple',    weight: 0.15, fired: true }); }
-  if (satinElongated) { satinScore += 0.20; signals.push({ id: 'satin_elongated', weight: 0.20, fired: true }); }
-  if (satinNarrow)    { satinScore += 0.10; signals.push({ id: 'satin_narrow',    weight: 0.10, fired: true }); }
-  if (noHoles)        { satinScore += 0.05; signals.push({ id: 'satin_no_holes',  weight: 0.05, fired: true }); }
+  if (satinWidthOk)   { satinScore += 0.25; signals.push({ id: 'satin_width_ok',   weight:  0.25, fired: true }); }
+  if (satinConvex)    { satinScore += 0.25; signals.push({ id: 'satin_convex',     weight:  0.25, fired: true }); }
+  if (satinSimple)    { satinScore += 0.15; signals.push({ id: 'satin_simple',     weight:  0.15, fired: true }); }
+  if (satinElongated) { satinScore += 0.20; signals.push({ id: 'satin_elongated',  weight:  0.20, fired: true }); }
+  if (satinNarrow)    { satinScore += 0.15; signals.push({ id: 'satin_narrow',     weight:  0.15, fired: true }); }
+  if (noHoles)        { satinScore += 0.05; signals.push({ id: 'satin_no_holes',   weight:  0.05, fired: true }); }
 
-  // Hard negatives — non-negotiable satin disqualifiers
-  if (!satinWidthOk)  { satinScore -= 0.70; signals.push({ id: 'satin_too_wide',  weight: -0.70, fired: true }); }
-  if (!satinConvex)   { satinScore -= 0.30; signals.push({ id: 'satin_concave',   weight: -0.30, fired: true }); }
-  if (holes > 0)      { satinScore -= 0.35; signals.push({ id: 'satin_holes',     weight: -0.35, fired: true }); }
-  // Area penalty: large areas shouldn't be satin even if other signals pass
-  if (area_mm2 > 60)  { satinScore -= 0.20; signals.push({ id: 'satin_area_large', weight: -0.20, fired: true }); }
-  if (area_mm2 > 90)  { satinScore -= 0.20; signals.push({ id: 'satin_area_xlarge', weight: -0.20, fired: true }); }
+  // Penalizaciones duras para satin
+  if (!satinConvex)   { satinScore -= 0.35; signals.push({ id: 'satin_concave',    weight: -0.35, fired: true }); }
+  if (holes > 0)      { satinScore -= 0.40; signals.push({ id: 'satin_holes',      weight: -0.40, fired: true }); }
+  if (area_mm2 > 50)  { satinScore -= 0.15; signals.push({ id: 'satin_area_med',   weight: -0.15, fired: true }); }
 
-  // — Fill signals —
-  if (area_mm2 > FILL_AREA_MIN)     { fillScore += 0.40; }
-  if (convexity > 0.40)             { fillScore += 0.20; }
-  if (area_mm2 > 50)                { fillScore += 0.20; }
-  if (complexity.level !== 'simple'){ fillScore += 0.10; }
-  if (holes > 0)                    { fillScore += 0.30; }
+  // Fill scoring
+  if (area_mm2 > FILL_AREA_MIN) { fillScore += 0.40; }
+  if (convexity > 0.40)         { fillScore += 0.15; }
+  if (area_mm2 > 40)            { fillScore += 0.20; }
+  if (holes > 0)                { fillScore += 0.30; }
+  if (complexity.level !== 'simple') { fillScore += 0.10; }
 
-  // Threshold raised to 0.70 — requires strong satin evidence, not just width+convexity
-  if (satinScore >= 0.70 && area_mm2 >= RUNNING_AREA_MAX) {
+  // Umbral satin: 0.65 — evidencia sólida requerida
+  if (satinScore >= 0.65) {
     const conf = Math.min(0.95, 0.55 + satinScore * 0.35);
     return {
       type: 'satin', confidence: +conf.toFixed(2),
-      rationale: `Satin: max_w=${max_width_mm.toFixed(1)}mm, elon=${elongation.toFixed(1)}×, convex=${convexity.toFixed(2)}, score=${satinScore.toFixed(2)}.`,
+      rationale: `Satin: w=${mean_width_mm.toFixed(1)}mm, elon=${elongation.toFixed(1)}×, convex=${convexity.toFixed(2)}, score=${satinScore.toFixed(2)}.`,
       signals,
     };
   }
 
-  const conf = Math.min(0.95, 0.50 + (fillScore / 1.20) * 0.45);
+  // Default → fill
+  const conf = Math.min(0.92, 0.55 + (fillScore / 1.15) * 0.40);
   return {
     type: 'fill', confidence: +conf.toFixed(2),
-    rationale: `Fill tatami: área=${area_mm2.toFixed(0)}mm², convex=${convexity.toFixed(2)}, complejidad=${complexity.level}.`,
+    rationale: `Fill tatami: área=${area_mm2.toFixed(0)}mm², ancho=${mean_width_mm.toFixed(1)}mm, convex=${convexity.toFixed(2)}.`,
     signals,
   };
 }
