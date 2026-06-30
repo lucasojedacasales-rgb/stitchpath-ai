@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Play, Pause, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
+import EmbroideryPreview3D from '@/components/editor/EmbroideryPreview3D.jsx';
 
 /**
  * EmbroideryPreview: Canvas-based embroidery stitch visualization
@@ -17,6 +18,7 @@ export default function EmbroideryPreview({ regions, config }) {
   const [zoom, setZoom] = useState(1);
   const [fabricColor, setFabricColor] = useState('#ffffff');
   const [viewMode, setViewMode] = useState('sequential'); // 'flat', 'sequential', 'layers'
+  const [show3D, setShow3D] = useState(false); // toggle 3D view
 
   // ─── Build stitches array from regions ──────────────────────────────────
   const stitches = buildStitchesFromRegions(regions, config);
@@ -97,6 +99,26 @@ export default function EmbroideryPreview({ regions, config }) {
   const handleZoomIn = () => setZoom((z) => Math.min(3, z * 1.25));
   const handleZoomOut = () => setZoom((z) => Math.max(0.5, z / 1.25));
 
+  // If 3D view is enabled, show the 3D component instead
+  if (show3D) {
+    return (
+      <div className="relative h-full w-full flex flex-col">
+        {/* 3D Toggle Button */}
+        <div className="flex-shrink-0 border-b border-[#1e2130] bg-[#0a0c12] p-2">
+          <button
+            onClick={() => setShow3D(false)}
+            className="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold transition-colors"
+          >
+            ← 2D
+          </button>
+        </div>
+        <div className="flex-1 overflow-hidden">
+          <EmbroideryPreview3D regions={regions} config={config} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full bg-[#0d0f14]">
       {/* Toolbar */}
@@ -165,6 +187,14 @@ export default function EmbroideryPreview({ regions, config }) {
               </button>
             ))}
           </div>
+
+          <button
+            onClick={() => setShow3D(true)}
+            className="px-2.5 py-1 rounded-lg border border-[#2a2d3a] bg-[#0d0f14] text-slate-400 hover:text-slate-300 text-xs font-medium transition-colors"
+            title="Vista 3D con relieve"
+          >
+            📦 3D
+          </button>
 
           <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[#2a2d3a] bg-[#0d0f14] text-slate-400 hover:text-slate-300 cursor-pointer text-xs font-medium transition-colors">
             <input
