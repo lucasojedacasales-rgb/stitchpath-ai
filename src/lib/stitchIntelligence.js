@@ -425,16 +425,25 @@ export function eieDensity(geo, stitchType, fabricType = 'Algodón') {
 // ─── 4. Pull Compensation ─────────────────────────────────────────────────────
 
 /**
- * Lateral (width) pull compensation in mm.
- * Formula calibrated against Wilcom reference values:
- *   cotton/satin 4mm wide → ~0.25mm
- *   lycra/satin 4mm wide  → ~0.55mm
- *   cotton/fill large     → ~0.20mm
+ * FASE 5 — Pull compensation lateral (expansión de ancho).
  *
- * The pull–density coupling is applied here: denser fill → more pull.
+ * La aguja tira la tela hacia dentro al salir; el hilo encoge el ancho real
+ * del elemento bordado. Compensación = ensanchar el polígono antes de bordar.
+ *
+ * Variables consideradas:
+ *   - tipo de puntada (satin / fill)
+ *   - ancho medio del elemento (satin: más ancho → más pull)
+ *   - densidad (denser → más tensión acumulada)
+ *   - material (FABRIC_MODEL.pull_factor)
+ *   - FASE 5 NEW: ángulo de relleno (fill_angle_deg)
+ *     Las puntadas diagonales (45°) distribuyen la tensión de forma más uniforme
+ *     que las horizontales/verticales → menor pull efectivo.
+ *     Reducción máxima en 45°: -12% pull. En 0°/90°: 0%.
+ *
+ * Referencia: Wilcom EmbroideryStudio pull comp guide (cotton baseline).
  * Returns { compensation_mm, rationale }
  */
-export function eiePullCompensation(geo, stitchType, fabricType = 'Algodón', density_mm = 0.40) {
+export function eiePullCompensation(geo, stitchType, fabricType = 'Algodón', density_mm = 0.40, fill_angle_deg = 45) {
   if (stitchType === 'running_stitch') return { compensation_mm: 0, rationale: 'Running stitch: sin pull comp.' };
 
   const fabric = FABRIC_MODEL[fabricType] || FABRIC_MODEL['Algodón'];
@@ -445,35 +454,43 @@ export function eiePullCompensation(geo, stitchType, fabricType = 'Algodón', de
 
   if (stitchType === 'satin') {
     // Wilcom reference: 0.15mm @ 2mm width, 0.35mm @ 8mm width (cotton baseline)
-    // Linear interpolation between those anchor points
     const baseComp = 0.15 + ((mean_width_mm - 2) / 6) * 0.20;
     comp = Math.max(0.10, baseComp) * fabric.pull_factor;
-    reasons.push(`base=${baseComp.toFixed(3)}mm × fabric_factor=${fabric.pull_factor} (${fabricType})`);
+    reasons.push(`base=${baseComp.toFixed(3)}mm × fabric=${fabric.pull_factor} (${fabricType})`);
 
     // Density coupling: denser satin → more tension
-    const densAdj = (0.40 - density_mm) * 0.4; // 0.40mm is neutral; denser = positive adj
+    const densAdj = (0.40 - density_mm) * 0.4;
     comp += densAdj;
-    if (Math.abs(densAdj) > 0.01) reasons.push(`coupling densidad: ${densAdj > 0 ? '+' : ''}${densAdj.toFixed(3)}`);
+    if (Math.abs(densAdj) > 0.01) reasons.push(`dens-coupling: ${densAdj >= 0 ? '+' : ''}${densAdj.toFixed(3)}`);
 
-    // Long columns push at ends → slight reduction in width comp
+    // Long columns accumulate more push at ends → slight reduction in width comp
     if (skeleton_length_mm > 25) {
       comp -= 0.03;
-      reasons.push('columna larga: -0.03 (efecto push longitudinal)');
+      reasons.push('col.larga>25mm: -0.030');
     }
   } else {
-    // Fill pull compensation: base from fabric, complexity and density adjusted
+    // Fill pull compensation
     const baseComp = 0.18 * fabric.pull_factor;
     comp = baseComp;
     reasons.push(`base_fill=${baseComp.toFixed(3)}mm (${fabricType})`);
 
-    if (area_mm2 > 200)  { comp += 0.04; reasons.push('+0.04 área grande'); }
-    if (area_mm2 > 500)  { comp += 0.03; reasons.push('+0.03 área muy grande'); }
+    if (area_mm2 > 200) { comp += 0.04; reasons.push('+0.040 área>200mm²'); }
+    if (area_mm2 > 500) { comp += 0.03; reasons.push('+0.030 área>500mm²'); }
     comp += complexity.score * 0.07;
-    if (complexity.score > 0.1) reasons.push(`+complejidad=${complexity.score.toFixed(2)}→+${(complexity.score * 0.07).toFixed(3)}`);
+    if (complexity.score > 0.1) reasons.push(`+complejidad ${complexity.score.toFixed(2)}`);
 
-    // Density coupling (fill)
     const densAdj = (0.40 - density_mm) * 0.30;
     comp += densAdj;
+    if (Math.abs(densAdj) > 0.01) reasons.push(`dens-coupling: ${densAdj >= 0 ? '+' : ''}${densAdj.toFixed(3)}`);
+  }
+
+  // FASE 5 — Dirección: ángulo diagonal distribuye tensión uniformemente → menos pull
+  // Reducción = 12% × sin²(2θ), máximo en θ=45° (sin²90°=1), nulo en 0° y 90°.
+  const rad2 = (2 * fill_angle_deg * Math.PI) / 180;
+  const dirFactor = 1 - 0.12 * Math.pow(Math.sin(rad2), 2);
+  comp *= dirFactor;
+  if (Math.abs(1 - dirFactor) > 0.005) {
+    reasons.push(`dirección ${fill_angle_deg}°: ×${dirFactor.toFixed(3)}`);
   }
 
   const clamped = +Math.max(0, Math.min(0.80, comp)).toFixed(3);
@@ -483,38 +500,189 @@ export function eiePullCompensation(geo, stitchType, fabricType = 'Algodón', de
 // ─── 5. Push Compensation ─────────────────────────────────────────────────────
 
 /**
- * Longitudinal (length) push compensation — unique to this engine.
- * Satin columns push outward at their ends proportional to their length.
- * Fill areas push along the fill direction.
- * Most digitizers ignore push compensation; we compute it explicitly.
+ * FASE 5 — Push compensation longitudinal (expansión de largo).
+ *
+ * Las puntadas empujan la tela hacia adelante en la dirección de avance de la
+ * aguja; el elemento bordado crece en longitud. Compensación = acortar el polígono.
+ *
+ * Variables consideradas (existentes + FASE 5 NEW):
+ *   - tipo de puntada y longitud de columna (satin)
+ *   - área (fill grande → más push)
+ *   - material (push_factor)
+ *   - FASE 5 NEW: density_mm — a mayor densidad, más push acumulado
+ *   - FASE 5 NEW: fill_angle_deg — ángulo ortogonal a la tela maximiza push;
+ *     diagonal lo reduce (~10% menos en 45°)
  *
  * Returns { compensation_mm, rationale }
  */
-export function eiePushCompensation(geo, stitchType, fabricType = 'Algodón') {
+export function eiePushCompensation(geo, stitchType, fabricType = 'Algodón', density_mm = 0.40, fill_angle_deg = 45) {
   if (stitchType === 'running_stitch') return { compensation_mm: 0, rationale: 'Running stitch: sin push comp.' };
 
   const fabric = FABRIC_MODEL[fabricType] || FABRIC_MODEL['Algodón'];
-  const { skeleton_length_mm, mean_width_mm, area_mm2 } = geo;
+  const { skeleton_length_mm, area_mm2 } = geo;
   const reasons = [];
 
   let push = 0;
 
   if (stitchType === 'satin') {
-    // Push scales with column length (more stitches = more cumulative push)
-    // Reference: ~0.10mm per 10mm of satin length on cotton
+    // Push ∝ columna (más puntadas → más empuje acumulado)
     const basePush = (skeleton_length_mm / 100) * 0.08 * fabric.push_factor;
     push = Math.max(0.05, Math.min(0.40, basePush));
-    reasons.push(`columna ${skeleton_length_mm.toFixed(0)}mm × push_factor=${fabric.push_factor} → ${basePush.toFixed(3)}mm`);
+    reasons.push(`col ${skeleton_length_mm.toFixed(0)}mm × push_factor=${fabric.push_factor} → ${basePush.toFixed(3)}mm`);
   } else if (stitchType === 'fill') {
-    // Fill push: minor, mostly relevant for large areas along fill direction
     push = area_mm2 > 300 ? 0.05 * fabric.push_factor : 0.02 * fabric.push_factor;
     reasons.push(`fill ${area_mm2.toFixed(0)}mm² → ${push.toFixed(3)}mm (${fabricType})`);
   }
 
+  // FASE 5 NEW — Density coupling: más densidad → más push por unidad de longitud
+  // Referencia: cada 0.10mm menos de espaciado añade ~8% de push
+  const densExtra = Math.max(0, (0.40 - density_mm) / 0.40) * 0.08 * push;
+  push += densExtra;
+  if (densExtra > 0.001) reasons.push(`dens-coupling +${densExtra.toFixed(3)}`);
+
+  // FASE 5 NEW — Dirección: ángulo oblicuo reduce el componente de push sobre el eje principal
+  // Factor: cos²(θ) — en 0° = total push, en 45° = 50%, en 90° = 0
+  const rad = (fill_angle_deg * Math.PI) / 180;
+  const dirFactor = Math.pow(Math.cos(rad), 2) * 0.5 + 0.5; // rango [0.5, 1.0]
+  push *= dirFactor;
+  if (Math.abs(1 - dirFactor) > 0.005) {
+    reasons.push(`dirección ${fill_angle_deg}°: ×${dirFactor.toFixed(3)}`);
+  }
+
   return {
-    compensation_mm: +push.toFixed(3),
+    compensation_mm: +Math.max(0, Math.min(0.50, push)).toFixed(3),
     rationale: reasons.join(', ') || 'No aplica.',
   };
+}
+
+// ─── 5b. Edge Compensation ────────────────────────────────────────────────────
+
+/**
+ * FASE 5 — Edge compensation (expansión de borde).
+ *
+ * El hilo se dobla en los bordes del elemento; las puntadas del borde quedan
+ * cortas respecto al polígono diseñado. Compensación: expandir el borde
+ * (añadir mm al polígono exterior).
+ *
+ * Variables:
+ *   - tipo de puntada: satin tiene bordes duros → más edge comp
+ *   - mean_curvature: bordes curvos necesitan más expansión que rectos
+ *   - densidad: mayor densidad → hilo más comprimido en borde
+ *   - material: tejidos elásticos (Lycra) tienen borde muy inestable
+ *
+ * Referencia: Barudan/Tajima edge compensation spec (0.1–0.4mm según tipo).
+ * Returns { compensation_mm, rationale }
+ */
+export function eieEdgeCompensation(geo, stitchType, fabricType = 'Algodón', density_mm = 0.40) {
+  if (stitchType === 'running_stitch') return { compensation_mm: 0, rationale: 'Running stitch: sin edge comp.' };
+
+  const fabric = FABRIC_MODEL[fabricType] || FABRIC_MODEL['Algodón'];
+  const { mean_curvature, convexity, mean_width_mm } = geo;
+  const reasons = [];
+
+  // Base por tipo de puntada
+  // Satin: borde duro → necesita más edge comp que fill (que tiene transición difuminada)
+  let base = stitchType === 'satin' ? 0.20 : 0.10;
+  reasons.push(`base_${stitchType}=${base.toFixed(2)}mm`);
+
+  // Fabric: Lycra/Mezcla estiran el borde → más comp; Lino/Denim rígidos → menos
+  const fabricAdj = (fabric.pull_factor - 1.0) * 0.08;
+  base += fabricAdj;
+  if (Math.abs(fabricAdj) > 0.005) reasons.push(`tejido ${fabricType}: ${fabricAdj >= 0 ? '+' : ''}${fabricAdj.toFixed(3)}`);
+
+  // Curvatura: bordes muy curvos recortan más hilo en las curvas
+  const curvAdj = Math.min(0.10, mean_curvature * 0.06);
+  base += curvAdj;
+  if (curvAdj > 0.005) reasons.push(`curvatura ${mean_curvature.toFixed(2)}: +${curvAdj.toFixed(3)}`);
+
+  // Concavidad: bordes cóncavos atrapan el hilo → extra comp
+  const concavAdj = (1 - convexity) * 0.05;
+  base += concavAdj;
+  if (concavAdj > 0.005) reasons.push(`concavidad ${(1-convexity).toFixed(2)}: +${concavAdj.toFixed(3)}`);
+
+  // Densidad: más denso → hilo más comprimido en borde
+  const densAdj = Math.max(0, (0.40 - density_mm) * 0.20);
+  base += densAdj;
+  if (densAdj > 0.005) reasons.push(`densidad ${density_mm.toFixed(2)}: +${densAdj.toFixed(3)}`);
+
+  // Satin muy estrecho: la proporción borde/área es muy alta → escalar extra
+  if (stitchType === 'satin' && mean_width_mm < 2.5) {
+    base *= 1.20;
+    reasons.push('satin<2.5mm: ×1.20 (alto ratio borde/área)');
+  }
+
+  const clamped = +Math.max(0, Math.min(0.50, base)).toFixed(3);
+  return { compensation_mm: clamped, rationale: reasons.join(', ') };
+}
+
+// ─── 5c. Corner Compensation ─────────────────────────────────────────────────
+
+/**
+ * FASE 5 — Corner compensation (compensación en esquinas).
+ *
+ * Las esquinas agudas concentran tensión; la aguja sobreimpone puntadas en
+ * el vértice, creando un bulto de hilo (needle stacking). Compensación:
+ * reducir la longitud de puntada en la zona próxima a la esquina, o
+ * proporcionar un parámetro de "corner rounding" al motor de tatami/satin.
+ *
+ * Variables:
+ *   - complexity (más vértices / ángulos agudos → más esquinas)
+ *   - mean_curvature (alta curvatura ≈ muchas esquinas agudas)
+ *   - convexity (baja convexity → forma con muescas = esquinas interiores)
+ *   - tipo de puntada (satin: esquinas problemáticas; fill: menos crítico)
+ *
+ * Devuelve:
+ *   compensation_mm  — reducción de longitud de puntada en esquinas [0–0.5]
+ *   corner_rounding  — suavizado de vértice recomendado en mm [0–1.0]
+ *   rationale
+ */
+export function eieCornerCompensation(geo, stitchType, fabricType = 'Algodón') {
+  if (stitchType === 'running_stitch') {
+    return { compensation_mm: 0, corner_rounding: 0, rationale: 'Running stitch: sin corner comp.' };
+  }
+
+  const fabric = FABRIC_MODEL[fabricType] || FABRIC_MODEL['Algodón'];
+  const { mean_curvature, convexity, complexity } = geo;
+  const reasons = [];
+
+  // Base de reducción de longitud de puntada en esquinas
+  // Satin: esquinas críticas → base 0.15mm; fill: 0.08mm
+  let comp = stitchType === 'satin' ? 0.15 : 0.08;
+  reasons.push(`base_${stitchType}=${comp.toFixed(2)}mm`);
+
+  // Curvatura alta → esquinas más agudas → mayor reducción necesaria
+  const curvAdj = Math.min(0.15, mean_curvature * 0.10);
+  comp += curvAdj;
+  if (curvAdj > 0.005) reasons.push(`curvatura ${mean_curvature.toFixed(2)}: +${curvAdj.toFixed(3)}`);
+
+  // Baja convexidad → forma con muescas interiores = esquinas reentrantes
+  const concavAdj = (1 - convexity) * 0.08;
+  comp += concavAdj;
+  if (concavAdj > 0.005) reasons.push(`concavidad ${(1-convexity).toFixed(2)}: +${concavAdj.toFixed(3)}`);
+
+  // Complejidad alta → muchos vértices → más esquinas potenciales
+  const complexAdj = complexity.score * 0.10;
+  comp += complexAdj;
+  if (complexAdj > 0.005) reasons.push(`complejidad ${complexity.level}: +${complexAdj.toFixed(3)}`);
+
+  // Fabric: Lycra distorsiona más en esquinas → aumenta comp
+  const fabricAdj = (fabric.pull_factor - 1.0) * 0.05;
+  comp += fabricAdj;
+  if (Math.abs(fabricAdj) > 0.005) reasons.push(`tejido ${fabricType}: ${fabricAdj >= 0 ? '+' : ''}${fabricAdj.toFixed(3)}`);
+
+  // Corner rounding: suavizado de vértice recomendado
+  // Formas muy complejas con curvatura alta se benefician de redondear esquinas
+  // para evitar needle stacking. Rango [0, 1.0] mm.
+  const corner_rounding = +Math.min(1.0,
+    (mean_curvature > 0.6 ? 0.3 : 0) +
+    (complexity.level === 'alta' ? 0.3 : complexity.level === 'media' ? 0.15 : 0) +
+    ((1 - convexity) * 0.4)
+  ).toFixed(3);
+
+  if (corner_rounding > 0) reasons.push(`rounding=${corner_rounding}mm`);
+
+  const clamped = +Math.max(0, Math.min(0.50, comp)).toFixed(3);
+  return { compensation_mm: clamped, corner_rounding, rationale: reasons.join(', ') };
 }
 
 // ─── 6. Underlay ─────────────────────────────────────────────────────────────
@@ -719,12 +887,18 @@ export function eieAnalyzeRegion(geo, fabricType = 'Algodón', context = {}, ove
   const densResult   = eieDensity(geo, stitch_type, fabricType);
   const density_mm   = overrides.density != null ? overrides.density : densResult.density_mm;
 
-  // — Pull compensation (uses density for coupling) —
-  const pullResult   = eiePullCompensation(geo, stitch_type, fabricType, density_mm);
+  // — Pull compensation (density + direction coupling) —
+  const pullResult   = eiePullCompensation(geo, stitch_type, fabricType, density_mm, fill_angle);
   const pull_comp    = overrides.pull_compensation != null ? overrides.pull_compensation : pullResult.compensation_mm;
 
-  // — Push compensation —
-  const pushResult   = eiePushCompensation(geo, stitch_type, fabricType);
+  // — Push compensation (density + direction coupling) —
+  const pushResult   = eiePushCompensation(geo, stitch_type, fabricType, density_mm, fill_angle);
+
+  // — Edge compensation —
+  const edgeResult   = eieEdgeCompensation(geo, stitch_type, fabricType, density_mm);
+
+  // — Corner compensation —
+  const cornerResult = eieCornerCompensation(geo, stitch_type, fabricType);
 
   // — Underlay: pass fill_angle into geo so the underlay angle is perpendicular
   //   to the ACTUAL top stitch angle (not the raw PCA orientation, which diverges
@@ -764,10 +938,15 @@ export function eieAnalyzeRegion(geo, fabricType = 'Algodón', context = {}, ove
     density_rationale:   densResult.rationale,
 
     // Compensation
-    pull_compensation_mm: pull_comp,
-    pull_rationale:       pullResult.rationale,
-    push_compensation_mm: pushResult.compensation_mm,
-    push_rationale:       pushResult.rationale,
+    pull_compensation_mm:   pull_comp,
+    pull_rationale:         pullResult.rationale,
+    push_compensation_mm:   pushResult.compensation_mm,
+    push_rationale:         pushResult.rationale,
+    edge_compensation_mm:   edgeResult.compensation_mm,
+    edge_rationale:         edgeResult.rationale,
+    corner_compensation_mm: cornerResult.compensation_mm,
+    corner_rounding_mm:     cornerResult.corner_rounding,
+    corner_rationale:       cornerResult.rationale,
 
     // Underlay
     underlay:            underlayResult,
