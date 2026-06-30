@@ -73,33 +73,41 @@ export default function PhysicsSimulator({ imageUrl, regions, config }) {
     stitchCacheRef.current.clear();
   }, [fabricType]);
 
-  // Resize observer
+  // Stable refs to always-current draw functions — avoids stale closure in ResizeObserver
+  const drawFabricRef  = useRef(null);
+  const drawStitchesRef = useRef(null);
+
+  // Resize observer — uses refs so it always calls the latest version of the draw functions
   useEffect(() => {
     const obs = new ResizeObserver(() => {
       resizeCanvases();
-      drawFabric();
-      drawStitches();
+      drawFabricRef.current?.();
+      drawStitchesRef.current?.();
     });
     if (containerRef.current) obs.observe(containerRef.current);
     resizeCanvases();
     return () => obs.disconnect();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load image
+  // Load image — uses refs to avoid stale closure on first render
   useEffect(() => {
     if (!imageUrl) return;
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
       imageRef.current = img;
-      drawFabric();
-      drawStitches();
+      drawFabricRef.current?.();
+      drawStitchesRef.current?.();
     };
     img.src = imageUrl;
   }, [imageUrl]);
 
+  // Keep refs current so ResizeObserver always calls the latest version
+  useEffect(() => { drawFabricRef.current  = drawFabric;  }, [drawFabric]);
+  useEffect(() => { drawStitchesRef.current = drawStitches; }, [drawStitches]);
+
   // Redraw on param/region/zoom changes
-  useEffect(() => { drawFabric(); drawStitches(); drawPostProcess(); }, [regions, zoom, offset, simParams]);
+  useEffect(() => { drawFabric(); drawStitches(); drawPostProcess(); }, [regions, zoom, offset, simParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function resizeCanvases() {
     const el = containerRef.current;

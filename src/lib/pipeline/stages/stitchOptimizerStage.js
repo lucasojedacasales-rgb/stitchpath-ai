@@ -25,8 +25,10 @@ export async function runStitchOptimizer(ctx) {
 
   ctx.optimized = optimizeTravelPath(ctx.regions, ctx.config);
 
-  // Apply optimized order back to ctx.regions so downstream stages use it
-  if (ctx.optimized?.optimizedSequence?.length > 0) {
-    ctx.regions = ctx.optimized.optimizedSequence;
+  // Apply optimized order back to ctx.regions — only when the optimizer returned
+  // a non-empty sequence (guards against optimizer returning [] on edge-case inputs).
+  const seq = ctx.optimized?.optimizedSequence;
+  if (Array.isArray(seq) && seq.length > 0) {
+    ctx.regions = seq;
   }
 }

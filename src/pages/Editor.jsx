@@ -83,7 +83,7 @@ export default function Editor() {
   const [showDecisionPanel, setShowDecisionPanel] = useState(false);
   // ═════════════════════════════
 
-  useEffect(() => {if (id) loadProject();}, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {if (id) loadProject();}, [id]); // loadProject reads `id` from closure — safe to omit from deps
 
   // Cleanup: clear processing timer on unmount to prevent memory leak / stale setState
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
@@ -101,38 +101,34 @@ export default function Editor() {
     finally {setLoading(false);}
   };
 
-  const saveProject = async (overrides = {}) => {
+  // saveProject uses a ref snapshot to avoid stale closures without nesting setState calls.
+  const regionsRef  = useRef(regions);
+  const configRef   = useRef(config);
+  const stepRef     = useRef(step);
+  const imageUrlRef = useRef(imageUrl);
+  useEffect(() => { regionsRef.current  = regions;  }, [regions]);
+  useEffect(() => { configRef.current   = config;   }, [config]);
+  useEffect(() => { stepRef.current     = step;     }, [step]);
+  useEffect(() => { imageUrlRef.current = imageUrl; }, [imageUrl]);
+
+  const saveProject = useCallback(async (overrides = {}) => {
     if (!project) return;
     setSaving(true);
     try {
-      // Read latest state via functional updates to avoid stale closures
-      const payload = await new Promise((resolve) => {
-        setRegions(currentRegions => {
-          setConfig(currentConfig => {
-            setStep(currentStep => {
-              setImageUrl(currentImage => {
-                resolve({
-                  config: currentConfig,
-                  regions: currentRegions,
-                  image_url: currentImage,
-                  step: currentStep,
-                  total_stitches: currentRegions.reduce((s, r) => s + (r.stitch_count || 0), 0),
-                  color_count: new Set(currentRegions.map((r) => r.color)).size,
-                  ...overrides,
-                });
-                return currentImage;
-              });
-              return currentStep;
-            });
-            return currentConfig;
-          });
-          return currentRegions;
-        });
-      });
+      const currentRegions = regionsRef.current;
+      const payload = {
+        config:        configRef.current,
+        regions:       currentRegions,
+        image_url:     imageUrlRef.current,
+        step:          stepRef.current,
+        total_stitches: currentRegions.reduce((s, r) => s + (r.stitch_count || 0), 0),
+        color_count:   new Set(currentRegions.map((r) => r.color)).size,
+        ...overrides,
+      };
       const updated = await base44.entities.Project.update(project.id, payload);
       setProject(updated);
-    } finally {setSaving(false);}
-  };
+    } finally { setSaving(false); }
+  }, [project]);
 
   const handleImageUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -214,12 +210,13 @@ export default function Editor() {
   };
 
   const handleRegionClick = useCallback((regionId) => setSelectedRegionId(regionId), []);
+  // Stable callback — regions update from child panels (RegionsPanel, TravelOptimizer, etc.)
   const handleRegionsUpdate = useCallback((updated) => setRegions(updated), []);
   const handleRename = useCallback(async (name) => {
-    if (!project || !name.trim()) return;
+    if (!id || !name.trim()) return;
     const updated = await base44.entities.Project.update(id, { name: name.trim() });
     setProject(updated);
-  }, [project, id]);
+  }, [id]);
 
   const totalStitches = useMemo(() => regions.reduce((s, r) => s + (r.stitch_count || 0), 0), [regions]);
   const colorsUsed = useMemo(() => new Set(regions.map((r) => r.color)).size, [regions]);
@@ -315,27 +312,6 @@ export default function Editor() {
             </div>
           ) : !imageUrl ?
           <UploadZone onUpload={handleImageUpload} fileInputRef={fileInputRef} uploading={uploadingImage} /> :
-          showDecisionPanel && AI_ENABLED ?
-          <div className="flex-1 flex items-center justify-center overflow-auto">
-              <div className="w-full max-w-md mx-4">
-                <div className="bg-[#0d0f14] border border-[#1e2130] p-5 shadow-2xl rounded mx-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-sm font-semibold text-white">🧠 Análisis de IA</h3>
-                    <button onClick={() => {setShowDecisionPanel(false);resetAI();}} className="p-1 rounded hover:bg-[#1a1d27] text-slate-500 hover:text-white transition-colors">✕</button>
-                  </div>
-                  <DecisionPanel
-                  result={aiResult}
-                  status={aiStatus}
-                  progress={aiProgress}
-                  error={aiError}
-                  isLoading={aiLoading}
-                  onProceed={() => {if (aiResult) startProcessing(aiResult.strategy);}}
-                  onAdjustParams={() => {setShowDecisionPanel(false);setActiveTab('panel');}}
-                  onCancel={() => {setShowDecisionPanel(false);resetAI();}} />
-                
-                </div>
-              </div>
-            </div> :
           activeTab === 'mask' ?
           <div className="flex-1 flex flex-col overflow-hidden">
               <MaskToolbar activeTool={maskTool} onToolChange={setMaskTool} brushSize={brushSize} onBrushSizeChange={setBrushSize} brushMode={brushMode} onBrushModeChange={setBrushMode} wandTolerance={wandTolerance} onWandToleranceChange={setWandTolerance} showMaskOverlay={showMaskOverlay} onToggleMaskOverlay={() => setShowMaskOverlay((v) => !v)} showOriginal={showOriginal} onToggleOriginal={() => setShowOriginal((v) => !v)} onInvertMask={() => maskCanvasRef.current?.invertMask()} onClearMask={() => {maskCanvasRef.current?.clearMask();setMaskedPixelCount(0);}} onApplyMask={handleApplyMask} maskedPixelCount={maskedPixelCount} />
@@ -345,6 +321,24 @@ export default function Editor() {
               </div>
             </div> :
 
+          showDecisionPanel && AI_ENABLED ?
+          <div className="flex-1 flex items-center justify-center overflow-auto">
+            <div className="w-full max-w-md mx-4">
+              <div className="bg-[#0d0f14] border border-[#1e2130] p-5 shadow-2xl rounded mx-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-semibold text-white">🧠 Análisis de IA</h3>
+                  <button onClick={() => {setShowDecisionPanel(false);resetAI();}} className="p-1 rounded hover:bg-[#1a1d27] text-slate-500 hover:text-white transition-colors">✕</button>
+                </div>
+                <DecisionPanel
+                  result={aiResult} status={aiStatus} progress={aiProgress}
+                  error={aiError} isLoading={aiLoading}
+                  onProceed={() => {if (aiResult) startProcessing(aiResult.strategy);}}
+                  onAdjustParams={() => {setShowDecisionPanel(false);setActiveTab('panel');}}
+                  onCancel={() => {setShowDecisionPanel(false);resetAI();}}
+                />
+              </div>
+            </div>
+          </div> :
           <div className="flex-1 overflow-hidden">
               <StitchCanvas imageUrl={imageUrl} regions={regions} selectedRegionId={selectedRegionId} onRegionClick={handleRegionClick} imageOpacity={imageOpacity} stitchOpacity={stitchOpacity} showFill={showFill} showContour={showContour} />
             </div>

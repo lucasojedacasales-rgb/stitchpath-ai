@@ -24,6 +24,16 @@ import {
   STITCH_TYPE_PROFILES,
 } from '@/lib/physicsSimulator';
 
+// ─── Sample path generator ────────────────────────────────────────────────────
+
+function genSamplePath(x0, y0, x1, y1) {
+  const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+  return [
+    [x0, y0], [mx, y0 * 0.95], [x1, y0], [x1, my],
+    [x1, y1], [mx, y1 * 1.02], [x0, y1], [x0, my], [x0, y0],
+  ];
+}
+
 // ─── Sample data (used when no regions prop provided) ─────────────────────────
 
 const SAMPLE_REGIONS = [
@@ -38,15 +48,6 @@ const SAMPLE_REGIONS = [
   { id: 'r9',  name: 'contour_d0bb38',  stitch_type: 'satin',  color: '#d0bb38', visible: true, stitch_count: 140,  path_points: genSamplePath(0.35, 0.35, 0.60, 0.60) },
   { id: 'r10', name: 'contour_f07e1f2', stitch_type: 'satin',  color: '#f07e1f', visible: true, stitch_count: 175,  path_points: genSamplePath(0.70, 0.70, 0.95, 0.95) },
 ];
-
-function genSamplePath(x0, y0, x1, y1) {
-  // Simple rectangular polygon in normalized coords
-  const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
-  return [
-    [x0, y0], [mx, y0 * 0.95], [x1, y0], [x1, my],
-    [x1, y1], [mx, y1 * 1.02], [x0, y1], [x0, my], [x0, y0],
-  ];
-}
 
 // ─── Type config ──────────────────────────────────────────────────────────────
 

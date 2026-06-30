@@ -354,7 +354,9 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
   const concavity     = +(1 - convexity).toFixed(3);
   const mean_curvature = computeMeanCurvature(scaled);
   const complexity    = computeComplexity(scaled, mean_curvature, convexity);
-  const holes         = estimateHoles({ ...region, area_mm2, centroid: region.centroid }, allRegions);
+  // Centroid: use pre-computed value from the vector engine (normalized), or derive from scaled points
+  const derivedCentroid = region.centroid || centroid(pts).map((v, i) => v / (i === 0 ? designWidthMm : designHeightMm));
+  const holes         = estimateHoles({ ...region, area_mm2, centroid: derivedCentroid }, allRegions);
 
   const skeletonMetrics = computeSkeletonMetrics(scaled, orientation);
 
@@ -405,10 +407,11 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
   // Overrides: only explicit values from backend/user (never defaults)
   const overrides = {};
   if (region.stitch_type) overrides.stitch_type = region.stitch_type;
-  if (region.density > 0) overrides.density = region.density;
-  if (region.pull_compensation > 0) overrides.pull_compensation = region.pull_compensation;
-  if (region.angle != null) overrides.angle = region.angle;
-  if (region.priority != null && region.priority > 0) overrides.priority = region.priority;
+  // Use != null so that a 0 value is preserved (0 density is invalid, but 0 angle is valid)
+  if (region.density != null && region.density > 0)            overrides.density           = region.density;
+  if (region.pull_compensation != null && region.pull_compensation >= 0) overrides.pull_compensation = region.pull_compensation;
+  if (region.angle != null)                                    overrides.angle             = region.angle;
+  if (region.priority != null && region.priority > 0)          overrides.priority          = region.priority;
 
   const adapted = adaptRegion(geoMetrics, overrides, fabricType);
 
