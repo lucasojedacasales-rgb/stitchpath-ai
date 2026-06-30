@@ -368,9 +368,15 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
   if (!useAdaptive && region.stitch_type) {
     const originalColor = region.color || region.hex || '#888888';
     const threadRec = recommendThread(originalColor);
+    // Ensure density is never 0 — 0 causes extreme fill density in tatamiEngine
+    const safeDensity = (region.density && region.density > 0) ? region.density : 0.4;
+    const adaptive_density_mm = computeAdaptiveDensity(
+      { stitch_type: region.stitch_type, area_mm2, angle: region.angle || 45, convexity, complexity, mean_width_mm: skeletonMetrics.mean_width_mm },
+      fabricType, designWidthMm, designHeightMm,
+    );
     const stitch_count = region.stitch_count || estimateStitchCount(
       { stitch_type: region.stitch_type, area_mm2, perimeter_mm },
-      region.density || 0.4
+      adaptive_density_mm || safeDensity
     );
     return {
       ...region,
@@ -382,6 +388,8 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
       mean_curvature, holes, complexity,
       color: originalColor,
       recommended_thread: threadRec,
+      density: adaptive_density_mm || safeDensity,
+      adaptive_density_mm,
       stitch_count,
       estimatedTime: estimateTime(stitch_count),
       estimatedThread: estimateThread(stitch_count),

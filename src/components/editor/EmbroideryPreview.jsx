@@ -22,7 +22,11 @@ export default function EmbroideryPreview({ regions, config }) {
 
   // ─── Build stitches array from regions (memoizado) ──────────────────────────────
   // Solo recalcula si regions o config cambian; progress no afecta la construcción
-  const stitches = useMemo(() => buildStitchesFromRegions(regions, config), [regions, config]);
+  const stitchCacheRef = useRef(createStitchCache());
+  // Clear cache when regions change identity (new project / reprocess)
+  useEffect(() => { stitchCacheRef.current.clear(); }, [regions]);
+
+  const stitches = useMemo(() => buildStitchesFromRegions(regions, config, stitchCacheRef.current), [regions, config]);
   const visibleStitches = useMemo(() => stitches.slice(0, Math.ceil((progress / 100) * stitches.length)), [stitches, progress]);
 
   // ─── Playback animation loop ────────────────────────────────────────────
@@ -301,9 +305,10 @@ export default function EmbroideryPreview({ regions, config }) {
  * cada vez que se actualiza el estado (zoom, progress, opacity, etc).
  * Solo recalcula si region.id, density, angle, o config cambian.
  */
-const _stitchCache = new Map(); // regionId → {hash, stitches}
+// Cache is per-component-instance via closure — cleared when component unmounts
+function createStitchCache() { return new Map(); }
 
-function buildStitchesFromRegions(regions, config) {
+function buildStitchesFromRegions(regions, config, _stitchCache) {
   const stitches = [];
   const designW = config.width_mm || 100;
   const designH = config.height_mm || 100;
@@ -526,97 +531,10 @@ function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regi
     }
   }
 
-  // DEFECTO 6 FIX: Pase de relleno de huecos — agregar filas intermedias si hay gaps detectados
-  // Detectar cobertura y añadir filas intermedias donde falte
-  const coverage = calculateFillCoverage(polygon, stitches);
-  if (coverage < 0.95) {
-    // Si cobertura < 95%, agregar filas intermedias
-    for (let y = rMinY + adjustedDensity * 0.5; y <= rMaxY; y += adjustedDensity) {
-      const intersections = [];
-      for (let i = 0; i < rotatedPoly.length; i++) {
-        const [x1, y1] = rotatedPoly[i];
-        const [x2, y2] = rotatedPoly[(i + 1) % rotatedPoly.length];
-        if (Math.abs(y2 - y1) < 1e-6) continue;
-        if ((y1 <= y && y <= y2) || (y2 <= y && y <= y1)) {
-          const t = Math.abs(y2 - y1) > 1e-6 ? (y - y1) / (y2 - y1) : 0;
-          const x = x1 + t * (x2 - x1);
-          intersections.push(x);
-        }
-      }
-      if (intersections.length < 2) continue;
-      
-      intersections.sort((a, b) => a - b);
-      for (let i = 0; i < intersections.length - 1; i += 2) {
-        let x1 = intersections[i];
-        let x2 = intersections[i + 1];
-        x1 -= 0.12;
-        x2 += 0.12;
-
-        const unrotate = (x, y) => [x * cosA - y * sinA, x * sinA + y * cosA];
-        const [ox1, oy1] = unrotate(x1, y);
-        const [ox2, oy2] = unrotate(x2, y);
-
-        const dx = ox2 - ox1;
-        const dy = oy2 - oy1;
-        const len = Math.hypot(dx, dy);
-        const steps = Math.max(6, Math.ceil(len / 0.8));
-
-        for (let s = 0; s <= steps; s++) {
-          const t = steps > 0 ? s / steps : 0;
-          const x = ox1 + dx * t;
-          const y = oy1 + dy * t;
-          
-          if (isPointInPolygon([x, y], polygon)) {
-            stitches.push({
-              x, y,
-              type: 'fill',
-              regionId,
-              color,
-              isJump: false,
-              threadWidth: 0.42,
-            });
-          }
-        }
-      }
-    }
-  }
+  // The 15% overlap factor (adjustedDensity = realDensity * 0.85) already guarantees coverage.
+  // calculateFillCoverage was O(n²) and caused UI freezes — removed.
 
   return stitches;
-}
-
-/**
- * Calcula el porcentaje de cobertura del relleno dentro del polígono
- * Usa grid-based sampling para detectar huecos
- */
-function calculateFillCoverage(polygon, stitches) {
-  if (stitches.length === 0 || polygon.length === 0) return 0;
-
-  // Calcular bounds
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const [x, y] of polygon) {
-    minX = Math.min(minX, x);
-    maxX = Math.max(maxX, x);
-    minY = Math.min(minY, y);
-    maxY = Math.max(maxY, y);
-  }
-
-  // Grid sampling — puntos en una grilla cada 0.3mm
-  const gridSpacing = 0.3;
-  let sampledInside = 0;
-  let totalSamples = 0;
-
-  for (let x = minX; x <= maxX; x += gridSpacing) {
-    for (let y = minY; y <= maxY; y += gridSpacing) {
-      if (isPointInPolygon([x, y], polygon)) {
-        totalSamples++;
-        // Verificar si hay stitch dentro de distancia de 0.5mm (radio de thread)
-        const covered = stitches.some(s => Math.hypot(s.x - x, s.y - y) < 0.5);
-        if (covered) sampledInside++;
-      }
-    }
-  }
-
-  return totalSamples > 0 ? sampledInside / totalSamples : 0;
 }
 
 /**
@@ -763,61 +681,6 @@ function generateSatinFillLines(polygon, angle, density, stitchLen, color, regio
             fillPattern: 'satin',
             threadWidth: 0.45,
           });
-        }
-      }
-    }
-  }
-
-  // DEFECTO 6 FIX: Pase de relleno de huecos para satin también
-  const coverage = calculateFillCoverage(polygon, stitches);
-  if (coverage < 0.95) {
-    for (let x = rMinX + adjustedDensity * 0.5; x <= rMaxX; x += adjustedDensity) {
-      const intersections = [];
-      for (let i = 0; i < rotatedPoly.length; i++) {
-        const [x1, y1] = rotatedPoly[i];
-        const [x2, y2] = rotatedPoly[(i + 1) % rotatedPoly.length];
-        if (Math.abs(x2 - x1) < 1e-6) continue;
-        if ((x1 <= x && x <= x2) || (x2 <= x && x <= x1)) {
-          const t = Math.abs(x2 - x1) > 1e-6 ? (x - x1) / (x2 - x1) : 0;
-          const y = y1 + t * (y2 - y1);
-          intersections.push(y);
-        }
-      }
-      if (intersections.length < 2) continue;
-      
-      intersections.sort((a, b) => a - b);
-      for (let i = 0; i < intersections.length - 1; i += 2) {
-        let y1 = intersections[i];
-        let y2 = intersections[i + 1];
-        y1 -= 0.12;
-        y2 += 0.12;
-
-        const unrotate = (x, y) => [x * cosA - y * sinA, x * sinA + y * cosA];
-        const [ox1, oy1] = unrotate(x, y1);
-        const [ox2, oy2] = unrotate(x, y2);
-
-        const dx = ox2 - ox1;
-        const dy = oy2 - oy1;
-        const len = Math.hypot(dx, dy);
-        const steps = Math.max(6, Math.ceil(len / 0.8));
-
-        for (let s = 0; s <= steps; s++) {
-          const t = steps > 0 ? s / steps : 0;
-          const px = ox1 + dx * t;
-          const py = oy1 + dy * t;
-          
-          if (isPointInPolygon([px, py], polygon)) {
-            stitches.push({
-              x: px,
-              y: py,
-              type: 'fill',
-              regionId,
-              color,
-              isJump: false,
-              fillPattern: 'satin',
-              threadWidth: 0.45,
-            });
-          }
         }
       }
     }

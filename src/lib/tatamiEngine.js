@@ -281,9 +281,15 @@ export function drawTatamiRegion(ctx, pts, region, drawW, drawH, zoom, isSelecte
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function darkenColor(hex, factor) {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
+  if (!hex || typeof hex !== 'string' || !hex.startsWith('#')) return '#888888';
+  // Expand shorthand #rgb → #rrggbb
+  const normalized = hex.length === 4
+    ? `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`
+    : hex;
+  const r = parseInt(normalized.slice(1, 3), 16);
+  const g = parseInt(normalized.slice(3, 5), 16);
+  const b = parseInt(normalized.slice(5, 7), 16);
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return '#888888';
   const d = v => Math.max(0, Math.round(v * factor)).toString(16).padStart(2, '0');
   return `#${d(r)}${d(g)}${d(b)}`;
 }

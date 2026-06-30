@@ -244,6 +244,7 @@
  * @property {Object[]}            stageLog       - [{stage, durationMs, ok}]
  */
 
+// Stages actually registered and executed in runner.js (CLIENT_STAGES)
 export const PIPELINE_STAGES = [
   'image_analysis',
   'image_enhancement',
@@ -253,8 +254,6 @@ export const PIPELINE_STAGES = [
   'region_builder',
   'stitch_planner',
   'stitch_optimizer',
-  'simulation_engine',
-  'export_engine',
 ];
 
 /**

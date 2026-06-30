@@ -200,41 +200,46 @@ function estimateStitchCount(region) {
 function consolidateColorChanges(regions, colorMergeGapMm2) {
   if (regions.length < 3) return { regions, colorMerges: 0 };
 
-  let colorMerges = 0;
-  const result = [...regions];
+  // Two-pass approach: collect merges first, then apply — avoids mutation-during-iteration bugs
+  const toMerge = []; // indices to absorb into prev
+  for (let i = 1; i < regions.length - 1; i++) {
+    const prev = regions[i - 1];
+    const curr = regions[i];
+    const next = regions[i + 1];
+    const currArea = curr.area_mm2 || 0;
+    if (
+      curr.color !== prev.color &&
+      prev.color === next.color &&
+      currArea <= colorMergeGapMm2
+    ) {
+      toMerge.push(i);
+    }
+  }
 
-  for (let i = 1; i < result.length - 1; i++) {
-    const prev = result[i - 1];
-    const curr = result[i];
-    const next = result[i + 1];
+  if (toMerge.length === 0) return { regions, colorMerges: 0 };
 
-    if (!prev || !curr || !next) continue;
-
-    const currArea = curr.area_mm2 || estimateStitchCount(curr) * 0.4 * 2.4;
-
-    // Si la región actual es pequeña y está flanqueada por regiones del mismo color
-    const isGap = (curr.color !== prev.color) &&
-                  (prev.color === next.color) &&
-                  currArea <= colorMergeGapMm2;
-
-    if (isGap) {
-      // Fusionar la micro-región con el vecino anterior (mismo color)
-      const mergedPts = mergePolygons(prev.path_points, curr.path_points);
-      result[i - 1] = {
-        ...prev,
-        path_points: mergedPts,
+  // Apply merges (set of indices to absorb)
+  const absorbSet = new Set(toMerge);
+  const result = [];
+  for (let i = 0; i < regions.length; i++) {
+    if (absorbSet.has(i)) continue; // skip absorbed gaps
+    // If the next index was absorbed, merge its path_points into this region
+    const mergeNext = absorbSet.has(i + 1) ? regions[i + 1] : null;
+    if (mergeNext) {
+      result.push({
+        ...regions[i],
+        path_points: mergePolygons(regions[i].path_points, mergeNext.path_points),
         centroid: undefined,
         area_mm2: undefined,
         stitch_count: undefined,
         _color_gap_merged: true,
-      };
-      result.splice(i, 1);
-      i--;
-      colorMerges++;
+      });
+    } else {
+      result.push(regions[i]);
     }
   }
 
-  return { regions: result, colorMerges };
+  return { regions: result, colorMerges: toMerge.length };
 }
 
 // ─── API pública ──────────────────────────────────────────────────────────────
