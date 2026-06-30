@@ -1,17 +1,102 @@
 /**
  * contourRenderer.js — Professional embroidery contour rendering engine
  *
- * Implements three distinct stitch renderers for canvas preview:
- *  1. drawSatinContour  — true satin stitch columns perpendicular to path tangent
- *  2. drawRunning       — precise running stitch along path (no spurious closing segment)
- *  3. drawSatinFill     — hatched fill for satin-type fill regions (wide satin bodies)
+ * FASE 8: Contornos adaptativos — el grosor del borde se adapta automáticamente
+ * a la geometría local de cada segmento del contorno:
  *
- * Key differences from the old renderer:
- *  - No ctx.clip() before drawing contours — clips were truncating border strokes
- *  - No ctx.closePath() on running stitch — that added a spurious return segment
- *  - Satin columns are drawn perpendicular to each path segment's tangent
- *  - Thread width is calibrated to physical 40wt thread diameter at design scale
+ *   Curvas cerradas   → borde más fino  (alta curvatura local → reducción hasta 50%)
+ *   Rectas largas     → borde normal    (curvatura ≈ 0 → grosor base completo)
+ *   Detalles (cortos) → borde reducido  (segmentos cortos → grosor reducido)
+ *
+ * Renderers disponibles:
+ *  1. drawSatinContour  — satin con grosor adaptativo per-segmento (FASE 8)
+ *  2. drawRunning       — running stitch con dasheo calibrado
+ *  3. drawSatinFill     — fill hatched para regiones satin anchas
+ *  4. drawOutline       — contorno simple (fallback / modo outline)
+ *
+ * Helpers exportados:
+ *  computeAdaptiveContourWidth(pts, baseWidthMm, i) → mm por segmento
  */
+
+// ─── FASE 8: Curvatura local y grosor adaptativo ──────────────────────────────
+
+/**
+ * Calcula el ángulo de giro (en radianes) en el vértice `i` del polígono.
+ * Un giro grande = curva aguda. Un giro ~0 = recta.
+ */
+function localTurnAngle(pts, i) {
+  const n = pts.length;
+  const prev = pts[(i - 1 + n) % n];
+  const curr = pts[i];
+  const next = pts[(i + 1) % n];
+
+  const ax = curr[0] - prev[0], ay = curr[1] - prev[1];
+  const bx = next[0] - curr[0], by = next[1] - curr[1];
+  const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+  if (la < 1e-9 || lb < 1e-9) return 0;
+
+  const dot = (ax * bx + ay * by) / (la * lb);
+  return Math.acos(Math.max(-1, Math.min(1, dot))); // [0, π]
+}
+
+/**
+ * Longitud del segmento i→i+1 en coordenadas normalizadas × DESIGN_NORM(mm).
+ */
+function segLenMm(pts, i, designNorm = 100) {
+  const n = pts.length;
+  const p0 = pts[i], p1 = pts[(i + 1) % n];
+  return Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) * designNorm;
+}
+
+/**
+ * computeAdaptiveContourWidth — FASE 8 core
+ *
+ * Devuelve el grosor de contorno (en mm) para el segmento `i` del polígono.
+ *
+ * Señales:
+ *   C1 — Curvatura local (ángulo de giro en los dos vértices del segmento)
+ *        Alta curvatura (curva cerrada) → reducción proporcional hasta -50%
+ *   C2 — Longitud de segmento (detalle fino)
+ *        Segmento corto (<0.8mm) → reducción hasta -35%
+ *   C3 — Curvatura acumulada vecina (ventana ±1 segmento)
+ *        Media de curvaturas vecinas para suavizar transiciones abruptas
+ *
+ * @param {number[][]} pts        — path points normalizados [0,1]
+ * @param {number}     baseMm     — grosor base (mm)
+ * @param {number}     i          — índice del segmento
+ * @param {number}     designNorm — mm por unidad normalizada (default 100)
+ * @returns {number}              — grosor adaptativo en mm
+ */
+export function computeAdaptiveContourWidth(pts, baseMm, i, designNorm = 100) {
+  const n = pts.length;
+  if (n < 3) return baseMm;
+
+  // C1 — Curvatura en los dos vértices del segmento (promedio)
+  const turn0 = localTurnAngle(pts, i);
+  const turn1 = localTurnAngle(pts, (i + 1) % n);
+  const turnAvg = (turn0 + turn1) / 2; // [0, π]
+
+  // Normalizar a [0,1]: π rad = curva perfectamente cerrada
+  // Reducción máxima: -50% en curva perfecta (π rad), lineal
+  const curvFactor = 1.0 - 0.50 * (turnAvg / Math.PI);
+
+  // C2 — Longitud del segmento: muy cortos → detalles → grosor reducido
+  const lenMm = segLenMm(pts, i, designNorm);
+  // <0.5mm → factor mínimo 0.55; ≥2.5mm → factor 1.0; interpolación lineal
+  const lenFactor = lenMm >= 2.5 ? 1.0 : Math.max(0.55, 0.55 + (lenMm / 2.5) * 0.45);
+
+  // C3 — Suavizado de vecindad (±1): evita saltos abruptos entre segmentos
+  const prevTurn = localTurnAngle(pts, (i - 1 + n) % n);
+  const nextTurn = localTurnAngle(pts, (i + 2) % n);
+  const smoothCurv = (prevTurn + turnAvg + nextTurn) / 3;
+  const smoothFactor = 1.0 - 0.45 * (smoothCurv / Math.PI);
+
+  // Combinar señales: curvatura suavizada domina (70%), longitud aporta (30%)
+  const combinedFactor = smoothFactor * 0.70 + lenFactor * 0.30;
+
+  // Clamp final: nunca bajar de 40% ni superar el 100% del base
+  return +Math.max(baseMm * 0.40, Math.min(baseMm, baseMm * combinedFactor)).toFixed(3);
+}
 
 // ─── Running stitch ───────────────────────────────────────────────────────────
 
@@ -51,43 +136,50 @@ export function drawRunning(ctx, pts, region, drawW, drawH, zoom, color, alpha) 
   ctx.restore();
 }
 
-// ─── Satin contour stitch ─────────────────────────────────────────────────────
+// ─── Satin contour stitch (FASE 8 — grosor adaptativo) ───────────────────────
 
 /**
  * Draws a true satin stitch contour along a polygon path.
  *
- * Algorithm:
- *  For each edge segment of the polygon:
- *   1. Compute the perpendicular direction (normal to the segment)
- *   2. Place satin columns at `density` intervals along the segment
- *   3. Each column spans `width` mm on each side of the path centerline
+ * FASE 8: el grosor del borde NO es uniforme. Para cada segmento se calcula
+ * un grosor adaptativo con computeAdaptiveContourWidth():
+ *   - Curvas cerradas  → borde más fino  (alta curvatura → hasta -50%)
+ *   - Rectas largas    → borde normal    (curvatura ≈ 0 → grosor base)
+ *   - Detalles cortos  → borde reducido  (segmentos cortos → hasta -45%)
  *
- * This produces the characteristic satin "column" look where thread runs
- * perpendicular to the path direction — matching Wilcom/Tajima satin borders.
+ * El grosor transiciona suavemente entre segmentos para evitar saltos bruscos.
  *
- * @param {number} widthMm  — full satin column width in mm (default 1.5mm = 3mm border)
- * @param {number} densityMm — spacing between columns in mm (default = region.density or 0.4)
+ * @param ctx        — Canvas 2D context
+ * @param pts        — path points normalizados [0,1]
+ * @param region     — región enriquecida (mean_width_mm, density, area_mm2…)
+ * @param drawW/H    — dimensiones del canvas en px
+ * @param zoom       — factor de zoom actual
+ * @param color      — color hex del hilo
+ * @param alpha      — opacidad global
  */
 export function drawSatinContour(ctx, pts, region, drawW, drawH, zoom, color, alpha) {
   if (pts.length < 2) return;
 
-  const pxPerMm   = drawW / 100;
-  // Width: use the region's actual mean_width clamped to [0.8, 4] mm for satin contours
-  // This makes thin contour satin (0.8-2mm) and medium satin bands (2-4mm) look correct
-  const widthMm   = Math.min(4, Math.max(0.8, region.mean_width_mm || region.satin_width_mm || 1.5));
-  const densityMm = Math.min(0.5, region.density || 0.4);
-  const halfW     = Math.max(1.5, (widthMm * 0.5 * pxPerMm) / zoom);
-  const stepPx    = Math.max(0.5, (densityMm * pxPerMm) / zoom);
-  // 40wt thread at 0.35mm physical — slightly thicker for satin columns to be readable
-  const threadPx  = Math.max(0.7, (0.35 * pxPerMm) / zoom);
+  const pxPerMm    = drawW / 100;
+  // Base width: clamped to [0.6, 4] mm — preserva proporciones reales de satin
+  const baseWidthMm = Math.min(4, Math.max(0.6, region.mean_width_mm || region.satin_width_mm || 1.5));
+  const densityMm   = Math.min(0.5, region.density || 0.4);
+  const stepPx      = Math.max(0.5, (densityMm * pxPerMm) / zoom);
+  const threadPx    = Math.max(0.7, (0.35 * pxPerMm) / zoom);
+
+  // Pre-calcular grosor adaptativo por segmento (en px)
+  const n = pts.length;
+  const segHalfWidthPx = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const adaptMm = computeAdaptiveContourWidth(pts, baseWidthMm, i);
+    segHalfWidthPx[i] = Math.max(1.0, (adaptMm * 0.5 * pxPerMm) / zoom);
+  }
 
   ctx.save();
   ctx.globalAlpha = alpha * 0.9;
   ctx.strokeStyle = color;
   ctx.lineWidth   = threadPx;
   ctx.lineCap     = 'butt';
-
-  const n = pts.length;
 
   for (let i = 0; i < n; i++) {
     const p0 = pts[i];
@@ -101,15 +193,23 @@ export function drawSatinContour(ctx, pts, region, drawW, drawH, zoom, color, al
     const segLen = Math.hypot(bx - ax, by - ay);
     if (segLen < 0.5) continue;
 
-    // Tangent & normal
+    // Tangente y normal al segmento
     const tx = (bx - ax) / segLen;
     const ty = (by - ay) / segLen;
-    const nx = -ty; // perpendicular (inward)
+    const nx = -ty;
     const ny =  tx;
 
-    // Place columns along the segment
+    // Grosor del segmento siguiente (para interpolación suave)
+    const halfW0 = segHalfWidthPx[i];
+    const halfW1 = segHalfWidthPx[(i + 1) % n];
+
+    // Colocar columnas a lo largo del segmento con grosor interpolado
     let t = stepPx * 0.5;
     while (t < segLen) {
+      const tNorm = segLen > 0 ? t / segLen : 0;
+      // Interpolación lineal del grosor entre inicio y fin del segmento
+      const halfW = halfW0 + (halfW1 - halfW0) * tNorm;
+
       const cx = ax + tx * t;
       const cy = ay + ty * t;
 
