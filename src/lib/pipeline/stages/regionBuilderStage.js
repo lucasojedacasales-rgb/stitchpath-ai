@@ -6,6 +6,7 @@
 
 import { enrichAllRegions } from '../../regionBuilder.js';
 import { getModeStrategy } from '../../digitizeModes.js';
+import { postProcessRegions } from '../../calibrationEngine.js';
 
 export async function runRegionBuilder(ctx) {
   if (!ctx.vectorRegions || ctx.vectorRegions.length === 0) {
@@ -52,7 +53,12 @@ export async function runRegionBuilder(ctx) {
     };
   });
 
-  ctx.regions = enrichAllRegions(named, width_mm, height_mm, fabric_type, ctx._useAdaptiveEngine);
+  const enriched = enrichAllRegions(named, width_mm, height_mm, fabric_type, ctx._useAdaptiveEngine);
+
+  // Calibration post-processing: background detection, semantic naming, empty filter
+  // Activated when any calibration flag is set in config
+  const needsCalibration = ctx.config._filterBackground || ctx.config._forceSemanticNames || ctx.config._filterEmptyRegions;
+  ctx.regions = needsCalibration ? postProcessRegions(enriched, ctx.config) : enriched;
 }
 
 // ─── Semantic matching ────────────────────────────────────────────────────────

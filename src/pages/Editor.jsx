@@ -14,6 +14,7 @@ import IntelligencePanel from '@/components/editor/IntelligencePanel.jsx';
 import TravelOptimizerPanel from '@/components/editor/TravelOptimizerPanel.jsx';
 import EmbroideryPreview from '@/components/editor/EmbroideryPreview.jsx';
 import AutoIterationPanel from '@/components/editor/AutoIterationPanel.jsx';
+import CalibrationPanel from '@/components/editor/CalibrationPanel.jsx';
 import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
@@ -250,8 +251,9 @@ export default function Editor() {
               { id: 'mask',    label: '✂ Máscara' },
               { id: 'planner', label: '✦ Planner' },
               { id: 'travel',  label: '⚡ Travel' },
-              { id: 'autofix', label: '🔄 AutoFix' },
-              { id: 'panel',   label: 'Panel' },
+              { id: 'autofix',      label: '🔄 AutoFix' },
+              { id: 'calibration', label: '🎯 Calibrar' },
+              { id: 'panel',       label: 'Panel' },
             ].map(({ id, label }) =>
               <button key={id} onClick={() => setActiveTab(id)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
                 {label}
@@ -313,6 +315,15 @@ export default function Editor() {
                 config={config}
                 onConfigChange={setConfig}
                 onReprocess={(newCfg) => startProcessing(null)}
+              />
+            </div>
+          ) : activeTab === 'calibration' ? (
+            <div className="flex-1 overflow-hidden">
+              <CalibrationPanel
+                imageUrl={imageUrl}
+                config={config}
+                onConfigChange={setConfig}
+                onRegionsUpdate={handleRegionsUpdate}
               />
             </div>
           ) : activeTab === 'travel' ? (
