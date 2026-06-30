@@ -15,18 +15,24 @@ import { getModeStrategy }   from '../../digitizeModes.js';
 // Per-mode quality presets — map strategy knobs to contourEngine options.
 // RDP epsilons raised across all modes to prevent sub-pixel micro-segmentation
 // while preserving real geometric detail. minSegmentPx raised to filter noise.
+// minAreaPx scales with analysisSize² to keep the physical minimum consistent.
+// At 512px: 60*(512/1024)² ≈ 15px. At 1600px: 60*(1600/1024)² ≈ 146px.
+// This ensures eyes and small details are always captured regardless of resolution.
 const MODE_OPTIONS = {
-  fast:      { analysisSize: 512,  chaikinPasses: 1, rdpBaseEpsilon: 2.2, minSegmentPx: 7,  cornerAngleDeg: 125, gapCloseThreshold: 14 },
-  standard:  { analysisSize: 800,  chaikinPasses: 2, rdpBaseEpsilon: 1.5, minSegmentPx: 5,  cornerAngleDeg: 130, gapCloseThreshold: 12 },
-  precision: { analysisSize: 1200, chaikinPasses: 3, rdpBaseEpsilon: 0.8, minSegmentPx: 3,  cornerAngleDeg: 120, gapCloseThreshold: 10 },
-  hybrid:    { analysisSize: 1024, chaikinPasses: 3, rdpBaseEpsilon: 1.1, minSegmentPx: 4,  cornerAngleDeg: 128, gapCloseThreshold: 12 },
-  ultra:     { analysisSize: 1600, chaikinPasses: 4, rdpBaseEpsilon: 0.6, minSegmentPx: 2,  cornerAngleDeg: 115, gapCloseThreshold: 8  },
+  fast:      { analysisSize: 512,  chaikinPasses: 1, rdpBaseEpsilon: 2.2, minSegmentPx: 7,  cornerAngleDeg: 125, gapCloseThreshold: 14, minAreaPx: 25  },
+  standard:  { analysisSize: 800,  chaikinPasses: 2, rdpBaseEpsilon: 1.5, minSegmentPx: 5,  cornerAngleDeg: 130, gapCloseThreshold: 12, minAreaPx: 40  },
+  precision: { analysisSize: 1200, chaikinPasses: 3, rdpBaseEpsilon: 0.8, minSegmentPx: 3,  cornerAngleDeg: 120, gapCloseThreshold: 10, minAreaPx: 80  },
+  hybrid:    { analysisSize: 1024, chaikinPasses: 3, rdpBaseEpsilon: 1.1, minSegmentPx: 4,  cornerAngleDeg: 128, gapCloseThreshold: 12, minAreaPx: 60  },
+  ultra:     { analysisSize: 1600, chaikinPasses: 4, rdpBaseEpsilon: 0.6, minSegmentPx: 2,  cornerAngleDeg: 115, gapCloseThreshold: 8,  minAreaPx: 100 },
 };
 
 export async function runContourEngine(ctx) {
   const strategy   = getModeStrategy(ctx.config.mode || 'hybrid');
   const sourceUrl  = ctx.enhanced?.enhancedUrl || ctx.imageUrl;
-  const colorCount = strategy.vectorizer?.color_count || ctx.config.color_count || 8;
+  // color_count from config (user slider) or strategy default.
+  // Minimum 8 — designs like Yoshi have 7+ distinct colours; fewer clusters
+  // merge white belly + white eyes into one blob, losing spatial separation.
+  const colorCount = Math.max(8, strategy.vectorizer?.color_count || ctx.config.color_count || 8);
 
   const modeOpts = { ...(MODE_OPTIONS[strategy.id] || MODE_OPTIONS.hybrid) };
 

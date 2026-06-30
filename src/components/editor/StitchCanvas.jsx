@@ -182,18 +182,11 @@ export default function StitchCanvas({
     // Fabric-neutral background: #4a4040 (warm dark, like dark linen/cotton).
     // Provides enough contrast for white thread (lightens) and black thread (darkens)
     // while looking like a real embroidery backing cloth.
-    ctx.fillStyle = '#2e2e2e';
+    // Neutral mid-grey: #4a4a4a — dark enough for light UI but light enough
+    // that white/cream thread (panza, eyes) is clearly visible.
+    // This matches the Wilcom EmbroideryStudio default canvas tone.
+    ctx.fillStyle = '#4a4a4a';
     ctx.fillRect(0, 0, W, H);
-    // Subtle fabric-grain texture overlay — very fine noise to simulate weave
-    ctx.save();
-    ctx.globalAlpha = 0.04;
-    ctx.fillStyle = '#ffffff';
-    for (let gx = 0; gx < W; gx += 2) {
-      for (let gy = (gx % 4 === 0 ? 0 : 1); gy < H; gy += 2) {
-        ctx.fillRect(gx, gy, 1, 1);
-      }
-    }
-    ctx.restore();
 
     if (!imageRef.current || imageOpacity <= 0) return;
 

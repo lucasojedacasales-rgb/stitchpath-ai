@@ -51,7 +51,8 @@ Deno.serve(async (req) => {
 
     if (!image_url) return Response.json({ error: 'image_url required' }, { status: 400 });
 
-    const maxColors = Math.min(color_count || 8, 20);
+    // Enforce minimum 8 colours — fewer clusters merge distinct regions (e.g. eyes + belly).
+    const maxColors = Math.min(Math.max(8, color_count || 8), 20);
     const w = width_mm || 100;
     const h = height_mm || 100;
     const regionLimit = max_regions || 150;
