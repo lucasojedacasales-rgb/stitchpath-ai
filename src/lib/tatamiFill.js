@@ -72,9 +72,22 @@ export function generateTatamiFill(polygon, densityMm = 0.4, stitchLenMm = 3.0, 
     // always enters the first span at the "current cursor" side
     if (!forward) spans.reverse();
 
-    for (const [xL, xR] of spans) {
+    for (let si = 0; si < spans.length; si++) {
+      const [xL, xR] = spans[si];
       const needles = buildNeedlePoints(xL, xR, stitchPitchPx, brickOffset, forward);
       emitStitches(stitches, needles, ry, toWorld);
+
+      // Connect end of this span to start of next span within the same row
+      // so the rendered path stays continuous (no floating span islands).
+      if (si < spans.length - 1) {
+        const [nx0, ] = spans[si + 1];
+        const exitX   = forward ? xR : xL;
+        const enterX  = forward ? nx0 : spans[si + 1][1];
+        const [wx0, wy0] = toWorld([exitX,  ry]);
+        const [wx1, wy1] = toWorld([enterX, ry]);
+        // Emit as a zero-length "jump" stitch so renderer can detect row-change
+        stitches.push([wx0, wy0, wx1, wy1]);
+      }
     }
 
     rowIdx++;

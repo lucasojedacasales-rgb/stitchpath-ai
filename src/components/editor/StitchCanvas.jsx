@@ -29,20 +29,23 @@ function getDrawSize(imageEl, W, H) {
 // stitchCache: Map<regionId, {stitches, drawW, drawH, angle, density}>
 
 function drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCache) {
-  const color = region.color || '#ffffff';
-  const angleDeg = region.angle || 0;
-  const densityMm = region.tatami_density || region.density_mm || 0.4;
+  const color     = region.color || '#ffffff';
+  const angleDeg  = region.angle ?? region.fill_angle ?? 0;
+  const densityMm = region.tatami_density || region.density || region.density_mm || 0.4;
+  const stitchLenMm = region.stitch_length_mm || 2.5;
 
-  // Cache key: recompute only if drawSize or region params change
   const cacheKey = region.id;
   let cached = stitchCache.get(cacheKey);
-  if (!cached || cached.drawW !== drawW || cached.drawH !== drawH || cached.angleDeg !== angleDeg || cached.densityMm !== densityMm) {
-    // Convert normalized path_points → canvas px
-    const polygon = pts.map(p => [(p[0] - 0.5) * drawW, (p[1] - 0.5) * drawH]);
-    // pxPerMm: drawW spans 100mm by default
-    const pxPerMm = drawW / 100;
-    const { stitches, totalStitches } = generateTatamiFill(polygon, densityMm, 2.5, angleDeg, pxPerMm);
-    cached = { stitches, totalStitches, drawW, drawH, angleDeg, densityMm };
+  if (
+    !cached ||
+    cached.drawW !== drawW || cached.drawH !== drawH ||
+    cached.angleDeg !== angleDeg || cached.densityMm !== densityMm ||
+    cached.stitchLenMm !== stitchLenMm
+  ) {
+    const polygon  = pts.map(p => [(p[0] - 0.5) * drawW, (p[1] - 0.5) * drawH]);
+    const pxPerMm  = drawW / 100;
+    const { stitches, totalStitches } = generateTatamiFill(polygon, densityMm, stitchLenMm, angleDeg, pxPerMm);
+    cached = { stitches, totalStitches, drawW, drawH, angleDeg, densityMm, stitchLenMm };
     stitchCache.set(cacheKey, cached);
   }
 
@@ -51,14 +54,39 @@ function drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCac
 
   ctx.globalAlpha = alpha * 0.92;
   ctx.strokeStyle = color;
-  ctx.lineWidth = Math.max(0.8, 1.5 / zoom);
-  ctx.lineCap = 'round';
+  ctx.lineWidth   = Math.max(0.7, 1.4 / zoom);
+  ctx.lineCap     = 'round';
+  ctx.lineJoin    = 'round';
+
+  // ── Render as a CONTINUOUS boustrophedon path ────────────────────────────────
+  // Each stitch is [x0,y0,x1,y1]. The tatami engine already orders them
+  // boustrophedon (row0 L→R, row1 R→L, …). We connect consecutive needle
+  // penetrations with lineTo so the fill renders as dense parallel lines
+  // instead of isolated segments.
+  //
+  // Row-change detection: when x1,y1 of stitch[i] ≠ x0,y0 of stitch[i+1]
+  // the engine made a row jump — draw a hairline travel connector so the
+  // visual stays connected but the row boundary remains visible.
 
   ctx.beginPath();
-  for (const [x0, y0, x1, y1] of stitches) {
-    ctx.moveTo(x0, y0);
+  ctx.moveTo(stitches[0][0], stitches[0][1]);
+
+  for (let i = 0; i < stitches.length; i++) {
+    const [x0, y0, x1, y1] = stitches[i];
+
+    // Connect start of this stitch to where we are (handles row transitions)
+    if (i > 0) {
+      const prev = stitches[i - 1];
+      const px = prev[2], py = prev[3];
+      if (Math.abs(px - x0) > 0.5 || Math.abs(py - y0) > 0.5) {
+        // Row-change connector: move without stroke gap (keeps path continuous)
+        ctx.lineTo(x0, y0);
+      }
+    }
+
     ctx.lineTo(x1, y1);
   }
+
   ctx.stroke();
 }
 
@@ -113,7 +141,11 @@ export default function StitchCanvas({
   }, [imageUrl]);
 
   useEffect(() => { drawImageLayer(); }, [zoom, offset, imageOpacity]);
-  useEffect(() => { drawStitchLayer(); }, [regions, zoom, offset, stitchOpacity, showFill, showContour, viewMode]);
+  useEffect(() => {
+    // Invalidate fill cache when regions change (new params, new regions)
+    stitchCache.current.clear();
+    drawStitchLayer();
+  }, [regions, zoom, offset, stitchOpacity, showFill, showContour, viewMode]);
   useEffect(() => { drawOverlayLayer(); }, [selectedRegionId, hoveredRegion, zoom, offset, regions]);
 
   // ── LAYER 1: Image ──────────────────────────────────────────────────────────
