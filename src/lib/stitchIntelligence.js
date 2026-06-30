@@ -243,63 +243,109 @@ export function eieStitchType(geo) {
 // ─── 2. Fill Angle ────────────────────────────────────────────────────────────
 
 /**
- * Computes optimal fill angle using 5 geometric signals:
- *   A1: PCA orientation (primary axis of mass distribution)
- *   A2: Perpendicular correction for highly elongated shapes
- *   A3: 45° bias for near-axis shapes (standard in the trade)
- *   A4: Curvature correction (diagonal bisects curvature better)
- *   A5: Context angle (neighbouring regions — visual harmony)
+ * FASE 3 — Dirección inteligente del relleno
+ *
+ * Señales aplicadas en orden de prioridad descendente:
+ *   A1: PCA orientation  — eje de masa principal de la región
+ *   A2: Perpendicular    — formas muy elongadas: puntadas ⊥ al eje largo
+ *   A3: Anti-grain bias  — eje ≈ 0°/180° en formas convexas → 45° (evita trampolín)
+ *   A4: Curvature flow   — curvatura media ajusta el ángulo para seguir el flujo de curvas
+ *                          (activa desde 0.3 para mayor sensibilidad, no solo >0.7)
+ *   A5: Volume signal    — compacidad alta (círculo/cuadrado) → 45° da volumen al centro
+ *   A6: Neighbour diverge — si dos regiones contiguas tendrían exactamente el mismo
+ *                           ángulo, desviamos ±20° al vecino más pequeño para
+ *                           garantizar diferenciación visual sin seam duro
+ *
+ * Reglas de producción preservadas:
+ *   - overrides del usuario se aplican en eieAnalyzeRegion (aquí se ignoran)
+ *   - resultado siempre en [0, 180) grados enteros
+ *   - cada decisión se registra en rationale y signals para transparencia
  *
  * Returns { angle_deg, rationale, signals }
  */
 export function eieFillAngle(geo, context = {}) {
-  const { orientation, skeleton_length_mm, mean_width_mm, mean_curvature, convexity } = geo;
+  const { orientation, skeleton_length_mm, mean_width_mm, mean_curvature, convexity, area_mm2 } = geo;
   const elongation = skeleton_length_mm / Math.max(0.1, mean_width_mm);
 
   const signals = [];
-  let angle = orientation;
+  let angle = orientation != null ? orientation : 45;
   const decisions = [];
 
-  // A1 — PCA baseline
-  decisions.push(`A1: eje PCA = ${orientation}°`);
-  signals.push({ id: 'A1_pca', angle: orientation, weight: 1.0 });
+  // A1 — PCA baseline: eje de masa principal (no se cambia aquí, solo se registra)
+  decisions.push(`A1: eje PCA = ${angle}°`);
+  signals.push({ id: 'A1_pca', angle, weight: 1.0 });
 
-  // A2 — Perpendicular for elongated shapes
+  // A2 — Perpendicular: formas muy elongadas (tiras, contornos)
+  // Las puntadas paralelas al eje largo de una tira producen un aspecto plano;
+  // perpendiculares dan volumen y mejor cobertura en los extremos.
   if (elongation > 3.0) {
-    angle = (orientation + 90) % 180;
+    angle = (angle + 90) % 180;
     decisions.push(`A2: elongación=${elongation.toFixed(1)}× → perpendicular ${angle}°`);
     signals.push({ id: 'A2_elongated', angle, weight: 0.9 });
   }
 
-  // A3 — 45° bias for near-horizontal/vertical & convex shapes
-  // (parallel stitches along fabric grain cause "trampolining" artifacts)
+  // A3 — Anti-grain: eje ≈ horizontal/vertical en formas convexas → 45°
+  // Puntadas paralelas al grano de tela producen "trampolín" (efecto trampoline).
+  // Solo aplica si la forma es suficientemente convexa (no concavidades complejas).
   if ((angle < 25 || angle > 155) && convexity > 0.65) {
     angle = 45;
-    decisions.push(`A3: eje casi horizontal/vertical → corrección 45°`);
+    decisions.push(`A3: eje casi h/v (${angle}°), convex=${convexity.toFixed(2)} → bias 45°`);
     signals.push({ id: 'A3_axis_bias', angle: 45, weight: 0.8 });
   }
 
-  // A4 — Curvature correction
-  if (mean_curvature > 0.7) {
-    const curveAdj = (mean_curvature > 1.2) ? 45 : 30;
-    angle = (angle + curveAdj) % 180;
-    decisions.push(`A4: curvatura alta (${mean_curvature.toFixed(2)}) → +${curveAdj}° → ${angle}°`);
-    signals.push({ id: 'A4_curvature', angle, weight: 0.6 });
-  }
-
-  // A5 — Neighbour harmony (avoid jarring angle transitions between adjacent regions)
-  if (context.neighbourAngle != null) {
-    const diff = Math.abs(angle - context.neighbourAngle);
-    if (diff > 70 && diff < 110) {
-      // Snap to neighbour to avoid visual seam
-      angle = context.neighbourAngle;
-      decisions.push(`A5: armonía con vecino (${context.neighbourAngle}°) → ${angle}°`);
-      signals.push({ id: 'A5_harmony', angle, weight: 0.5 });
+  // A4 — Curvature flow: el ángulo gira con el flujo de curvas de la región
+  // FASE 3 FIX: umbral bajado 0.7→0.3 para capturar curvas suaves también.
+  // La fórmula escala linealmente entre 0° (recta) y 45° (curva pronunciada).
+  if (mean_curvature > 0.3) {
+    // curveAdj: 0° @ curvature=0.3, 45° @ curvature≥1.5 — interpolación lineal
+    const curveAdj = Math.round(Math.min(45, ((mean_curvature - 0.3) / 1.2) * 45));
+    if (curveAdj > 0) {
+      angle = (angle + curveAdj) % 180;
+      decisions.push(`A4: curvatura=${mean_curvature.toFixed(2)} → flujo +${curveAdj}° → ${angle}°`);
+      signals.push({ id: 'A4_curvature_flow', angle, weight: 0.7 });
     }
   }
 
+  // A5 — Volume signal: formas compactas (near-circular/square) se ven más
+  // volumétricas con 45° porque las puntadas capturan luz desde múltiples ejes.
+  // Aplica solo si no se ha aplicado ya A3 (que también lleva a 45°).
+  const isCompact = convexity > 0.80 && elongation < 1.5;
+  const alreadyAt45 = Math.abs(angle - 45) < 10;
+  if (isCompact && !alreadyAt45) {
+    // Blend suave hacia 45°: 30% del recorrido angular (no snap duro)
+    const delta = ((45 - angle + 270) % 180) - 90; // diferencia con signo [-90, 90]
+    angle = Math.round((angle + delta * 0.30 + 360) % 180);
+    decisions.push(`A5: forma compacta (convex=${convexity.toFixed(2)}, elon=${elongation.toFixed(1)}) → volumen blend → ${angle}°`);
+    signals.push({ id: 'A5_volume', angle, weight: 0.5 });
+  }
+
+  // A6 — Neighbour divergence: garantizar ángulo diferente en regiones contiguas
+  // FASE 3 FIX: la lógica anterior (A5) solo hacía snap si diff∈(70°,110°),
+  // lo que dejaba pasar casos con diferencias de 0–10° (aspecto idéntico).
+  // Nueva regla: si la diferencia con el vecino es < 20°, desviamos ±20°
+  // en la dirección que más se aleja del vecino (sin colapsar a su ángulo).
+  if (context.neighbourAngle != null) {
+    const neighbourAngle = context.neighbourAngle;
+    const rawDiff = ((angle - neighbourAngle + 360) % 180); // [0, 180)
+    const absDiff = rawDiff > 90 ? 180 - rawDiff : rawDiff; // [0, 90]
+
+    if (absDiff < 20) {
+      // Demasiado similar — desviamos 20° en dirección opuesta al vecino
+      const sign = rawDiff <= 90 ? +1 : -1;
+      angle = ((angle + sign * 20) + 360) % 180;
+      decisions.push(`A6: vecino=${neighbourAngle}° dif=${absDiff}°<20° → divergencia +${sign * 20}° → ${angle}°`);
+      signals.push({ id: 'A6_neighbour_diverge', angle, weight: 0.6 });
+    } else if (absDiff > 70 && absDiff < 110) {
+      // Diferencia jarring (cerca de perpendicular) — snap al vecino para armonía
+      angle = neighbourAngle;
+      decisions.push(`A6: vecino=${neighbourAngle}° dif=${absDiff}°∈(70°,110°) → armonía snap → ${angle}°`);
+      signals.push({ id: 'A6_neighbour_harmony', angle, weight: 0.5 });
+    }
+    // dif∈[20°, 70°] o [110°,160°]: diferencia natural, no intervenir
+  }
+
   return {
-    angle_deg: Math.round(angle),
+    angle_deg: Math.round(((angle % 180) + 180) % 180), // garantizar [0, 180)
     rationale: decisions.join(' → '),
     signals,
   };
