@@ -40,6 +40,7 @@ import { adaptRegion } from './adaptiveEngine.js';
 import { applyProfessionalStrategy } from './embroideryStrategy.js';
 import { partitionRegions } from './regionPartitioner.js';
 import { computeAdaptiveDensity } from './adaptiveDensity.js';
+import { cleanMicroRegions } from './microRegionCleaner.js';
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 
@@ -499,11 +500,27 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
  * Enriquece todas las regiones y asigna travelOrder (secuencia greedy por prioridad + proximidad).
  */
 export function enrichAllRegions(regions, designWidthMm = 100, designHeightMm = 100, fabricType = 'Algodón', useAdaptive = true) {
+  // FASE 10: Limpieza de micro-regiones ANTES de particionar y enriquecer.
+  // Elimina islotes, fusiona micro-regiones y consolida cambios de color innecesarios.
+  const { regions: cleaned, stats: cleanStats } = cleanMicroRegions(regions, {
+    mergeThresholdMm2: 4.0,
+    islandRadiusNorm:  0.15,
+    minStitches:       3,
+    colorMergeGapMm2:  2.0,
+  });
+
   // FASE 4: Partición automática de regiones irregulares (antes de enriquecer)
-  const partitioned = partitionRegions(regions, designWidthMm, designHeightMm);
+  const partitioned = partitionRegions(cleaned, designWidthMm, designHeightMm);
   const enriched = partitioned.map(r => enrichRegion(r, partitioned, designWidthMm, designHeightMm, fabricType, useAdaptive));
 
   // EIE v3.0 — Professional Strategy Engine:
   // Adjacency graph → layering fix → angle harmony → sewing order → jump routing → deformation prevention
-  return applyProfessionalStrategy(enriched, fabricType);
+  const strategized = applyProfessionalStrategy(enriched, fabricType);
+
+  // Attach FASE 10 clean stats to first region for diagnostics
+  if (strategized.length > 0 && cleanStats.total_removed > 0) {
+    strategized[0] = { ...strategized[0], _fase10_stats: cleanStats };
+  }
+
+  return strategized;
 }
