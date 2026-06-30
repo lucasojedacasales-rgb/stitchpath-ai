@@ -14,7 +14,10 @@
  * 10. Auto gap closing (merge nearby contour endpoints)
  * 11. Noise removal (minimum area threshold)
  * 12. Geometric metrics (area, perimeter, compactness, PCA angle, inertia ratio)
+ * 13. NUEVO: Polygon validation + auto-repair (closure, gaps, self-intersections)
  */
+
+import { validatePolygon, scorePolygonQuality } from '@/lib/contourValidation';
 
 const DEFAULTS = {
   analysisSize:       1024,   // px — higher = more sub-pixel accuracy
@@ -113,22 +116,28 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
         normalized.push([...first]);
       }
 
-      // 12. Geometric metrics
-      const areaNorm    = shoelaceArea(normalized);
+      // 13. NUEVO: Validación de polígono con auto-repair (FASE 1)
+      // Esto garantiza closure, cierra gaps, detecta y repara intersecciones
+      const validation = validatePolygon(normalized, { autoRepair: true, tolerance: 0.005 });
+      const repairedPath = validation.repaired;
+      const qualityScore = scorePolygonQuality(repairedPath);
+
+      // 12. Geometric metrics (sobre polígono reparado para métricas fiables)
+      const areaNorm    = shoelaceArea(repairedPath);
       let   perimNorm   = 0;
-      for (let i = 0; i < normalized.length - 1; i++) {
+      for (let i = 0; i < repairedPath.length - 1; i++) {
         perimNorm += Math.hypot(
-          normalized[i+1][0] - normalized[i][0],
-          normalized[i+1][1] - normalized[i][1],
+          repairedPath[i+1][0] - repairedPath[i][0],
+          repairedPath[i+1][1] - repairedPath[i][1],
         );
       }
       const compacidad    = perimNorm > 0 ? (4 * Math.PI * areaNorm) / (perimNorm ** 2) : 0;
-      const inertia_ratio = computeInertiaRatio(normalized);
-      const fill_angle    = computePCAAngle(normalized);
+      const inertia_ratio = computeInertiaRatio(repairedPath);
+      const fill_angle    = computePCAAngle(repairedPath);
       const bw            = (blob.bbox.maxX - blob.bbox.minX) / W;
       const bh            = (blob.bbox.maxY - blob.bbox.minY) / H;
-      const centroidX     = normalized.reduce((s, p) => s + p[0], 0) / normalized.length;
-      const centroidY     = normalized.reduce((s, p) => s + p[1], 0) / normalized.length;
+      const centroidX     = repairedPath.reduce((s, p) => s + p[0], 0) / repairedPath.length;
+      const centroidY     = repairedPath.reduce((s, p) => s + p[1], 0) / repairedPath.length;
 
       regions.push({
         hex:            rgbToHex(palette[ci]),
@@ -143,10 +152,15 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
         bbox_aspect:    bh > 0 ? bw / bh : 1,
         fill_angle,
         centroid:       [centroidX, centroidY],
-        path_points:    normalized,
+        path_points:    repairedPath,  // FASE 1: usar polígono validado
         bezier_handles: bezierHandles,
         corner_count:   smoothCorners.size,
         bbox:           blob.bbox,
+        _validation: {
+          isValid: validation.isValid,
+          errors: validation.errors,
+          qualityScore,  // 0-10: mayor = mejor para tatami/satin
+        }
       });
     }
   }
