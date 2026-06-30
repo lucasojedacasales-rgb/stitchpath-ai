@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Play, Pause, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
 import EmbroideryPreview3D from '@/components/editor/EmbroideryPreview3D.jsx';
 
@@ -20,9 +20,10 @@ export default function EmbroideryPreview({ regions, config }) {
   const [viewMode, setViewMode] = useState('sequential'); // 'flat', 'sequential', 'layers'
   const [show3D, setShow3D] = useState(false); // toggle 3D view
 
-  // ─── Build stitches array from regions ──────────────────────────────────
-  const stitches = buildStitchesFromRegions(regions, config);
-  const visibleStitches = stitches.slice(0, Math.ceil((progress / 100) * stitches.length));
+  // ─── Build stitches array from regions (memoizado) ──────────────────────────────
+  // Solo recalcula si regions o config cambian; progress no afecta la construcción
+  const stitches = useMemo(() => buildStitchesFromRegions(regions, config), [regions, config]);
+  const visibleStitches = useMemo(() => stitches.slice(0, Math.ceil((progress / 100) * stitches.length)), [stitches, progress]);
 
   // ─── Playback animation loop ────────────────────────────────────────────
   useEffect(() => {
@@ -46,6 +47,12 @@ export default function EmbroideryPreview({ regions, config }) {
   }, [isPlaying, speed, stitches.length]);
 
   // ─── Canvas rendering ───────────────────────────────────────────────────
+  // ─── Canvas rendering (optimizado: solo redibuja cuando cambian datos visuales)
+  const drawingParams = useMemo(() => ({
+    bounds: stitches.length > 0 ? calculateBounds(stitches) : null,
+    scale: stitches.length > 0 ? calculateScale(calculateBounds(stitches), 800, 600, zoom) : 1,
+  }), [stitches, zoom]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -58,11 +65,10 @@ export default function EmbroideryPreview({ regions, config }) {
     ctx.fillStyle = fabricColor;
     ctx.fillRect(0, 0, w, h);
 
-    if (stitches.length === 0) return;
+    if (stitches.length === 0 || !drawingParams.bounds) return;
 
-    // Calculate bounds
-    const bounds = calculateBounds(stitches);
-    const scale = calculateScale(bounds, w, h, zoom);
+    const bounds = drawingParams.bounds;
+    const scale = drawingParams.scale;
     const offsetX = (w - (bounds.maxX - bounds.minX) * scale) / 2;
     const offsetY = (h - (bounds.maxY - bounds.minY) * scale) / 2;
 
@@ -71,19 +77,16 @@ export default function EmbroideryPreview({ regions, config }) {
 
     // Draw based on view mode
     if (viewMode === 'flat') {
-      // Show all stitches regardless of progress
       drawAllStitches(ctx, stitches, toScreenX, toScreenY, showTravel);
     } else if (viewMode === 'sequential') {
-      // Draw only up to current progress
       drawStitchesSequential(ctx, visibleStitches, stitches, toScreenX, toScreenY, showTravel);
     } else if (viewMode === 'layers') {
-      // Draw one complete region at a time
       drawStitchesByLayer(ctx, regions, stitches, progress, toScreenX, toScreenY, showTravel);
     }
 
     // Info overlay
     drawInfoOverlay(ctx, w, h, progress, visibleStitches.length, stitches.length, config);
-  }, [stitches, visibleStitches, progress, zoom, fabricColor, viewMode, showTravel, regions, config]);
+  }, [visibleStitches, progress, zoom, fabricColor, viewMode, showTravel, regions, config, stitches.length, drawingParams]);
 
   // ─── Controls ───────────────────────────────────────────────────────────
   const handlePlayPause = () => {
@@ -289,7 +292,13 @@ export default function EmbroideryPreview({ regions, config }) {
 /**
  * Build stitches array from regions — FILL + CONTOURS
  * Genera tatami y satin fills con texturas diferenciadas
+ * 
+ * OPTIMIZACIÓN: Caché por región para evitar recalcular fills
+ * cada vez que se actualiza el estado (zoom, progress, opacity, etc).
+ * Solo recalcula si region.id, density, angle, o config cambian.
  */
+const _stitchCache = new Map(); // regionId → {hash, stitches}
+
 function buildStitchesFromRegions(regions, config) {
   const stitches = [];
   const designW = config.width_mm || 100;
@@ -311,7 +320,7 @@ function buildStitchesFromRegions(regions, config) {
       p[1] * designH,
     ]);
 
-    // === FILL STITCHES: Tatami vs Satin ===
+    // === FILL STITCHES: Tatami vs Satin (con caché) ===
     if (type === 'fill' || type === 'satin') {
       const density = region.tatami_density || region.density || 0.4;
       const stitchLen = 2.5;
@@ -319,9 +328,28 @@ function buildStitchesFromRegions(regions, config) {
       // Detectar si es satin o tatami por compactness
       const isSatin = region.stitch_type === 'satin' && region.compacidad > 0.15;
       
-      const fillStitches = isSatin
-        ? generateSatinFillLines(polygonMm, angle, density, stitchLen, color, region.id)
-        : generateTatamiFillLines(polygonMm, angle, density, stitchLen, color, region.id);
+      // Hash para invalidar caché: si cambian params clave, recalcula
+      const cacheKey = `${region.id}`;
+      const paramHash = `${isSatin}|${density}|${angle}|${color}`;
+      const cached = _stitchCache.get(cacheKey);
+      
+      let fillStitches;
+      if (cached && cached.hash === paramHash && cached.polygon === JSON.stringify(polygonMm)) {
+        // ✓ Caché válido — reutiliza stitches
+        fillStitches = cached.stitches;
+      } else {
+        // ✗ Caché inválido — recalcula
+        fillStitches = isSatin
+          ? generateSatinFillLines(polygonMm, angle, density, stitchLen, color, region.id)
+          : generateTatamiFillLines(polygonMm, angle, density, stitchLen, color, region.id);
+        
+        // Almacena en caché
+        _stitchCache.set(cacheKey, {
+          hash: paramHash,
+          polygon: JSON.stringify(polygonMm),
+          stitches: fillStitches
+        });
+      }
       
       stitches.push(...fillStitches);
     }
