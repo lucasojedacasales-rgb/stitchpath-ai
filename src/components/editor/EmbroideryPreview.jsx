@@ -265,8 +265,13 @@ export default function EmbroideryPreview({ regions, config }) {
             <span className="text-slate-500 ml-1">{stitches.length}</span>
           </span>
           <span className="text-slate-400">
-            Tiempo estimado:{' '}
-            <span className="text-cyan-400 font-bold">{estimateTime(stitches.length, config)}</span>
+            Cobertura:{' '}
+            <span className={`font-bold ${calculateCoverage(regions) > 85 ? 'text-green-400' : calculateCoverage(regions) > 70 ? 'text-yellow-400' : 'text-orange-400'}`}>
+              {calculateCoverage(regions)}%
+            </span>
+          </span>
+          <span className="text-slate-400">
+            Tiempo: <span className="text-cyan-400 font-bold">{estimateTime(stitches.length, config)}</span>
           </span>
           <span className="text-slate-400">
             Regiones: <span className="text-emerald-400 font-bold">{regions.length}</span>
@@ -283,7 +288,7 @@ export default function EmbroideryPreview({ regions, config }) {
 
 /**
  * Build stitches array from regions — FILL + CONTOURS
- * CRITICAL: Generate actual fill lines (parallel dense stitches), not just contours
+ * Genera tatami y satin fills con texturas diferenciadas
  */
 function buildStitchesFromRegions(regions, config) {
   const stitches = [];
@@ -298,25 +303,30 @@ function buildStitchesFromRegions(regions, config) {
 
     const color = region.color || '#ffffff';
     const type = region.stitch_type || 'fill';
-    const angle = (region.angle || 0) * (Math.PI / 180); // convert to radians
+    const angle = (region.angle || 0) * (Math.PI / 180);
 
-    // Convert normalized path_points to mm (contour polygon)
+    // Convert normalized path_points to mm
     const polygonMm = region.path_points.map((p) => [
       p[0] * designW,
       p[1] * designH,
     ]);
 
-    // === FILL STITCHES (priority: actual fill lines) ===
+    // === FILL STITCHES: Tatami vs Satin ===
     if (type === 'fill' || type === 'satin') {
-      const density = region.tatami_density || region.density || 0.4; // mm between rows
-      const stitchLen = 2.5; // mm per stitch segment
+      const density = region.tatami_density || region.density || 0.4;
+      const stitchLen = 2.5;
       
-      // Generate scanline fills with proper density
-      const fillStitches = generateTatamiFillLines(polygonMm, angle, density, stitchLen, color, region.id);
+      // Detectar si es satin o tatami por compactness
+      const isSatin = region.stitch_type === 'satin' && region.compacidad > 0.15;
+      
+      const fillStitches = isSatin
+        ? generateSatinFillLines(polygonMm, angle, density, stitchLen, color, region.id)
+        : generateTatamiFillLines(polygonMm, angle, density, stitchLen, color, region.id);
+      
       stitches.push(...fillStitches);
     }
 
-    // === CONTOUR STITCHES (secondary, after fill) ===
+    // === CONTOUR STITCHES ===
     const threadWidth = getThreadWidth(type);
     for (let i = 0; i < polygonMm.length - 1; i++) {
       const [x0, y0] = polygonMm[i];
@@ -325,7 +335,7 @@ function buildStitchesFromRegions(regions, config) {
       const dx = x1 - x0;
       const dy = y1 - y0;
       const dist = Math.hypot(dx, dy);
-      const steps = Math.max(2, Math.ceil(dist / 0.3)); // 0.3mm per contour stitch
+      const steps = Math.max(2, Math.ceil(dist / 0.3));
 
       for (let j = 0; j < steps; j++) {
         const t = j / steps;
@@ -336,7 +346,7 @@ function buildStitchesFromRegions(regions, config) {
           regionId: region.id,
           color,
           isJump: false,
-          threadWidth: threadWidth * 0.7, // contours slightly thinner
+          threadWidth: threadWidth * 0.7,
         });
       }
     }
@@ -432,6 +442,96 @@ function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regi
           color,
           isJump: false,
           threadWidth: 0.4, // slightly thicker to be visible
+        });
+      }
+    }
+  }
+
+  return stitches;
+}
+
+/**
+ * Generate satin fill lines — columnas perpendiculares a tatami
+ * Textura visual diferenciada: columnas en lugar de filas
+ */
+function generateSatinFillLines(polygon, angle, density, stitchLen, color, regionId) {
+  const stitches = [];
+  if (polygon.length < 3) return stitches;
+
+  // Calculate bounding box
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const [x, y] of polygon) {
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+
+  // Rotate into satin-space (perpendicular to tatami)
+  const satinAngle = angle + Math.PI / 2; // 90° offset
+  const cosA = Math.cos(satinAngle);
+  const sinA = Math.sin(satinAngle);
+  
+  const rotatePoint = (x, y) => [
+    x * cosA + y * sinA,
+    -x * sinA + y * cosA,
+  ];
+
+  const rotatedPoly = polygon.map(p => rotatePoint(p[0], p[1]));
+  
+  let rMinX = Infinity, rMaxX = -Infinity, rMinY = Infinity, rMaxY = -Infinity;
+  for (const [x, y] of rotatedPoly) {
+    rMinX = Math.min(rMinX, x);
+    rMaxX = Math.max(rMaxX, x);
+    rMinY = Math.min(rMinY, y);
+    rMaxY = Math.max(rMaxY, y);
+  }
+
+  // Satin: columnas más anchas que tatami (0.5-0.8mm entre líneas)
+  const satinDensity = Math.max(0.4, Math.min(density * 1.3, 0.8));
+
+  for (let x = rMinX; x < rMaxX; x += satinDensity) {
+    const intersections = [];
+    for (let i = 0; i < rotatedPoly.length; i++) {
+      const [x1, y1] = rotatedPoly[i];
+      const [x2, y2] = rotatedPoly[(i + 1) % rotatedPoly.length];
+
+      if ((x1 <= x && x < x2) || (x2 <= x && x < x1)) {
+        const t = (x - x1) / (x2 - x1);
+        const y = y1 + t * (y2 - y1);
+        intersections.push(y);
+      }
+    }
+
+    intersections.sort((a, b) => a - b);
+    for (let i = 0; i < intersections.length - 1; i += 2) {
+      const y1 = intersections[i];
+      const y2 = intersections[i + 1];
+
+      const unrotate = (x, y) => [
+        x * cosA - y * sinA,
+        x * sinA + y * cosA,
+      ];
+
+      const [ox1, oy1] = unrotate(x, y1);
+      const [ox2, oy2] = unrotate(x, y2);
+
+      const dx = ox2 - ox1;
+      const dy = oy2 - oy1;
+      const len = Math.hypot(dx, dy);
+      const steps = Math.max(3, Math.ceil(len / 1.5));
+
+      for (let s = 0; s < steps; s++) {
+        const t = s / steps;
+        stitches.push({
+          x: ox1 + dx * t,
+          y: oy1 + dy * t,
+          type: 'fill',
+          regionId,
+          color,
+          isJump: false,
+          fillPattern: 'satin', // marca para renderizado diferenciado
+          threadWidth: 0.45, // satin: medio entre tatami y contorno
         });
       }
     }
@@ -746,6 +846,13 @@ function drawInfoOverlay(ctx, w, h, progress, visibleCount, totalCount, config) 
   ctx.fillStyle = '#94a3b8';
   ctx.fillText(`Progreso: ${Math.round(progress)}%`, 10, 35);
   ctx.fillText(`Tiempo: ${estimateTime(totalCount, config)}`, 10, 50);
+}
+
+function calculateCoverage(regions) {
+  if (!regions || regions.length === 0) return 0;
+  const totalArea = regions.reduce((sum, r) => sum + (r.area_mm2 || 0), 0);
+  const filledArea = regions.filter(r => r.stitch_type === 'fill' || r.stitch_type === 'satin').reduce((sum, r) => sum + (r.area_mm2 || 0), 0);
+  return Math.round((filledArea / totalArea) * 100) || 0;
 }
 
 function estimateTime(stitchCount, config) {
