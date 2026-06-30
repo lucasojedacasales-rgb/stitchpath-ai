@@ -64,7 +64,7 @@ export default function Dashboard() {
               <span className="text-base">🧵</span>
             </div>
             <div>
-              <h1 className="text-lg font-bold tracking-tight">StitchFlow IA</h1>
+              <h1 className="text-lg font-bold tracking-tight">StitchPath AI</h1>
               <p className="text-[11px] text-slate-500">Motor de digitalización avanzado</p>
             </div>
           </div>

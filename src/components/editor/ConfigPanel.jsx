@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { ChevronDown, ChevronRight, Zap, Cpu, Settings, BookMarked, Brain, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Zap, Cpu, Settings, BookMarked, Brain, Loader2, Sparkles, CheckCircle2, Info } from 'lucide-react';
 import WorkflowPresetPanel from './WorkflowPresetPanel';
 import { DIGITIZE_MODES, MODE_COLORS } from '@/lib/digitizeModes';
 import { generateProcessingPlan } from '@/lib/intelligentEngine';
@@ -46,6 +46,17 @@ function Section({ title, icon: Icon, children, defaultOpen = true }) {
       </button>
       {open && <div className="px-4 pb-4">{children}</div>}
     </div>
+  );
+}
+
+function Tooltip({ text }) {
+  return (
+    <span className="relative group cursor-help ml-1">
+      <Info className="w-3 h-3 text-slate-600 inline" />
+      <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 z-50 w-48 px-2 py-1.5 rounded bg-[#1e2130] border border-[#2a2d3a] text-[10px] text-slate-300 leading-tight shadow-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-normal">
+        {text}
+      </span>
+    </span>
   );
 }
 
@@ -124,7 +135,10 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
       <Section title="Configuración General" icon={Settings}>
         <div className="space-y-3">
           <div>
-            <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-1 block">Tipo de tela</label>
+            <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-1 block">
+            Tipo de tela
+            <Tooltip text="El tipo de tela determina los factores de compensación de tensión, pull y push. Lycra y Mezcla requieren mayor compensación." />
+          </label>
             <select
               value={cfg.fabric_type || 'Algodón'}
               onChange={e => set('fabric_type', e.target.value)}
@@ -155,7 +169,10 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
           </div>
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="text-[11px] text-slate-500 uppercase tracking-wider">Optimizador de colores</label>
+              <label className="text-[11px] text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                Optimizador de colores
+                <Tooltip text="K-means clustering. Menos colores = menos cambios de hilo y menos tiempo de máquina. Recomendado: 4-8." />
+              </label>
               <span className="text-xs font-bold text-violet-400">{cfg.color_count || 6}</span>
             </div>
             <input
@@ -416,7 +433,10 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
       <Section title="Relleno Tatami" icon={Cpu}>
         <div className="space-y-3">
           <div>
-            <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-2 block">Densidad</label>
+            <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1">
+            Densidad
+            <Tooltip text="Espaciado entre filas de puntada. Menor = más densa y pesada. Para badges usa 0.3mm; para logo estándar 0.4mm." />
+          </label>
             <div className="grid grid-cols-2 gap-1.5">
               {[
                 { id: 'low',   label: 'Baja',  sub: '0.6mm · rápido',         value: 0.6 },
@@ -446,7 +466,10 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
             </div>
           </div>
           <div>
-            <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-2 block">Ángulo de relleno</label>
+            <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1">
+            Ángulo de relleno
+            <Tooltip text="Dirección de las filas tatami. Auto usa PCA de la región. 45° da volumen a formas compactas." />
+          </label>
             <div className="flex gap-1 flex-wrap">
               {[
                 { label: 'Auto', value: null },
@@ -525,6 +548,49 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
               type="number" min="0" max="2" step="0.1"
               value={cfg.tension_comp || 0.5}
               onChange={e => set('tension_comp', Number(e.target.value))}
+              className="w-full bg-[#161a23] border border-[#2a2d3a] rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-violet-500"
+            />
+          </div>
+        </div>
+      </Section>
+
+      {/* FASE 10 — Limpieza de micro-regiones */}
+      <Section title="FASE 10 — Limpieza" icon={Settings} defaultOpen={false}>
+        <div className="space-y-3 text-[11px]">
+          <p className="text-slate-500 leading-tight">Umbrales para la fusión automática de micro-regiones antes de la digitalización.</p>
+          <div>
+            <label className="text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">
+              Área mínima (mm²)
+              <Tooltip text="Regiones por debajo de este umbral se fusionan con su vecino más cercano. Por defecto: 4mm²." />
+            </label>
+            <input
+              type="number" min="0.5" max="20" step="0.5"
+              value={cfg.micro_merge_threshold ?? 4.0}
+              onChange={e => set('micro_merge_threshold', Number(e.target.value))}
+              className="w-full bg-[#161a23] border border-[#2a2d3a] rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-violet-500"
+            />
+          </div>
+          <div>
+            <label className="text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">
+              Puntadas mínimas
+              <Tooltip text="Regiones que generarían menos de este número de puntadas se eliminan. Por defecto: 3." />
+            </label>
+            <input
+              type="number" min="1" max="20" step="1"
+              value={cfg.micro_min_stitches ?? 3}
+              onChange={e => set('micro_min_stitches', Number(e.target.value))}
+              className="w-full bg-[#161a23] border border-[#2a2d3a] rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-violet-500"
+            />
+          </div>
+          <div>
+            <label className="text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">
+              Radio islote (0–1)
+              <Tooltip text="Fracción del espacio normalizado. Regiones sin vecinos dentro de este radio se eliminan como islotes. Por defecto: 0.15." />
+            </label>
+            <input
+              type="number" min="0.05" max="0.5" step="0.01"
+              value={cfg.micro_island_radius ?? 0.15}
+              onChange={e => set('micro_island_radius', Number(e.target.value))}
               className="w-full bg-[#161a23] border border-[#2a2d3a] rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-violet-500"
             />
           </div>

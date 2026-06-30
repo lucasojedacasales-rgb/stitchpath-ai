@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Save, Download, Zap, ChevronRight, ArrowLeft } from 'lucide-react';
+import { Save, Download, Zap, ChevronRight, ArrowLeft, CheckCircle2 } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import StepPipeline from '@/components/editor/StepPipeline';
 import AIProgressIndicator from '@/components/editor/AIProgressIndicator';
@@ -56,6 +56,7 @@ export default function Editor() {
   const [showExport, setShowExport] = useState(false);
   const [activeTab, setActiveTab] = useState('editor');
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [savedToast, setSavedToast] = useState(false);
   const [preprocessSettings, setPreprocessSettings] = useState(DEFAULT_PREPROCESS);
   const [preprocessedUrl, setPreprocessedUrl] = useState(null);
   const [pathMetrics, setPathMetrics] = useState(null);
@@ -88,6 +89,24 @@ export default function Editor() {
 
   // Cleanup: clear processing timer on unmount to prevent memory leak / stale setState
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e) => {
+      // Ctrl+S / Cmd+S — save
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveProject();
+      }
+      // Escape — close export modal or deselect region
+      if (e.key === 'Escape') {
+        if (showExport) setShowExport(false);
+        else if (selectedRegionId) setSelectedRegionId(null);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [saveProject, showExport, selectedRegionId]);
 
   const loadProject = async () => {
     setLoading(true);
@@ -128,6 +147,8 @@ export default function Editor() {
       };
       const updated = await base44.entities.Project.update(project.id, payload);
       setProject(updated);
+      setSavedToast(true);
+      setTimeout(() => setSavedToast(false), 2000);
     } finally { setSaving(false); }
   }, [project]);
 
@@ -233,7 +254,7 @@ export default function Editor() {
           <ProjectNameInput name={project?.name || 'Sin título'} onSave={handleRename} />
           <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
           <span className="text-xs text-slate-400">{config.mode || 'hybrid'}</span>
-          <div className="flex-1 flex justify-center"><StepPipeline currentStep={step} /></div>
+          <div className="flex-1 flex justify-center"><StepPipeline currentStep={step} onStepClick={setStep} /></div>
           <AIProgressIndicator active={processing} elapsed={processingElapsed} />
           <div className="flex items-center gap-1.5">
             <NavButton onClick={() => setShowExport(true)} icon={Download} label="Exportar" accent />
@@ -388,6 +409,13 @@ export default function Editor() {
       </div>
 
       {showExport && <ExportModal project={project} regions={regions} onClose={() => setShowExport(false)} />}
+
+      {/* Saved toast */}
+      {savedToast && (
+        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-900/80 border border-emerald-500/40 text-emerald-300 text-xs font-semibold shadow-xl animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <CheckCircle2 className="w-3.5 h-3.5" /> Guardado
+        </div>
+      )}
     </div>);
 
 }

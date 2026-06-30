@@ -499,14 +499,16 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
 /**
  * Enriquece todas las regiones y asigna travelOrder (secuencia greedy por prioridad + proximidad).
  */
-export function enrichAllRegions(regions, designWidthMm = 100, designHeightMm = 100, fabricType = 'Algodón', useAdaptive = true) {
+export function enrichAllRegions(regions, designWidthMm = 100, designHeightMm = 100, fabricType = 'Algodón', useAdaptive = true, cleanOptions = {}) {
   // FASE 10: Limpieza de micro-regiones ANTES de particionar y enriquecer.
   // Elimina islotes, fusiona micro-regiones y consolida cambios de color innecesarios.
+  // cleanOptions puede sobreescribir los umbrales por defecto desde la UI (ConfigPanel).
   const { regions: cleaned, stats: cleanStats } = cleanMicroRegions(regions, {
     mergeThresholdMm2: 4.0,
     islandRadiusNorm:  0.15,
     minStitches:       3,
     colorMergeGapMm2:  2.0,
+    ...cleanOptions,
   });
 
   // FASE 4: Partición automática de regiones irregulares (antes de enriquecer)
