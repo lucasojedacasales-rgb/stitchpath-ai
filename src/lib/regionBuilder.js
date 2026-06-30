@@ -37,7 +37,7 @@
  */
 
 import { adaptRegion } from './adaptiveEngine.js';
-import { eieOptimizeTravelOrder } from './stitchIntelligence.js';
+import { applyProfessionalStrategy } from './embroideryStrategy.js';
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 
@@ -480,7 +480,7 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
 export function enrichAllRegions(regions, designWidthMm = 100, designHeightMm = 100, fabricType = 'Algodón', useAdaptive = true) {
   const enriched = regions.map(r => enrichRegion(r, regions, designWidthMm, designHeightMm, fabricType, useAdaptive));
 
-  // EIE 2-opt optimized travel order: priority-grouped + nearest-neighbour + 2-opt improvement.
-  // Ensures fills are drawn before satin outlines, and satin before running_stitch details.
-  return eieOptimizeTravelOrder(enriched, fabricType);
+  // EIE v3.0 — Professional Strategy Engine:
+  // Adjacency graph → layering fix → angle harmony → sewing order → jump routing → deformation prevention
+  return applyProfessionalStrategy(enriched, fabricType);
 }
