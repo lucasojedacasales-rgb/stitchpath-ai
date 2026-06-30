@@ -109,45 +109,20 @@ Deno.serve(async (req) => {
       step: 2, // mark for re-processing
     });
 
-    // Invoke hybridDigitize with new parameters
-    const digitizeResult = await base44.functions.invoke('hybridDigitize', {
-      image_url: project.image_url,
-      width_mm: project.width_mm || 100,
-      height_mm: project.height_mm || 100,
-      color_count: newConfig.color_count,
-      mode: project.digitize_mode || 'hybrid',
-      // Pass existing regions as seed for vectorEngine
-      traced_contours: {
-        regions: project.regions || [],
-        imageWidth: 1024,
-        imageHeight: 1024,
-      },
-    });
-
-    if (!digitizeResult.success) {
-      throw new Error(`hybridDigitize failed: ${digitizeResult.error}`);
-    }
-
-    // Update project with new regions
-    const newRegions = digitizeResult.data.regions || [];
-    const totalStitches = digitizeResult.data.total_stitches || 0;
-
+    // Update project config with new parameters (step 2 = re-processing stage)
+    // The user will manually trigger the pipeline re-run in the UI, or we can mark it for auto-reprocess
     await base44.entities.Project.update(project_id, {
-      regions: newRegions,
-      total_stitches: totalStitches,
-      color_count: digitizeResult.data.colors_used || 0,
-      step: 3,
-      status: 'ready',
+      config: newConfig,
+      step: 2,
+      status: 'processing',
     });
 
     return Response.json({
       success: true,
-      message: `Re-digitized with ${adjustments.length} adjustment(s)`,
+      message: `Parámetros ajustados — proyecto marcado para re-procesamiento`,
       current_rating: currentRating,
       adjustments_applied: adjustments,
-      new_region_count: newRegions.length,
-      new_stitch_count: totalStitches,
-      next_step: 'Run analyzeDigitizationQuality again to verify improvement',
+      next_step: 'El pipeline se re-ejecutará automáticamente con los nuevos parámetros',
     });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });

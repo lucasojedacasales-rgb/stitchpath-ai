@@ -3,7 +3,7 @@ import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Zap, BarChart3, Sparkles, ChevronDown } from 'lucide-react';
+import { Zap, BarChart3, Sparkles, ChevronDown, Wand2 } from 'lucide-react';
 
 export default function QualityAnalysisPanel({ projectId, onAnalysisComplete }) {
   const [analyzing, setAnalyzing] = useState(false);
@@ -11,6 +11,7 @@ export default function QualityAnalysisPanel({ projectId, onAnalysisComplete }) 
   const [training, setTraining] = useState(false);
   const [autoRules, setAutoRules] = useState(null);
   const [expanded, setExpanded] = useState(false);
+  const [autoAdjusting, setAutoAdjusting] = useState(false);
 
   const handleAnalyze = async () => {
     setAnalyzing(true);
@@ -36,6 +37,38 @@ export default function QualityAnalysisPanel({ projectId, onAnalysisComplete }) 
       console.error('Training failed:', err);
     } finally {
       setTraining(false);
+    }
+  };
+
+  const handleAutoAdjustTo10 = async () => {
+    if (!analysis || analysis.quality_assessment?.overall_rating >= 10) return;
+    setAutoAdjusting(true);
+    try {
+      // Step 1: Auto-adjust parameters
+      const adjustResult = await base44.functions.invoke('autoAdjustAndRedigitize', {
+        project_id: projectId,
+      });
+      
+      // Show adjustment summary
+      if (adjustResult.adjustments_applied && adjustResult.adjustments_applied.length > 0) {
+        console.log('Adjustments applied:', adjustResult.adjustments_applied);
+        // In production, might show a toast or notification here
+      }
+      
+      // Step 2: Small delay for backend to persist and re-process
+      await new Promise(r => setTimeout(r, 1200));
+      
+      // Step 3: Re-analyze to get new rating
+      const newAnalysis = await base44.functions.invoke('analyzeDigitizationQuality', {
+        project_id: projectId,
+      });
+      setAnalysis(newAnalysis.data);
+      onAnalysisComplete?.(newAnalysis.data);
+    } catch (err) {
+      console.error('Auto-adjust failed:', err);
+      // Could show error toast here
+    } finally {
+      setAutoAdjusting(false);
     }
   };
 
@@ -91,6 +124,17 @@ export default function QualityAnalysisPanel({ projectId, onAnalysisComplete }) 
         >
           {analyzing ? 'Analizando...' : 'Analizar'}
         </Button>
+        {analysis && analysis.quality_assessment?.overall_rating < 10 && (
+          <Button
+            onClick={handleAutoAdjustTo10}
+            disabled={autoAdjusting || !projectId}
+            size="sm"
+            className="flex-1 text-xs h-8 bg-green-600 hover:bg-green-700 flex items-center gap-1"
+          >
+            <Wand2 className="w-3 h-3" />
+            {autoAdjusting ? 'Ajustando...' : 'A 10/10'}
+          </Button>
+        )}
         <Button
           onClick={handleTrainAutoAdjustment}
           disabled={training}
