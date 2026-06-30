@@ -252,7 +252,8 @@ export default function EmbroideryPreview({ regions, config }) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Build stitches array from regions
+ * Build stitches array from regions — FILL + CONTOURS
+ * CRITICAL: Generate actual fill lines (parallel dense stitches), not just contours
  */
 function buildStitchesFromRegions(regions, config) {
   const stitches = [];
@@ -263,39 +264,140 @@ function buildStitchesFromRegions(regions, config) {
   const sorted = [...regions].sort((a, b) => (a.priority || 0) - (b.priority || 0));
 
   for (const region of sorted) {
-    if (!region.visible || !region.path_points || region.path_points.length < 2) continue;
+    if (!region.visible || !region.path_points || region.path_points.length < 3) continue;
 
     const color = region.color || '#ffffff';
     const type = region.stitch_type || 'fill';
+    const angle = (region.angle || 0) * (Math.PI / 180); // convert to radians
 
-    // Convert normalized path_points to mm
-    const pathMm = region.path_points.map((p) => [
+    // Convert normalized path_points to mm (contour polygon)
+    const polygonMm = region.path_points.map((p) => [
       p[0] * designW,
       p[1] * designH,
     ]);
 
-    // Generate stitches for this region
-    const threadWidth = getThreadWidth(type);
-    for (let i = 0; i < pathMm.length - 1; i++) {
-      const [x0, y0] = pathMm[i];
-      const [x1, y1] = pathMm[i + 1];
+    // === FILL STITCHES (priority: actual fill lines) ===
+    if (type === 'fill' || type === 'satin') {
+      const density = region.tatami_density || region.density || 0.4; // mm between rows
+      const stitchLen = 2.5; // mm per stitch segment
+      
+      // Generate scanline fills with proper density
+      const fillStitches = generateTatamiFillLines(polygonMm, angle, density, stitchLen, color, region.id);
+      stitches.push(...fillStitches);
+    }
 
-      // Interpolate stitches along the segment
+    // === CONTOUR STITCHES (secondary, after fill) ===
+    const threadWidth = getThreadWidth(type);
+    for (let i = 0; i < polygonMm.length - 1; i++) {
+      const [x0, y0] = polygonMm[i];
+      const [x1, y1] = polygonMm[i + 1];
+
       const dx = x1 - x0;
       const dy = y1 - y0;
       const dist = Math.hypot(dx, dy);
-      const steps = Math.max(2, Math.ceil(dist / 0.5)); // 0.5mm per stitch
+      const steps = Math.max(2, Math.ceil(dist / 0.3)); // 0.3mm per contour stitch
 
       for (let j = 0; j < steps; j++) {
         const t = j / steps;
         stitches.push({
           x: x0 + dx * t,
           y: y0 + dy * t,
-          type,
+          type: 'contour',
           regionId: region.id,
           color,
           isJump: false,
-          threadWidth,
+          threadWidth: threadWidth * 0.7, // contours slightly thinner
+        });
+      }
+    }
+  }
+
+  return stitches;
+}
+
+/**
+ * Generate tatami fill lines — parallel lines rotated by angle, clipped to polygon
+ * Returns array of stitch objects with proper fill line segments
+ */
+function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regionId) {
+  const stitches = [];
+  if (polygon.length < 3) return stitches;
+
+  // Calculate bounding box
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const [x, y] of polygon) {
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+
+  // Rotate polygon and bbox into fill-space (angle-aligned scanlines)
+  const cosA = Math.cos(angle);
+  const sinA = Math.sin(angle);
+  
+  const rotatePoint = (x, y) => [
+    x * cosA + y * sinA,
+    -x * sinA + y * cosA,
+  ];
+
+  const rotatedPoly = polygon.map(p => rotatePoint(p[0], p[1]));
+  
+  let rMinX = Infinity, rMaxX = -Infinity, rMinY = Infinity, rMaxY = -Infinity;
+  for (const [x, y] of rotatedPoly) {
+    rMinX = Math.min(rMinX, x);
+    rMaxX = Math.max(rMaxX, x);
+    rMinY = Math.min(rMinY, y);
+    rMaxY = Math.max(rMaxY, y);
+  }
+
+  // Generate horizontal scanlines in fill-space, spaced by density
+  for (let y = rMinY; y < rMaxY; y += density) {
+    // Find intersections with polygon edges at this Y
+    const intersections = [];
+    for (let i = 0; i < rotatedPoly.length; i++) {
+      const [x1, y1] = rotatedPoly[i];
+      const [x2, y2] = rotatedPoly[(i + 1) % rotatedPoly.length];
+
+      // Line segment crosses this scanline?
+      if ((y1 <= y && y < y2) || (y2 <= y && y < y1)) {
+        const t = (y - y1) / (y2 - y1);
+        const x = x1 + t * (x2 - x1);
+        intersections.push(x);
+      }
+    }
+
+    // Sort intersections and draw even-odd rule pairs
+    intersections.sort((a, b) => a - b);
+    for (let i = 0; i < intersections.length - 1; i += 2) {
+      const x1 = intersections[i];
+      const x2 = intersections[i + 1];
+
+      // Convert back to original space
+      const unrotate = (x, y) => [
+        x * cosA - y * sinA,
+        x * sinA + y * cosA,
+      ];
+
+      const [ox1, oy1] = unrotate(x1, y);
+      const [ox2, oy2] = unrotate(x2, y);
+
+      // Generate stitches along this fill line
+      const dx = ox2 - ox1;
+      const dy = oy2 - oy1;
+      const len = Math.hypot(dx, dy);
+      const steps = Math.max(2, Math.ceil(len / stitchLen));
+
+      for (let s = 0; s < steps; s++) {
+        const t = s / steps;
+        stitches.push({
+          x: ox1 + dx * t,
+          y: oy1 + dy * t,
+          type: 'fill',
+          regionId,
+          color,
+          isJump: false,
+          threadWidth: 0.35,
         });
       }
     }
@@ -346,74 +448,82 @@ function drawAllStitches(ctx, stitches, toScreenX, toScreenY, showTravel) {
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
 
-  let currentColor = null;
-  let currentType = null;
-  let isPath = false;
+  // Group by type for proper layering: fill first, contour on top
+  const fillStitches = stitches.filter(s => s.type === 'fill');
+  const contourStitches = stitches.filter(s => s.type === 'contour' || s.type === 'satin');
 
-  for (let i = 0; i < stitches.length; i++) {
-    const stitch = stitches[i];
+  // === Draw FILL first (base layer, dense) ===
+  const fillByColor = {};
+  for (const s of fillStitches) {
+    if (!fillByColor[s.color]) fillByColor[s.color] = [];
+    fillByColor[s.color].push(s);
+  }
 
-    if (stitch.color !== currentColor || stitch.type !== currentType) {
-      if (isPath) ctx.stroke();
-      isPath = false;
+  ctx.setLineDash([3, 1]); // stitch pattern
+  ctx.lineWidth = 1.8;
 
-      if (stitch.isJump && !showTravel) continue;
-
-      ctx.strokeStyle = stitch.isJump ? '#999999' : stitch.color;
-      ctx.lineWidth = stitch.isJump ? 0.5 : stitch.threadWidth || 0.5;
-      ctx.setLineDash(stitch.isJump ? [2, 2] : []);
-
-      currentColor = stitch.color;
-      currentType = stitch.type;
-    }
-
-    const x = toScreenX(stitch.x);
-    const y = toScreenY(stitch.y);
-
-    if (!isPath) {
+  for (const [color, colorStitches] of Object.entries(fillByColor)) {
+    ctx.strokeStyle = color;
+    for (let i = 0; i < colorStitches.length - 1; i++) {
+      const s1 = colorStitches[i];
+      const s2 = colorStitches[i + 1];
       ctx.beginPath();
-      ctx.moveTo(x, y);
-      isPath = true;
-    } else {
-      ctx.lineTo(x, y);
+      ctx.moveTo(toScreenX(s1.x), toScreenY(s1.y));
+      ctx.lineTo(toScreenX(s2.x), toScreenY(s2.y));
+      ctx.stroke();
     }
   }
 
-  if (isPath) ctx.stroke();
+  // === Draw CONTOURS on top (solid) ===
+  const contourByColor = {};
+  for (const s of contourStitches) {
+    if (!contourByColor[s.color]) contourByColor[s.color] = [];
+    contourByColor[s.color].push(s);
+  }
+
+  ctx.setLineDash([]);
+  ctx.lineWidth = 1.2;
+
+  for (const [color, colorStitches] of Object.entries(contourByColor)) {
+    ctx.strokeStyle = color;
+    for (let i = 0; i < colorStitches.length - 1; i++) {
+      const s1 = colorStitches[i];
+      const s2 = colorStitches[i + 1];
+      ctx.beginPath();
+      ctx.moveTo(toScreenX(s1.x), toScreenY(s1.y));
+      ctx.lineTo(toScreenX(s2.x), toScreenY(s2.y));
+      ctx.stroke();
+    }
+  }
+
   ctx.setLineDash([]);
 }
 
 function drawStitchesSequential(ctx, visibleStitches, allStitches, toScreenX, toScreenY, showTravel) {
-  // Group by color/type for efficient drawing
-  const groups = {};
-
-  for (const stitch of visibleStitches) {
-    if (stitch.isJump && !showTravel) continue;
-
-    const key = `${stitch.color}_${stitch.type}`;
-    if (!groups[key]) {
-      groups[key] = {
-        stitches: [],
-        color: stitch.color,
-        type: stitch.type,
-        isJump: stitch.isJump,
-        threadWidth: stitch.threadWidth,
-      };
-    }
-    groups[key].stitches.push(stitch);
-  }
+  // Separate by type: fills first (dense), then contours (overlay)
+  const fillStitches = visibleStitches.filter(s => s.type === 'fill');
+  const contourStitches = visibleStitches.filter(s => s.type === 'contour' || s.type === 'satin');
+  const jumpStitches = visibleStitches.filter(s => s.isJump);
 
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
 
-  for (const group of Object.values(groups)) {
-    ctx.strokeStyle = group.isJump ? '#999999' : group.color;
-    ctx.lineWidth = group.isJump ? 0.5 : group.threadWidth || 0.5;
-    ctx.setLineDash(group.isJump ? [2, 2] : []);
+  // === PASS 1: Draw FILL stitches (dense, with dash pattern) ===
+  const fillByColor = {};
+  for (const s of fillStitches) {
+    if (!fillByColor[s.color]) fillByColor[s.color] = [];
+    fillByColor[s.color].push(s);
+  }
 
-    for (let i = 0; i < group.stitches.length - 1; i++) {
-      const s1 = group.stitches[i];
-      const s2 = group.stitches[i + 1];
+  for (const [color, stitches] of Object.entries(fillByColor)) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2; // visible fill lines
+    ctx.setLineDash([3, 1]); // stitch-like pattern
+    ctx.globalAlpha = 0.95; // nearly opaque
+
+    for (let i = 0; i < stitches.length - 1; i++) {
+      const s1 = stitches[i];
+      const s2 = stitches[i + 1];
 
       ctx.beginPath();
       ctx.moveTo(toScreenX(s1.x), toScreenY(s1.y));
@@ -422,6 +532,49 @@ function drawStitchesSequential(ctx, visibleStitches, allStitches, toScreenX, to
     }
   }
 
+  // === PASS 2: Draw CONTOUR stitches (overlay, solid) ===
+  const contourByColor = {};
+  for (const s of contourStitches) {
+    if (!contourByColor[s.color]) contourByColor[s.color] = [];
+    contourByColor[s.color].push(s);
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([]);
+  for (const [color, stitches] of Object.entries(contourByColor)) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.2;
+
+    for (let i = 0; i < stitches.length - 1; i++) {
+      const s1 = stitches[i];
+      const s2 = stitches[i + 1];
+
+      ctx.beginPath();
+      ctx.moveTo(toScreenX(s1.x), toScreenY(s1.y));
+      ctx.lineTo(toScreenX(s2.x), toScreenY(s2.y));
+      ctx.stroke();
+    }
+  }
+
+  // === PASS 3: Draw TRAVEL stitches (optional, thin gray dashes) ===
+  if (showTravel && jumpStitches.length > 0) {
+    ctx.strokeStyle = '#666666';
+    ctx.lineWidth = 0.8;
+    ctx.setLineDash([2, 3]);
+    ctx.globalAlpha = 0.6;
+
+    for (let i = 0; i < jumpStitches.length - 1; i++) {
+      const s1 = jumpStitches[i];
+      const s2 = jumpStitches[i + 1];
+
+      ctx.beginPath();
+      ctx.moveTo(toScreenX(s1.x), toScreenY(s1.y));
+      ctx.lineTo(toScreenX(s2.x), toScreenY(s2.y));
+      ctx.stroke();
+    }
+  }
+
+  ctx.globalAlpha = 1;
   ctx.setLineDash([]);
 }
 
@@ -434,21 +587,43 @@ function drawStitchesByLayer(ctx, regions, allStitches, progress, toScreenX, toS
 
   for (let i = 0; i <= regionIndex && i < sorted.length; i++) {
     const region = sorted[i];
-    const regionStitches = allStitches.filter((s) => s.regionId === region.id);
+    const fillStitches = allStitches.filter((s) => s.regionId === region.id && s.type === 'fill');
+    const contourStitches = allStitches.filter((s) => s.regionId === region.id && s.type === 'contour');
 
-    ctx.strokeStyle = region.color || '#ffffff';
-    ctx.lineWidth = getThreadWidth(region.stitch_type || 'fill');
+    // Draw fill first
+    if (fillStitches.length > 0) {
+      ctx.strokeStyle = region.color || '#ffffff';
+      ctx.lineWidth = 1.8;
+      ctx.setLineDash([3, 1]);
+      
+      for (let j = 0; j < fillStitches.length - 1; j++) {
+        const s1 = fillStitches[j];
+        const s2 = fillStitches[j + 1];
+        ctx.beginPath();
+        ctx.moveTo(toScreenX(s1.x), toScreenY(s1.y));
+        ctx.lineTo(toScreenX(s2.x), toScreenY(s2.y));
+        ctx.stroke();
+      }
+    }
 
-    for (let j = 0; j < regionStitches.length - 1; j++) {
-      const s1 = regionStitches[j];
-      const s2 = regionStitches[j + 1];
-
-      ctx.beginPath();
-      ctx.moveTo(toScreenX(s1.x), toScreenY(s1.y));
-      ctx.lineTo(toScreenX(s2.x), toScreenY(s2.y));
-      ctx.stroke();
+    // Draw contours on top
+    if (contourStitches.length > 0) {
+      ctx.strokeStyle = region.color || '#ffffff';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([]);
+      
+      for (let j = 0; j < contourStitches.length - 1; j++) {
+        const s1 = contourStitches[j];
+        const s2 = contourStitches[j + 1];
+        ctx.beginPath();
+        ctx.moveTo(toScreenX(s1.x), toScreenY(s1.y));
+        ctx.lineTo(toScreenX(s2.x), toScreenY(s2.y));
+        ctx.stroke();
+      }
     }
   }
+
+  ctx.setLineDash([]);
 }
 
 function drawInfoOverlay(ctx, w, h, progress, visibleCount, totalCount, config) {
