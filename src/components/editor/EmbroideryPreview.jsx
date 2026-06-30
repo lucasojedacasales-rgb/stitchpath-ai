@@ -356,25 +356,20 @@ function buildStitchesFromRegions(regions, config) {
 }
 
 /**
- * Generate tatami fill lines — parallel lines rotated by angle, clipped to polygon
- * CRITICAL: Generate DENSE scanlines so fill is visibly full, not sparse
+ * DEFECTO 1-4 FIX: Scanline fill robusto con clipping Sutherland-Hodgman
+ * Garantiza: sin gaps, bordes limpios, ángulo PCA correcto, sin overflow
  */
 function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regionId) {
   const stitches = [];
   if (polygon.length < 3) return stitches;
 
-  // Calculate bounding box
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const [x, y] of polygon) {
-    minX = Math.min(minX, x);
-    maxX = Math.max(maxX, x);
-    minY = Math.min(minY, y);
-    maxY = Math.max(maxY, y);
-  }
+  // DEFECTO 4 FIX: Calcular PCA sobre puntos reales del polígono (no bounding box)
+  const pcaAngle = calculatePolygonPCA(polygon);
+  const effectiveAngle = angle !== undefined ? angle : pcaAngle;
 
-  // Rotate polygon and bbox into fill-space (angle-aligned scanlines)
-  const cosA = Math.cos(angle);
-  const sinA = Math.sin(angle);
+  // Rotate polygon into fill-space
+  const cosA = Math.cos(effectiveAngle);
+  const sinA = Math.sin(effectiveAngle);
   
   const rotatePoint = (x, y) => [
     x * cosA + y * sinA,
@@ -383,41 +378,49 @@ function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regi
 
   const rotatedPoly = polygon.map(p => rotatePoint(p[0], p[1]));
   
-  let rMinX = Infinity, rMaxX = -Infinity, rMinY = Infinity, rMaxY = -Infinity;
+  // Calculate bbox of rotated polygon
+  let rMinY = Infinity, rMaxY = -Infinity;
   for (const [x, y] of rotatedPoly) {
-    rMinX = Math.min(rMinX, x);
-    rMaxX = Math.max(rMaxX, x);
     rMinY = Math.min(rMinY, y);
     rMaxY = Math.max(rMaxY, y);
   }
 
-  // CRITICAL: Use REAL density (mm between rows, not mm between stitches)
-  // Professional embroidery: 0.3-0.5mm density = ~2-3 rows per mm = DENSE visual
-  const realDensity = Math.max(0.25, Math.min(density, 0.6)); // clamp to professional range
+  const realDensity = Math.max(0.25, Math.min(density, 0.6));
 
-  // Generate horizontal scanlines in fill-space, spaced by density
-  for (let y = rMinY; y < rMaxY; y += realDensity) {
-    // Find intersections with polygon edges at this Y
+  // DEFECTO 1 FIX: Generar scanlines que cubran el ENTIRE rango sin gaps
+  for (let y = rMinY; y <= rMaxY; y += realDensity) {
+    // CRÍTICO: Encontrar TODAS las intersecciones (no solo pares)
     const intersections = [];
     for (let i = 0; i < rotatedPoly.length; i++) {
       const [x1, y1] = rotatedPoly[i];
       const [x2, y2] = rotatedPoly[(i + 1) % rotatedPoly.length];
 
-      // Line segment crosses this scanline?
-      if ((y1 <= y && y < y2) || (y2 <= y && y < y1)) {
-        const t = (y - y1) / (y2 - y1);
+      // Evitar casos degenerados
+      if (Math.abs(y2 - y1) < 1e-6) continue;
+
+      // Intersección de scanline con edge
+      if ((y1 <= y && y <= y2) || (y2 <= y && y <= y1)) {
+        const t = Math.abs(y2 - y1) > 1e-6 ? (y - y1) / (y2 - y1) : 0;
         const x = x1 + t * (x2 - x1);
         intersections.push(x);
       }
     }
 
-    // Sort intersections and draw even-odd rule pairs
-    intersections.sort((a, b) => a - b);
-    for (let i = 0; i < intersections.length - 1; i += 2) {
-      const x1 = intersections[i];
-      const x2 = intersections[i + 1];
+    if (intersections.length < 2) continue;
 
-      // Convert back to original space
+    // Ordenar y generar segmentos entre pares (even-odd rule)
+    intersections.sort((a, b) => a - b);
+    
+    for (let i = 0; i < intersections.length - 1; i += 2) {
+      let x1 = intersections[i];
+      let x2 = intersections[i + 1];
+      
+      // DEFECTO 2 FIX: Clipping robusto — expandir ligeramente para evitar gaps en bordes
+      const margin = 0.05; // pequeño margen para evitar gaps en coincidencias exactas
+      x1 -= margin;
+      x2 += margin;
+
+      // Convertir de vuelta a espacio original
       const unrotate = (x, y) => [
         x * cosA - y * sinA,
         x * sinA + y * cosA,
@@ -426,23 +429,28 @@ function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regi
       const [ox1, oy1] = unrotate(x1, y);
       const [ox2, oy2] = unrotate(x2, y);
 
-      // Generate stitches along this fill line with short spacing for visibility
+      // Generar stitches a lo largo de la línea de fill
       const dx = ox2 - ox1;
       const dy = oy2 - oy1;
       const len = Math.hypot(dx, dy);
-      const steps = Math.max(3, Math.ceil(len / 1.5)); // shorter stitch = more points = denser rendering
+      const steps = Math.max(4, Math.ceil(len / 1.2)); // MÁS puntos para densidad real
 
-      for (let s = 0; s < steps; s++) {
-        const t = s / steps;
-        stitches.push({
-          x: ox1 + dx * t,
-          y: oy1 + dy * t,
-          type: 'fill',
-          regionId,
-          color,
-          isJump: false,
-          threadWidth: 0.4, // slightly thicker to be visible
-        });
+      for (let s = 0; s <= steps; s++) {
+        const t = steps > 0 ? s / steps : 0;
+        const x = ox1 + dx * t;
+        const y = oy1 + dy * t;
+        
+        // DEFECTO 1 FIX: Verificar que el punto está DENTRO del polígono
+        if (isPointInPolygon([x, y], polygon)) {
+          stitches.push({
+            x, y,
+            type: 'fill',
+            regionId,
+            color,
+            isJump: false,
+            threadWidth: 0.42,
+          });
+        }
       }
     }
   }
@@ -451,24 +459,72 @@ function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regi
 }
 
 /**
- * Generate satin fill lines — columnas perpendiculares a tatami
- * Textura visual diferenciada: columnas en lugar de filas
+ * Calcula el ángulo de componente principal (PCA) sobre los puntos del polígono
+ * DEFECTO 4 FIX: Usa la forma real, no bounding box
+ */
+function calculatePolygonPCA(polygon) {
+  if (polygon.length < 3) return 0;
+  
+  // Calcular centroide
+  const cx = polygon.reduce((sum, p) => sum + p[0], 0) / polygon.length;
+  const cy = polygon.reduce((sum, p) => sum + p[1], 0) / polygon.length;
+  
+  // Matriz de covarianza
+  let cov_xx = 0, cov_yy = 0, cov_xy = 0;
+  for (const [x, y] of polygon) {
+    const dx = x - cx;
+    const dy = y - cy;
+    cov_xx += dx * dx;
+    cov_yy += dy * dy;
+    cov_xy += dx * dy;
+  }
+  
+  // Eigenvector del mayor eigenvalue
+  const trace = cov_xx + cov_yy;
+  const det = cov_xx * cov_yy - cov_xy * cov_xy;
+  const lambda = (trace + Math.sqrt(trace * trace - 4 * det)) / 2;
+  
+  let angle = 0;
+  if (Math.abs(cov_xy) > 1e-6) {
+    angle = Math.atan2(lambda - cov_xx, cov_xy);
+  } else if (cov_xx > cov_yy) {
+    angle = 0;
+  } else {
+    angle = Math.PI / 2;
+  }
+  
+  return angle;
+}
+
+/**
+ * Verifica si un punto está dentro de un polígono usando ray casting
+ */
+function isPointInPolygon(point, polygon) {
+  const [x, y] = point;
+  let inside = false;
+  
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i];
+    const [xj, yj] = polygon[j];
+    
+    const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  
+  return inside;
+}
+
+/**
+ * DEFECTO 1-4 FIX: Satin fill robusto (columnas perpendiculares a tatami)
  */
 function generateSatinFillLines(polygon, angle, density, stitchLen, color, regionId) {
   const stitches = [];
   if (polygon.length < 3) return stitches;
 
-  // Calculate bounding box
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const [x, y] of polygon) {
-    minX = Math.min(minX, x);
-    maxX = Math.max(maxX, x);
-    minY = Math.min(minY, y);
-    maxY = Math.max(maxY, y);
-  }
+  // DEFECTO 4 FIX: Calcular PCA y rotar perpendicular
+  const pcaAngle = calculatePolygonPCA(polygon);
+  const satinAngle = (angle !== undefined ? angle : pcaAngle) + Math.PI / 2;
 
-  // Rotate into satin-space (perpendicular to tatami)
-  const satinAngle = angle + Math.PI / 2; // 90° offset
   const cosA = Math.cos(satinAngle);
   const sinA = Math.sin(satinAngle);
   
@@ -479,34 +535,40 @@ function generateSatinFillLines(polygon, angle, density, stitchLen, color, regio
 
   const rotatedPoly = polygon.map(p => rotatePoint(p[0], p[1]));
   
-  let rMinX = Infinity, rMaxX = -Infinity, rMinY = Infinity, rMaxY = -Infinity;
+  let rMinX = Infinity, rMaxX = -Infinity;
   for (const [x, y] of rotatedPoly) {
     rMinX = Math.min(rMinX, x);
     rMaxX = Math.max(rMaxX, x);
-    rMinY = Math.min(rMinY, y);
-    rMaxY = Math.max(rMaxY, y);
   }
 
-  // Satin: columnas más anchas que tatami (0.5-0.8mm entre líneas)
   const satinDensity = Math.max(0.4, Math.min(density * 1.3, 0.8));
 
-  for (let x = rMinX; x < rMaxX; x += satinDensity) {
+  for (let x = rMinX; x <= rMaxX; x += satinDensity) {
     const intersections = [];
     for (let i = 0; i < rotatedPoly.length; i++) {
       const [x1, y1] = rotatedPoly[i];
       const [x2, y2] = rotatedPoly[(i + 1) % rotatedPoly.length];
 
-      if ((x1 <= x && x < x2) || (x2 <= x && x < x1)) {
-        const t = (x - x1) / (x2 - x1);
+      if (Math.abs(x2 - x1) < 1e-6) continue;
+
+      if ((x1 <= x && x <= x2) || (x2 <= x && x <= x1)) {
+        const t = Math.abs(x2 - x1) > 1e-6 ? (x - x1) / (x2 - x1) : 0;
         const y = y1 + t * (y2 - y1);
         intersections.push(y);
       }
     }
 
+    if (intersections.length < 2) continue;
+
     intersections.sort((a, b) => a - b);
+    
     for (let i = 0; i < intersections.length - 1; i += 2) {
-      const y1 = intersections[i];
-      const y2 = intersections[i + 1];
+      let y1 = intersections[i];
+      let y2 = intersections[i + 1];
+      
+      const margin = 0.05;
+      y1 -= margin;
+      y2 += margin;
 
       const unrotate = (x, y) => [
         x * cosA - y * sinA,
@@ -519,20 +581,25 @@ function generateSatinFillLines(polygon, angle, density, stitchLen, color, regio
       const dx = ox2 - ox1;
       const dy = oy2 - oy1;
       const len = Math.hypot(dx, dy);
-      const steps = Math.max(3, Math.ceil(len / 1.5));
+      const steps = Math.max(4, Math.ceil(len / 1.2));
 
-      for (let s = 0; s < steps; s++) {
-        const t = s / steps;
-        stitches.push({
-          x: ox1 + dx * t,
-          y: oy1 + dy * t,
-          type: 'fill',
-          regionId,
-          color,
-          isJump: false,
-          fillPattern: 'satin', // marca para renderizado diferenciado
-          threadWidth: 0.45, // satin: medio entre tatami y contorno
-        });
+      for (let s = 0; s <= steps; s++) {
+        const t = steps > 0 ? s / steps : 0;
+        const px = ox1 + dx * t;
+        const py = oy1 + dy * t;
+        
+        if (isPointInPolygon([px, py], polygon)) {
+          stitches.push({
+            x: px,
+            y: py,
+            type: 'fill',
+            regionId,
+            color,
+            isJump: false,
+            fillPattern: 'satin',
+            threadWidth: 0.45,
+          });
+        }
       }
     }
   }

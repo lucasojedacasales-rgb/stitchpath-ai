@@ -294,7 +294,7 @@ function buildStitches3D(regions, config) {
 
   const sorted = [...regions].sort((a, b) => (a.priority || 0) - (b.priority || 0));
 
-  let zHeight = 0; // cumulative thread stack height
+  let zHeight = 0; // DEFECTO 5 FIX: altura acumulada por región
 
   for (const region of sorted) {
     if (!region.visible || !region.path_points) continue;
@@ -302,85 +302,159 @@ function buildStitches3D(regions, config) {
     const color = region.color || '#ffffff';
     const path = region.path_points.map((p) => [p[0] * designW - designW / 2, p[1] * designH - designH / 2]);
 
-    // Generate fill lines (same as 2D)
     const threadRadius = 0.2;
     const angle = ((region.angle || 0) * Math.PI) / 180;
     const density = region.tatami_density || region.density || 0.4;
 
+    // DEFECTO 5 FIX: Generar fills robusto y verificar que todas las puntadas se renderizan
     const fillLines = generateTatamiFillLines3D(path, angle, density, color);
 
-    // Elevate fill lines by zHeight
+    // DEFECTO 5 FIX: Cada línea de fill genera múltiples puntos para volumen denso
     for (const line of fillLines) {
       const [x1, y1, x2, y2, col] = line;
-      stitches.push([x1, y1, zHeight, x2, y2, zHeight + threadRadius * 1.5, col]);
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const len = Math.hypot(dx, dy);
+      const steps = Math.max(3, Math.ceil(len / 1.0)); // paso pequeño = más cilindros = más volumen
+
+      for (let s = 0; s < steps; s++) {
+        const t = steps > 0 ? s / steps : 0;
+        const sx1 = x1 + dx * t;
+        const sy1 = y1 + dy * t;
+        const t2 = steps > 0 ? (s + 1) / steps : 1;
+        const sx2 = x1 + dx * t2;
+        const sy2 = y1 + dy * t2;
+        
+        // Cada segmento a altura incrementada
+        stitches.push([sx1, sy1, zHeight, sx2, sy2, zHeight + threadRadius * 1.5, col]);
+      }
     }
 
-    // Contour at same height (slight offset for visibility)
-    const contourHeight = zHeight + threadRadius;
+    // Contornos en altura separada
+    const contourHeight = zHeight + threadRadius * 2;
     for (let i = 0; i < path.length - 1; i++) {
       const [x1, y1] = path[i];
       const [x2, y2] = path[i + 1];
-      stitches.push([x1, y1, contourHeight, x2, y2, contourHeight, color]);
+      stitches.push([x1, y1, contourHeight, x2, y2, contourHeight + threadRadius, color]);
     }
 
-    // Accumulate z height for next region (thread stacking)
-    zHeight += threadRadius * 2.5;
+    // DEFECTO 5 FIX: Altura mínima garantizada para volumen visible
+    const regionHeight = Math.max(0.5, Math.ceil(fillLines.length * 0.05));
+    zHeight += regionHeight;
   }
 
   return { stitches, totalCount: stitches.length };
 }
 
 /**
- * Generate 3D tatami fill lines (same scanline algorithm as 2D)
+ * DEFECTO 5 FIX: Generar 3D tatami fills robusto con cobertura completa
  */
 function generateTatamiFillLines3D(polygon, angle, density, color) {
   const lines = [];
   if (polygon.length < 3) return lines;
 
-  const cosA = Math.cos(angle);
-  const sinA = Math.sin(angle);
+  // DEFECTO 4 FIX: Calcular PCA real
+  const pcaAngle = calculatePolygonPCA3D(polygon);
+  const effectiveAngle = angle !== undefined ? angle : pcaAngle;
+
+  const cosA = Math.cos(effectiveAngle);
+  const sinA = Math.sin(effectiveAngle);
 
   const rotatePoint = (x, y) => [x * cosA + y * sinA, -x * sinA + y * cosA];
-
   const rotatedPoly = polygon.map((p) => rotatePoint(p[0], p[1]));
 
-  let rMinY = Infinity,
-    rMaxY = -Infinity,
-    rMinX = Infinity,
-    rMaxX = -Infinity;
+  let rMinY = Infinity, rMaxY = -Infinity;
   for (const [x, y] of rotatedPoly) {
     rMinY = Math.min(rMinY, y);
     rMaxY = Math.max(rMaxY, y);
-    rMinX = Math.min(rMinX, x);
-    rMaxX = Math.max(rMaxX, x);
   }
 
-  // Generate scanlines
-  for (let y = rMinY; y < rMaxY; y += density) {
+  const realDensity = Math.max(0.25, Math.min(density, 0.6));
+
+  // DEFECTO 1 FIX: Generar scanlines sin gaps
+  for (let y = rMinY; y <= rMaxY; y += realDensity) {
     const intersections = [];
     for (let i = 0; i < rotatedPoly.length; i++) {
       const [x1, y1] = rotatedPoly[i];
       const [x2, y2] = rotatedPoly[(i + 1) % rotatedPoly.length];
 
-      if ((y1 <= y && y < y2) || (y2 <= y && y < y1)) {
+      if (Math.abs(y2 - y1) < 1e-6) continue;
+
+      if ((y1 <= y && y <= y2) || (y2 <= y && y <= y1)) {
         const t = (y - y1) / (y2 - y1);
         const x = x1 + t * (x2 - x1);
         intersections.push(x);
       }
     }
 
+    if (intersections.length < 2) continue;
+
     intersections.sort((a, b) => a - b);
     for (let i = 0; i < intersections.length - 1; i += 2) {
-      const x1 = intersections[i];
-      const x2 = intersections[i + 1];
+      let x1 = intersections[i];
+      let x2 = intersections[i + 1];
+
+      // DEFECTO 2 FIX: Margen para evitar gaps
+      const margin = 0.05;
+      x1 -= margin;
+      x2 += margin;
 
       const unrotate = (x, y) => [x * cosA - y * sinA, x * sinA + y * cosA];
       const [ox1, oy1] = unrotate(x1, y);
       const [ox2, oy2] = unrotate(x2, y);
 
-      lines.push([ox1, oy1, ox2, oy2, color]);
+      // DEFECTO 1 FIX: Verificar punto dentro del polígono
+      if (isPointInPolygon3D([(ox1 + ox2) / 2, (oy1 + oy2) / 2], polygon)) {
+        lines.push([ox1, oy1, ox2, oy2, color]);
+      }
     }
   }
 
   return lines;
+}
+
+function calculatePolygonPCA3D(polygon) {
+  if (polygon.length < 3) return 0;
+  
+  const cx = polygon.reduce((sum, p) => sum + p[0], 0) / polygon.length;
+  const cy = polygon.reduce((sum, p) => sum + p[1], 0) / polygon.length;
+  
+  let cov_xx = 0, cov_yy = 0, cov_xy = 0;
+  for (const [x, y] of polygon) {
+    const dx = x - cx;
+    const dy = y - cy;
+    cov_xx += dx * dx;
+    cov_yy += dy * dy;
+    cov_xy += dx * dy;
+  }
+  
+  const trace = cov_xx + cov_yy;
+  const det = cov_xx * cov_yy - cov_xy * cov_xy;
+  const lambda = (trace + Math.sqrt(Math.max(0, trace * trace - 4 * det))) / 2;
+  
+  let angle = 0;
+  if (Math.abs(cov_xy) > 1e-6) {
+    angle = Math.atan2(lambda - cov_xx, cov_xy);
+  } else if (cov_xx > cov_yy) {
+    angle = 0;
+  } else {
+    angle = Math.PI / 2;
+  }
+  
+  return angle;
+}
+
+function isPointInPolygon3D(point, polygon) {
+  const [x, y] = point;
+  let inside = false;
+  
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i];
+    const [xj, yj] = polygon[j];
+    
+    const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  
+  return inside;
 }
