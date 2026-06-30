@@ -13,6 +13,7 @@ import StitchPlannerPanel from '@/components/editor/StitchPlannerPanel.jsx';
 import IntelligencePanel from '@/components/editor/IntelligencePanel.jsx';
 import TravelOptimizerPanel from '@/components/editor/TravelOptimizerPanel.jsx';
 import EmbroideryPreview from '@/components/editor/EmbroideryPreview.jsx';
+import AutoIterationPanel from '@/components/editor/AutoIterationPanel.jsx';
 import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
@@ -249,6 +250,7 @@ export default function Editor() {
               { id: 'mask',    label: '✂ Máscara' },
               { id: 'planner', label: '✦ Planner' },
               { id: 'travel',  label: '⚡ Travel' },
+              { id: 'autofix', label: '🔄 AutoFix' },
               { id: 'panel',   label: 'Panel' },
             ].map(({ id, label }) =>
               <button key={id} onClick={() => setActiveTab(id)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
@@ -302,6 +304,15 @@ export default function Editor() {
                     return { ...r, stitch_type: upd.stitch_type, angle: upd.angle, underlay: upd.underlay };
                   }));
                 }}
+              />
+            </div>
+          ) : activeTab === 'autofix' ? (
+            <div className="flex-1 overflow-y-auto">
+              <AutoIterationPanel
+                regions={regions}
+                config={config}
+                onConfigChange={setConfig}
+                onReprocess={(newCfg) => startProcessing(null)}
               />
             </div>
           ) : activeTab === 'travel' ? (
