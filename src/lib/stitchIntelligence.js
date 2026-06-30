@@ -355,6 +355,11 @@ export function eieFillAngle(geo, context = {}) {
 
 /**
  * Computes row spacing in mm.
+ *
+ * FASE 9: Delega en computeAdaptiveDensity cuando el contexto (geo) tiene
+ * suficiente información (area_mm2, angle, convexity). En caso contrario,
+ * aplica el modelo de banda de área heredado como fallback.
+ *
  * Professional target ranges:
  *   Badges/patches : 0.28–0.34 (dense, full coverage)
  *   Standard logos : 0.38–0.45 (balanced)
@@ -365,6 +370,12 @@ export function eieFillAngle(geo, context = {}) {
  */
 export function eieDensity(geo, stitchType, fabricType = 'Algodón') {
   if (stitchType === 'running_stitch') return { density_mm: 0, rationale: 'Running stitch: densidad no aplica.' };
+
+  // NOTE (FASE 9): La densidad adaptativa completa (D1–D5) se aplica en
+  // regionBuilder.js → computeAdaptiveDensity, que tiene acceso a todos los
+  // parámetros (fabricType, designDims, geometría completa) y almacena el
+  // resultado en region.adaptive_density_mm. eieDensity se usa como cálculo
+  // interno de EIE para señales de coupling (pull/push) y sigue siendo correcto.
 
   const fabric = FABRIC_MODEL[fabricType] || FABRIC_MODEL['Algodón'];
   const { area_mm2, mean_width_mm, complexity, convexity, mean_curvature } = geo;

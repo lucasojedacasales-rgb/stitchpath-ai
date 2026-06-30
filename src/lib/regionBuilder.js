@@ -39,6 +39,7 @@
 import { adaptRegion } from './adaptiveEngine.js';
 import { applyProfessionalStrategy } from './embroideryStrategy.js';
 import { partitionRegions } from './regionPartitioner.js';
+import { computeAdaptiveDensity } from './adaptiveDensity.js';
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 
@@ -434,6 +435,24 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
   // Preserve original pixel color — never overwrite
   const originalColor = region.color || region.hex || '#888888';
 
+  // FASE 9: Densidad adaptativa — calculada aquí para tener disponibles
+  // todos los parámetros geométricos y de tela. Se almacena como
+  // adaptive_density_mm y sobreescribe region.density en el output.
+  const adaptive_density_mm = computeAdaptiveDensity(
+    {
+      stitch_type:  adapted.stitch_type,
+      area_mm2,
+      angle:        adapted.fill_angle,
+      fill_angle:   adapted.fill_angle,
+      convexity,
+      complexity,
+      mean_width_mm: skeletonMetrics.mean_width_mm,
+    },
+    fabricType,
+    designWidthMm,
+    designHeightMm,
+  );
+
   return {
     ...region,
     // Geometría
@@ -456,7 +475,8 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
     stitch_type:         adapted.stitch_type,
     stitch_confidence:   adapted.stitch_confidence,
     stitch_rationale:    adapted.stitch_rationale,
-    density:             adapted.density,
+    density:             adaptive_density_mm || adapted.density, // FASE 9: densidad adaptativa
+    adaptive_density_mm,
     stitch_length_mm:    adapted.stitch_length_mm,
     pull_compensation:   adapted.pull_compensation,
     recommended_underlay: adapted.underlay,

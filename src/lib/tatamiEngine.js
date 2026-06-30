@@ -148,9 +148,15 @@ function rotatedBBox(pts, angle) {
 
 export function generateTatamiLines(pts, region, drawW, drawH) {
   const angle = ((region.angle || 45) * Math.PI) / 180;
-  const density = region.density || 0.7;
-  // spacing in px: density maps 0.4→5px, 1.0→1px
-  const spacing = Math.max(1.5, 5 / density);
+
+  // FASE 9: Densidad adaptativa — si la región ya tiene adaptive_density_mm
+  // (calculado por computeAdaptiveDensity en regionBuilder), usarlo directamente.
+  // Si no, usar region.density con fallback a 0.40mm (densidad base estándar).
+  const densityMm = region.adaptive_density_mm || region.density || 0.40;
+
+  // spacing in px: densityMm (mm) → px via drawW/100 (pxPerMm)
+  const pxPerMm = drawW / 100;
+  const spacing = Math.max(1.5, densityMm * pxPerMm);
   const pullComp = (region.pull_compensation || 0.15) * (drawW / 100); // convert mm to px
   const needleOffset = 0.3 * (drawW / 100); // 0.3mm in px
   const sectionWidth = 6 * (drawW / 100);   // 6mm in px
