@@ -61,11 +61,15 @@ export default function EmbroideryPreview({ regions, config }) {
     const w = canvas.width;
     const h = canvas.height;
 
-    // Clear
+    // Draw fabric background (always visible, not part of stitch phases)
     ctx.fillStyle = fabricColor;
     ctx.fillRect(0, 0, w, h);
 
-    if (stitches.length === 0 || !drawingParams.bounds) return;
+    if (stitches.length === 0 || !drawingParams.bounds) {
+      // Even with no stitches, show the fabric
+      drawInfoOverlay(ctx, w, h, progress, 0, 0, config);
+      return;
+    }
 
     const bounds = drawingParams.bounds;
     const scale = drawingParams.scale;
