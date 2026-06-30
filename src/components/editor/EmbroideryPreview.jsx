@@ -356,8 +356,8 @@ function buildStitchesFromRegions(regions, config) {
 }
 
 /**
- * DEFECTO 1-4 FIX: Scanline fill robusto con clipping Sutherland-Hodgman
- * Garantiza: sin gaps, bordes limpios, ángulo PCA correcto, sin overflow
+ * DEFECTO 1-6 FIX: Scanline fill robusto con solapamiento automático para eliminar huecos
+ * Garantiza: sin gaps, cobertura total, bordes limpios, solapamiento de filas
  */
 function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regionId) {
   const stitches = [];
@@ -385,10 +385,14 @@ function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regi
     rMaxY = Math.max(rMaxY, y);
   }
 
+  // DEFECTO 6 FIX: Densidad adaptativa con solapamiento automático
+  // Reduce 10-20% el espaciado para garantizar solapamiento entre filas
   const realDensity = Math.max(0.25, Math.min(density, 0.6));
+  const overlapFactor = 0.85; // 15% de solapamiento = filas se superponen
+  const adjustedDensity = realDensity * overlapFactor;
 
-  // DEFECTO 1 FIX: Generar scanlines que cubran el ENTIRE rango sin gaps
-  for (let y = rMinY; y <= rMaxY; y += realDensity) {
+  // DEFECTO 6 FIX: Generar scanlines con solapamiento garantizado
+  for (let y = rMinY; y <= rMaxY; y += adjustedDensity) {
     // CRÍTICO: Encontrar TODAS las intersecciones (no solo pares)
     const intersections = [];
     for (let i = 0; i < rotatedPoly.length; i++) {
@@ -415,8 +419,9 @@ function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regi
       let x1 = intersections[i];
       let x2 = intersections[i + 1];
       
-      // DEFECTO 2 FIX: Clipping robusto — expandir ligeramente para evitar gaps en bordes
-      const margin = 0.05; // pequeño margen para evitar gaps en coincidencias exactas
+      // DEFECTO 2 FIX: Clipping robusto — expandir para evitar gaps EN BORDES
+      // DEFECTO 6 FIX: Margen expandido para solapamiento de los bordes
+      const margin = 0.12; // margen aumentado para garantizar solapamiento en transiciones
       x1 -= margin;
       x2 += margin;
 
@@ -429,11 +434,13 @@ function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regi
       const [ox1, oy1] = unrotate(x1, y);
       const [ox2, oy2] = unrotate(x2, y);
 
-      // Generar stitches a lo largo de la línea de fill
+      // Generar stitches a lo largo de la línea de fill con MAYOR densidad para cobertura
       const dx = ox2 - ox1;
       const dy = oy2 - oy1;
       const len = Math.hypot(dx, dy);
-      const steps = Math.max(4, Math.ceil(len / 1.2)); // MÁS puntos para densidad real
+      // DEFECTO 6 FIX: Reducir espaciado entre stitches dentro de cada línea (0.8 en lugar de 1.2)
+      // esto asegura que los puntos consecutivos se superpongan ligeramente
+      const steps = Math.max(6, Math.ceil(len / 0.8)); // más puntos = más solapamiento
 
       for (let s = 0; s <= steps; s++) {
         const t = steps > 0 ? s / steps : 0;
@@ -455,7 +462,97 @@ function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regi
     }
   }
 
+  // DEFECTO 6 FIX: Pase de relleno de huecos — agregar filas intermedias si hay gaps detectados
+  // Detectar cobertura y añadir filas intermedias donde falte
+  const coverage = calculateFillCoverage(polygon, stitches);
+  if (coverage < 0.95) {
+    // Si cobertura < 95%, agregar filas intermedias
+    for (let y = rMinY + adjustedDensity * 0.5; y <= rMaxY; y += adjustedDensity) {
+      const intersections = [];
+      for (let i = 0; i < rotatedPoly.length; i++) {
+        const [x1, y1] = rotatedPoly[i];
+        const [x2, y2] = rotatedPoly[(i + 1) % rotatedPoly.length];
+        if (Math.abs(y2 - y1) < 1e-6) continue;
+        if ((y1 <= y && y <= y2) || (y2 <= y && y <= y1)) {
+          const t = Math.abs(y2 - y1) > 1e-6 ? (y - y1) / (y2 - y1) : 0;
+          const x = x1 + t * (x2 - x1);
+          intersections.push(x);
+        }
+      }
+      if (intersections.length < 2) continue;
+      
+      intersections.sort((a, b) => a - b);
+      for (let i = 0; i < intersections.length - 1; i += 2) {
+        let x1 = intersections[i];
+        let x2 = intersections[i + 1];
+        x1 -= 0.12;
+        x2 += 0.12;
+
+        const unrotate = (x, y) => [x * cosA - y * sinA, x * sinA + y * cosA];
+        const [ox1, oy1] = unrotate(x1, y);
+        const [ox2, oy2] = unrotate(x2, y);
+
+        const dx = ox2 - ox1;
+        const dy = oy2 - oy1;
+        const len = Math.hypot(dx, dy);
+        const steps = Math.max(6, Math.ceil(len / 0.8));
+
+        for (let s = 0; s <= steps; s++) {
+          const t = steps > 0 ? s / steps : 0;
+          const x = ox1 + dx * t;
+          const y = oy1 + dy * t;
+          
+          if (isPointInPolygon([x, y], polygon)) {
+            stitches.push({
+              x, y,
+              type: 'fill',
+              regionId,
+              color,
+              isJump: false,
+              threadWidth: 0.42,
+            });
+          }
+        }
+      }
+    }
+  }
+
   return stitches;
+}
+
+/**
+ * Calcula el porcentaje de cobertura del relleno dentro del polígono
+ * Usa grid-based sampling para detectar huecos
+ */
+function calculateFillCoverage(polygon, stitches) {
+  if (stitches.length === 0 || polygon.length === 0) return 0;
+
+  // Calcular bounds
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const [x, y] of polygon) {
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+
+  // Grid sampling — puntos en una grilla cada 0.3mm
+  const gridSpacing = 0.3;
+  let sampledInside = 0;
+  let totalSamples = 0;
+
+  for (let x = minX; x <= maxX; x += gridSpacing) {
+    for (let y = minY; y <= maxY; y += gridSpacing) {
+      if (isPointInPolygon([x, y], polygon)) {
+        totalSamples++;
+        // Verificar si hay stitch dentro de distancia de 0.5mm (radio de thread)
+        const covered = stitches.some(s => Math.hypot(s.x - x, s.y - y) < 0.5);
+        if (covered) sampledInside++;
+      }
+    }
+  }
+
+  return totalSamples > 0 ? sampledInside / totalSamples : 0;
 }
 
 /**
@@ -515,7 +612,7 @@ function isPointInPolygon(point, polygon) {
 }
 
 /**
- * DEFECTO 1-4 FIX: Satin fill robusto (columnas perpendiculares a tatami)
+ * DEFECTO 1-6 FIX: Satin fill robusto con solapamiento automático
  */
 function generateSatinFillLines(polygon, angle, density, stitchLen, color, regionId) {
   const stitches = [];
@@ -541,9 +638,11 @@ function generateSatinFillLines(polygon, angle, density, stitchLen, color, regio
     rMaxX = Math.max(rMaxX, x);
   }
 
+  // DEFECTO 6 FIX: Solapamiento automático también en satin
   const satinDensity = Math.max(0.4, Math.min(density * 1.3, 0.8));
+  const adjustedDensity = satinDensity * 0.85; // 15% solapamiento
 
-  for (let x = rMinX; x <= rMaxX; x += satinDensity) {
+  for (let x = rMinX; x <= rMaxX; x += adjustedDensity) {
     const intersections = [];
     for (let i = 0; i < rotatedPoly.length; i++) {
       const [x1, y1] = rotatedPoly[i];
@@ -566,7 +665,7 @@ function generateSatinFillLines(polygon, angle, density, stitchLen, color, regio
       let y1 = intersections[i];
       let y2 = intersections[i + 1];
       
-      const margin = 0.05;
+      const margin = 0.12; // margen aumentado para solapamiento
       y1 -= margin;
       y2 += margin;
 
@@ -581,7 +680,8 @@ function generateSatinFillLines(polygon, angle, density, stitchLen, color, regio
       const dx = ox2 - ox1;
       const dy = oy2 - oy1;
       const len = Math.hypot(dx, dy);
-      const steps = Math.max(4, Math.ceil(len / 1.2));
+      // DEFECTO 6 FIX: Mayor densidad de puntos (0.8 en lugar de 1.2)
+      const steps = Math.max(6, Math.ceil(len / 0.8));
 
       for (let s = 0; s <= steps; s++) {
         const t = steps > 0 ? s / steps : 0;
@@ -599,6 +699,61 @@ function generateSatinFillLines(polygon, angle, density, stitchLen, color, regio
             fillPattern: 'satin',
             threadWidth: 0.45,
           });
+        }
+      }
+    }
+  }
+
+  // DEFECTO 6 FIX: Pase de relleno de huecos para satin también
+  const coverage = calculateFillCoverage(polygon, stitches);
+  if (coverage < 0.95) {
+    for (let x = rMinX + adjustedDensity * 0.5; x <= rMaxX; x += adjustedDensity) {
+      const intersections = [];
+      for (let i = 0; i < rotatedPoly.length; i++) {
+        const [x1, y1] = rotatedPoly[i];
+        const [x2, y2] = rotatedPoly[(i + 1) % rotatedPoly.length];
+        if (Math.abs(x2 - x1) < 1e-6) continue;
+        if ((x1 <= x && x <= x2) || (x2 <= x && x <= x1)) {
+          const t = Math.abs(x2 - x1) > 1e-6 ? (x - x1) / (x2 - x1) : 0;
+          const y = y1 + t * (y2 - y1);
+          intersections.push(y);
+        }
+      }
+      if (intersections.length < 2) continue;
+      
+      intersections.sort((a, b) => a - b);
+      for (let i = 0; i < intersections.length - 1; i += 2) {
+        let y1 = intersections[i];
+        let y2 = intersections[i + 1];
+        y1 -= 0.12;
+        y2 += 0.12;
+
+        const unrotate = (x, y) => [x * cosA - y * sinA, x * sinA + y * cosA];
+        const [ox1, oy1] = unrotate(x, y1);
+        const [ox2, oy2] = unrotate(x, y2);
+
+        const dx = ox2 - ox1;
+        const dy = oy2 - oy1;
+        const len = Math.hypot(dx, dy);
+        const steps = Math.max(6, Math.ceil(len / 0.8));
+
+        for (let s = 0; s <= steps; s++) {
+          const t = steps > 0 ? s / steps : 0;
+          const px = ox1 + dx * t;
+          const py = oy1 + dy * t;
+          
+          if (isPointInPolygon([px, py], polygon)) {
+            stitches.push({
+              x: px,
+              y: py,
+              type: 'fill',
+              regionId,
+              color,
+              isJump: false,
+              fillPattern: 'satin',
+              threadWidth: 0.45,
+            });
+          }
         }
       }
     }
