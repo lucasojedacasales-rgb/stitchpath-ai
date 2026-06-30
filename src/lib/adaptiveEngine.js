@@ -102,6 +102,8 @@ export function adaptRegion(geo, overrides = {}, fabricType = 'Algodón') {
       type:        eie.underlay?.type,
       density_mm:  eie.underlay?.density_mm,
       angle_deg:   eie.underlay?.angle_deg,
+      second_pass: eie.underlay?.second_pass,
+      layers:      eie.underlay?.layers ?? [],
       rationale:   eie.underlay_rationale,
     },
     fill_angle:          eie.fill_angle,

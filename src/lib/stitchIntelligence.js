@@ -688,91 +688,194 @@ export function eieCornerCompensation(geo, stitchType, fabricType = 'Algodón') 
 // ─── 6. Underlay ─────────────────────────────────────────────────────────────
 
 /**
- * Professional underlay decision:
+ * FASE 6 — Underlay inteligente multi-estrategia.
  *
- *   running_stitch → none
- *   satin <2.5mm  → centre_walk
- *   satin 2.5–5mm → centre_walk (standard)
- *   satin >5mm    → zigzag + centre_walk
- *   fill <12mm²   → none (too small)
- *   fill 12–40mm² → edge_walk
- *   fill 40–120mm²→ edge_walk + light zigzag
- *   fill >120mm²  → full zigzag underlay
- *   pile fabric   → full_coverage regardless
+ * Selecciona automáticamente UNO o VARIOS tipos de underlay en combinación,
+ * dependiendo de: tipo de puntada, anchura, densidad, material y complejidad.
  *
- * Returns { type, density_mm, angle_deg, second_pass, rationale }
+ * Tipos disponibles:
+ *   center_walk   — hilo de andamiaje central (satin estrecho, base mínima)
+ *   edge_walk     — hilo perimetral (fills pequeños, ancla bordes)
+ *   zigzag        — zigzag perpendicular al top (fills medianos, tensión lateral)
+ *   double_zigzag — dos pasadas de zigzag (fills grandes en tejidos elásticos)
+ *   tatami        — tatami a baja densidad, ángulo perpendicular (fills grandes / complejos)
+ *
+ * Combinaciones posibles (en orden de ejecución):
+ *   center_walk                    — satin fino
+ *   center_walk + zigzag           — satin ancho estándar
+ *   center_walk + double_zigzag    — satin ancho en Lycra/Mezcla
+ *   edge_walk                      — fill pequeño
+ *   edge_walk + zigzag             — fill mediano
+ *   edge_walk + tatami             — fill mediano complejo / tejido difícil
+ *   zigzag + tatami                — fill grande estándar
+ *   double_zigzag + tatami         — fill grande en tejido elástico
+ *   edge_walk + double_zigzag + tatami — fill enorme / muy elástico
+ *
+ * Returns { layers: UnderlayLayer[], rationale }
+ * UnderlayLayer: { type, density_mm, angle_deg, passes }
+ *
+ * Backward-compat shim: also sets .type (first layer) and .second_pass on the returned object.
  */
 export function eieUnderlay(geo, stitchType, fabricType = 'Algodón') {
-  const { area_mm2, mean_width_mm, complexity } = geo;
-  const reasons = [];
+  const { area_mm2, mean_width_mm, complexity, convexity } = geo;
+  const fabric = FABRIC_MODEL[fabricType] || FABRIC_MODEL['Algodón'];
 
-  const none = (r) => ({ type: null, density_mm: 0, angle_deg: 0, second_pass: false, rationale: r });
+  const none = (r) => ({
+    type: null, density_mm: 0, angle_deg: 0, second_pass: false,
+    layers: [], rationale: r,
+  });
 
   if (stitchType === 'running_stitch') return none('Running stitch: sin underlay.');
-  if (area_mm2 < 6) return none('Micro-área: underlay omitido.');
+  if (area_mm2 < 6) return none('Micro-área (<6mm²): underlay omitido.');
 
-  const isPile = fabricType === 'Otro'; // Terry/fleece proxy
+  // Fabric flags
+  const isElastic  = fabric.pull_factor >= 1.8;   // Lycra
+  const isMedElast = fabric.pull_factor >= 1.2 && fabric.pull_factor < 1.8; // Mezcla
+  const isDense    = fabricType === 'Denim' || fabricType === 'Lino';
+  const isDelicate = fabricType === 'Seda';
+  const isPile     = fabricType === 'Otro'; // Terry / fleece proxy
 
+  // Top-stitch angle (for perpendicular underlay alignment)
+  const topAngle     = geo.fill_angle != null ? geo.fill_angle
+                     : geo.orientation != null ? geo.orientation : 45;
+  const perpAngle    = (topAngle + 90) % 180;
+  const diagAngle    = 45;
+
+  const reasons = [];
+  const layers  = [];
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SATIN underlay
+  // ══════════════════════════════════════════════════════════════════════════
   if (stitchType === 'satin') {
-    if (mean_width_mm < 2.5) {
-      return {
-        type: 'centre_walk', density_mm: 0, angle_deg: 0, second_pass: false,
-        rationale: `Satin estrecho ${mean_width_mm.toFixed(1)}mm: centre walk.`,
-      };
+
+    // ── Satin <2mm: hairline — center walk only ──────────────────────────
+    if (mean_width_mm < 2.0) {
+      layers.push({ type: 'center_walk', density_mm: 0, angle_deg: 0, passes: 1 });
+      reasons.push(`satin fino ${mean_width_mm.toFixed(1)}mm → center walk`);
+
+    // ── Satin 2–3.5mm: narrow — center walk (+ zigzag on elastic) ────────
+    } else if (mean_width_mm <= 3.5) {
+      layers.push({ type: 'center_walk', density_mm: 0, angle_deg: 0, passes: 1 });
+      reasons.push(`satin estrecho ${mean_width_mm.toFixed(1)}mm → center walk`);
+      if (isElastic) {
+        const d = +(THREAD.diameter_fill * 1.4).toFixed(2);
+        layers.push({ type: 'zigzag', density_mm: d, angle_deg: perpAngle, passes: 1 });
+        reasons.push(`+zigzag (Lycra, evita apertura del borde)`);
+      }
+
+    // ── Satin 3.5–5.5mm: medium — center walk + zigzag ───────────────────
+    } else if (mean_width_mm <= 5.5) {
+      const d = +(THREAD.diameter_fill * 1.5).toFixed(2);
+      layers.push({ type: 'center_walk', density_mm: 0, angle_deg: 0, passes: 1 });
+      layers.push({ type: 'zigzag', density_mm: d, angle_deg: perpAngle, passes: 1 });
+      reasons.push(`satin medio ${mean_width_mm.toFixed(1)}mm → center walk + zigzag ${d}mm`);
+      if (isElastic || isMedElast) {
+        layers[1].passes = 2; // double zigzag via two passes
+        reasons.push(`tejido elástico → zigzag doble pase`);
+      }
+
+    // ── Satin >5.5mm: wide — center walk + double_zigzag ─────────────────
+    } else {
+      const d = +(THREAD.diameter_fill * 1.8 + (mean_width_mm - 5.5) * 0.06).toFixed(2);
+      layers.push({ type: 'center_walk', density_mm: 0, angle_deg: 0, passes: 1 });
+      const zigType = (isElastic || isPile) ? 'double_zigzag' : 'zigzag';
+      layers.push({ type: zigType, density_mm: d, angle_deg: perpAngle, passes: isElastic ? 2 : 1 });
+      reasons.push(`satin ancho ${mean_width_mm.toFixed(1)}mm → center walk + ${zigType} ${d}mm @ ${perpAngle}°`);
+      if (isPile) {
+        // Pile (terry) needs tatami too to push pile down
+        const td = +(THREAD.diameter_fill * 2.2).toFixed(2);
+        layers.push({ type: 'tatami', density_mm: td, angle_deg: diagAngle, passes: 1 });
+        reasons.push(`+tatami (tejido de pelo: aplasta pelusa)`);
+      }
     }
-    if (mean_width_mm > 5.0) {
-      // Wide satin: zigzag + centre_walk (double pass for stability)
-      const d = +(THREAD.diameter_fill * 1.6 + (mean_width_mm - 5) * 0.08).toFixed(2);
-      return {
-        type: 'zigzag_centre', density_mm: d, angle_deg: 90, second_pass: true,
-        rationale: `Satin ancho ${mean_width_mm.toFixed(1)}mm: zigzag (${d}mm) + centre walk.`,
-      };
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // FILL underlay
+  // ══════════════════════════════════════════════════════════════════════════
+  } else {
+
+    if (area_mm2 < 12) return none(`Fill pequeño (${area_mm2.toFixed(0)}mm²): sin underlay.`);
+
+    // ── Micro fill 12–30mm²: edge walk only ──────────────────────────────
+    if (area_mm2 < 30) {
+      layers.push({ type: 'edge_walk', density_mm: 0, angle_deg: 0, passes: 1 });
+      reasons.push(`fill micro ${area_mm2.toFixed(0)}mm² → edge walk`);
+
+    // ── Small fill 30–80mm²: edge walk + zigzag ───────────────────────────
+    } else if (area_mm2 < 80) {
+      layers.push({ type: 'edge_walk', density_mm: 0, angle_deg: 0, passes: 1 });
+      const d = +(THREAD.diameter_fill * 1.8).toFixed(2);
+      layers.push({ type: 'zigzag', density_mm: d, angle_deg: perpAngle, passes: 1 });
+      reasons.push(`fill pequeño ${area_mm2.toFixed(0)}mm² → edge walk + zigzag ${d}mm @ ${perpAngle}°`);
+      // Elastic: edge walk + double zigzag
+      if (isElastic) {
+        layers[1].type = 'double_zigzag';
+        reasons.push(`Lycra → double_zigzag`);
+      }
+      // Complex concave shapes: add tatami for interior coverage
+      if (convexity < 0.55 && complexity.level !== 'simple') {
+        const td = +(THREAD.diameter_fill * 2.0).toFixed(2);
+        layers.push({ type: 'tatami', density_mm: td, angle_deg: perpAngle, passes: 1 });
+        reasons.push(`+tatami (forma cóncava compleja, cobertura interior)`);
+      }
+
+    // ── Medium fill 80–200mm²: edge walk + zigzag/tatami ─────────────────
+    } else if (area_mm2 < 200) {
+      layers.push({ type: 'edge_walk', density_mm: 0, angle_deg: 0, passes: 1 });
+      const d = +(THREAD.diameter_fill * 2.0).toFixed(2);
+      // Complex or concave → tatami; simple → zigzag
+      const innerType = (complexity.level === 'alta' || convexity < 0.50 || isElastic) ? 'tatami' : 'zigzag';
+      layers.push({ type: innerType, density_mm: d, angle_deg: perpAngle, passes: 1 });
+      reasons.push(`fill medio ${area_mm2.toFixed(0)}mm² → edge walk + ${innerType} ${d}mm @ ${perpAngle}°`);
+      if (isElastic && innerType === 'tatami') {
+        layers[1].passes = 2;
+        reasons.push(`Lycra → tatami doble pase`);
+      }
+
+    // ── Large fill 200–500mm²: zigzag + tatami ────────────────────────────
+    } else if (area_mm2 < 500) {
+      const zd = +(THREAD.diameter_fill * 2.2).toFixed(2);
+      const td = +(THREAD.diameter_fill * 2.6).toFixed(2);
+      const zigType = isElastic ? 'double_zigzag' : 'zigzag';
+      layers.push({ type: zigType, density_mm: zd, angle_deg: diagAngle, passes: 1 });
+      layers.push({ type: 'tatami', density_mm: td, angle_deg: perpAngle, passes: 1 });
+      reasons.push(`fill grande ${area_mm2.toFixed(0)}mm² → ${zigType} ${zd}mm + tatami ${td}mm @ ${perpAngle}°`);
+      if (isDense) {
+        layers[0].density_mm = +(zd + 0.05).toFixed(2);
+        reasons.push(`tejido denso → zigzag más abierto`);
+      }
+
+    // ── Huge fill ≥500mm²: full triple underlay ───────────────────────────
+    } else {
+      const ed = 0;
+      const zd = +(THREAD.diameter_fill * 2.4).toFixed(2);
+      const td = +(THREAD.diameter_fill * 3.0).toFixed(2);
+      const zigType = (isElastic || isPile) ? 'double_zigzag' : 'zigzag';
+      layers.push({ type: 'edge_walk', density_mm: ed, angle_deg: 0, passes: 1 });
+      layers.push({ type: zigType, density_mm: zd, angle_deg: diagAngle, passes: isElastic ? 2 : 1 });
+      layers.push({ type: 'tatami', density_mm: td, angle_deg: perpAngle, passes: 1 });
+      reasons.push(`fill enorme ${area_mm2.toFixed(0)}mm² → edge walk + ${zigType} ${zd}mm + tatami ${td}mm @ ${perpAngle}°`);
+      if (isDelicate) {
+        // Silk: skip edge walk, reduce density to avoid damage
+        layers.shift();
+        layers.forEach(l => { l.density_mm = +(l.density_mm + 0.08).toFixed(2); });
+        reasons.push(`seda → sin edge walk, densidad reducida`);
+      }
     }
-    return {
-      type: 'centre_walk', density_mm: 0, angle_deg: 0, second_pass: false,
-      rationale: `Satin ${mean_width_mm.toFixed(1)}mm: centre walk estándar.`,
-    };
   }
 
-  // Fill underlay
-  if (isPile) {
-    const d = +(THREAD.diameter_fill * 1.5).toFixed(2);
-    return {
-      type: 'full_coverage', density_mm: d, angle_deg: 45, second_pass: true,
-      rationale: `Tejido de pelo: full coverage doble (${d}mm, 45°).`,
-    };
-  }
-
-  if (area_mm2 < 12) return none(`Fill pequeño ${area_mm2.toFixed(0)}mm²: sin underlay.`);
-
-  if (area_mm2 < 40) {
-    return {
-      type: 'edge_walk', density_mm: 0, angle_deg: 0, second_pass: false,
-      rationale: `Fill pequeño ${area_mm2.toFixed(0)}mm²: edge walk perimetral.`,
-    };
-  }
-
-  if (area_mm2 < 120) {
-    const d = +(THREAD.diameter_fill * 2.0).toFixed(2);
-    // Underlay angle: must be perpendicular to the ACTUAL fill angle (not orientation).
-    // geo.fill_angle is the computed EIE fill angle; geo.orientation is the PCA axis.
-    // The two differ when A2/A3/A4 corrections apply (elongated/curved shapes).
-    // Running underlay parallel to top stitches provides zero stabilization — it must cross them.
-    const topAngle = geo.fill_angle != null ? geo.fill_angle : (geo.orientation != null ? geo.orientation : 45);
-    const underlayAngle = (topAngle + 90) % 180;
-    return {
-      type: 'edge_walk_zigzag', density_mm: d, angle_deg: underlayAngle, second_pass: false,
-      rationale: `Fill medio ${area_mm2.toFixed(0)}mm²: edge walk + zigzag ${d}mm @ ${underlayAngle}° (perp. al ángulo de relleno ${topAngle}°).`,
-    };
-  }
-
-  // Large fill: full zigzag underlay perpendicular to actual fill angle
-  const d = +(THREAD.diameter_fill * 2.5).toFixed(2);
-  const topAngle = geo.fill_angle != null ? geo.fill_angle : (geo.orientation != null ? geo.orientation : 45);
-  const underlayAngle = (topAngle + 90) % 180;
+  // ── Backward-compat shim ──────────────────────────────────────────────────
+  const first = layers[0] || { type: null, density_mm: 0, angle_deg: 0, passes: 1 };
   return {
-    type: 'zigzag', density_mm: d, angle_deg: underlayAngle, second_pass: complexity.level === 'alta',
-    rationale: `Fill grande ${area_mm2.toFixed(0)}mm²: zigzag ${d}mm @ ${underlayAngle}° (perp. al ángulo de relleno ${topAngle}°)${complexity.level === 'alta' ? ' doble pase' : ''}.`,
+    // Legacy fields (consumed by existing UI / adaptiveEngine)
+    type:        first.type,
+    density_mm:  first.density_mm,
+    angle_deg:   first.angle_deg,
+    second_pass: layers.length > 1,
+    // FASE 6: full layer list
+    layers,
+    rationale: reasons.join('; '),
   };
 }
 
