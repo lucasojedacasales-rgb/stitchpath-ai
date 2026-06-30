@@ -103,9 +103,21 @@ function greedyTSPWithPriority(regions, startPos = [0.5, 0.5], config = {}) {
 }
 
 /**
- * 2-opt local optimization: intercambia pares de aristas para reducir distancia total.
- * Mejora tours greedy sin garantizar óptimo global (suficientemente rápido).
+ * 2-opt local optimization with color-change penalty.
+ * A swap is only accepted when the combined cost (distance + color change penalty)
+ * improves. This prevents 2-opt from reducing 1mm of travel at the cost of
+ * introducing extra thread changes (each = ~30s machine time = ~150mm equivalent).
+ *
+ * COLOR_CHANGE_MM_EQUIV: treat each color change as equivalent to this many mm of
+ * travel for cost comparison purposes. At 300mm/s jump speed, 30s = 9000mm — we
+ * use a conservative 50mm to avoid over-constraining proximity optimization.
  */
+const COLOR_CHANGE_MM_EQUIV = 50;
+
+function colorChangeCost(a, b) {
+  return (a && b && a.color !== b.color) ? COLOR_CHANGE_MM_EQUIV : 0;
+}
+
 function twoOptImprove(tour, maxIterations = 100) {
   let improved = true;
   let iterations = 0;
@@ -121,21 +133,22 @@ function twoOptImprove(tour, maxIterations = 100) {
         const c3 = getCentroid(tour[j]);
         const c4 = getCentroid(tour[(j + 1) % tour.length]);
 
-        // Distancia actual: i->i+1 + j->j+1
-        const dCurrent = distance(c1, c2) + distance(c3, c4);
+        // Current cost: distance i→i+1 + distance j→j+1 + color penalties
+        const dCurrent = distance(c1, c2) + distance(c3, c4)
+          + colorChangeCost(tour[i], tour[i + 1])
+          + colorChangeCost(tour[j], tour[(j + 1) % tour.length]);
 
-        // Distancia después de reversión: i->j + i+1->j+1
-        const dNew = distance(c1, c3) + distance(c2, c4);
+        // New cost after 2-opt reversal: i→j + i+1→j+1
+        const dNew = distance(c1, c3) + distance(c2, c4)
+          + colorChangeCost(tour[i], tour[j])
+          + colorChangeCost(tour[i + 1], tour[(j + 1) % tour.length]);
 
         if (dNew < dCurrent - 1e-6) {
-          // Reversión mejora tour
           const newTour = [...tour];
-          let left = i + 1;
-          let right = j;
+          let left = i + 1, right = j;
           while (left < right) {
             [newTour[left], newTour[right]] = [newTour[right], newTour[left]];
-            left++;
-            right--;
+            left++; right--;
           }
           tour = newTour;
           improved = true;

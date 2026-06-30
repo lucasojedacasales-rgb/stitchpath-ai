@@ -139,34 +139,30 @@ function isLightColor(hex) {
 }
 
 // ─── Secuenciación de color (min. saltos) ─────────────────────────────────────
+// Layer-first ordering: fills before satins before running — within each layer,
+// group by color to minimize thread changes. This preserves EIE travelOrder intent
+// (fills are background, satins are midground, run is detail/outline).
 
 function optimizeColorSequence(regionPlans) {
-  // Agrupar por color, luego ordenar grupos por área descendente
-  const colorGroups = {};
-  for (const rp of regionPlans) {
-    const c = rp.color;
-    if (!colorGroups[c]) colorGroups[c] = [];
-    colorGroups[c].push(rp);
-  }
+  // Sort by layer first (fill=3 < satin=2 < run=1), then by EIE travelOrder when available,
+  // then group same-layer same-color together to minimize changes.
+  const layerSorted = [...regionPlans].sort((a, b) => {
+    const la = LAYER_ORDER[a.stitchType] || 0;
+    const lb = LAYER_ORDER[b.stitchType] || 0;
+    if (la !== lb) return la - lb; // base layers first
+    // Within same layer: group by color to minimize thread changes
+    if (a.color !== b.color) return a.color.localeCompare(b.color);
+    return 0;
+  });
 
-  const groups = Object.entries(colorGroups)
-    .map(([color, plans]) => ({
-      color,
-      plans,
-      totalArea: plans.reduce((s, p) => s + (p.areaMm2 || 0), 0),
-    }))
-    .sort((a, b) => b.totalArea - a.totalArea);
-
-  // Dentro de cada grupo: ordenar por layer_order
-  const sequenced = [];
+  // Count actual color changes in this sequence
   let colorChanges = 0;
-  for (const group of groups) {
-    group.plans.sort((a, b) => (LAYER_ORDER[a.stitchType] || 0) - (LAYER_ORDER[b.stitchType] || 0));
-    if (sequenced.length > 0) colorChanges++;
-    sequenced.push(...group.plans);
+  const uniqueColors = new Set(layerSorted.map(r => r.color)).size;
+  for (let i = 1; i < layerSorted.length; i++) {
+    if (layerSorted[i].color !== layerSorted[i - 1].color) colorChanges++;
   }
 
-  return { sequenced, colorChanges, uniqueColors: groups.length };
+  return { sequenced: layerSorted, colorChanges, uniqueColors };
 }
 
 // ─── Advertencias de producción ───────────────────────────────────────────────
@@ -285,17 +281,20 @@ export function generateStitchPlan(regions, config = {}) {
       const stitchLenMm = region.stitch_length_mm
         || (classification.type === 'satin' ? region.mean_width_mm || 3.0 : 3.0);
 
-      // Estimate stitches using canonical formula (matches hybridDigitize)
+      // Estimate stitches — canonical physical model matching regionBuilder.js
+      // Fill:   rows = area / (rowSpacing × stitchLength); stitchLength nominal 2.4mm
+      // Satin:  columns = (perim/2) / density — each pass = one needle penetration
+      // Run:    one stitch per 1.8mm of perimeter
       const area  = region.area_mm2     || 0;
       const perim = region.perimeter_mm || 1;
       let estimatedStitches = region.stitch_count || 0;
       if (!estimatedStitches) {
         if (classification.type === 'fill') {
-          estimatedStitches = Math.round(area * 2.5 * (1 / Math.max(0.25, density)));
+          estimatedStitches = Math.round(area / (Math.max(0.25, density) * 2.4));
         } else if (classification.type === 'satin') {
-          estimatedStitches = Math.round(perim * 2 * (area / Math.max(1, perim)));
+          estimatedStitches = Math.round(Math.max(1, (perim / 2) / Math.max(0.25, density)));
         } else {
-          estimatedStitches = Math.round(perim / 1.5);
+          estimatedStitches = Math.round(perim / 1.8);
         }
       }
 

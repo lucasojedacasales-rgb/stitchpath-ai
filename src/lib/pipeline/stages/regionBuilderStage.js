@@ -64,17 +64,22 @@ function findSemanticForRegion(region, objects) {
 
   for (const obj of objects) {
     const { x, y, w, h } = obj.bbox || {};
-    if (x === undefined) continue;
+    if (x === undefined || w <= 0 || h <= 0) continue;
     const inside = cx >= x && cx <= x + w && cy >= y && cy <= y + h;
-    const dist   = Math.hypot(cx - (x + w / 2), cy - (y + h / 2));
-    const score  = inside ? (1 - dist) : -dist;
+    // Normalized distance: dist / (bbox diagonal * 0.5) → 0 at center, 1 at bbox corner
+    const distToCenter = Math.hypot(cx - (x + w / 2), cy - (y + h / 2));
+    const bboxDiag     = Math.hypot(w, h);
+    const normDist     = bboxDiag > 0 ? distToCenter / (bboxDiag * 0.5) : Infinity;
+    // Score: positive when inside, negative when outside, normalized by bbox size.
+    // This makes the threshold scale-invariant across small and large semantic objects.
+    const score = inside ? (1 - normDist) : -normDist;
     if (score > bestScore) { bestScore = score; best = obj; }
   }
 
-  // Strict threshold: only accept a semantic match when the region centroid is
-  // inside or very close to the semantic bounding box (score > 0 = inside, > -0.1 = nearby).
-  // Larger negative values (e.g. -0.3) cause cross-region semantic pollution.
-  return bestScore > -0.08 ? best : null;
+  // Accept: centroid inside bbox (score > 0) or within 30% of bbox diagonal outside (score > -0.3).
+  // Rejects distant false positives while tolerating small centroid/bbox misalignments
+  // that happen on irregular shapes where centroid falls just outside the LLM bbox.
+  return bestScore > -0.3 ? best : null;
 }
 
 // ─── Auto-naming ──────────────────────────────────────────────────────────────

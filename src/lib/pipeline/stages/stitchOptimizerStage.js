@@ -13,7 +13,6 @@ export async function runStitchOptimizer(ctx) {
   const strategy = getModeStrategy(ctx.config.mode || 'hybrid');
 
   if (!strategy.stitchStrategy?.travelOptimize) {
-    // Skip optimizer — keep regions as-is, populate minimal optimized wrapper
     ctx.optimized = null;
     return;
   }
@@ -23,10 +22,19 @@ export async function runStitchOptimizer(ctx) {
     return;
   }
 
-  ctx.optimized = optimizeTravelPath(ctx.regions, ctx.config);
+  // Pass design dimensions so the optimizer uses real mm² scale for metrics
+  const travelConfig = {
+    ...ctx.config,
+    width_mm:  ctx.config.width_mm  || 100,
+    height_mm: ctx.config.height_mm || 100,
+    speedSpm:  ctx.config.machine_speed || 800,
+  };
 
-  // Apply optimized order back to ctx.regions — only when the optimizer returned
-  // a non-empty sequence (guards against optimizer returning [] on edge-case inputs).
+  ctx.optimized = optimizeTravelPath(ctx.regions, travelConfig);
+
+  // Only apply the reordered sequence when the optimizer produced a valid result.
+  // The optimizer already sorts by priority first (fills→satins→runs) then by
+  // proximity within each layer, so this never inverts the build order.
   const seq = ctx.optimized?.optimizedSequence;
   if (Array.isArray(seq) && seq.length > 0) {
     ctx.regions = seq;
