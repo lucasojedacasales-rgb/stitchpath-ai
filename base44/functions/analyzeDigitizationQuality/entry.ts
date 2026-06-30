@@ -180,9 +180,13 @@ Deno.serve(async (req) => {
 function analyzeDetailVisibility(regions) {
   const smallRegions = regions.filter(r => (r.area_mm2 || 0) < 50).length;
   const tinyRegions = regions.filter(r => (r.area_mm2 || 0) < 10).length;
-  if (tinyRegions > 3) return 'HIGH'; // eyes, nose, small details visible
-  if (smallRegions > 5) return 'HIGH';
-  if (smallRegions > 2) return 'MEDIUM';
+  const microRegions = regions.filter(r => (r.area_mm2 || 0) < 5).length;  // eyes level detail
+  
+  // Professional detail visibility: capture eyes (micro), nose, mouth details
+  if (microRegions > 2 && smallRegions > 8) return 'HIGH';  // both micro AND small regions
+  if (microRegions > 4) return 'HIGH';  // lots of micro-details = HIGH visibility
+  if (smallRegions > 8) return 'HIGH';  // comprehensive small feature coverage
+  if (smallRegions > 4) return 'MEDIUM';
   return 'LOW';
 }
 

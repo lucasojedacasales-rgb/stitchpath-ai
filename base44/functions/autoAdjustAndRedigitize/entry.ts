@@ -69,16 +69,16 @@ Deno.serve(async (req) => {
       newConfig.adaptive_density = true;
     }
 
-    // === ISSUE 3: detail_visibility not HIGH ===
-    if (qa?.detail_visibility !== 'HIGH' && !adjustments.some(a => a.param === 'minAreaPx')) {
+    // === ISSUE 3: Micro-details and eyes not captured (always apply if rating < 9) ===
+    if (currentRating < 9 && !adjustments.some(a => a.param === 'minAreaPx')) {
       adjustments.push({
         param: 'minAreaPx',
-        reason: `detail_visibility is ${qa?.detail_visibility}, not HIGH`,
+        reason: `Rating < 9 — lowering minAreaPx to capture eyes, noses, micro-details`,
         old_value: 60,
-        new_value: 45,
+        new_value: 25, // very aggressive: 25px² ≈ 3-4mm detail at 1024px
       });
-      // Note: minAreaPx is in contourEngine, passed via config to pipeline
-      newConfig.contour_min_area_px = 45;
+      newConfig.contour_min_area_px = 25;
+      newConfig.contour_min_area_relative = 0.00007; // very permissive for micro
     }
 
     // === ISSUE 4: layer_integrity not PERFECT ===
