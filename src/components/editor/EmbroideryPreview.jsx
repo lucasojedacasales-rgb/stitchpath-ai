@@ -304,62 +304,64 @@ function buildStitchesFromRegions(regions, config) {
   const designW = config.width_mm || 100;
   const designH = config.height_mm || 100;
 
-  // Sort regions by priority (stitch order)
-  const sorted = [...regions].sort((a, b) => (a.priority || 0) - (b.priority || 0));
-
-  for (const region of sorted) {
-    if (!region.visible || !region.path_points || region.path_points.length < 3) continue;
-
-    const color = region.color || '#ffffff';
-    const type = region.stitch_type || 'fill';
-    const angle = (region.angle || 0) * (Math.PI / 180);
-
-    // Convert normalized path_points to mm
-    const polygonMm = region.path_points.map((p) => [
-      p[0] * designW,
-      p[1] * designH,
-    ]);
-
-    // === FILL STITCHES: Tatami vs Satin (con caché) ===
-    if (type === 'fill' || type === 'satin') {
-      const density = region.tatami_density || region.density || 0.4;
-      const stitchLen = 2.5;
-      
-      // Detectar si es satin o tatami por compactness
-      const isSatin = region.stitch_type === 'satin' && region.compacidad > 0.15;
-      
-      // Hash para invalidar caché: si cambian params clave, recalcula
-      const cacheKey = `${region.id}`;
-      const paramHash = `${isSatin}|${density}|${angle}|${color}`;
-      const cached = _stitchCache.get(cacheKey);
-      
-      let fillStitches;
-      if (cached && cached.hash === paramHash && cached.polygon === JSON.stringify(polygonMm)) {
-        // ✓ Caché válido — reutiliza stitches
-        fillStitches = cached.stitches;
-      } else {
-        // ✗ Caché inválido — recalcula
-        fillStitches = isSatin
-          ? generateSatinFillLines(polygonMm, angle, density, stitchLen, color, region.id)
-          : generateTatamiFillLines(polygonMm, angle, density, stitchLen, color, region.id);
-        
-        // Almacena en caché
-        _stitchCache.set(cacheKey, {
-          hash: paramHash,
-          polygon: JSON.stringify(polygonMm),
-          stitches: fillStitches
-        });
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // SECUENCIADO CORRECTO: FASE 1 → FASE 2 → FASE 3
+  // ═══════════════════════════════════════════════════════════════════════════════
+  
+  // FASE 1: RELLENOS (fills) — Ordenados por prioridad (1-5 = fills)
+  // Esto forma la BASE del bordado. La prioridad es asignada por EIE/enrichRegion
+  const fillRegions = regions
+    .filter(r => r.visible && r.path_points && r.path_points.length >= 3 && r.stitch_type === 'fill')
+    .sort((a, b) => {
+      // Primero por prioridad (menor = primero) — EIE asigna 1-5 a fills
+      if ((a.priority || 999) !== (b.priority || 999)) {
+        return (a.priority || 999) - (b.priority || 999);
       }
-      
-      stitches.push(...fillStitches);
-    }
+      // Luego por área (grande a pequeño) dentro de la misma prioridad
+      return (b.area_mm2 || 0) - (a.area_mm2 || 0);
+    });
 
-    // === CONTOUR STITCHES ===
-    const threadWidth = getThreadWidth(type);
+  for (const region of fillRegions) {
+    const color = region.color || '#ffffff';
+    const angle = (region.angle || 0) * (Math.PI / 180);
+    const polygonMm = region.path_points.map((p) => [p[0] * designW, p[1] * designH]);
+    const density = region.tatami_density || region.density || 0.4;
+    const stitchLen = 2.5;
+
+    // Generar fill (tatami)
+    const cacheKey = `${region.id}`;
+    const paramHash = `fill|${density}|${angle}|${color}`;
+    const cached = _stitchCache.get(cacheKey);
+    
+    let fillStitches;
+    if (cached && cached.hash === paramHash) {
+      fillStitches = cached.stitches;
+    } else {
+      fillStitches = generateTatamiFillLines(polygonMm, angle, density, stitchLen, color, region.id);
+      _stitchCache.set(cacheKey, { hash: paramHash, stitches: fillStitches });
+    }
+    
+    stitches.push(...fillStitches);
+  }
+
+  // FASE 2: DETALLES INTERNOS (run, small fills) — Orden por prioridad (6-9 = detalles)
+  const detailRegions = regions
+    .filter(r => r.visible && r.path_points && r.path_points.length >= 3 && (r.stitch_type === 'running_stitch' || (r.area_mm2 || 0) < 50))
+    .sort((a, b) => {
+      // Orden por prioridad (EIE asigna 6-9 a detalles)
+      return (a.priority || 999) - (b.priority || 999);
+    });
+
+  for (const region of detailRegions) {
+    const color = region.color || '#ffffff';
+    const angle = (region.angle || 0) * (Math.PI / 180);
+    const polygonMm = region.path_points.map((p) => [p[0] * designW, p[1] * designH]);
+
+    // Generar contorno (detalles pequeños)
+    const threadWidth = getThreadWidth(region.stitch_type);
     for (let i = 0; i < polygonMm.length - 1; i++) {
       const [x0, y0] = polygonMm[i];
       const [x1, y1] = polygonMm[i + 1];
-
       const dx = x1 - x0;
       const dy = y1 - y0;
       const dist = Math.hypot(dx, dy);
@@ -370,7 +372,7 @@ function buildStitchesFromRegions(regions, config) {
         stitches.push({
           x: x0 + dx * t,
           y: y0 + dy * t,
-          type: 'contour',
+          type: 'run',
           regionId: region.id,
           color,
           isJump: false,
@@ -378,6 +380,43 @@ function buildStitchesFromRegions(regions, config) {
         });
       }
     }
+  }
+
+  // FASE 3: CONTORNOS SATIN (bordes) — ÚLTIMO (define los bordes limpios)
+  // CRÍTICO: Esto va al FINAL para que cierre el bordado sobre los rellenos
+  // EIE asigna prioridad 5-8 a satins, pero dentro de Fase 3 van todos después de fills
+  const satinRegions = regions
+    .filter(r => r.visible && r.path_points && r.path_points.length >= 3 && r.stitch_type === 'satin')
+    .sort((a, b) => {
+      // Orden por prioridad (EIE asigna 5-8 a satins)
+      return (a.priority || 999) - (b.priority || 999);
+    });
+
+  for (const region of satinRegions) {
+    const color = region.color || '#ffffff';
+    const angle = (region.angle || 0) * (Math.PI / 180);
+    const polygonMm = region.path_points.map((p) => [p[0] * designW, p[1] * designH]);
+    const density = region.tatami_density || region.density || 0.4;
+    const stitchLen = 2.5;
+
+    // Generar satin fill (para satins anchos) o contorno satin (para contornos)
+    const isSatinFill = region.compacidad > 0.15;
+    
+    const cacheKey = `${region.id}`;
+    const paramHash = `satin|${density}|${angle}|${color}|${isSatinFill}`;
+    const cached = _stitchCache.get(cacheKey);
+    
+    let satinStitches;
+    if (cached && cached.hash === paramHash) {
+      satinStitches = cached.stitches;
+    } else {
+      satinStitches = isSatinFill
+        ? generateSatinFillLines(polygonMm, angle, density, stitchLen, color, region.id)
+        : generateSatinContourLines(polygonMm, angle, color, region.id);
+      _stitchCache.set(cacheKey, { hash: paramHash, stitches: satinStitches });
+    }
+    
+    stitches.push(...satinStitches);
   }
 
   return stitches;
@@ -784,6 +823,40 @@ function generateSatinFillLines(polygon, angle, density, stitchLen, color, regio
           }
         }
       }
+    }
+  }
+
+  return stitches;
+}
+
+/**
+ * Genera líneas de contorno satin puro (sin relleno interior)
+ * Para contornos delgados: borde definido sin área interna
+ */
+function generateSatinContourLines(polygonMm, angle, color, regionId) {
+  const stitches = [];
+  if (polygonMm.length < 2) return stitches;
+
+  // Generar puntos a lo largo del contorno
+  for (let i = 0; i < polygonMm.length - 1; i++) {
+    const [x0, y0] = polygonMm[i];
+    const [x1, y1] = polygonMm[i + 1];
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const dist = Math.hypot(dx, dy);
+    const steps = Math.max(2, Math.ceil(dist / 0.3));
+
+    for (let j = 0; j < steps; j++) {
+      const t = j / steps;
+      stitches.push({
+        x: x0 + dx * t,
+        y: y0 + dy * t,
+        type: 'satin',
+        regionId,
+        color,
+        isJump: false,
+        threadWidth: 0.6,
+      });
     }
   }
 
