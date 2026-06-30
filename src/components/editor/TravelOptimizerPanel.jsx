@@ -3,11 +3,11 @@ import {
   Zap, TrendingDown, Scissors, Palette, Route,
   ChevronDown, ChevronRight, CheckCircle2, Clock, Layers,
 } from 'lucide-react';
-import {
-  optimizeStitchSequence,
-  formatTimeSec,
-  formatThreadMm,
-} from '@/lib/stitchSequenceOptimizer';
+import { optimizeTravelPath, formatTime, formatThread } from '@/lib/travelOptimizer';
+
+// Adapter: travelOptimizer uses different key names than the old optimizer
+const formatTimeSec = formatTime;
+const formatThreadMm = formatThread;
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -103,10 +103,10 @@ export default function TravelOptimizerPanel({ regions, onApplyOrder }) {
     setApplied(false);
     setResult(null);
     setTimeout(() => {
-      const res = optimizeStitchSequence(regions, {
+      const res = optimizeTravelPath(regions, {
         width_mm:  100,
         height_mm: 100,
-        speed_spm: 800,
+        speedSpm:  800,
       });
       setResult(res);
       setRunning(false);
@@ -170,7 +170,7 @@ export default function TravelOptimizerPanel({ regions, onApplyOrder }) {
           {/* Overall saving */}
           <div className="flex items-center justify-center py-3">
             <div className="text-center">
-              <div className="text-5xl font-black text-emerald-400 leading-none">{result.overallPct}%</div>
+              <div className="text-5xl font-black text-emerald-400 leading-none">{result.overallSaving ?? result.overallPct ?? 0}%</div>
               <div className="text-xs font-semibold text-slate-400 mt-1 uppercase tracking-wider">Ahorro global</div>
             </div>
           </div>
@@ -187,7 +187,7 @@ export default function TravelOptimizerPanel({ regions, onApplyOrder }) {
               </div>
             </div>
             <span className="text-xl font-black text-violet-300">
-              {result.savings.timePct > 0 ? `↓${result.savings.timePct}%` : '—'}
+              {result.savings.time > 0 ? `↓${result.savings.time}%` : '—'}
             </span>
           </div>
 
@@ -203,7 +203,7 @@ export default function TravelOptimizerPanel({ regions, onApplyOrder }) {
               </div>
             </div>
             <span className="text-xl font-black text-emerald-400">
-              {result.savings.threadPct > 0 ? `↓${result.savings.threadPct}%` : '—'}
+              {result.savings.thread > 0 ? `↓${result.savings.thread}%` : '—'}
             </span>
           </div>
 
@@ -216,7 +216,7 @@ export default function TravelOptimizerPanel({ regions, onApplyOrder }) {
             />
             <SavingCard
               icon={Scissors}  label="Cortes"
-              before={result.before.cuts}  after={result.after.cuts}  unit=""
+              before={result.before.trims ?? result.before.cuts ?? 0}  after={result.after.trims ?? result.after.cuts ?? 0}  unit=""
               color="rose"
             />
             <SavingCard
@@ -244,12 +244,10 @@ export default function TravelOptimizerPanel({ regions, onApplyOrder }) {
           {showDetail && (
             <div className="rounded-lg border border-[#1e2130] bg-[#0a0c12] px-3 py-1">
               <MetricRow label="Saltos totales"   before={result.before.jumps}        after={result.after.jumps}        unit="" />
-              <MetricRow label="Cortes de hilo"   before={result.before.cuts}         after={result.after.cuts}         unit="" />
+              <MetricRow label="Cortes de hilo"   before={result.before.trims ?? result.before.cuts ?? 0} after={result.after.trims ?? result.after.cuts ?? 0} unit="" />
               <MetricRow label="Cambios color"    before={result.before.colorChanges} after={result.after.colorChanges} unit="" />
               <MetricRow label="Distancia saltos" before={result.before.jumpDistMm}   after={result.after.jumpDistMm}   unit="mm" />
-              <MetricRow label="Tiempo puntadas"  before={result.before.stitchTimeSec} after={result.after.stitchTimeSec} unit="s" formatter={formatTimeSec} />
-              <MetricRow label="Tiempo saltos"    before={result.before.jumpTimeSec}  after={result.after.jumpTimeSec}  unit="s" formatter={formatTimeSec} />
-              <MetricRow label="Tiempo cambios"   before={result.before.colorTimeSec} after={result.after.colorTimeSec} unit="s" formatter={formatTimeSec} />
+              <MetricRow label="Tiempo total"     before={result.before.totalTimeSec} after={result.after.totalTimeSec} unit="s" formatter={formatTimeSec} />
               <MetricRow label="Hilo total"       before={result.before.threadMm}     after={result.after.threadMm}     unit="" formatter={formatThreadMm} />
             </div>
           )}
@@ -261,15 +259,20 @@ export default function TravelOptimizerPanel({ regions, onApplyOrder }) {
           >
             <div className="flex items-center gap-1.5">
               <Layers className="w-3.5 h-3.5" />
-              <span>Secuencia de capas ({result.bandGroups?.length} grupos)</span>
+              <span>Grupos de color ({result.colorGroups?.length ?? 0})</span>
             </div>
             {showBands ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
           </button>
 
           {showBands && (
             <div className="rounded-lg border border-[#1e2130] bg-[#0a0c12] px-3 py-1 max-h-52 overflow-y-auto">
-              {result.bandGroups?.map((g, i) => (
-                <BandGroupRow key={`${g.color}-${i}`} group={g} index={i} />
+              {result.colorGroups?.map((g, i) => (
+                <div key={`${g.color}-${i}`} className="flex items-center gap-2 py-1.5 border-b border-[#1a1d27] last:border-0">
+                  <span className="text-[10px] text-slate-600 w-4 text-right">{i + 1}</span>
+                  <div className="w-2.5 h-2.5 rounded-full border border-white/10 shrink-0" style={{ background: g.color }} />
+                  <span className="text-[10px] text-slate-400 flex-1 truncate">{g.color}</span>
+                  <span className="text-[10px] text-slate-600">{g.count} reg</span>
+                </div>
               ))}
             </div>
           )}
