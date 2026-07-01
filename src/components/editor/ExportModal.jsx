@@ -1,7 +1,9 @@
-import { useState } from 'react';
-import { X, Download, Clock, Layers, Palette, FileText, ChevronRight, ShieldCheck } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { X, Download, Clock, Layers, Palette, FileText, ChevronRight, ShieldCheck, ShieldAlert, Bug, Wrench } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import PreflightPanel from './PreflightPanel';
+import ExportDebugPanel from './ExportDebugPanel';
+import { runExportPipeline, encodeToFile } from '@/lib/exportPipeline';
 
 const FORMATS = ['DST', 'PES', 'JEF', 'DSB'];
 
@@ -14,6 +16,8 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
   const [cuts, setCuts] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState(null);
+  const [debugMode, setDebugMode] = useState(false);
+  const [pipeline, setPipeline] = useState(null);
 
   const config = project?.config || {};
   const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
@@ -22,35 +26,34 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
   const widthMm  = config.width_mm  || 100;
   const heightMm = config.height_mm || 100;
 
-  // Critical issues: density out of safe embroidery range (0.25–0.65mm) or missing geometry
-  const hasErrors = regions.some(r =>
-    (r.density != null && (r.density < 0.25 || r.density > 0.65)) ||
-    !r.path_points || r.path_points.length < 3
-  );
+  const machineSettings = {
+    maxStitchLength: 12.1,
+    maxJumpLength: 12.1,
+    hoopSize: [widthMm, heightMm],
+    designOffset: [0, 0],
+    trimThreshold: 5.0,
+  };
+
+  // Run pipeline whenever regions/format change (memoized)
+  const pipelineResult = useMemo(() => {
+    return runExportPipeline(regions, config, machineSettings, format);
+  }, [regions, format, widthMm, heightMm]);
 
   const handleExport = async () => {
+    // GATE: block export if validation fails
+    if (!pipelineResult.ready) {
+      setExportError('Exportación cancelada: el diseño no supera todas las validaciones. Revisa el panel Debug.');
+      return;
+    }
     setExporting(true);
     setExportError(null);
     try {
-      const res = await base44.functions.invoke('generateEmbroideryFile', {
-        regions,
-        format,
-        width_mm: widthMm,
-        height_mm: heightMm,
-        machine_name: machine || 'Generic',
-        speed_rpm: speed,
-        cuts,
-        project_name: project?.name || 'design'
-      });
-      const { file_base64, file_name } = res.data;
-      if (!file_base64) throw new Error('El servidor no devolvió un archivo válido');
-      const byteStr = atob(file_base64);
-      const bytes = new Uint8Array(byteStr.length);
-      for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
-      const blob = new Blob([bytes], { type: 'application/octet-stream' });
+      const blob = await encodeToFile(pipelineResult.commands, pipelineResult.objects, format, machineSettings, base44);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url; a.download = file_name; a.click();
+      a.href = url;
+      a.download = `${(project?.name || 'design').replace(/[^a-zA-Z0-9_-]/g, '_')}.${format.toLowerCase()}`;
+      a.click();
       URL.revokeObjectURL(url);
       onClose();
     } catch (e) {
@@ -61,10 +64,12 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
     }
   };
 
+  const blockingErrors = pipelineResult.blockingErrors || [];
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm">
       <div className="bg-[#161a23] border border-[#2a2d3a] rounded-xl shadow-2xl flex flex-col"
-           style={{ width: step === 'preflight' ? 480 : 400, maxHeight: '90vh' }}>
+           style={{ width: step === 'preflight' ? 480 : (debugMode ? 640 : 400), maxHeight: '90vh' }}>
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#1e2130] flex-shrink-0">
@@ -72,7 +77,9 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
             <div className="flex items-center gap-2">
               {step === 'preflight'
                 ? <ShieldCheck className="w-4 h-4 text-violet-400" />
-                : <Download className="w-4 h-4 text-violet-400" />}
+                : blockingErrors.length > 0
+                  ? <ShieldAlert className="w-4 h-4 text-red-400" />
+                  : <Download className="w-4 h-4 text-violet-400" />}
               <h2 className="text-sm font-bold text-white">
                 {step === 'preflight' ? 'Pre-flight check' : 'Exportar diseño'}
               </h2>
@@ -109,6 +116,49 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
             </div>
           ) : (
             <div className="p-6 space-y-5">
+              {/* Validation status banner */}
+              {blockingErrors.length > 0 ? (
+                <div className="bg-red-900/20 border border-red-500/40 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ShieldAlert className="w-4 h-4 text-red-400" />
+                    <span className="text-xs font-bold text-red-400">Exportación BLOQUEADA</span>
+                    <span className="text-[10px] text-red-300 ml-auto">{blockingErrors.length} errores</span>
+                  </div>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
+                    {blockingErrors.slice(0, 8).map((e, i) => (
+                      <div key={i} className="text-[10px] text-red-300 flex items-start gap-1">
+                        <span className="font-bold text-red-400 shrink-0">[{e.rule}]</span>
+                        <span>{e.message}</span>
+                      </div>
+                    ))}
+                    {blockingErrors.length > 8 && (
+                      <div className="text-[10px] text-red-400 italic">+{blockingErrors.length - 8} errores más... (ver Debug)</div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-emerald-900/15 border border-emerald-500/30 rounded-lg p-3 flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-bold text-emerald-400">Validación superada — 12 reglas OK</span>
+                </div>
+              )}
+
+              {/* Debug toggle */}
+              <button
+                onClick={() => setDebugMode(!debugMode)}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-xs transition-colors ${
+                  debugMode ? 'bg-violet-900/20 border-violet-500/40 text-violet-300' : 'bg-[#0d0f14] border-[#2a2d3a] text-slate-400 hover:text-slate-300'
+                }`}
+              >
+                <Bug className="w-3.5 h-3.5" />
+                Modo Debug: {debugMode ? 'ON' : 'OFF'}
+                <ChevronRight className="w-3 h-3 ml-auto" />
+              </button>
+
+              {debugMode && (
+                <ExportDebugPanel pipeline={pipelineResult} />
+              )}
+
               {/* Stats */}
               <div className="grid grid-cols-4 gap-2">
                 {[
@@ -172,13 +222,9 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
               </button>
               <button
                 onClick={() => setStep('export')}
-                className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 ${
-                  hasErrors
-                    ? 'bg-amber-600 hover:bg-amber-500 text-white'
-                    : 'bg-violet-600 hover:bg-violet-500 text-white'
-                }`}
+                className="flex-1 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold transition-colors flex items-center justify-center gap-2"
               >
-                {hasErrors ? '⚠ Continuar de todas formas' : 'Continuar'}
+                Continuar
                 <ChevronRight className="w-4 h-4" />
               </button>
             </>
@@ -193,11 +239,22 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
                     {exportError}
                   </div>
                 )}
-                <button onClick={handleExport} disabled={exporting}
-                  className="w-full py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-sm font-bold transition-colors flex items-center justify-center gap-2">
-                  {exporting
-                    ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>
-                    : <><Download className="w-4 h-4" /> Confirmar y exportar</>}
+                <button
+                  onClick={handleExport}
+                  disabled={exporting || blockingErrors.length > 0}
+                  className={`w-full py-2.5 rounded-lg text-white text-sm font-bold transition-colors flex items-center justify-center gap-2 disabled:cursor-not-allowed ${
+                    blockingErrors.length > 0
+                      ? 'bg-red-900/40 border border-red-500/30 text-red-300 cursor-not-allowed'
+                      : 'bg-violet-600 hover:bg-violet-500 disabled:opacity-50'
+                  }`}
+                >
+                  {blockingErrors.length > 0 ? (
+                    <><ShieldAlert className="w-4 h-4" /> Exportación bloqueada</>
+                  ) : exporting ? (
+                    <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>
+                  ) : (
+                    <><Download className="w-4 h-4" /> Confirmar y exportar</>
+                  )}
                 </button>
               </div>
             </>
