@@ -247,22 +247,19 @@ function encodeDST(stitches, ms) {
       if (d & 128) b1 |= 0x80;
     }
 
-    // Overflow bits (byte 2)
+    // Overflow bits (byte 2) — bit 3 (value 8) doesn't fit in b0/b1
+    // Y bit 3 → b2 bit 2 (0x04), X bit 3 → b2 bit 3 (0x08)
+    // These positions are safe: they don't conflict with control flags
+    //   Normal=0x03, Jump=0x83, ColorChange=0xC3, End=0xF3
     if (y > 0) {
-      if (y & 8)   b2 |= 0x40;
-      if (y & 128) b2 |= 0x80;
+      if (y & 8)   b2 |= 0x04;
     } else if (y < 0) {
-      const d = -y;
-      if (d & 8)   b2 |= 0x40;
-      if (d & 128) b2 |= 0x80;
+      if ((-y) & 8) b2 |= 0x04;
     }
     if (x > 0) {
-      if (x & 8)   b2 |= 0x10;
-      if (x & 128) b2 |= 0x20;
+      if (x & 8)   b2 |= 0x08;
     } else if (x < 0) {
-      const d = -x;
-      if (d & 8)   b2 |= 0x10;
-      if (d & 128) b2 |= 0x20;
+      if ((-x) & 8) b2 |= 0x08;
     }
 
     records.push(b0, b1, b2);
