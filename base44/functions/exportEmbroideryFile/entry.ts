@@ -44,6 +44,25 @@ Deno.serve(async (req) => {
     // ── Validation ─────────────────────────────────────────────────────────
     const warnings = validateStitches(stitches, ms);
 
+    // ── Build stitchPaths fallback from commands (for PES/JEF color order) ──
+    let pathsForEncoding = stitchPaths;
+    if (!pathsForEncoding || !Array.isArray(pathsForEncoding) || pathsForEncoding.length === 0) {
+      pathsForEncoding = [];
+      let currentPath = null;
+      let currentColor = null;
+      for (const s of stitches) {
+        if (s.type === 'colorChange' || (currentColor === null && s.type === 'stitch')) {
+          if (currentPath && currentPath.points.length > 0) pathsForEncoding.push(currentPath);
+          currentColor = s.color || '#000000';
+          currentPath = { color: currentColor, points: [] };
+        }
+        if (s.type === 'stitch' && currentPath) {
+          currentPath.points.push([s.x, s.y]);
+        }
+      }
+      if (currentPath && currentPath.points.length > 0) pathsForEncoding.push(currentPath);
+    }
+
     // ── Encode ─────────────────────────────────────────────────────────────
     let fileBuffer, mimeType, ext;
     const fmt = format.toUpperCase();
@@ -53,11 +72,11 @@ Deno.serve(async (req) => {
       mimeType = 'application/octet-stream';
       ext = 'dst';
     } else if (fmt === 'PES') {
-      fileBuffer = encodePES(stitches, ms, stitchPaths);
+      fileBuffer = encodePES(stitches, ms, pathsForEncoding);
       mimeType = 'application/octet-stream';
       ext = 'pes';
     } else if (fmt === 'JEF') {
-      fileBuffer = encodeJEF(stitches, ms, stitchPaths);
+      fileBuffer = encodeJEF(stitches, ms, pathsForEncoding);
       mimeType = 'application/octet-stream';
       ext = 'jef';
     } else if (fmt === 'EXP') {

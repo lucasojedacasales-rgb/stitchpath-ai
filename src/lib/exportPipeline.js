@@ -21,6 +21,8 @@
  *   R12 NaN / Infinite coordinates   — non-finite x or y
  */
 
+import { optimizeObjectOrder, processObjectStitches } from './industrialStitchProcessor';
+
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
   DST: { maxStitch: 12.1, maxJump: 12.1, coordRange: 121, unit: 0.1 },
@@ -104,8 +106,15 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
   let prevX = 0, prevY = 0;
   let firstCmd = true;
 
-  for (const obj of objects) {
-    if (obj.points.length === 0) continue;
+  // Industrial: optimize object order — color grouping + nearest-neighbor
+  const ordered = optimizeObjectOrder(objects);
+
+  for (const obj of ordered) {
+    if (!obj.points || obj.points.length === 0) continue;
+
+    // Industrial: process object (redundant removal + density + underlay + tie-in/off)
+    const stitchPoints = processObjectStitches(obj, ms);
+    if (stitchPoints.length < 2) continue;
 
     // Color change (skip if same as previous)
     if (prevColor !== null && obj.color !== prevColor) {
@@ -114,7 +123,7 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
     prevColor = obj.color;
 
     // Jump to start if far from current position (including first object from origin 0,0)
-    const [sx, sy] = obj.points[0];
+    const [sx, sy] = stitchPoints[0];
     const startX = sx + offX, startY = sy + offY;
     const startDist = Math.hypot(startX - prevX, startY - prevY);
     if (startDist > 0.5) {
@@ -132,10 +141,10 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
       prevY = startY;
     }
 
-    // Stitch points
-    for (let i = 0; i < obj.points.length; i++) {
-      const x = obj.points[i][0] + offX;
-      const y = obj.points[i][1] + offY;
+    // Stitch all points (tie-in + underlay + main + tie-off) with splitting
+    for (let i = 0; i < stitchPoints.length; i++) {
+      const x = stitchPoints[i][0] + offX;
+      const y = stitchPoints[i][1] + offY;
       const dist = Math.hypot(x - prevX, y - prevY);
 
       if (dist > ms.maxStitchLength) {
