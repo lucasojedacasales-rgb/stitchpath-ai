@@ -90,10 +90,14 @@ Deno.serve(async (req) => {
     }
 
     // ── Encode as base64 for JSON transport (SDK can't handle raw binary) ───
+    // Use small chunks (8192) to avoid stack overflow on large designs
     let binary = '';
-    const chunkSize = 0x8000;
+    const chunkSize = 0x2000;
     for (let i = 0; i < fileBuffer.length; i += chunkSize) {
-      binary += String.fromCharCode.apply(null, fileBuffer.subarray(i, i + chunkSize));
+      const chunk = fileBuffer.subarray(i, Math.min(i + chunkSize, fileBuffer.length));
+      for (let j = 0; j < chunk.length; j++) {
+        binary += String.fromCharCode(chunk[j]);
+      }
     }
     const fileBase64 = btoa(binary);
 

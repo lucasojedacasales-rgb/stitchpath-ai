@@ -784,26 +784,42 @@ export async function encodeToFile(commands, objects, format, machineSettings, b
 
   if (!res || !res.data) throw new Error('Backend no devolvió datos');
 
-  // Handle different response shapes: Blob, ArrayBuffer, base64 string, or Uint8Array
+  // Extract base64 string from various possible response shapes
   const data = res.data;
   if (data instanceof Blob) return data;
   if (data instanceof ArrayBuffer) return new Blob([data], { type: 'application/octet-stream' });
   if (data instanceof Uint8Array) return new Blob([data], { type: 'application/octet-stream' });
+
+  // Find the base64 string — could be in an object, or data itself could be a JSON string
+  let b64 = null;
   if (typeof data === 'string') {
-    // base64-encoded binary
-    const byteStr = atob(data);
+    // Could be raw base64 or a JSON string — try JSON.parse first
+    try {
+      const parsed = JSON.parse(data);
+      b64 = parsed?.file_base64 || null;
+    } catch {
+      b64 = data; // Not JSON — assume it's raw base64
+    }
+  } else if (data && typeof data === 'object' && data.file_base64) {
+    b64 = data.file_base64;
+  }
+
+  if (!b64 || typeof b64 !== 'string') {
+    throw new Error('Formato de respuesta del backend no reconocido: ' + typeof data);
+  }
+
+  // Decode base64 → Blob. Use fetch(data:) as primary method — it's the browser's
+  // native base64 decoder, handles any length, and avoids atob's Latin1 limitation.
+  try {
+    const blob = await fetch(`data:application/octet-stream;base64,${b64}`).then(r => r.blob());
+    return blob;
+  } catch {
+    // Fallback: atob (may fail on very large or non-Latin1 strings)
+    const byteStr = atob(b64);
     const bytes = new Uint8Array(byteStr.length);
     for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
     return new Blob([bytes], { type: 'application/octet-stream' });
   }
-  // If it's an object with file_base64 (fallback to generateEmbroideryFile shape)
-  if (data.file_base64) {
-    const byteStr = atob(data.file_base64);
-    const bytes = new Uint8Array(byteStr.length);
-    for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
-    return new Blob([bytes], { type: 'application/octet-stream' });
-  }
-  throw new Error('Formato de respuesta del backend no reconocido: ' + typeof data);
 }
 
 /**
