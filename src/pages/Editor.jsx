@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Save, Download, Zap, ChevronRight, ArrowLeft } from 'lucide-react';
+import { Save, Download, Zap, ChevronRight, ArrowLeft, CheckCircle2 } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import StepPipeline from '@/components/editor/StepPipeline';
 import AIProgressIndicator from '@/components/editor/AIProgressIndicator';
@@ -13,8 +13,6 @@ import StitchPlannerPanel from '@/components/editor/StitchPlannerPanel.jsx';
 import IntelligencePanel from '@/components/editor/IntelligencePanel.jsx';
 import TravelOptimizerPanel from '@/components/editor/TravelOptimizerPanel.jsx';
 import EmbroideryPreview from '@/components/editor/EmbroideryPreview.jsx';
-import AutoIterationPanel from '@/components/editor/AutoIterationPanel.jsx';
-import CalibrationPanel from '@/components/editor/CalibrationPanel.jsx';
 import ExportModal from '@/components/editor/ExportModal';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
@@ -58,6 +56,7 @@ export default function Editor() {
   const [showExport, setShowExport] = useState(false);
   const [activeTab, setActiveTab] = useState('editor');
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [savedToast, setSavedToast] = useState(false);
   const [preprocessSettings, setPreprocessSettings] = useState(DEFAULT_PREPROCESS);
   const [preprocessedUrl, setPreprocessedUrl] = useState(null);
   const [pathMetrics, setPathMetrics] = useState(null);
@@ -90,6 +89,8 @@ export default function Editor() {
 
   // Cleanup: clear processing timer on unmount to prevent memory leak / stale setState
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
+
+
 
   const loadProject = async () => {
     setLoading(true);
@@ -130,6 +131,8 @@ export default function Editor() {
       };
       const updated = await base44.entities.Project.update(project.id, payload);
       setProject(updated);
+      setSavedToast(true);
+      setTimeout(() => setSavedToast(false), 2000);
     } finally { setSaving(false); }
   }, [project]);
 
@@ -224,6 +227,22 @@ export default function Editor() {
   const totalStitches = useMemo(() => regions.reduce((s, r) => s + (r.stitch_count || 0), 0), [regions]);
   const colorsUsed = useMemo(() => new Set(regions.map((r) => r.color)).size, [regions]);
 
+  // Keyboard shortcuts — defined after saveProject to avoid TDZ error
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveProject();
+      }
+      if (e.key === 'Escape') {
+        if (showExport) setShowExport(false);
+        else if (selectedRegionId) setSelectedRegionId(null);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [saveProject, showExport, selectedRegionId]);
+
   if (loading) return <div className="min-h-screen bg-[#0d0f14] flex items-center justify-center"><div className="w-8 h-8 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" /></div>;
 
   return (
@@ -235,7 +254,7 @@ export default function Editor() {
           <ProjectNameInput name={project?.name || 'Sin título'} onSave={handleRename} />
           <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
           <span className="text-xs text-slate-400">{config.mode || 'hybrid'}</span>
-          <div className="flex-1 flex justify-center"><StepPipeline currentStep={step} /></div>
+          <div className="flex-1 flex justify-center"><StepPipeline currentStep={step} onStepClick={setStep} /></div>
           <AIProgressIndicator active={processing} elapsed={processingElapsed} />
           <div className="flex items-center gap-1.5">
             <NavButton onClick={() => setShowExport(true)} icon={Download} label="Exportar" accent />
@@ -251,9 +270,7 @@ export default function Editor() {
               { id: 'mask',    label: '✂ Máscara' },
               { id: 'planner', label: '✦ Planner' },
               { id: 'travel',  label: '⚡ Travel' },
-              { id: 'autofix',      label: '🔄 AutoFix' },
-              { id: 'calibration', label: '🎯 Calibrar' },
-              { id: 'panel',       label: 'Panel' },
+              { id: 'panel',   label: 'Panel' },
             ].map(({ id, label }) =>
               <button key={id} onClick={() => setActiveTab(id)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
                 {label}
@@ -306,24 +323,6 @@ export default function Editor() {
                     return { ...r, stitch_type: upd.stitch_type, angle: upd.angle, underlay: upd.underlay };
                   }));
                 }}
-              />
-            </div>
-          ) : activeTab === 'autofix' ? (
-            <div className="flex-1 overflow-y-auto">
-              <AutoIterationPanel
-                regions={regions}
-                config={config}
-                onConfigChange={setConfig}
-                onReprocess={(newCfg) => startProcessing(null)}
-              />
-            </div>
-          ) : activeTab === 'calibration' ? (
-            <div className="flex-1 overflow-hidden">
-              <CalibrationPanel
-                imageUrl={imageUrl}
-                config={config}
-                onConfigChange={setConfig}
-                onRegionsUpdate={handleRegionsUpdate}
               />
             </div>
           ) : activeTab === 'travel' ? (
@@ -410,6 +409,13 @@ export default function Editor() {
       </div>
 
       {showExport && <ExportModal project={project} regions={regions} onClose={() => setShowExport(false)} />}
+
+      {/* Saved toast */}
+      {savedToast && (
+        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-900/80 border border-emerald-500/40 text-emerald-300 text-xs font-semibold shadow-xl animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <CheckCircle2 className="w-3.5 h-3.5" /> Guardado
+        </div>
+      )}
     </div>);
 
 }

@@ -3,10 +3,11 @@
  * Input:  ctx.regions, ctx.config
  * Output: ctx.optimized (OptimizedPlan)
  *
+ * Uses travelOptimizer.js (superior: real entry/exit points, correct physical scale).
  * Only runs when the mode strategy enables travelOptimize.
  */
 
-import { optimizeStitchSequence } from '../../stitchSequenceOptimizer.js';
+import { optimizeTravelPath } from '../../travelOptimizer.js';
 import { getModeStrategy } from '../../digitizeModes.js';
 
 export async function runStitchOptimizer(ctx) {
@@ -22,16 +23,16 @@ export async function runStitchOptimizer(ctx) {
     return;
   }
 
-  const result = optimizeStitchSequence(ctx.regions, {
+  const result = optimizeTravelPath(ctx.regions, {
     width_mm:  ctx.config.width_mm  || 100,
     height_mm: ctx.config.height_mm || 100,
-    speed_spm: ctx.config.machine_speed || 800,
+    speedSpm:  ctx.config.machine_speed || 800,
   });
 
   // Store full result for downstream consumers (NeedlePathPanel, metrics bar)
   ctx.optimized = result;
 
-  if (Array.isArray(result.optimizedSequence) && result.optimizedSequence.length > 0) {
+  if (result && Array.isArray(result.optimizedSequence) && result.optimizedSequence.length > 0) {
     ctx.regions = result.optimizedSequence;
   }
 }

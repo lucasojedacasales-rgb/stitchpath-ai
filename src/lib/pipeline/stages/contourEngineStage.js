@@ -36,14 +36,6 @@ export async function runContourEngine(ctx) {
 
   const modeOpts = { ...(MODE_OPTIONS[strategy.id] || MODE_OPTIONS.hybrid) };
 
-  // Calibration overrides: scale gap/area factors from calibrationEngine adjustments
-  if (ctx.config._gapCloseFactor) {
-    modeOpts.gapCloseThreshold = Math.min(30, modeOpts.gapCloseThreshold * ctx.config._gapCloseFactor);
-  }
-  if (ctx.config._minAreaFactor) {
-    modeOpts.minAreaPx = Math.min(300, Math.round(modeOpts.minAreaPx * ctx.config._minAreaFactor));
-  }
-
   // Adaptive RDP epsilon: denser edges → tighter epsilon to preserve detail.
   // edgeDensityMap is a 2D grid of Sobel density [0,1]. Compute the mean.
   if (ctx.analysis?.edgeDensityMap) {
