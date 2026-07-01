@@ -229,75 +229,87 @@ function validateStitches(stitches, ms) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function encodeDST(stitches, ms) {
-  const header = new Uint8Array(512);
-  const label = 'StitchPath';
-  for (let i = 0; i < label.length && i < 512; i++) header[i] = label.charCodeAt(i);
+  // ── Compute design extents for header ──────────────────────────────────
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let stitchCount = 0, colorCount = 0;
+  for (const s of stitches) {
+    // Count ALL DST records per Tajima spec (ST includes jumps, colorChanges, trims, END)
+    // Trim generates 3 jump records in the Tajima trim sequence
+    if (s.type === 'trim') stitchCount += 3;
+    else stitchCount++;
+
+    if (s.type === 'colorChange') colorCount++;
+
+    // Extents from stitch/jump positions only
+    if (s.type === 'stitch' || s.type === 'jump') {
+      if (s.x < minX) minX = s.x;
+      if (s.y < minY) minY = s.y;
+      if (s.x > maxX) maxX = s.x;
+      if (s.y > maxY) maxY = s.y;
+    }
+  }
+  if (minX === Infinity) { minX = 0; minY = 0; maxX = 0; maxY = 0; }
+
+  // ── Build header (512 bytes, ASCII metadata per Tajima spec) ────────────
+  const header = new Uint8Array(512).fill(0x20);
+  let hpos = 0;
+  const writeStr = (s) => { for (let i = 0; i < s.length && hpos < 512; i++) header[hpos++] = s.charCodeAt(i); header[hpos++] = 0x0D; };
+
+  writeStr(`LA:${'StitchPath'.padEnd(16, ' ').slice(0, 16)}`);
+  writeStr(`ST:${String(stitchCount).padStart(7, '0')}`);
+  writeStr(`CO:${String(colorCount).padStart(3, '0')}`);
+  writeStr(`+X:${String(Math.round(maxX * 10)).padStart(5, '0')}`);
+  writeStr(`-X:${String(Math.round(-minX * 10)).padStart(5, '0')}`);
+  writeStr(`+Y:${String(Math.round(maxY * 10)).padStart(5, '0')}`);
+  writeStr(`-Y:${String(Math.round(-minY * 10)).padStart(5, '0')}`);
+  writeStr('AX:+00000');
+  writeStr('AY:+00000');
+  writeStr('MX:+00000');
+  writeStr('MY:+00000');
+  writeStr('PD:******');
 
   const records = [];
   let cx = 0, cy = 0;
   const UNIT = 0.1; // mm per DST unit
 
+  /**
+   * Encodes a DST record using balanced ternary decomposition.
+   * Each coordinate is decomposed into signed digits: ±1, ±3, ±9, ±27, ±81.
+   *
+   * Byte 1: y±1, y±9 | x±9, x±1
+   * Byte 2: y±3, y±27 | x±27, x±3
+   * Byte 3: ctrl, y±81 | x±81, set(0x03)
+   */
   const encodeRecord = (dx, dy, flags) => {
     dx = Math.max(-121, Math.min(121, Math.round(dx)));
     dy = Math.max(-121, Math.min(121, Math.round(dy)));
 
     let b0 = 0, b1 = 0, b2 = flags;
-    const y = dy, x = dx;
+    let y = dy, x = dx;
 
-    // Y encoding (byte 0)
-    if (y > 0) {
-      if (y & 1)   b0 |= 0x01;
-      if (y & 2)   b0 |= 0x02;
-      if (y & 4)   b0 |= 0x04;
-      if (y & 16)  b0 |= 0x10;
-      if (y & 32)  b0 |= 0x20;
-      if (y & 64)  b0 |= 0x40;
-      if (y & 128) b0 |= 0x80;
-    } else if (y < 0) {
-      const d = -y;
-      if (d & 1)   b0 |= 0x08;
-      if (d & 2)   b0 |= 0x10;
-      if (d & 4)   b0 |= 0x20;
-      if (d & 16)  b0 |= 0x01;
-      if (d & 32)  b0 |= 0x02;
-      if (d & 64)  b0 |= 0x04;
-      if (d & 128) b0 |= 0x80;
-    }
+    // Y: balanced ternary (places 81, 27, 9, 3, 1)
+    if (y > 40)       { b2 |= 0x20; y -= 81; }
+    else if (y < -40) { b2 |= 0x10; y += 81; }
+    if (y > 13)       { b1 |= 0x20; y -= 27; }
+    else if (y < -13) { b1 |= 0x10; y += 27; }
+    if (y > 4)        { b0 |= 0x20; y -= 9; }
+    else if (y < -4)  { b0 |= 0x10; y += 9; }
+    if (y > 1)        { b1 |= 0x80; y -= 3; }
+    else if (y < -1)  { b1 |= 0x40; y += 3; }
+    if (y > 0)        { b0 |= 0x80; }
+    else if (y < 0)   { b0 |= 0x40; }
 
-    // X encoding (byte 1)
-    if (x > 0) {
-      if (x & 1)   b1 |= 0x01;
-      if (x & 2)   b1 |= 0x02;
-      if (x & 4)   b1 |= 0x04;
-      if (x & 16)  b1 |= 0x10;
-      if (x & 32)  b1 |= 0x20;
-      if (x & 64)  b1 |= 0x40;
-      if (x & 128) b1 |= 0x80;
-    } else if (x < 0) {
-      const d = -x;
-      if (d & 1)   b1 |= 0x08;
-      if (d & 2)   b1 |= 0x10;
-      if (d & 4)   b1 |= 0x20;
-      if (d & 16)  b1 |= 0x01;
-      if (d & 32)  b1 |= 0x02;
-      if (d & 64)  b1 |= 0x04;
-      if (d & 128) b1 |= 0x80;
-    }
-
-    // Overflow bits (byte 2) — bit 3 (value 8) doesn't fit in b0/b1
-    // Y bit 3 → b2 bit 2 (0x04), X bit 3 → b2 bit 3 (0x08)
-    // These positions are safe: they don't conflict with control flags
-    //   Normal=0x03, Jump=0x83, ColorChange=0xC3, End=0xF3
-    if (y > 0) {
-      if (y & 8)   b2 |= 0x04;
-    } else if (y < 0) {
-      if ((-y) & 8) b2 |= 0x04;
-    }
-    if (x > 0) {
-      if (x & 8)   b2 |= 0x08;
-    } else if (x < 0) {
-      if ((-x) & 8) b2 |= 0x08;
-    }
+    // X: balanced ternary (places 81, 27, 9, 3, 1)
+    if (x > 40)       { b2 |= 0x04; x -= 81; }
+    else if (x < -40) { b2 |= 0x08; x += 81; }
+    if (x > 13)       { b1 |= 0x04; x -= 27; }
+    else if (x < -13) { b1 |= 0x08; x += 27; }
+    if (x > 4)        { b0 |= 0x04; x -= 9; }
+    else if (x < -4)  { b0 |= 0x08; x += 9; }
+    if (x > 1)        { b1 |= 0x01; x -= 3; }
+    else if (x < -1)  { b1 |= 0x02; x += 3; }
+    if (x > 0)        { b0 |= 0x01; }
+    else if (x < 0)   { b0 |= 0x02; }
 
     records.push(b0, b1, b2);
   };
