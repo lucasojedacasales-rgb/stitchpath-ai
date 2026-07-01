@@ -4,6 +4,7 @@ import {
   CheckCircle, AlertTriangle, SkipForward, RotateCcw, Sparkles
 } from 'lucide-react';
 import { runExportPipelineRaw, applyFixForRule, validatePipeline, DEFAULT_MACHINE } from '@/lib/exportPipeline';
+import ValidationPreview from './ValidationPreview';
 
 // ── Rule metadata: user-friendly descriptions ────────────────────────────────
 const RULE_INFO = {
@@ -197,6 +198,9 @@ export default function ExportFixWizard({ regions, config, machineSettings, form
         {phase === 'fixing' && currentError ? (
           <FixingView
             error={currentError}
+            commands={pipelineState.commands}
+            allErrors={pipelineState.errors}
+            machineSettings={ms}
             applying={applying}
             onApplyFix={handleApplyFix}
             onSkip={handleSkip}
@@ -209,6 +213,8 @@ export default function ExportFixWizard({ regions, config, machineSettings, form
             fixedLog={fixedLog}
             skippedLog={skippedLog}
             remainingErrors={pipelineState.errors}
+            commands={pipelineState.commands}
+            machineSettings={ms}
             allResolved={allResolved}
             onComplete={handleComplete}
             onRestart={handleRestart}
@@ -233,12 +239,20 @@ export default function ExportFixWizard({ regions, config, machineSettings, form
 }
 
 // ── Fixing View: shows current error + fix actions ───────────────────────────
-function FixingView({ error, applying, onApplyFix, onSkip, onFixAll, onCancel, hasMore }) {
+function FixingView({ error, commands, allErrors, machineSettings, applying, onApplyFix, onSkip, onFixAll, onCancel, hasMore }) {
   const info = RULE_INFO[error.rule] || { label: error.rule, fix: 'Aplicar corrección automática', severity: 'error' };
   const isWarning = info.severity === 'warning';
 
   return (
     <div className="space-y-4">
+      {/* Visual preview — highlights problematic stitches in red */}
+      <ValidationPreview
+        commands={commands}
+        errors={allErrors}
+        currentIndex={error?.index}
+        machineSettings={machineSettings}
+      />
+
       {/* Error card */}
       <div className={`rounded-lg border p-4 ${isWarning ? 'border-amber-500/30 bg-amber-950/15' : 'border-red-500/30 bg-red-950/15'}`}>
         <div className="flex items-start gap-3">
@@ -313,9 +327,16 @@ function FixingView({ error, applying, onApplyFix, onSkip, onFixAll, onCancel, h
 }
 
 // ── Summary View: final report after all errors processed ────────────────────
-function SummaryView({ fixedLog, skippedLog, remainingErrors, allResolved, onComplete, onRestart, onCancel }) {
+function SummaryView({ fixedLog, skippedLog, remainingErrors, commands, machineSettings, allResolved, onComplete, onRestart, onCancel }) {
   return (
     <div className="space-y-4">
+      {/* Visual preview — shows final state after fixes */}
+      <ValidationPreview
+        commands={commands}
+        errors={remainingErrors}
+        machineSettings={machineSettings}
+      />
+
       {/* Status banner */}
       <div className={`rounded-lg border p-4 ${allResolved ? 'border-emerald-500/30 bg-emerald-950/20' : remainingErrors.length > 0 ? 'border-red-500/30 bg-red-950/15' : 'border-amber-500/30 bg-amber-950/15'}`}>
         <div className="flex items-center gap-3 mb-2">

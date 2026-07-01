@@ -4,6 +4,7 @@ import { base44 } from '@/api/base44Client';
 import PreflightPanel from './PreflightPanel';
 import ExportDebugPanel from './ExportDebugPanel';
 import ExportFixWizard from './ExportFixWizard';
+import ValidationPreview from './ValidationPreview';
 import { runExportPipeline, encodeToFile } from '@/lib/exportPipeline';
 
 const FORMATS = ['DST', 'PES', 'JEF', 'EXP'];
@@ -213,6 +214,14 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
                   )}
                 </div>
               )}
+
+              {/* Visual preview — highlights problematic stitches in red */}
+              <ValidationPreview
+                commands={pipelineResult.commands}
+                errors={blockingErrors}
+                machineSettings={machineSettings}
+                height={140}
+              />
 
               {/* Debug toggle */}
               <button
