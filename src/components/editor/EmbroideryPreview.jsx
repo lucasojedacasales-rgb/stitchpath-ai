@@ -402,7 +402,10 @@ function buildStitchesFromRegions(regions, config, _stitchCache) {
     const stitchLen = 2.5;
 
     // Generar satin fill (para satins anchos) o contorno satin (para contornos)
-    const isSatinFill = region.compacidad > 0.15;
+    // BUG FIX: region.compacidad está en _metrics, no en el top-level → siempre undefined → false
+    // Usar area_mm2 como discriminador real: >2mm² = satin fill con columnas; ≤2mm² = outline fino
+    const areaMm2 = region.area_mm2 || 0;
+    const isSatinFill = areaMm2 > 2;
     
     const cacheKey = `${region.id}`;
     const paramHash = `satin|${density}|${angle}|${color}|${isSatinFill}`;

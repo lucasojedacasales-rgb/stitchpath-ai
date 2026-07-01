@@ -69,10 +69,16 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
     labels[i] = nearestIdx(lab, paletteLab);
   }
 
-  // Relative floor: 0.00015 of image area — at 1024px ≈ 157px minimum.
-  // Low enough to capture eyes (≈200–400px at 1024) and small details like nose.
-  // The minAreaPx absolute floor (60px) handles tiny designs at lower resolutions.
-  const minPixels = Math.max(cfg.minAreaPx, Math.floor(W * H * 0.00015));
+  // Scale minAreaPx proportionally to analysis resolution so the physical minimum
+  // stays consistent regardless of analysisSize. Reference size = 1024px.
+  // At 512px:  60 * (512/1024)² = 15px  (captures tiny details at low res)
+  // At 1024px: 60 * 1            = 60px  (baseline — correct, no override)
+  // At 1600px: 60 * (1600/1024)² ≈ 146px (larger canvas needs bigger min)
+  // OLD CODE used Math.max(60, W*H*0.00015) which at 1024px gave 157px,
+  // silently overriding the 60px absolute and losing small details like pupils.
+  const refSize = 1024;
+  const sizeRatio = (W * H) / (refSize * refSize);
+  const minPixels = Math.max(1, Math.round(cfg.minAreaPx * sizeRatio));
   const regions = [];
 
   for (let ci = 0; ci < palette.length; ci++) {
