@@ -239,8 +239,11 @@ export function validatePipeline(commands, objects, machine = DEFAULT_MACHINE, f
       }
       // R13: Jump > trimThreshold without preceding trim — home machine rule
       // Only check the FIRST jump in a consecutive sequence (sub-jumps are part of same travel)
+      // Skip: position 0 (start of design) and after colorChange (machine auto-trims on color change)
       const isFirstInJumpSeq = i === 0 || commands[i - 1].type !== 'jump';
-      if (isFirstInJumpSeq && dist > ms.trimThreshold && (i === 0 || commands[i - 1].type !== 'trim')) {
+      const prevCmd = i > 0 ? commands[i - 1] : null;
+      const hasStitchBefore = prevCmd && (prevCmd.type === 'stitch' || prevCmd.type === 'jump');
+      if (isFirstInJumpSeq && hasStitchBefore && dist > ms.trimThreshold && prevCmd.type !== 'trim') {
         errors.push({ rule: 'R13', index: i, message: `Salto de ${dist.toFixed(1)}mm sin trim previo — requiere corte de hilo (>${ms.trimThreshold}mm)` });
         fixable.push({ rule: 'R13', index: i });
       }
@@ -479,11 +482,11 @@ export function autoFix(commands, objects, machine = DEFAULT_MACHINE, format = '
     if (c.type === 'jump') {
       const prev = i > 0 ? cmds[i - 1] : null;
       const isFirstInSeq = !prev || prev.type !== 'jump';
-      if (isFirstInSeq) {
-        let prevX = 0, prevY = 0;
-        if (prev && prev.x !== undefined) { prevX = prev.x; prevY = prev.y; }
+      const hasStitchBefore = prev && (prev.type === 'stitch' || prev.type === 'jump');
+      if (isFirstInSeq && hasStitchBefore) {
+        let prevX = prev.x, prevY = prev.y;
         const dist = Math.hypot(c.x - prevX, c.y - prevY);
-        if (dist > ms.trimThreshold && (!prev || prev.type !== 'trim')) {
+        if (dist > ms.trimThreshold && prev.type !== 'trim') {
           trimmed13.push({ type: 'trim', x: prevX, y: prevY, color: c.color });
           trimInserted++;
         }
@@ -695,11 +698,11 @@ export function applyFixForRule(commands, objects, rule, machine = DEFAULT_MACHI
       if (c.type === 'jump') {
         const prev = i > 0 ? cmds[i - 1] : null;
         const isFirstInSeq = !prev || prev.type !== 'jump';
-        if (isFirstInSeq) {
-          let prevX = 0, prevY = 0;
-          if (prev && prev.x !== undefined) { prevX = prev.x; prevY = prev.y; }
+        const hasStitchBefore = prev && (prev.type === 'stitch' || prev.type === 'jump');
+        if (isFirstInSeq && hasStitchBefore) {
+          let prevX = prev.x, prevY = prev.y;
           const dist = Math.hypot(c.x - prevX, c.y - prevY);
-          if (dist > ms.trimThreshold && (!prev || prev.type !== 'trim')) {
+          if (dist > ms.trimThreshold && prev.type !== 'trim') {
             trimmed.push({ type: 'trim', x: prevX, y: prevY, color: c.color });
             trimInserted++;
           }

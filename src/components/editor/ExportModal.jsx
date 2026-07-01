@@ -35,7 +35,7 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
     maxJumpLength: 12.1,
     hoopSize: [widthMm, heightMm],
     designOffset: [0, 0],
-    trimThreshold: 5.0,
+    trimThreshold: 3.5,
   };
 
   // Run pipeline whenever regions/format change (memoized)

@@ -124,7 +124,10 @@ export default function ExportFixWizard({ regions, config, machineSettings, form
       let cmds = pipelineState.commands;
       let objs = pipelineState.objects;
       let applied = [];
-      const rulesToFix = ['R5', 'R4', 'R10', 'R7', 'R6', 'R13', 'R9', 'R8', 'R1', 'R2', 'R12', 'R3'];
+      // R13 must run LAST — R8 can remove trims at position 0, and R1/R2 splitting
+      // can create new jump sequences. Running R13 after all other fixes ensures
+      // trims are inserted on the final command sequence and aren't undone.
+      const rulesToFix = ['R5', 'R4', 'R10', 'R7', 'R6', 'R9', 'R8', 'R1', 'R2', 'R12', 'R3', 'R13'];
 
       for (const rule of rulesToFix) {
         const result = applyFixForRule(cmds, objs, rule, ms, format);
