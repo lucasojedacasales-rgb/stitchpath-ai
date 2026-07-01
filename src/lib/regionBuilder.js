@@ -37,10 +37,7 @@
  */
 
 import { adaptRegion } from './adaptiveEngine.js';
-import { applyProfessionalStrategy } from './embroideryStrategy.js';
-import { partitionRegions } from './regionPartitioner.js';
-import { computeAdaptiveDensity } from './adaptiveDensity.js';
-import { cleanMicroRegions } from './microRegionCleaner.js';
+import { eieOptimizeTravelOrder } from './stitchIntelligence.js';
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 
@@ -368,15 +365,9 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
   if (!useAdaptive && region.stitch_type) {
     const originalColor = region.color || region.hex || '#888888';
     const threadRec = recommendThread(originalColor);
-    // Ensure density is never 0 — 0 causes extreme fill density in tatamiEngine
-    const safeDensity = (region.density && region.density > 0) ? region.density : 0.4;
-    const adaptive_density_mm = computeAdaptiveDensity(
-      { stitch_type: region.stitch_type, area_mm2, angle: region.angle || 45, convexity, complexity, mean_width_mm: skeletonMetrics.mean_width_mm },
-      fabricType, designWidthMm, designHeightMm,
-    );
     const stitch_count = region.stitch_count || estimateStitchCount(
       { stitch_type: region.stitch_type, area_mm2, perimeter_mm },
-      adaptive_density_mm || safeDensity
+      region.density || 0.4
     );
     return {
       ...region,
@@ -388,8 +379,6 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
       mean_curvature, holes, complexity,
       color: originalColor,
       recommended_thread: threadRec,
-      density: adaptive_density_mm || safeDensity,
-      adaptive_density_mm,
       stitch_count,
       estimatedTime: estimateTime(stitch_count),
       estimatedThread: estimateThread(stitch_count),
@@ -444,24 +433,6 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
   // Preserve original pixel color — never overwrite
   const originalColor = region.color || region.hex || '#888888';
 
-  // FASE 9: Densidad adaptativa — calculada aquí para tener disponibles
-  // todos los parámetros geométricos y de tela. Se almacena como
-  // adaptive_density_mm y sobreescribe region.density en el output.
-  const adaptive_density_mm = computeAdaptiveDensity(
-    {
-      stitch_type:  adapted.stitch_type,
-      area_mm2,
-      angle:        adapted.fill_angle,
-      fill_angle:   adapted.fill_angle,
-      convexity,
-      complexity,
-      mean_width_mm: skeletonMetrics.mean_width_mm,
-    },
-    fabricType,
-    designWidthMm,
-    designHeightMm,
-  );
-
   return {
     ...region,
     // Geometría
@@ -484,8 +455,7 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
     stitch_type:         adapted.stitch_type,
     stitch_confidence:   adapted.stitch_confidence,
     stitch_rationale:    adapted.stitch_rationale,
-    density:             adaptive_density_mm || adapted.density, // FASE 9: densidad adaptativa
-    adaptive_density_mm,
+    density:             adapted.density,
     stitch_length_mm:    adapted.stitch_length_mm,
     pull_compensation:   adapted.pull_compensation,
     recommended_underlay: adapted.underlay,
@@ -507,30 +477,10 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
 /**
  * Enriquece todas las regiones y asigna travelOrder (secuencia greedy por prioridad + proximidad).
  */
-export function enrichAllRegions(regions, designWidthMm = 100, designHeightMm = 100, fabricType = 'Algodón', useAdaptive = true, cleanOptions = {}) {
-  // FASE 10: Limpieza de micro-regiones ANTES de particionar y enriquecer.
-  // Elimina islotes, fusiona micro-regiones y consolida cambios de color innecesarios.
-  // cleanOptions puede sobreescribir los umbrales por defecto desde la UI (ConfigPanel).
-  const { regions: cleaned, stats: cleanStats } = cleanMicroRegions(regions, {
-    mergeThresholdMm2: 4.0,
-    islandRadiusNorm:  0.15,
-    minStitches:       3,
-    colorMergeGapMm2:  2.0,
-    ...cleanOptions,
-  });
+export function enrichAllRegions(regions, designWidthMm = 100, designHeightMm = 100, fabricType = 'Algodón', useAdaptive = true) {
+  const enriched = regions.map(r => enrichRegion(r, regions, designWidthMm, designHeightMm, fabricType, useAdaptive));
 
-  // FASE 4: Partición automática de regiones irregulares (antes de enriquecer)
-  const partitioned = partitionRegions(cleaned, designWidthMm, designHeightMm);
-  const enriched = partitioned.map(r => enrichRegion(r, partitioned, designWidthMm, designHeightMm, fabricType, useAdaptive));
-
-  // EIE v3.0 — Professional Strategy Engine:
-  // Adjacency graph → layering fix → angle harmony → sewing order → jump routing → deformation prevention
-  const strategized = applyProfessionalStrategy(enriched, fabricType);
-
-  // Attach FASE 10 clean stats to first region for diagnostics
-  if (strategized.length > 0 && cleanStats.total_removed > 0) {
-    strategized[0] = { ...strategized[0], _fase10_stats: cleanStats };
-  }
-
-  return strategized;
+  // EIE 2-opt optimized travel order: priority-grouped + nearest-neighbour + 2-opt improvement.
+  // Ensures fills are drawn before satin outlines, and satin before running_stitch details.
+  return eieOptimizeTravelOrder(enriched, fabricType);
 }

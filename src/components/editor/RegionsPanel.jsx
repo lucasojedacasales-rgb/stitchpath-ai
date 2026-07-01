@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Eye, EyeOff, Edit2, Check, Layers, Focus, ChevronDown, ChevronRight, Brain, Search, X } from 'lucide-react';
+import { Eye, EyeOff, Edit2, Check, Layers, Focus, ChevronDown, ChevronRight, Brain, Zap } from 'lucide-react';
 import RegionEditModal from './RegionEditModal';
 import RegionInspector from './RegionInspector.jsx';
 import { enrichAllRegions } from '@/lib/regionBuilder.js';
@@ -257,7 +257,6 @@ function RegionInspectorPanel({ region, allRegions }) {
 
 export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate, config }) {
   const [filter, setFilter] = useState('Todas');
-  const [search, setSearch] = useState('');
   const [batchMode, setBatchMode] = useState(false);
   const [applyingEIE, setApplyingEIE] = useState(false);
   const [selected, setSelected] = useState([]);
@@ -275,36 +274,21 @@ export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate, 
     if (!allRegions.length) return;
     setApplyingEIE(true);
     setTimeout(() => {
-      const {
-        width_mm = 100, height_mm = 100, fabric_type = 'Algodón',
-        micro_merge_threshold, micro_min_stitches, micro_island_radius
-      } = config || {};
+      const { width_mm = 100, height_mm = 100, fabric_type = 'Algodón' } = config || {};
       // Re-enrich all regions through the EIE — resets adaptive params from geometry
-      const enriched = enrichAllRegions(allRegions, width_mm, height_mm, fabric_type, true, {
-        mergeThresholdMm2: micro_merge_threshold,
-        minStitches:       micro_min_stitches,
-        islandRadiusNorm:  micro_island_radius,
-      });
+      const enriched = enrichAllRegions(allRegions, width_mm, height_mm, fabric_type, true);
       onUpdate(enriched);
       setApplyingEIE(false);
     }, 50);
   };
 
-  const filtered = useMemo(() => {
-    const lowerSearch = search.toLowerCase();
-    return allRegions.filter(r => {
-      if (isolatedId && r.id !== isolatedId) return false;
-      if (filter === 'Fill')  return r.stitch_type === 'fill';
-      if (filter === 'Satin') return r.stitch_type === 'satin';
-      if (filter === 'Run')   return r.stitch_type === 'running_stitch';
-      if (search) {
-        const name = generateRegionName(r, allRegions).toLowerCase();
-        const colorName = getColorName(r.color).toLowerCase();
-        return name.includes(lowerSearch) || colorName.includes(lowerSearch) || r.stitch_type?.includes(lowerSearch);
-      }
-      return true;
-    });
-  }, [allRegions, filter, isolatedId, search]);
+  const filtered = useMemo(() => allRegions.filter(r => {
+    if (isolatedId && r.id !== isolatedId) return false;
+    if (filter === 'Fill')  return r.stitch_type === 'fill';
+    if (filter === 'Satin') return r.stitch_type === 'satin';
+    if (filter === 'Run')   return r.stitch_type === 'running_stitch';
+    return true;
+  }), [allRegions, filter, isolatedId]);
 
   // Group by closest color name
   const groups = useMemo(() => {
@@ -402,29 +386,9 @@ export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate, 
           </div>
         </div>
 
-        {/* Search */}
-        <div className="relative mb-2">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-600 pointer-events-none" />
-          <input
-            type="text"
-            placeholder="Buscar región..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full bg-[#161a23] border border-[#2a2d3a] rounded px-6 py-1.5 text-[11px] text-slate-300 placeholder-slate-600 focus:outline-none focus:border-violet-500"
-          />
-          {search && (
-            <button onClick={() => setSearch('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
-              <X className="w-3 h-3" />
-            </button>
-          )}
-        </div>
-
         {/* Summary */}
         <div className="text-[10px] text-slate-600 mb-1.5">
-          {search
-            ? <><span className="text-violet-400 font-bold">{filtered.length}</span> de {allRegions.length} · {fmtPts(totalStitches)} pts</>
-            : <>{fmtPts(totalStitches)} puntadas totales</>
-          }
+          {fmtPts(totalStitches)} puntadas totales
         </div>
 
         {/* Filters */}
@@ -452,9 +416,7 @@ export default function RegionsPanel({ regions, selectedId, onSelect, onUpdate, 
       {/* Region list */}
       <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 && (
-          <div className="text-center text-slate-600 text-xs py-12">
-            {search ? `Sin resultados para "${search}"` : 'No hay regiones'}
-          </div>
+          <div className="text-center text-slate-600 text-xs py-12">No hay regiones</div>
         )}
 
         {groupByColor && groups ? (

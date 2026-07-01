@@ -179,16 +179,10 @@ Responde SOLO JSON:
           ? (label.underlay !== undefined ? label.underlay : stitch_type === 'fill')
           : false;
 
-        // BUG FIX: perimeter_norm is in NORMALIZED coordinates [0,1] relative to the
-        // image dimensions, NOT the diagonal. Using hypot(w,h) inflated perimeters by
-        // up to 41% on square designs (100x100mm → diag=141mm vs correct avg=100mm).
-        // Correct formula: scale by the geometric mean of design dimensions.
-        // perimeter_norm is sum of Euclidean distances in normalized [0,1]×[0,1] space.
-        // Physical conversion: sqrt((dx*w)² + (dy*h)²). For w=h this = dist_norm × w exactly.
-        // General approximation: geometric mean sqrt(w*h) is accurate to within ~15% for any aspect.
-        const geoMeanMm = Math.sqrt(w * h);
+        // Derive perimeter_mm from normalized perimeter (diagonal of design = reference)
+        const diagMm = Math.hypot(w, h);
         const perimeterMm = r.perimeter_norm
-          ? r.perimeter_norm * geoMeanMm
+          ? r.perimeter_norm * diagMm
           : (r.perimeter_mm || Math.sqrt(r.coverage * w * h) * 3.5);
 
         return {
