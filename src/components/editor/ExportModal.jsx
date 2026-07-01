@@ -3,6 +3,7 @@ import { X, Download, Clock, Layers, Palette, FileText, ChevronRight, ShieldChec
 import { base44 } from '@/api/base44Client';
 import PreflightPanel from './PreflightPanel';
 import ExportDebugPanel from './ExportDebugPanel';
+import ExportFixWizard from './ExportFixWizard';
 import { runExportPipeline, encodeToFile } from '@/lib/exportPipeline';
 
 const FORMATS = ['DST', 'PES', 'JEF', 'EXP'];
@@ -19,6 +20,7 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
   const [debugMode, setDebugMode] = useState(false);
   const [pipeline, setPipeline] = useState(null);
   const [fixAttempted, setFixAttempted] = useState(false);
+  const [wizardResult, setWizardResult] = useState(null);
 
   const config = project?.config || {};
   const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
@@ -41,15 +43,18 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
   }, [regions, format, widthMm, heightMm]);
 
   const handleExport = async () => {
-    // GATE: block export if validation fails
-    if (!pipelineResult.ready) {
-      setExportError('Exportación cancelada: el diseño no supera todas las validaciones. Revisa el panel Debug.');
+    const commands = wizardResult?.commands || pipelineResult.commands;
+    const objects = wizardResult?.objects || pipelineResult.objects;
+
+    // GATE: block export if validation fails and no wizard result
+    if (!pipelineResult.ready && !wizardResult) {
+      setExportError('Exportación cancelada: el diseño no supera todas las validaciones. Usa el asistente de corrección.');
       return;
     }
     setExporting(true);
     setExportError(null);
     try {
-      const blob = await encodeToFile(pipelineResult.commands, pipelineResult.objects, format, machineSettings, base44);
+      const blob = await encodeToFile(commands, objects, format, machineSettings, base44);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -70,7 +75,7 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm">
       <div className="bg-[#161a23] border border-[#2a2d3a] rounded-xl shadow-2xl flex flex-col"
-           style={{ width: step === 'preflight' ? 480 : (debugMode ? 640 : 400), maxHeight: '90vh' }}>
+           style={{ width: step === 'preflight' ? 480 : step === 'wizard' ? 460 : (debugMode ? 640 : 400), maxHeight: '90vh' }}>
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#1e2130] flex-shrink-0">
@@ -78,24 +83,26 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
             <div className="flex items-center gap-2">
               {step === 'preflight'
                 ? <ShieldCheck className="w-4 h-4 text-violet-400" />
-                : blockingErrors.length > 0
-                  ? <ShieldAlert className="w-4 h-4 text-red-400" />
-                  : <Download className="w-4 h-4 text-violet-400" />}
+                : step === 'wizard'
+                  ? <Wrench className="w-4 h-4 text-cyan-400" />
+                  : blockingErrors.length > 0 && !wizardResult
+                    ? <ShieldAlert className="w-4 h-4 text-red-400" />
+                    : <Download className="w-4 h-4 text-violet-400" />}
               <h2 className="text-sm font-bold text-white">
-                {step === 'preflight' ? 'Pre-flight check' : 'Exportar diseño'}
+                {step === 'preflight' ? 'Pre-flight check' : step === 'wizard' ? 'Asistente de corrección' : 'Exportar diseño'}
               </h2>
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5">{project?.name}</p>
           </div>
           {/* Step indicator */}
           <div className="flex items-center gap-2 mr-4">
-            {['preflight', 'export'].map((s, i) => (
+            {['preflight', 'wizard', 'export'].map((s, i) => (
               <div key={s} className="flex items-center gap-1">
                 <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold border transition-colors ${
                   step === s ? 'bg-violet-600 border-violet-500 text-white' :
-                  (step === 'export' && i === 0) ? 'bg-emerald-900/40 border-emerald-500/40 text-emerald-400' :
+                  (step === 'wizard' && i === 0) || (step === 'export' && i <= 1) ? 'bg-emerald-900/40 border-emerald-500/40 text-emerald-400' :
                   'border-[#2a2d3a] text-slate-600'}`}>{i + 1}</div>
-                {i === 0 && <ChevronRight className="w-3 h-3 text-slate-600" />}
+                {i < 2 && <ChevronRight className="w-3 h-3 text-slate-600" />}
               </div>
             ))}
           </div>
@@ -115,10 +122,32 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
                 onOptimizeRoute={setRegions}
               />
             </div>
+          ) : step === 'wizard' ? (
+            <ExportFixWizard
+              regions={regions}
+              config={config}
+              machineSettings={machineSettings}
+              format={format}
+              onComplete={(result) => {
+                setWizardResult(result);
+                setStep('export');
+              }}
+              onCancel={() => setStep('export')}
+            />
           ) : (
             <div className="p-6 space-y-5">
               {/* Validation status banner */}
-              {blockingErrors.length > 0 ? (
+              {wizardResult && wizardResult.remainingErrors === 0 ? (
+                <div className="bg-emerald-900/20 border border-emerald-500/40 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    <span className="text-xs font-bold text-emerald-400">Errores corregidos por el asistente</span>
+                  </div>
+                  <p className="text-[10px] text-emerald-300">
+                    El asistente corrigió todos los errores bloqueantes. Puedes exportar con seguridad.
+                  </p>
+                </div>
+              ) : blockingErrors.length > 0 ? (
                 <div className="bg-red-900/20 border border-red-500/40 rounded-lg p-3">
                   <div className="flex items-center gap-2 mb-2">
                     <ShieldAlert className="w-4 h-4 text-red-400" />
@@ -159,10 +188,14 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
                       <div className="text-[10px] text-red-400 italic">+{blockingErrors.length - 8} errores más... (ver Debug)</div>
                     )}
                   </div>
-                  {/* Manual fix hint */}
-                  <div className="mt-2 pt-2 border-t border-red-500/20 text-[10px] text-slate-400">
-                    <span className="text-slate-300">Acción:</span> Editar las regiones en el editor para corregir geometría, o reducir tamaño del diseño al bastidor ({widthMm}×{heightMm}mm).
-                  </div>
+                  {/* Launch wizard button */}
+                  <button
+                    onClick={() => { setWizardResult(null); setStep('wizard'); }}
+                    className="w-full mt-2 flex items-center justify-center gap-2 py-2 rounded-lg bg-cyan-600/20 border border-cyan-500/30 text-cyan-300 text-xs font-bold hover:bg-cyan-600/30 transition-colors"
+                  >
+                    <Wrench className="w-3.5 h-3.5" />
+                    Iniciar asistente de corrección
+                  </button>
                 </div>
               ) : (
                 <div className="bg-emerald-900/15 border border-emerald-500/30 rounded-lg p-3">
@@ -266,6 +299,10 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
                 <ChevronRight className="w-4 h-4" />
               </button>
             </>
+          ) : step === 'wizard' ? (
+            <button onClick={() => setStep('export')} className="flex-1 py-2.5 rounded-lg border border-[#2a2d3a] text-slate-400 text-sm hover:text-white transition-colors">
+              ← Volver
+            </button>
           ) : (
             <>
               <button onClick={() => setStep('preflight')} className="px-4 py-2.5 rounded-lg border border-[#2a2d3a] text-slate-400 text-sm hover:text-white transition-colors">
@@ -279,17 +316,19 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
                 )}
                 <button
                   onClick={handleExport}
-                  disabled={exporting || blockingErrors.length > 0}
+                  disabled={exporting || (blockingErrors.length > 0 && !wizardResult)}
                   className={`w-full py-2.5 rounded-lg text-white text-sm font-bold transition-colors flex items-center justify-center gap-2 disabled:cursor-not-allowed ${
-                    blockingErrors.length > 0
+                    blockingErrors.length > 0 && !wizardResult
                       ? 'bg-red-900/40 border border-red-500/30 text-red-300 cursor-not-allowed'
                       : 'bg-violet-600 hover:bg-violet-500 disabled:opacity-50'
                   }`}
                 >
-                  {blockingErrors.length > 0 ? (
+                  {blockingErrors.length > 0 && !wizardResult ? (
                     <><ShieldAlert className="w-4 h-4" /> Exportación bloqueada</>
                   ) : exporting ? (
                     <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>
+                  ) : wizardResult ? (
+                    <><Download className="w-4 h-4" /> Exportar (corregido)</>
                   ) : (
                     <><Download className="w-4 h-4" /> Confirmar y exportar</>
                   )}

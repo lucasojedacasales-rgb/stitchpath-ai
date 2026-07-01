@@ -29,7 +29,7 @@ const FORMAT_LIMITS = {
   JEF: { maxStitch: 12.7, maxJump: 12.7, coordRange: 32767, unit: 0.1 },
 };
 
-const DEFAULT_MACHINE = {
+export const DEFAULT_MACHINE = {
   maxStitchLength: 12.1,
   maxJumpLength: 12.1,
   hoopSize: [100, 100],     // mm
@@ -468,6 +468,181 @@ export function autoFix(commands, objects, machine = DEFAULT_MACHINE, format = '
   });
   if (clipCount > 0) {
     applied.push({ rule: 'R3', message: `${clipCount} coordenadas recortadas al bastidor (${hw}×${hh}mm)` });
+  }
+
+  return { fixedCommands: cmds, fixedObjects, applied };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  RAW PIPELINE (no auto-fix) + SINGLE-RULE FIX — for interactive wizard
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Runs pipeline WITHOUT auto-fix — returns raw errors for interactive review.
+ */
+export function runExportPipelineRaw(regions, config, machineSettings, format) {
+  const ms = { ...DEFAULT_MACHINE, ...machineSettings };
+  const objects = buildStitchObjects(regions, config);
+  const commands = flattenToCommands(objects, ms);
+  const validation = validatePipeline(commands, objects, ms, format);
+  return {
+    objects,
+    commands,
+    errors: validation.errors,
+    warnings: validation.warnings,
+    fixable: validation.fixable,
+    stats: validation.stats,
+    ready: validation.passed,
+  };
+}
+
+/**
+ * Applies fix for a SINGLE rule only (used by the interactive wizard).
+ * Returns { fixedCommands, fixedObjects, applied }.
+ */
+export function applyFixForRule(commands, objects, rule, machine = DEFAULT_MACHINE, format = 'DST') {
+  const ms = { ...DEFAULT_MACHINE, ...machine };
+  const limits = FORMAT_LIMITS[format] || FORMAT_LIMITS.DST;
+  const applied = [];
+  let cmds = [...commands];
+  let fixedObjects = objects;
+
+  // Normalize R1/R2 — errors store "R1" or "R2", fix applies to both
+  const fixKey = (rule === 'R1' || rule === 'R2') ? 'R1R2' : rule;
+
+  if (fixKey === 'R5') {
+    fixedObjects = objects.map(obj => {
+      if (obj.points.length >= 3) {
+        const [fx, fy] = obj.points[0];
+        const [lx, ly] = obj.points[obj.points.length - 1];
+        if (Math.hypot(fx - lx, fy - ly) > 0.5) {
+          applied.push({ rule: 'R5', objectId: obj.id, message: `Región ${obj.id} cerrada automáticamente` });
+          return { ...obj, points: [...obj.points, [fx, fy]] };
+        }
+      }
+      return obj;
+    });
+    cmds = flattenToCommands(fixedObjects, ms);
+  }
+
+  if (fixKey === 'R4' || fixKey === 'R10') {
+    const before = fixedObjects.length;
+    fixedObjects = fixedObjects.filter(obj => {
+      if (!obj.points || obj.points.length === 0) {
+        applied.push({ rule: 'R4', objectId: obj.id, message: `Objeto vacío ${obj.id} eliminado` });
+        return false;
+      }
+      const unique = new Set(obj.points.map(p => `${p[0].toFixed(2)},${p[1].toFixed(2)}`));
+      if (unique.size < 2) {
+        applied.push({ rule: 'R10', objectId: obj.id, message: `Bloque corrupto ${obj.id} eliminado` });
+        return false;
+      }
+      return true;
+    });
+    if (fixedObjects.length < before) {
+      cmds = flattenToCommands(fixedObjects, ms);
+    }
+  }
+
+  if (fixKey === 'R7') {
+    cmds = cmds.filter((c, i) => {
+      if (c.type !== 'colorChange') return true;
+      const prev = cmds.slice(0, i).reverse().find(x => x.type === 'colorChange' || x.type === 'stitch' || x.type === 'jump');
+      if (prev && prev.color === c.color) {
+        applied.push({ rule: 'R7', index: i, message: `Cambio de color redundante eliminado` });
+        return false;
+      }
+      return true;
+    });
+  }
+
+  if (fixKey === 'R6') {
+    let prevType = null;
+    cmds = cmds.filter(c => {
+      if (c.type === 'trim' && prevType === 'trim') {
+        applied.push({ rule: 'R6', message: 'Trim consecutivo eliminado' });
+        return false;
+      }
+      prevType = c.type;
+      return true;
+    });
+  }
+
+  if (fixKey === 'R9') {
+    const endIdx = cmds.findIndex(c => c.type === 'end');
+    if (endIdx === -1) {
+      const last = cmds[cmds.length - 1] || { x: 0, y: 0 };
+      cmds.push({ type: 'end', x: last.x, y: last.y, color: null });
+      applied.push({ rule: 'R9', message: 'Comando END añadido al final' });
+    } else if (endIdx !== cmds.length - 1) {
+      cmds = [...cmds.slice(0, endIdx + 1)];
+      applied.push({ rule: 'R9', message: 'END movido al final' });
+    }
+  }
+
+  if (fixKey === 'R8') {
+    while (cmds.length > 0 && (cmds[0].type === 'colorChange' || cmds[0].type === 'trim')) {
+      applied.push({ rule: 'R8', message: `Comando ilegal en posición 0 (${cmds[0].type}) eliminado` });
+      cmds.shift();
+    }
+  }
+
+  if (fixKey === 'R1R2') {
+    const splitCmds = [];
+    let prevX2 = 0, prevY2 = 0;
+    let splitCount = 0;
+    for (const c of cmds) {
+      if (c.type === 'stitch' || c.type === 'jump') {
+        const dist = Math.hypot(c.x - prevX2, c.y - prevY2);
+        const maxLen = c.type === 'stitch' ? limits.maxStitch : limits.maxJump;
+        if (dist > maxLen) {
+          const steps = Math.ceil(dist / maxLen);
+          for (let s = 1; s <= steps; s++) {
+            const sx = prevX2 + (c.x - prevX2) * s / steps;
+            const sy = prevY2 + (c.y - prevY2) * s / steps;
+            splitCmds.push({ type: c.type, x: sx, y: sy, color: c.color });
+          }
+          splitCount++;
+        } else {
+          splitCmds.push(c);
+        }
+        prevX2 = c.x; prevY2 = c.y;
+      } else {
+        splitCmds.push(c);
+      }
+    }
+    if (splitCount > 0) {
+      applied.push({ rule: fixKey === 'R1R2' ? 'R1/R2' : rule, message: `${splitCount} puntadas/saltos excesivos divididos en sub-puntadas` });
+      cmds = splitCmds;
+    }
+  }
+
+  if (fixKey === 'R12') {
+    const beforeR12 = cmds.length;
+    cmds = cmds.filter(c => {
+      if (c.x !== undefined && (!Number.isFinite(c.x) || !Number.isFinite(c.y))) return false;
+      return true;
+    });
+    if (cmds.length < beforeR12) {
+      applied.push({ rule: 'R12', message: `${beforeR12 - cmds.length} comandos con coordenadas NaN/Inf eliminados` });
+    }
+  }
+
+  if (fixKey === 'R3') {
+    const [hw, hh] = ms.hoopSize;
+    let clipCount = 0;
+    cmds = cmds.map(c => {
+      if (c.type === 'stitch' || c.type === 'jump') {
+        const cx = Math.max(-hw / 2, Math.min(hw / 2, c.x));
+        const cy = Math.max(-hh / 2, Math.min(hh / 2, c.y));
+        if (cx !== c.x || cy !== c.y) clipCount++;
+        return { ...c, x: cx, y: cy };
+      }
+      return c;
+    });
+    if (clipCount > 0) {
+      applied.push({ rule: 'R3', message: `${clipCount} coordenadas recortadas al bastidor (${hw}×${hh}mm)` });
+    }
   }
 
   return { fixedCommands: cmds, fixedObjects, applied };
