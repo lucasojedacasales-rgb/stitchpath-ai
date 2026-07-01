@@ -5,7 +5,7 @@ import PreflightPanel from './PreflightPanel';
 import ExportDebugPanel from './ExportDebugPanel';
 import { runExportPipeline, encodeToFile } from '@/lib/exportPipeline';
 
-const FORMATS = ['DST', 'PES', 'JEF', 'DSB'];
+const FORMATS = ['DST', 'PES', 'JEF', 'EXP'];
 
 export default function ExportModal({ project, regions: initialRegions, onClose }) {
   const [step, setStep] = useState('preflight'); // 'preflight' | 'export'
