@@ -19,6 +19,7 @@ const RULE_INFO = {
   R9:  { label: 'Falta terminador',     fix: 'Añadir comando END al final',           icon: 'flag',     severity: 'error' },
   R10: { label: 'Bloque corrupto',      fix: 'Eliminar bloque con <2 puntos únicos',  icon: 'trash',    severity: 'error' },
   R12: { label: 'Coordenada inválida',  fix: 'Eliminar comandos con NaN/Infinito',    icon: 'alert',    severity: 'error' },
+  R13: { label: 'Salto sin corte',      fix: 'Insertar trim antes de saltos largos (>3.5mm)', icon: 'scissors', severity: 'warning' },
 };
 
 function RuleIcon({ rule, className }) {
@@ -123,7 +124,7 @@ export default function ExportFixWizard({ regions, config, machineSettings, form
       let cmds = pipelineState.commands;
       let objs = pipelineState.objects;
       let applied = [];
-      const rulesToFix = ['R5', 'R4', 'R10', 'R7', 'R6', 'R9', 'R8', 'R1', 'R2', 'R12', 'R3'];
+      const rulesToFix = ['R5', 'R4', 'R10', 'R7', 'R6', 'R13', 'R9', 'R8', 'R1', 'R2', 'R12', 'R3'];
 
       for (const rule of rulesToFix) {
         const result = applyFixForRule(cmds, objs, rule, ms, format);

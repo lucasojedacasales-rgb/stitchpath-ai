@@ -6,7 +6,7 @@
  * Flow:
  *   regions → buildStitchObjects → validatePipeline → autoFix → encode (backend)
  *
- * 12 validation rules (all must pass before export):
+ * 13 validation rules (all must pass before export):
  *   R1  Excessive stitch length      — stitch > maxStitchLength (12.1mm DST)
  *   R2  Jumps too long               — jump > maxJumpLength (12.1mm DST)
  *   R3  Coordinates outside hoop     — |x|>hoopW/2 or |y|>hoopH/2
@@ -19,6 +19,7 @@
  *   R10 Corrupt blocks               — block with <2 points or degenerate
  *   R11 Invalid offsets              — offset pushes coords outside hoop
  *   R12 NaN / Infinite coordinates   — non-finite x or y
+ *   R13 Jump without trim            — jump >3.5mm without preceding trim (home machine rule)
  */
 
 import { optimizeObjectOrder, processObjectStitches } from './industrialStitchProcessor';
@@ -36,7 +37,7 @@ export const DEFAULT_MACHINE = {
   maxJumpLength: 12.1,
   hoopSize: [100, 100],     // mm
   designOffset: [0, 0],     // mm
-  trimThreshold: 5.0,       // mm — distance to trigger trim
+  trimThreshold: 3.5,       // mm — home machine: trim at 3-4mm (Caydo CE01 rule)
   minStitchLength: 0.3,     // mm — below this = degenerate
 };
 
@@ -235,6 +236,13 @@ export function validatePipeline(commands, objects, machine = DEFAULT_MACHINE, f
       if (dist > limits.maxJump) {
         errors.push({ rule: 'R2', index: i, message: `Salto excesivo ${dist.toFixed(1)}mm > ${limits.maxJump}mm en comando ${i}` });
         fixable.push({ rule: 'R2', index: i, dist });
+      }
+      // R13: Jump > trimThreshold without preceding trim — home machine rule
+      // Only check the FIRST jump in a consecutive sequence (sub-jumps are part of same travel)
+      const isFirstInJumpSeq = i === 0 || commands[i - 1].type !== 'jump';
+      if (isFirstInJumpSeq && dist > ms.trimThreshold && (i === 0 || commands[i - 1].type !== 'trim')) {
+        errors.push({ rule: 'R13', index: i, message: `Salto de ${dist.toFixed(1)}mm sin trim previo — requiere corte de hilo (>${ms.trimThreshold}mm)` });
+        fixable.push({ rule: 'R13', index: i });
       }
     }
 
@@ -463,6 +471,31 @@ export function autoFix(commands, objects, machine = DEFAULT_MACHINE, format = '
     applied.push({ rule: 'R12', message: `${beforeR12 - cmds.length} comandos con coordenadas NaN/Inf eliminados` });
   }
 
+  // R13: Insert trim before first jump in sequence that exceeds trimThreshold without preceding trim
+  let trimInserted = 0;
+  const trimmed13 = [];
+  for (let i = 0; i < cmds.length; i++) {
+    const c = cmds[i];
+    if (c.type === 'jump') {
+      const prev = i > 0 ? cmds[i - 1] : null;
+      const isFirstInSeq = !prev || prev.type !== 'jump';
+      if (isFirstInSeq) {
+        let prevX = 0, prevY = 0;
+        if (prev && prev.x !== undefined) { prevX = prev.x; prevY = prev.y; }
+        const dist = Math.hypot(c.x - prevX, c.y - prevY);
+        if (dist > ms.trimThreshold && (!prev || prev.type !== 'trim')) {
+          trimmed13.push({ type: 'trim', x: prevX, y: prevY, color: c.color });
+          trimInserted++;
+        }
+      }
+    }
+    trimmed13.push(c);
+  }
+  if (trimInserted > 0) {
+    applied.push({ rule: 'R13', message: `${trimInserted} trims insertados antes de saltos largos (>${ms.trimThreshold}mm)` });
+    cmds = trimmed13;
+  }
+
   // R3: Clip coordinates to hoop bounds
   const [hw, hh] = ms.hoopSize;
   let clipCount = 0;
@@ -651,6 +684,32 @@ export function applyFixForRule(commands, objects, rule, machine = DEFAULT_MACHI
     });
     if (clipCount > 0) {
       applied.push({ rule: 'R3', message: `${clipCount} coordenadas recortadas al bastidor (${hw}×${hh}mm)` });
+    }
+  }
+
+  if (fixKey === 'R13') {
+    let trimInserted = 0;
+    const trimmed = [];
+    for (let i = 0; i < cmds.length; i++) {
+      const c = cmds[i];
+      if (c.type === 'jump') {
+        const prev = i > 0 ? cmds[i - 1] : null;
+        const isFirstInSeq = !prev || prev.type !== 'jump';
+        if (isFirstInSeq) {
+          let prevX = 0, prevY = 0;
+          if (prev && prev.x !== undefined) { prevX = prev.x; prevY = prev.y; }
+          const dist = Math.hypot(c.x - prevX, c.y - prevY);
+          if (dist > ms.trimThreshold && (!prev || prev.type !== 'trim')) {
+            trimmed.push({ type: 'trim', x: prevX, y: prevY, color: c.color });
+            trimInserted++;
+          }
+        }
+      }
+      trimmed.push(c);
+    }
+    if (trimInserted > 0) {
+      applied.push({ rule: 'R13', message: `${trimInserted} trims insertados antes de saltos largos (>${ms.trimThreshold}mm)` });
+      cmds = trimmed;
     }
   }
 
