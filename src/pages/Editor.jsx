@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Save, Download, Zap, ChevronRight, ArrowLeft } from 'lucide-react';
+import { Save, Download, Zap, ChevronRight, ArrowLeft, ShieldCheck } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import StepPipeline from '@/components/editor/StepPipeline';
 import AIProgressIndicator from '@/components/editor/AIProgressIndicator';
@@ -14,6 +14,7 @@ import IntelligencePanel from '@/components/editor/IntelligencePanel.jsx';
 import TravelOptimizerPanel from '@/components/editor/TravelOptimizerPanel.jsx';
 import EmbroideryPreview from '@/components/editor/EmbroideryPreview.jsx';
 import ExportModal from '@/components/editor/ExportModal';
+import MachineValidatorPanel from '@/components/editor/MachineValidatorPanel';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
 import MaskCanvas from '@/components/editor/MaskCanvas';
@@ -249,6 +250,7 @@ export default function Editor() {
               { id: 'mask',    label: '✂ Máscara' },
               { id: 'planner', label: '✦ Planner' },
               { id: 'travel',  label: '⚡ Travel' },
+              { id: 'validate',label: '✓ Validar' },
               { id: 'panel',   label: 'Panel' },
             ].map(({ id, label }) =>
               <button key={id} onClick={() => setActiveTab(id)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
@@ -303,6 +305,27 @@ export default function Editor() {
                   }));
                 }}
               />
+            </div>
+          ) : activeTab === 'validate' ? (
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="max-w-md mx-auto">
+                <div className="flex items-center gap-2 mb-3">
+                  <ShieldCheck className="w-4 h-4 text-violet-400" />
+                  <h3 className="text-sm font-bold text-white">Validación de Máquina Doméstica</h3>
+                  <span className="text-[10px] text-slate-500">Caydo CE01</span>
+                </div>
+                <MachineValidatorPanel
+                  regions={regions}
+                  config={config}
+                  machineSettings={{
+                    maxStitchLength: 12.1,
+                    maxJumpLength: 12.1,
+                    hoopSize: [config.width_mm || 100, config.height_mm || 100],
+                    designOffset: [0, 0],
+                    trimThreshold: 3.5,
+                  }}
+                />
+              </div>
             </div>
           ) : activeTab === 'travel' ? (
             <div className="flex-1 overflow-hidden">
