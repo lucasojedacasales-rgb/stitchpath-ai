@@ -711,17 +711,28 @@ export function runExportPipeline(regions, config, machineSettings, format) {
 /**
  * Sends validated commands to backend encoder for file writing.
  * Returns a Blob ready for download.
+ *
+ * Sends `commands` directly (already validated + optimized by the pipeline)
+ * as the primary input. Also builds `stitchPaths` as a fallback so the backend
+ * can use whichever format is available.
  */
 export async function encodeToFile(commands, objects, format, machineSettings, base44Client) {
-  // Convert commands back to stitchPaths format expected by backend
+  // ── Sanitize commands: filter out NaN/Infinity coordinates ──────────────
+  const cleanCommands = (commands || []).filter(c => {
+    if (!c || !c.type) return false;
+    if (c.type === 'colorChange' || c.type === 'end') return true;
+    return Number.isFinite(c.x) && Number.isFinite(c.y);
+  });
+
+  // ── Build stitchPaths fallback from clean commands ──────────────────────
   const stitchPaths = [];
   let currentPath = null;
   let currentColor = null;
 
-  for (const c of commands) {
+  for (const c of cleanCommands) {
     if (c.type === 'colorChange' || (currentColor === null && c.type === 'stitch')) {
       if (currentPath && currentPath.points.length > 0) stitchPaths.push(currentPath);
-      currentColor = c.color;
+      currentColor = c.color || '#000000';
       currentPath = { color: currentColor, points: [] };
     }
     if (c.type === 'stitch' && currentPath) {
@@ -730,11 +741,37 @@ export async function encodeToFile(commands, objects, format, machineSettings, b
   }
   if (currentPath && currentPath.points.length > 0) stitchPaths.push(currentPath);
 
-  const res = await base44Client.functions.invoke('exportEmbroideryFile', {
-    stitchPaths,
-    format,
-    machineSettings,
-  });
+  // ── Sanitize machineSettings: ensure numeric values ─────────────────────
+  const ms = machineSettings || {};
+  const hs = Array.isArray(ms.hoopSize) ? ms.hoopSize : [ms.hoopSize, ms.hoopSize];
+  const dof = Array.isArray(ms.designOffset) ? ms.designOffset : [ms.designOffset, ms.designOffset];
+  const cleanMachineSettings = {
+    maxStitchLength: Number(ms.maxStitchLength) || 12.1,
+    maxJumpLength: Number(ms.maxJumpLength) || 12.1,
+    hoopSize: [Number(hs[0]) || 100, Number(hs[1]) || 100],
+    designOffset: [Number(dof[0]) || 0, Number(dof[1]) || 0],
+    trimThreshold: Number(ms.trimThreshold) || 5.0,
+  };
+
+  // ── Invoke backend with BOTH formats — backend prefers `commands` ───────
+  let res;
+  try {
+    res = await base44Client.functions.invoke('exportEmbroideryFile', {
+      commands: cleanCommands,
+      stitchPaths,
+      format,
+      machineSettings: cleanMachineSettings,
+    });
+  } catch (e) {
+    // Extract the real error message from the Axios error response
+    const backendError = e?.response?.data?.error;
+    const status = e?.response?.status;
+    throw new Error(
+      backendError
+        ? `Backend (${status}): ${backendError}`
+        : e?.message || 'Error de conexión con el backend'
+    );
+  }
 
   if (!res || !res.data) throw new Error('Backend no devolvió datos');
 

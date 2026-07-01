@@ -6,9 +6,13 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { stitchPaths, format = 'DST', machineSettings = {} } = await req.json();
-    if (!stitchPaths || !Array.isArray(stitchPaths)) {
-      return Response.json({ error: 'stitchPaths array required' }, { status: 400 });
+    const { stitchPaths, commands: preFlattened, format = 'DST', machineSettings = {} } = await req.json();
+
+    // Accept either `commands` (pre-flattened by the export pipeline) or
+    // `stitchPaths` (legacy). Prefer `commands` since they're already validated.
+    if ((!preFlattened || !Array.isArray(preFlattened) || preFlattened.length === 0) &&
+        (!stitchPaths || !Array.isArray(stitchPaths) || stitchPaths.length === 0)) {
+      return Response.json({ error: 'Either commands or stitchPaths array required' }, { status: 400 });
     }
 
     const ms = {
@@ -20,8 +24,22 @@ Deno.serve(async (req) => {
       ...machineSettings,
     };
 
-    // ── Flatten + optimize stitches ──────────────────────────────────────────
-    const stitches = flattenAndOptimize(stitchPaths, ms);
+    // ── Use pre-flattened commands if available, otherwise flatten from stitchPaths ──
+    let stitches;
+    if (preFlattened && Array.isArray(preFlattened) && preFlattened.length > 0) {
+      // Commands from the pipeline already have { x, y, type, color } — use directly
+      stitches = preFlattened.filter(s => s && s.type && (
+        s.type === 'colorChange' || s.type === 'end' ||
+        (Number.isFinite(s.x) && Number.isFinite(s.y))
+      ));
+      // Ensure END terminator exists
+      if (stitches.length === 0 || stitches[stitches.length - 1].type !== 'end') {
+        const last = stitches[stitches.length - 1] || { x: 0, y: 0 };
+        stitches.push({ x: last.x, y: last.y, type: 'end', color: null });
+      }
+    } else {
+      stitches = flattenAndOptimize(stitchPaths, ms);
+    }
 
     // ── Validation ─────────────────────────────────────────────────────────
     const warnings = validateStitches(stitches, ms);
