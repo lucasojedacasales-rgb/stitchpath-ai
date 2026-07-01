@@ -20,10 +20,17 @@ export async function runRegionBuilder(ctx) {
 
   const { width_mm = 100, height_mm = 100, fabric_type = 'Algodón' } = ctx.config;
 
+  // Filter out background regions — area > 35% of design = fabric/tela, not embroidery
+  const designArea = width_mm * height_mm;
+  const nonBgRegions = ctx.vectorRegions.filter(r => {
+    const areaRatio = (r.area_mm2 || 0) / designArea;
+    return areaRatio <= 0.35;
+  });
+
   // Apply semantic metadata to vector regions when available
   const semanticObjects = ctx.semanticMap?.objects || [];
 
-  const named = ctx.vectorRegions.map((r, i) => {
+  const named = nonBgRegions.map((r, i) => {
     const sem = findSemanticForRegion(r, semanticObjects);
     // Preserve the pixel-accurate color from the vector engine — never overwrite it.
     // LLM semantic color guesses (sem.color_hex) are unreliable and cause color mismatches.
@@ -84,25 +91,30 @@ function findSemanticForRegion(region, objects) {
 
 // ─── Auto-naming ──────────────────────────────────────────────────────────────
 
-const COLOR_NAMES = {
-  '#000000': 'negro', '#1a1a1a': 'negro', '#ffffff': 'blanco',
-  '#ff0000': 'rojo',  '#00ff00': 'verde', '#0000ff': 'azul',
-  '#ffff00': 'amarillo', '#ffa500': 'naranja', '#800080': 'morado',
-  '#ff69b4': 'rosa',  '#ffc0cb': 'rosa',  '#8b4513': 'marron',
-};
-
 function closestColorName(hex) {
-  if (!hex) return 'color';
+  if (!hex || hex.length < 7) return 'color';
   const h = hex.toLowerCase();
-  if (COLOR_NAMES[h]) return COLOR_NAMES[h];
-  const r = parseInt(h.slice(1,3),16), g = parseInt(h.slice(3,5),16), b = parseInt(h.slice(5,7),16);
-  let best = 'color', bestD = Infinity;
-  for (const [k, name] of Object.entries(COLOR_NAMES)) {
-    const kr = parseInt(k.slice(1,3),16), kg = parseInt(k.slice(3,5),16), kb = parseInt(k.slice(5,7),16);
-    const d = (r-kr)**2 + (g-kg)**2 + (b-kb)**2;
-    if (d < bestD) { bestD = d; best = name; }
-  }
-  return best;
+  const r = parseInt(h.slice(1,3),16) || 128;
+  const g = parseInt(h.slice(3,5),16) || 128;
+  const b = parseInt(h.slice(5,7),16) || 128;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const lum = (r + g + b) / 3, delta = max - min;
+  if (lum < 30) return 'negro';
+  if (lum > 230 && delta < 20) return 'blanco';
+  if (delta < 25) return 'gris';
+  let hue;
+  if (max === r) hue = ((g - b) / delta) % 6;
+  else if (max === g) hue = (b - r) / delta + 2;
+  else hue = (r - g) / delta + 4;
+  hue = hue * 60; if (hue < 0) hue += 360;
+  if (hue < 15 || hue >= 345) { if (delta < 80 && lum > 150) return 'rosa'; return 'rojo'; }
+  if (hue < 45) return 'naranja';
+  if (hue < 65) return 'amarillo';
+  if (hue < 165) return 'verde';
+  if (hue < 195) return 'cyan';
+  if (hue < 255) return 'azul';
+  if (hue < 285) return 'morado';
+  return 'rosa';
 }
 
 function autoName(r, i) {

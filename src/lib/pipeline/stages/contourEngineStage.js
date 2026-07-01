@@ -30,9 +30,9 @@ export async function runContourEngine(ctx) {
   const strategy   = getModeStrategy(ctx.config.mode || 'hybrid');
   const sourceUrl  = ctx.enhanced?.enhancedUrl || ctx.imageUrl;
   // color_count from config (user slider) or strategy default.
-  // Minimum 8 — designs like Yoshi have 7+ distinct colours; fewer clusters
-  // merge white belly + white eyes into one blob, losing spatial separation.
-  const colorCount = Math.max(8, strategy.vectorizer?.color_count || ctx.config.color_count || 8);
+  // Minimum 6 — optimal for character/mascot designs (body, eyes, mouth, cheeks, feet, contours).
+  // More colors = over-segmentation + unnecessary thread changes on simple designs.
+  const colorCount = Math.max(6, strategy.vectorizer?.color_count || ctx.config.color_count || 8);
 
   const modeOpts = { ...(MODE_OPTIONS[strategy.id] || MODE_OPTIONS.hybrid) };
 

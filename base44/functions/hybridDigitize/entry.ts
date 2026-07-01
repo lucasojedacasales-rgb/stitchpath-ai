@@ -51,9 +51,10 @@ Deno.serve(async (req) => {
 
     if (!image_url) return Response.json({ error: 'image_url required' }, { status: 400 });
 
-    // IMPROVED: Default to 10 for better color separation (EXCELLENT, not just GOOD).
-    // Minimum 10 prevents merging of similar shades; maximum 16 for very detailed designs.
-    const maxColors = Math.min(Math.max(10, color_count || 10), 16);
+    // Color count: 6-8 is optimal for character/mascot designs.
+    // Too many colors → over-segmentation + unnecessary thread changes.
+    // Minimum 6 captures body, eyes, mouth, cheeks, feet, contours.
+    const maxColors = Math.min(Math.max(6, color_count || 8), 12);
     const w = width_mm || 100;
     const h = height_mm || 100;
     const regionLimit = max_regions || 150;
@@ -185,9 +186,12 @@ Responde SOLO JSON:
           ? r.perimeter_norm * diagMm
           : (r.perimeter_mm || Math.sqrt(r.coverage * w * h) * 3.5);
 
+        // Semantic fallback name: position + color + stitch_type (never region_hex_index)
+        const fallbackName = semanticName(r, i, w, h, stitch_type);
+
         return {
           id: `r${i + 1}`,
-          name: label.name || `region_${r.hex.replace('#', '')}_${i}`,
+          name: label.name || fallbackName,
           color: r.hex,
           stitch_type,
           density: regionDensity,
@@ -214,6 +218,14 @@ Responde SOLO JSON:
         };
       });
 
+      // Cap total stitches at 12,000 — if exceeded, scale down density proportionally
+      const rawTotal = finalRegions.reduce((s, r) => s + r.stitch_count, 0);
+      if (rawTotal > 12000) {
+        const scale = 12000 / rawTotal;
+        for (const r of finalRegions) {
+          r.stitch_count = Math.round(r.stitch_count * scale);
+        }
+      }
       const total_stitches = finalRegions.reduce((s, r) => s + r.stitch_count, 0);
       return Response.json({
         success: true,
@@ -297,6 +309,66 @@ Responde SOLO con JSON válido (sin texto extra):
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
+
+/**
+ * Generates a semantic region name from color, position, and stitch type.
+ * Format: [position]_[color]_[stitch_type] — e.g., "sup_izq_negro_fill", "cen_rosa_fill"
+ * Never returns "region_hex_index" — always human-readable.
+ */
+function semanticName(r, i, w, h, stitchType) {
+  // Position from centroid
+  const [cx, cy] = r.centroid || [0.5, 0.5];
+  const vPos = cy < 0.33 ? 'sup' : cy > 0.66 ? 'inf' : 'cen';
+  const hPos = cx < 0.33 ? '_izq' : cx > 0.66 ? '_der' : '';
+  const pos = `${vPos}${hPos}`;
+
+  // Color name from hex
+  const colorName = colorToName(r.hex);
+
+  // Stitch abbreviation
+  const stitchAbbr = stitchType === 'fill' ? 'fill' : stitchType === 'satin' ? 'satin' : 'run';
+
+  return `${pos}_${colorName}_${stitchAbbr}`;
+}
+
+function colorToName(hex) {
+  if (!hex || hex.length < 7) return 'color';
+  const h = hex.toLowerCase();
+  const r = parseInt(h.slice(1,3),16) || 128;
+  const g = parseInt(h.slice(3,5),16) || 128;
+  const b = parseInt(h.slice(5,7),16) || 128;
+
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const lum = (r + g + b) / 3;
+  const delta = max - min;
+
+  if (lum < 30) return 'negro';
+  if (lum > 230 && delta < 20) return 'blanco';
+  if (delta < 25) return 'gris';
+
+  // Hue-based classification (accurate for all colors)
+  let hue;
+  if (max === r) hue = ((g - b) / delta) % 6;
+  else if (max === g) hue = (b - r) / delta + 2;
+  else hue = (r - g) / delta + 4;
+  hue = hue * 60;
+  if (hue < 0) hue += 360;
+
+  // Red/pink boundary (345°-15°): distinguish by saturation + luminance
+  // Low saturation + light = pink; high saturation = red
+  if (hue < 15 || hue >= 345) {
+    if (delta < 80 && lum > 150) return 'rosa';
+    return 'rojo';
+  }
+  if (hue < 45) return 'naranja';
+  if (hue < 65) return 'amarillo';
+  if (hue < 165) return 'verde';
+  if (hue < 195) return 'cyan';
+  if (hue < 255) return 'azul';
+  if (hue < 285) return 'morado';
+  return 'rosa';
+}
 
 /**
  * Classify stitch type from real geometric metrics.

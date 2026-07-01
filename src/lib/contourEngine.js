@@ -69,6 +69,11 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
     labels[i] = nearestIdx(lab, paletteLab);
   }
 
+  // 2b. Morphological closing per-color: fill 1-pixel gaps within same-color areas
+  // This prevents over-segmentation where JPEG noise splits a single shape (e.g. cheek)
+  // into multiple fragments. Dilate then erode each color mask by 1px.
+  morphologicalClose(labels, W, H, palette.length);
+
   // Relative floor: 0.00015 of image area — at 1024px ≈ 157px minimum.
   // Low enough to capture eyes (≈200–400px at 1024) and small details like nose.
   // The minAreaPx absolute floor (60px) handles tiny designs at lower resolutions.
@@ -168,10 +173,16 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
   // 10. Auto gap closing across same-color regions
   autoCloseGaps(regions, cfg.gapCloseThreshold / Math.max(W, H));
 
-  // Sort largest first
-  regions.sort((a, b) => b.pixelCount - a.pixelCount);
+  // 11b. Background detection — remove the largest region that touches image borders.
+  // The background (fabric/tela) is NOT an embroidery region and must not generate stitches.
+  // Detection criteria: touches ≥3 of 4 image edges AND is the largest region, OR
+  // covers >35% of image AND touches ≥2 edges.
+  const filtered = removeBackgroundRegions(regions, W, H);
 
-  return { regions, imageWidth: img.width, imageHeight: img.height, analysisW: W, analysisH: H };
+  // Sort largest first
+  filtered.sort((a, b) => b.pixelCount - a.pixelCount);
+
+  return { regions: filtered, imageWidth: img.width, imageHeight: img.height, analysisW: W, analysisH: H };
 }
 
 // ─── Step 4: Sub-pixel refinement ────────────────────────────────────────────
@@ -461,6 +472,92 @@ function mooreTrace(mask, W, H) {
     if (mask[i]) return mooreTraceSingle(mask, W, H, i);
   }
   return [];
+}
+
+// ─── Morphological closing (gap filling) ──────────────────────────────────────
+
+/**
+ * Per-color morphological close (dilate 1px → erode 1px) on the label map.
+ * Fills single-pixel gaps within same-color areas without merging different colors.
+ * Prevents over-segmentation from JPEG noise / quantization artifacts.
+ */
+function morphologicalClose(labels, W, H, numColors) {
+  // Dilate: for each pixel, if it's unassigned (-1) but has ≥2 same-color neighbors,
+  // assign it to that color. This fills 1px gaps.
+  const dilated = new Int32Array(labels);
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      const idx = y * W + x;
+      if (labels[idx] !== -1) continue;
+      // Count neighbor colors
+      const counts = {};
+      const ns = [labels[idx-1], labels[idx+1], labels[idx-W], labels[idx+W]];
+      for (const n of ns) {
+        if (n >= 0) counts[n] = (counts[n] || 0) + 1;
+      }
+      // Assign to color with ≥2 neighbors
+      for (const [c, cnt] of Object.entries(counts)) {
+        if (cnt >= 2) { dilated[idx] = parseInt(c); break; }
+      }
+    }
+  }
+  // Erode: for each pixel that was originally unassigned but got filled by dilation,
+  // check if it still has ≥2 same-color neighbors. If not, revert to -1.
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      const idx = y * W + x;
+      if (labels[idx] !== -1) continue; // only check newly filled pixels
+      const c = dilated[idx];
+      if (c < 0) continue;
+      const ns = [dilated[idx-1], dilated[idx+1], dilated[idx-W], dilated[idx+W]];
+      const cnt = ns.filter(n => n === c).length;
+      if (cnt < 2) dilated[idx] = -1; // revert — not enough support
+    }
+  }
+  labels.set(dilated);
+}
+
+// ─── Background detection ──────────────────────────────────────────────────────
+
+/**
+ * Detects and removes background regions (fabric/tela that is NOT embroidery).
+ * A region is background if:
+ *   - Its bounding box touches ≥3 of 4 image edges AND it's the largest region, OR
+ *   - It covers >35% of the image AND touches ≥2 edges
+ * Returns the filtered region list (background removed).
+ */
+function removeBackgroundRegions(regions, W, H) {
+  if (regions.length === 0) return regions;
+
+  const edgeMargin = 3; // px tolerance for "touching" an edge
+  const result = [];
+
+  for (const r of regions) {
+    const bb = r.bbox;
+    if (!bb) { result.push(r); continue; }
+
+    const touchesLeft   = bb.minX <= edgeMargin;
+    const touchesRight  = bb.maxX >= W - edgeMargin;
+    const touchesTop    = bb.minY <= edgeMargin;
+    const touchesBottom = bb.maxY >= H - edgeMargin;
+    const edgeCount = (touchesLeft ? 1 : 0) + (touchesRight ? 1 : 0) + (touchesTop ? 1 : 0) + (touchesBottom ? 1 : 0);
+
+    const coverage = r.pixelCount / (W * H);
+
+    // Background criteria
+    const isLargestAndBorders = (r === regions[0]) && edgeCount >= 3;
+    const isLargeAndBorders = coverage > 0.35 && edgeCount >= 2;
+
+    if (isLargestAndBorders || isLargeAndBorders) {
+      r._isBackground = true;
+      // Skip — don't include in result
+      continue;
+    }
+
+    result.push(r);
+  }
+
+  return result;
 }
 
 // ─── Connected-component blob detection ───────────────────────────────────────
