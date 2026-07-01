@@ -310,8 +310,9 @@ function createStitchCache() { return new Map(); }
 
 function buildStitchesFromRegions(regions, config, _stitchCache) {
   const stitches = [];
-  const designW = config.width_mm || 100;
-  const designH = config.height_mm || 100;
+  const cfg = config || {};
+  const designW = cfg.width_mm || 100;
+  const designH = cfg.height_mm || 100;
 
   // ═══════════════════════════════════════════════════════════════════════════════
   // SECUENCIADO CORRECTO: FASE 1 → FASE 2 → FASE 3
@@ -428,115 +429,68 @@ function buildStitchesFromRegions(regions, config, _stitchCache) {
 }
 
 /**
- * DEFECTO 1-6 FIX: Scanline fill robusto con solapamiento automático para eliminar huecos
- * Garantiza: sin gaps, cobertura total, bordes limpios, solapamiento de filas
+ * Scanline tatami fill — clean O(n_rows × n_edges) algorithm.
+ *
+ * KEY FIXES vs previous version:
+ * 1. NO isPointInPolygon — was O(n_stitches × n_edges) = 36M ops for complex regions,
+ *    AND incorrectly rejected interior points in self-intersecting polygons.
+ * 2. NO margin expansion — scanline pairs already define interior spans.
+ * 3. Strict half-open interval for intersection (y1 < y <= y2) prevents double-counting
+ *    at vertices, which produced phantom intersections causing odd-count glitches.
+ * 4. Step size 2mm (was 0.8mm) — enough resolution for path-group rendering, 2.5× fewer objects.
  */
 function generateTatamiFillLines(polygon, angle, density, stitchLen, color, regionId) {
   const stitches = [];
   if (polygon.length < 3) return stitches;
 
-  // DEFECTO 4 FIX: Calcular PCA sobre puntos reales del polígono (no bounding box)
-  const pcaAngle = calculatePolygonPCA(polygon);
-  const effectiveAngle = angle !== undefined ? angle : pcaAngle;
-
-  // Rotate polygon into fill-space
+  const effectiveAngle = (angle !== undefined && !isNaN(angle)) ? angle : calculatePolygonPCA(polygon);
   const cosA = Math.cos(effectiveAngle);
   const sinA = Math.sin(effectiveAngle);
-  
-  const rotatePoint = (x, y) => [
-    x * cosA + y * sinA,
-    -x * sinA + y * cosA,
-  ];
 
-  const rotatedPoly = polygon.map(p => rotatePoint(p[0], p[1]));
-  
-  // Calculate bbox of rotated polygon
+  const rotate   = (x, y) => [ x * cosA + y * sinA, -x * sinA + y * cosA];
+  const unrotate = (x, y) => [ x * cosA - y * sinA,  x * sinA + y * cosA];
+
+  const rotatedPoly = polygon.map(p => rotate(p[0], p[1]));
+
   let rMinY = Infinity, rMaxY = -Infinity;
-  for (const [x, y] of rotatedPoly) {
-    rMinY = Math.min(rMinY, y);
-    rMaxY = Math.max(rMaxY, y);
+  for (const [, ry] of rotatedPoly) {
+    if (ry < rMinY) rMinY = ry;
+    if (ry > rMaxY) rMaxY = ry;
   }
 
-  // DEFECTO 6 FIX: Densidad adaptativa con solapamiento automático
-  // Reduce 10-20% el espaciado para garantizar solapamiento entre filas
-  const realDensity = Math.max(0.25, Math.min(density, 0.6));
-  const overlapFactor = 0.85; // 15% de solapamiento = filas se superponen
-  const adjustedDensity = realDensity * overlapFactor;
+  const rowSpacing = Math.max(0.2, Math.min(density, 0.65));
+  const stepMm = Math.max(1.5, stitchLen || 2.5); // step between needle points within a row
 
-  // DEFECTO 6 FIX: Generar scanlines con solapamiento garantizado
-  for (let y = rMinY; y <= rMaxY; y += adjustedDensity) {
-    // CRÍTICO: Encontrar TODAS las intersecciones (no solo pares)
-    const intersections = [];
-    for (let i = 0; i < rotatedPoly.length; i++) {
+  const n = rotatedPoly.length;
+
+  for (let scanY = rMinY + rowSpacing * 0.5; scanY < rMaxY; scanY += rowSpacing) {
+    const xs = [];
+    for (let i = 0; i < n; i++) {
       const [x1, y1] = rotatedPoly[i];
-      const [x2, y2] = rotatedPoly[(i + 1) % rotatedPoly.length];
-
-      // Evitar casos degenerados
-      if (Math.abs(y2 - y1) < 1e-6) continue;
-
-      // Intersección de scanline con edge
-      if ((y1 <= y && y <= y2) || (y2 <= y && y <= y1)) {
-        const t = Math.abs(y2 - y1) > 1e-6 ? (y - y1) / (y2 - y1) : 0;
-        const x = x1 + t * (x2 - x1);
-        intersections.push(x);
+      const [x2, y2] = rotatedPoly[(i + 1) % n];
+      if (Math.abs(y2 - y1) < 1e-9) continue;
+      // Half-open: strictly one endpoint included to avoid double-count at exact vertex
+      if ((y1 < scanY && scanY <= y2) || (y2 < scanY && scanY <= y1)) {
+        xs.push(x1 + (scanY - y1) / (y2 - y1) * (x2 - x1));
       }
     }
+    if (xs.length < 2) continue;
+    xs.sort((a, b) => a - b);
 
-    if (intersections.length < 2) continue;
-
-    // Ordenar y generar segmentos entre pares (even-odd rule)
-    intersections.sort((a, b) => a - b);
-    
-    for (let i = 0; i < intersections.length - 1; i += 2) {
-      let x1 = intersections[i];
-      let x2 = intersections[i + 1];
-      
-      // DEFECTO 2 FIX: Clipping robusto — expandir para evitar gaps EN BORDES
-      // DEFECTO 6 FIX: Margen expandido para solapamiento de los bordes
-      const margin = 0.12; // margen aumentado para garantizar solapamiento en transiciones
-      x1 -= margin;
-      x2 += margin;
-
-      // Convertir de vuelta a espacio original
-      const unrotate = (x, y) => [
-        x * cosA - y * sinA,
-        x * sinA + y * cosA,
-      ];
-
-      const [ox1, oy1] = unrotate(x1, y);
-      const [ox2, oy2] = unrotate(x2, y);
-
-      // Generar stitches a lo largo de la línea de fill con MAYOR densidad para cobertura
-      const dx = ox2 - ox1;
-      const dy = oy2 - oy1;
+    for (let i = 0; i + 1 < xs.length; i += 2) {
+      const [sx, sy] = unrotate(xs[i], scanY);
+      const [ex, ey] = unrotate(xs[i + 1], scanY);
+      const dx = ex - sx, dy = ey - sy;
       const len = Math.hypot(dx, dy);
-      // DEFECTO 6 FIX: Reducir espaciado entre stitches dentro de cada línea (0.8 en lugar de 1.2)
-      // esto asegura que los puntos consecutivos se superpongan ligeramente
-      const steps = Math.max(6, Math.ceil(len / 0.8)); // más puntos = más solapamiento
+      if (len < 0.3) continue; // skip degenerate edge rows
 
+      const steps = Math.max(2, Math.ceil(len / stepMm));
       for (let s = 0; s <= steps; s++) {
-        const t = steps > 0 ? s / steps : 0;
-        const x = ox1 + dx * t;
-        const y = oy1 + dy * t;
-        
-        // DEFECTO 1 FIX: Verificar que el punto está DENTRO del polígono
-        if (isPointInPolygon([x, y], polygon)) {
-          stitches.push({
-            x, y,
-            type: 'fill',
-            regionId,
-            color,
-            isJump: false,
-            threadWidth: 0.42,
-          });
-        }
+        const t = s / steps;
+        stitches.push({ x: sx + dx * t, y: sy + dy * t, type: 'fill', regionId, color, isJump: false, threadWidth: 0.42 });
       }
     }
   }
-
-  // The 15% overlap factor (adjustedDensity = realDensity * 0.85) already guarantees coverage.
-  // calculateFillCoverage was O(n²) and caused UI freezes — removed.
-
   return stitches;
 }
 
@@ -597,98 +551,61 @@ function isPointInPolygon(point, polygon) {
 }
 
 /**
- * DEFECTO 1-6 FIX: Satin fill robusto con solapamiento automático
+ * Satin fill — scanline columns perpendicular to shape's main axis.
+ * Same clean algorithm as tatami: no isPointInPolygon, half-open interval.
  */
 function generateSatinFillLines(polygon, angle, density, stitchLen, color, regionId) {
   const stitches = [];
   if (polygon.length < 3) return stitches;
 
-  // DEFECTO 4 FIX: Calcular PCA y rotar perpendicular
+  // Satin columns run perpendicular to the fill angle
   const pcaAngle = calculatePolygonPCA(polygon);
-  const satinAngle = (angle !== undefined ? angle : pcaAngle) + Math.PI / 2;
+  const satinAngle = ((angle !== undefined && !isNaN(angle)) ? angle : pcaAngle) + Math.PI / 2;
 
   const cosA = Math.cos(satinAngle);
   const sinA = Math.sin(satinAngle);
-  
-  const rotatePoint = (x, y) => [
-    x * cosA + y * sinA,
-    -x * sinA + y * cosA,
-  ];
+  const rotate   = (x, y) => [ x * cosA + y * sinA, -x * sinA + y * cosA];
+  const unrotate = (x, y) => [ x * cosA - y * sinA,  x * sinA + y * cosA];
 
-  const rotatedPoly = polygon.map(p => rotatePoint(p[0], p[1]));
-  
-  let rMinX = Infinity, rMaxX = -Infinity;
-  for (const [x, y] of rotatedPoly) {
-    rMinX = Math.min(rMinX, x);
-    rMaxX = Math.max(rMaxX, x);
+  const rotatedPoly = polygon.map(p => rotate(p[0], p[1]));
+
+  let rMinY = Infinity, rMaxY = -Infinity;
+  for (const [, ry] of rotatedPoly) {
+    if (ry < rMinY) rMinY = ry;
+    if (ry > rMaxY) rMaxY = ry;
   }
 
-  // DEFECTO 6 FIX: Solapamiento automático también en satin
-  const satinDensity = Math.max(0.4, Math.min(density * 1.3, 0.8));
-  const adjustedDensity = satinDensity * 0.85; // 15% solapamiento
+  const colSpacing = Math.max(0.25, Math.min(density, 0.65));
+  const stepMm = Math.max(1.5, stitchLen || 2.5);
+  const n = rotatedPoly.length;
 
-  for (let x = rMinX; x <= rMaxX; x += adjustedDensity) {
-    const intersections = [];
-    for (let i = 0; i < rotatedPoly.length; i++) {
+  for (let scanY = rMinY + colSpacing * 0.5; scanY < rMaxY; scanY += colSpacing) {
+    const xs = [];
+    for (let i = 0; i < n; i++) {
       const [x1, y1] = rotatedPoly[i];
-      const [x2, y2] = rotatedPoly[(i + 1) % rotatedPoly.length];
-
-      if (Math.abs(x2 - x1) < 1e-6) continue;
-
-      if ((x1 <= x && x <= x2) || (x2 <= x && x <= x1)) {
-        const t = Math.abs(x2 - x1) > 1e-6 ? (x - x1) / (x2 - x1) : 0;
-        const y = y1 + t * (y2 - y1);
-        intersections.push(y);
+      const [x2, y2] = rotatedPoly[(i + 1) % n];
+      if (Math.abs(y2 - y1) < 1e-9) continue;
+      if ((y1 < scanY && scanY <= y2) || (y2 < scanY && scanY <= y1)) {
+        xs.push(x1 + (scanY - y1) / (y2 - y1) * (x2 - x1));
       }
     }
+    if (xs.length < 2) continue;
+    xs.sort((a, b) => a - b);
 
-    if (intersections.length < 2) continue;
-
-    intersections.sort((a, b) => a - b);
-    
-    for (let i = 0; i < intersections.length - 1; i += 2) {
-      let y1 = intersections[i];
-      let y2 = intersections[i + 1];
-      
-      const margin = 0.12; // margen aumentado para solapamiento
-      y1 -= margin;
-      y2 += margin;
-
-      const unrotate = (x, y) => [
-        x * cosA - y * sinA,
-        x * sinA + y * cosA,
-      ];
-
-      const [ox1, oy1] = unrotate(x, y1);
-      const [ox2, oy2] = unrotate(x, y2);
-
-      const dx = ox2 - ox1;
-      const dy = oy2 - oy1;
+    for (let i = 0; i + 1 < xs.length; i += 2) {
+      const [sx, sy] = unrotate(xs[i], scanY);
+      const [ex, ey] = unrotate(xs[i + 1], scanY);
+      const dx = ex - sx, dy = ey - sy;
       const len = Math.hypot(dx, dy);
-      // DEFECTO 6 FIX: Mayor densidad de puntos (0.8 en lugar de 1.2)
-      const steps = Math.max(6, Math.ceil(len / 0.8));
+      if (len < 0.3) continue;
 
+      const steps = Math.max(2, Math.ceil(len / stepMm));
       for (let s = 0; s <= steps; s++) {
-        const t = steps > 0 ? s / steps : 0;
-        const px = ox1 + dx * t;
-        const py = oy1 + dy * t;
-        
-        if (isPointInPolygon([px, py], polygon)) {
-          stitches.push({
-            x: px,
-            y: py,
-            type: 'fill',
-            regionId,
-            color,
-            isJump: false,
-            fillPattern: 'satin',
-            threadWidth: 0.45,
-          });
-        }
+        const t = s / steps;
+        stitches.push({ x: sx + dx * t, y: sy + dy * t, type: 'fill', regionId, color, isJump: false, fillPattern: 'satin', threadWidth: 0.45 });
       }
     }
   }
-
   return stitches;
 }
 
@@ -787,22 +704,19 @@ function drawAllStitches(ctx, stitches, toScreenX, toScreenY, showTravel) {
     if (colorStitches.length < 2) continue;
     ctx.strokeStyle = color;
 
-    // Draw as row-by-row polylines
+    // Draw as row-by-row polylines — break on gap or region change
     let currentPath = [colorStitches[0]];
     for (let i = 1; i < colorStitches.length; i++) {
       const s0 = colorStitches[i - 1];
       const s1 = colorStitches[i];
-      const dist = Math.hypot(s1.x - s0.x, s1.y - s0.y);
-      
-      if (dist < 3) {
+      const sameRow = Math.hypot(s1.x - s0.x, s1.y - s0.y) < 4 && s1.regionId === s0.regionId;
+      if (sameRow) {
         currentPath.push(s1);
       } else {
         if (currentPath.length > 1) {
           ctx.beginPath();
           ctx.moveTo(toScreenX(currentPath[0].x), toScreenY(currentPath[0].y));
-          for (let j = 1; j < currentPath.length; j++) {
-            ctx.lineTo(toScreenX(currentPath[j].x), toScreenY(currentPath[j].y));
-          }
+          for (let j = 1; j < currentPath.length; j++) ctx.lineTo(toScreenX(currentPath[j].x), toScreenY(currentPath[j].y));
           ctx.stroke();
         }
         currentPath = [s1];
@@ -811,9 +725,7 @@ function drawAllStitches(ctx, stitches, toScreenX, toScreenY, showTravel) {
     if (currentPath.length > 1) {
       ctx.beginPath();
       ctx.moveTo(toScreenX(currentPath[0].x), toScreenY(currentPath[0].y));
-      for (let j = 1; j < currentPath.length; j++) {
-        ctx.lineTo(toScreenX(currentPath[j].x), toScreenY(currentPath[j].y));
-      }
+      for (let j = 1; j < currentPath.length; j++) ctx.lineTo(toScreenX(currentPath[j].x), toScreenY(currentPath[j].y));
       ctx.stroke();
     }
   }
@@ -865,42 +777,34 @@ function drawStitchesSequential(ctx, visibleStitches, allStitches, toScreenX, to
 
   for (const [color, stitches] of Object.entries(fillByColor)) {
     if (stitches.length < 2) continue;
-
     ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5; // thin lines to show individual rows
-    ctx.setLineDash([]); // solid lines (not dashed)
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([]);
 
-    // Draw fill lines as continuous paths per row
-    // Group by proximity to detect row changes
+    // Draw each row as a separate path — break when regionId changes or gap > 4mm
     let currentPath = [stitches[0]];
     for (let i = 1; i < stitches.length; i++) {
       const s0 = stitches[i - 1];
       const s1 = stitches[i];
-      const dist = Math.hypot(s1.x - s0.x, s1.y - s0.y);
-      
-      if (dist < 3) {
-        // Same row, continue path
+      const gap = Math.hypot(s1.x - s0.x, s1.y - s0.y);
+      const sameRow = gap < 4 && s1.regionId === s0.regionId;
+
+      if (sameRow) {
         currentPath.push(s1);
       } else {
-        // New row, draw current path and start fresh
         if (currentPath.length > 1) {
           ctx.beginPath();
           ctx.moveTo(toScreenX(currentPath[0].x), toScreenY(currentPath[0].y));
-          for (let j = 1; j < currentPath.length; j++) {
-            ctx.lineTo(toScreenX(currentPath[j].x), toScreenY(currentPath[j].y));
-          }
+          for (let j = 1; j < currentPath.length; j++) ctx.lineTo(toScreenX(currentPath[j].x), toScreenY(currentPath[j].y));
           ctx.stroke();
         }
         currentPath = [s1];
       }
     }
-    // Draw last path
     if (currentPath.length > 1) {
       ctx.beginPath();
       ctx.moveTo(toScreenX(currentPath[0].x), toScreenY(currentPath[0].y));
-      for (let j = 1; j < currentPath.length; j++) {
-        ctx.lineTo(toScreenX(currentPath[j].x), toScreenY(currentPath[j].y));
-      }
+      for (let j = 1; j < currentPath.length; j++) ctx.lineTo(toScreenX(currentPath[j].x), toScreenY(currentPath[j].y));
       ctx.stroke();
     }
   }
@@ -974,17 +878,14 @@ function drawStitchesByLayer(ctx, regions, allStitches, progress, toScreenX, toS
       for (let j = 1; j < fillStitches.length; j++) {
         const s0 = fillStitches[j - 1];
         const s1 = fillStitches[j];
-        const dist = Math.hypot(s1.x - s0.x, s1.y - s0.y);
-        
-        if (dist < 3) {
+        const sameRow = Math.hypot(s1.x - s0.x, s1.y - s0.y) < 4 && s1.regionId === s0.regionId;
+        if (sameRow) {
           currentPath.push(s1);
         } else {
           if (currentPath.length > 1) {
             ctx.beginPath();
             ctx.moveTo(toScreenX(currentPath[0].x), toScreenY(currentPath[0].y));
-            for (let k = 1; k < currentPath.length; k++) {
-              ctx.lineTo(toScreenX(currentPath[k].x), toScreenY(currentPath[k].y));
-            }
+            for (let k = 1; k < currentPath.length; k++) ctx.lineTo(toScreenX(currentPath[k].x), toScreenY(currentPath[k].y));
             ctx.stroke();
           }
           currentPath = [s1];
@@ -993,9 +894,7 @@ function drawStitchesByLayer(ctx, regions, allStitches, progress, toScreenX, toS
       if (currentPath.length > 1) {
         ctx.beginPath();
         ctx.moveTo(toScreenX(currentPath[0].x), toScreenY(currentPath[0].y));
-        for (let k = 1; k < currentPath.length; k++) {
-          ctx.lineTo(toScreenX(currentPath[k].x), toScreenY(currentPath[k].y));
-        }
+        for (let k = 1; k < currentPath.length; k++) ctx.lineTo(toScreenX(currentPath[k].x), toScreenY(currentPath[k].y));
         ctx.stroke();
       }
     }
@@ -1042,7 +941,7 @@ function calculateCoverage(regions) {
 }
 
 function estimateTime(stitchCount, config) {
-  const machineSpeed = 800; // stitches per minute (typical)
+  const machineSpeed = 800;
   const minutes = stitchCount / machineSpeed;
   if (minutes < 1) return '<1 min';
   if (minutes < 60) return `${Math.round(minutes)} min`;
