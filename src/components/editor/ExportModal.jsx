@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { X, Download, Clock, Layers, Palette, FileText, ChevronRight, ShieldCheck, ShieldAlert, Bug, Wrench } from 'lucide-react';
+import { X, Download, Clock, Layers, Palette, FileText, ChevronRight, ShieldCheck, ShieldAlert, Bug, Wrench, RefreshCw } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import PreflightPanel from './PreflightPanel';
 import ExportDebugPanel from './ExportDebugPanel';
@@ -18,6 +18,7 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
   const [exportError, setExportError] = useState(null);
   const [debugMode, setDebugMode] = useState(false);
   const [pipeline, setPipeline] = useState(null);
+  const [fixAttempted, setFixAttempted] = useState(false);
 
   const config = project?.config || {};
   const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
@@ -124,6 +125,29 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
                     <span className="text-xs font-bold text-red-400">Exportación BLOQUEADA</span>
                     <span className="text-[10px] text-red-300 ml-auto">{blockingErrors.length} errores</span>
                   </div>
+                  {/* Auto-fix report — what was already repaired */}
+                  {pipelineResult.stages.fixReport.applied.length > 0 && (
+                    <div className="bg-emerald-900/15 border border-emerald-500/30 rounded px-2 py-1.5 mb-2">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <Wrench className="w-3 h-3 text-emerald-400" />
+                        <span className="text-[10px] font-bold text-emerald-400">
+                          {pipelineResult.stages.fixReport.applied.length} errores auto-reparados
+                        </span>
+                      </div>
+                      <div className="space-y-0.5 max-h-20 overflow-y-auto">
+                        {pipelineResult.stages.fixReport.applied.slice(0, 6).map((f, i) => (
+                          <div key={i} className="text-[9px] text-emerald-300 flex items-start gap-1">
+                            <span className="font-bold text-emerald-400 shrink-0">[{f.rule}]</span>
+                            <span>{f.message}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Remaining errors — require manual action */}
+                  <div className="text-[10px] text-amber-400 mb-1.5 font-medium">
+                    ⚠ {blockingErrors.length} error(es) requieren acción manual:
+                  </div>
                   <div className="space-y-1 max-h-32 overflow-y-auto">
                     {blockingErrors.slice(0, 8).map((e, i) => (
                       <div key={i} className="text-[10px] text-red-300 flex items-start gap-1">
@@ -135,11 +159,25 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
                       <div className="text-[10px] text-red-400 italic">+{blockingErrors.length - 8} errores más... (ver Debug)</div>
                     )}
                   </div>
+                  {/* Manual fix hint */}
+                  <div className="mt-2 pt-2 border-t border-red-500/20 text-[10px] text-slate-400">
+                    <span className="text-slate-300">Acción:</span> Editar las regiones en el editor para corregir geometría, o reducir tamaño del diseño al bastidor ({widthMm}×{heightMm}mm).
+                  </div>
                 </div>
               ) : (
-                <div className="bg-emerald-900/15 border border-emerald-500/30 rounded-lg p-3 flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  <span className="text-xs font-bold text-emerald-400">Validación superada — 12 reglas OK</span>
+                <div className="bg-emerald-900/15 border border-emerald-500/30 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    <span className="text-xs font-bold text-emerald-400">Validación superada — 12 reglas OK</span>
+                  </div>
+                  {pipelineResult.stages.fixReport.applied.length > 0 && (
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <Wrench className="w-3 h-3 text-emerald-400" />
+                      <span className="text-[10px] text-emerald-300">
+                        {pipelineResult.stages.fixReport.applied.length} reparaciones automáticas aplicadas
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
 

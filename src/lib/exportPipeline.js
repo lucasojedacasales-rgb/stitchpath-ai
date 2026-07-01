@@ -113,23 +113,23 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
     }
     prevColor = obj.color;
 
-    // Jump to start if far from current position
+    // Jump to start if far from current position (including first object from origin 0,0)
     const [sx, sy] = obj.points[0];
     const startX = sx + offX, startY = sy + offY;
-    if (!firstCmd) {
-      const dist = Math.hypot(startX - prevX, startY - prevY);
-      if (dist > ms.trimThreshold) {
+    const startDist = Math.hypot(startX - prevX, startY - prevY);
+    if (startDist > 0.5) {
+      // Insert jump(s) from current position to first stitch point
+      if (!firstCmd && startDist > ms.trimThreshold) {
         cmds.push({ type: 'trim', x: prevX, y: prevY, color: obj.color });
       }
-      if (dist > 0.5) {
-        // Break long jumps
-        const steps = Math.ceil(dist / ms.maxJumpLength);
-        for (let s = 1; s <= steps; s++) {
-          const jx = prevX + (startX - prevX) * s / steps;
-          const jy = prevY + (startY - prevY) * s / steps;
-          cmds.push({ type: s === steps ? 'jump' : 'jump', x: jx, y: jy, color: obj.color });
-        }
+      const steps = Math.ceil(startDist / ms.maxJumpLength);
+      for (let s = 1; s <= steps; s++) {
+        const jx = prevX + (startX - prevX) * s / steps;
+        const jy = prevY + (startY - prevY) * s / steps;
+        cmds.push({ type: 'jump', x: jx, y: jy, color: obj.color });
       }
+      prevX = startX;
+      prevY = startY;
     }
 
     // Stitch points
@@ -138,7 +138,7 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
       const y = obj.points[i][1] + offY;
       const dist = Math.hypot(x - prevX, y - prevY);
 
-      if (i > 0 && dist > ms.maxStitchLength) {
+      if (dist > ms.maxStitchLength) {
         // Break long stitches into sub-stitches
         const steps = Math.ceil(dist / ms.maxStitchLength);
         for (let s = 1; s < steps; s++) {
@@ -411,6 +411,63 @@ export function autoFix(commands, objects, machine = DEFAULT_MACHINE, format = '
   while (cmds.length > 0 && (cmds[0].type === 'colorChange' || cmds[0].type === 'trim')) {
     applied.push({ rule: 'R8', message: `Comando ilegal en posición 0 (${cmds[0].type}) eliminado` });
     cmds.shift();
+  }
+
+  // R1/R2: Split stitches/jumps that still exceed max length
+  const splitCmds = [];
+  let prevX2 = 0, prevY2 = 0;
+  let splitCount = 0;
+  for (const c of cmds) {
+    if (c.type === 'stitch' || c.type === 'jump') {
+      const dist = Math.hypot(c.x - prevX2, c.y - prevY2);
+      const maxLen = c.type === 'stitch' ? limits.maxStitch : limits.maxJump;
+      if (dist > maxLen) {
+        const steps = Math.ceil(dist / maxLen);
+        for (let s = 1; s <= steps; s++) {
+          const sx = prevX2 + (c.x - prevX2) * s / steps;
+          const sy = prevY2 + (c.y - prevY2) * s / steps;
+          splitCmds.push({ type: c.type, x: sx, y: sy, color: c.color });
+        }
+        splitCount++;
+      } else {
+        splitCmds.push(c);
+      }
+      prevX2 = c.x; prevY2 = c.y;
+    } else {
+      splitCmds.push(c);
+    }
+  }
+  if (splitCount > 0) {
+    applied.push({ rule: 'R1/R2', message: `${splitCount} puntadas/saltos excesivos divididos en sub-puntadas` });
+    cmds = splitCmds;
+  }
+
+  // R12: Remove commands with NaN/Infinite coordinates
+  const beforeR12 = cmds.length;
+  cmds = cmds.filter(c => {
+    if (c.x !== undefined && (!Number.isFinite(c.x) || !Number.isFinite(c.y))) {
+      return false;
+    }
+    return true;
+  });
+  if (cmds.length < beforeR12) {
+    applied.push({ rule: 'R12', message: `${beforeR12 - cmds.length} comandos con coordenadas NaN/Inf eliminados` });
+  }
+
+  // R3: Clip coordinates to hoop bounds
+  const [hw, hh] = ms.hoopSize;
+  let clipCount = 0;
+  cmds = cmds.map(c => {
+    if (c.type === 'stitch' || c.type === 'jump') {
+      const cx = Math.max(-hw / 2, Math.min(hw / 2, c.x));
+      const cy = Math.max(-hh / 2, Math.min(hh / 2, c.y));
+      if (cx !== c.x || cy !== c.y) clipCount++;
+      return { ...c, x: cx, y: cy };
+    }
+    return c;
+  });
+  if (clipCount > 0) {
+    applied.push({ rule: 'R3', message: `${clipCount} coordenadas recortadas al bastidor (${hw}×${hh}mm)` });
   }
 
   return { fixedCommands: cmds, fixedObjects, applied };
