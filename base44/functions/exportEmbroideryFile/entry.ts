@@ -52,21 +52,26 @@ Deno.serve(async (req) => {
       return Response.json({ error: `Unsupported format: ${format}` }, { status: 400 });
     }
 
+    // ── Encode as base64 for JSON transport (SDK can't handle raw binary) ───
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < fileBuffer.length; i += chunkSize) {
+      binary += String.fromCharCode.apply(null, fileBuffer.subarray(i, i + chunkSize));
+    }
+    const fileBase64 = btoa(binary);
+
     // ── Checksum ───────────────────────────────────────────────────────────
     let checksum = 0;
     for (let i = 0; i < fileBuffer.length; i++) checksum ^= fileBuffer[i];
 
     const suggestedName = `design.${ext}`;
-    return new Response(fileBuffer, {
-      status: 200,
-      headers: {
-        'Content-Type': mimeType,
-        'Content-Disposition': `attachment; filename="${suggestedName}"`,
-        'X-File-Size': String(fileBuffer.length),
-        'X-Checksum': String(checksum),
-        'X-Warnings': JSON.stringify(warnings),
-        'X-Suggested-Name': suggestedName,
-      },
+    return Response.json({
+      file_base64: fileBase64,
+      filename: suggestedName,
+      mimeType,
+      size: fileBuffer.length,
+      checksum,
+      warnings,
     });
 
   } catch (error) {
