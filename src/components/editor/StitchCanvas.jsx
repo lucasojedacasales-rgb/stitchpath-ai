@@ -2,6 +2,7 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { ZoomIn, ZoomOut, Maximize2, Download, Layers, AlignJustify } from 'lucide-react';
 import { generateTatamiFill } from '@/lib/tatamiFill';
 import { drawRunning, drawSatinContour, drawSatinFill, drawOutline } from '@/lib/contourRenderer';
+import { drawContourLayer } from '@/lib/contourLayerRenderer';
 
 // ── Region classification helpers ─────────────────────────────────────────────
 
@@ -312,6 +313,18 @@ export default function StitchCanvas({
           drawSatinFill(ctx, pts, region, drawW, drawH, zoom, color, alpha);
         }
         ctx.restore();
+      }
+    }
+
+    // ── PASS 2b: Dedicated contour layer — drawn from region.contour ────────
+    // Fill regions that have a separate contour object get their contour
+    // drawn on top of the fill, using the contour's own points/color/width.
+    // This is the clean separation: fill from path_points, contour from contour_points.
+    if (showContour) {
+      for (const region of fillRegions) {
+        if (region.visible === false) continue;
+        if (!region.contour) continue;
+        drawContourLayer(ctx, region, drawW, drawH, zoom, alpha, outlineOnly);
       }
     }
 

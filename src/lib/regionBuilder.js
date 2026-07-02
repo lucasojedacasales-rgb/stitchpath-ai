@@ -439,6 +439,11 @@ export function enrichRegion(region, allRegions = [], designWidthMm = 100, desig
     // Color — never overwritten
     color:               originalColor,
     recommended_thread:  threadRec,
+    // Contour layer — preserved from contourEngineStage, never overwritten
+    contour:             region.contour || null,
+    contour_stitch_count: region.contour
+      ? Math.round(perimeter_mm / (region.contour.contour_width_mm || 1.2))
+      : 0,
     // Adaptive parameters (computed from geometry)
     stitch_type:         adapted.stitch_type,
     stitch_confidence:   adapted.stitch_confidence,

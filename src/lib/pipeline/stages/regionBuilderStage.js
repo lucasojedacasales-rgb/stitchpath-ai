@@ -7,6 +7,7 @@
 import { enrichAllRegions } from '../../regionBuilder.js';
 import { getModeStrategy } from '../../digitizeModes.js';
 import { normalizeRegionForPipeline, filterBackgroundRegions } from '../regionNormalize.js';
+import { buildContoursForRegions } from '../../contourPathBuilder.js';
 
 export async function runRegionBuilder(ctx) {
   if (!ctx.vectorRegions || ctx.vectorRegions.length === 0) {
@@ -68,6 +69,20 @@ export async function runRegionBuilder(ctx) {
       name: r.name || (sem ? sem.label : autoName(r, i)),
     };
   });
+
+  // ── Build dedicated contour paths on the final regions ──────────────────
+  // Backend-produced regions (hybridDigitize path) arrive without contours.
+  // Fallback regions (from contours) may already have them — skip those.
+  const needsContours = named.some(r => !r.contour);
+  if (needsContours && named.length > 0) {
+    const { contours } = buildContoursForRegions(named);
+    for (const r of named) {
+      if (!r.contour) {
+        const c = contours.get(r.id);
+        if (c) r.contour = c;
+      }
+    }
+  }
 
   ctx.regions = enrichAllRegions(named, width_mm, height_mm, fabric_type, ctx._useAdaptiveEngine);
   console.log(`[RegionBuilder] Regiones finales: ${ctx.regions.length}`);

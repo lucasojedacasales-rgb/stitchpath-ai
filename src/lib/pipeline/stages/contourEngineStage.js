@@ -11,6 +11,7 @@
 
 import { traceContoursProf } from '../../contourEngine.js';
 import { getModeStrategy }   from '../../digitizeModes.js';
+import { buildContoursForRegions } from '../../contourPathBuilder.js';
 
 // Per-mode quality presets — map strategy knobs to contourEngine options.
 // RDP epsilons raised across all modes to prevent sub-pixel micro-segmentation
@@ -49,5 +50,20 @@ export async function runContourEngine(ctx) {
   }
 
   ctx.contours = await traceContoursProf(sourceUrl, colorCount, modeOpts);
-  console.log(`[ContourEngine] Contornos detectados: ${ctx.contours?.regions?.length ?? 0}`);
+  const contourRegions = ctx.contours?.regions || [];
+  console.log(`[ContourEngine] Contornos detectados: ${contourRegions.length}`);
+
+  // ── Build dedicated contour paths (separate from fill path_points) ──────
+  // Each region gets region.contour = { contour_points, closed, width, color, type }
+  if (contourRegions.length > 0) {
+    // Ensure each region has an id (builder uses id as key)
+    for (const r of contourRegions) {
+      if (!r.id) r.id = `contour_${Math.random().toString(36).slice(2, 9)}`;
+    }
+    const { contours } = buildContoursForRegions(contourRegions);
+    for (const region of contourRegions) {
+      const contour = contours.get(region.id);
+      if (contour) region.contour = contour;
+    }
+  }
 }
