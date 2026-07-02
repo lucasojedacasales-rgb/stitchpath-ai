@@ -350,7 +350,7 @@ export default function ExportModal({ project, regions: initialRegions, finalCom
                     Iniciar asistente de corrección
                   </button>
                 </div>
-              ) : !ce01ProductionMode ? null : (
+              ) : !ce01ProductionMode ? (
                 <div className="bg-emerald-900/15 border border-emerald-500/30 rounded-lg p-3">
                   <div className="flex items-center gap-2 mb-1">
                     <ShieldCheck className="w-4 h-4 text-emerald-400" />
@@ -365,7 +365,7 @@ export default function ExportModal({ project, regions: initialRegions, finalCom
                     </div>
                   )}
                 </div>
-              )}
+              ) : null}
 
               {/* CE01 Production mode panel — shows command source + protected metrics */}
               {ce01ProductionMode && productionReport && (
