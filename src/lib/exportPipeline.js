@@ -26,6 +26,7 @@ import { optimizeObjectOrder, processObjectStitches } from './industrialStitchPr
 import { generateCE01SafeFillCommands } from './ce01SafeFillGenerator.js';
 import { sanitizeCommandsForCE01 } from './ce01CommandSanitizer.js';
 import { repairCE01FinalCommands } from './ce01FinalCommandRepair.js';
+import { optimizeCE01TravelPath } from './ce01TravelPathOptimizer.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -1044,9 +1045,21 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     commands = repairResult.commands;
   }
 
+  // Stage 3c: Travel path optimization — collapse jumps, convert short jumps to stitches
+  const travelResult = optimizeCE01TravelPath(commands, regions, config, ms);
+  if (travelResult.applied) {
+    commands = travelResult.commands;
+  }
+
   // Stage 4: CE01 sanitize (dedupe, merge micro, split long, optimize jumps + trims)
   const { commands: sanitizedCommands, report: sanitizeReport } = sanitizeCommandsForCE01(commands, ms);
   commands = sanitizedCommands;
+
+  // Stage 4b: Second light travel pass — clean up any new jumps/trims from sanitize
+  const finalTravelResult = optimizeCE01TravelPath(commands, regions, config, ms);
+  if (finalTravelResult.applied) {
+    commands = finalTravelResult.commands;
+  }
 
   const stitchCount = commands.filter(c => c.type === 'stitch').length;
   const jumpCount = commands.filter(c => c.type === 'jump').length;
@@ -1067,7 +1080,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
 
   _lastFinalCommandsMeta = meta;
 
-  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, validation };
+  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, validation };
 }
 
 /**

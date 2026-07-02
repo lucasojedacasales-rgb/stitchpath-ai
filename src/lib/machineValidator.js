@@ -31,6 +31,10 @@ const THRESHOLDS = {
   maxStitches: 12000,
   hoopW: 100,
   hoopH: 100,
+  maxTotalJumpsSafe: 300,       // total jumps — SAFE threshold
+  maxTotalJumpsRisky: 500,      // total jumps — RISKY threshold
+  maxTotalTrimsSafe: 60,        // total trims — SAFE threshold
+  maxTotalTrimsRisky: 100,      // total trims — RISKY threshold
 };
 
 // ─── Penalty weights ─────────────────────────────────────────────────────────
@@ -299,6 +303,46 @@ function checkJumps(commands, ms) {
       rule: 'J3',
       message: `${longJumpsWithoutTrim} saltos >3.5mm sin trim — exceso de arrastre de hilo.`,
       recommendation: 'Activar trim automático en saltos >3.5mm.',
+    });
+  }
+
+  // ── Total jump count — global pathing efficiency ──
+  const totalJumps = commands.filter(c => c.type === 'jump').length;
+  if (totalJumps > THRESHOLDS.maxTotalJumpsRisky) {
+    issues.push({
+      severity: 'MAJOR',
+      category: 'JUMPS',
+      rule: 'J4',
+      message: `${totalJumps} saltos totales — demasiado alto para un diseño doméstico simple.`,
+      recommendation: 'Usar Travel Path Optimizer para reducir saltos.',
+    });
+  } else if (totalJumps > THRESHOLDS.maxTotalJumpsSafe) {
+    issues.push({
+      severity: 'MINOR',
+      category: 'JUMPS',
+      rule: 'J4',
+      message: `${totalJumps} saltos totales — algo elevado para CE01.`,
+      recommendation: 'Considerar optimizar el travel path.',
+    });
+  }
+
+  // ── Total trim count — excessive cuts slow production ──
+  const totalTrims = commands.filter(c => c.type === 'trim').length;
+  if (totalTrims > THRESHOLDS.maxTotalTrimsRisky) {
+    issues.push({
+      severity: 'MAJOR',
+      category: 'TRIM',
+      rule: 'T3',
+      message: `${totalTrims} trims totales — exceso de cortes para CE01.`,
+      recommendation: 'Reducir trims innecesarios con Travel Path Optimizer.',
+    });
+  } else if (totalTrims > THRESHOLDS.maxTotalTrimsSafe) {
+    issues.push({
+      severity: 'MINOR',
+      category: 'TRIM',
+      rule: 'T3',
+      message: `${totalTrims} trims totales — algo elevado.`,
+      recommendation: 'Considerar reducir trims.',
     });
   }
 

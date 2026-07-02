@@ -1,17 +1,16 @@
 import { useState } from 'react';
 import {
-  Route, ShieldCheck, ShieldAlert, CheckCircle, XCircle,
-  Zap, Scissors, Layers, Activity, ArrowRight, RefreshCw,
+  Route, ShieldAlert, CheckCircle, RefreshCw,
+  Zap, Scissors, Activity, ArrowRight,
 } from 'lucide-react';
 import { optimizeCE01TravelPath } from '@/lib/ce01TravelPathOptimizer';
 
 /**
- * TravelPathOptimizerPanel — reduces jumps and trims by reordering
- * sewing blocks and optimizing the travel path.
+ * TravelPathOptimizerPanel — manual travel path optimization on top of
+ * finalEmbroideryCommands. The optimizer also runs automatically inside
+ * buildFinalCommands, but this panel allows re-running it on demand.
  *
- * Works ONLY on finalEmbroideryCommands (read-only input).
- * Transactional: applies only if jumps −20% AND trims −20%.
- * Never touches regions, vectors, colors, or visual types.
+ * Works ONLY on commands (read-only input). Never touches regions or visual state.
  */
 export default function TravelPathOptimizerPanel({
   regions, config, machineSettings,
@@ -25,7 +24,7 @@ export default function TravelPathOptimizerPanel({
     setResult(null);
     await new Promise(r => setTimeout(r, 50));
     try {
-      const res = optimizeCE01TravelPath(finalCommands, regions, machineSettings);
+      const res = optimizeCE01TravelPath(finalCommands, regions, config, machineSettings);
       setResult(res);
       if (res.applied && onOptimizationApplied) {
         console.log('[travel-opt] applied — updating finalEmbroideryCommands');
@@ -50,9 +49,9 @@ export default function TravelPathOptimizerPanel({
       </div>
 
       <p className="text-[10px] text-slate-500 leading-relaxed">
-        Reordena bloques de costura (fills → detalles → contornos) y optimiza el travel path
-        con nearest-neighbor. Reduce saltos y trims sin cambiar el diseño visual.
-        Solo aplica si saltos −20% y trims −20%.
+        Colapsa saltos consecutivos, convierte saltos cortos seguros (≤3.5mm) en puntadas
+        cuando el segmento está dentro del polígono, y elimina trims innecesarios.
+        Solo aplica si mejora sin aumentar largas ni duplicadas.
       </p>
 
       <button
@@ -82,7 +81,7 @@ export default function TravelPathOptimizerPanel({
               <span className={`text-[11px] font-bold ${
                 r.applied ? 'text-emerald-400' : 'text-amber-400'
               }`}>
-                {r.applied ? 'Optimización aplicada' : 'Travel optimization discarded'}
+                {r.applied ? 'Optimización aplicada' : 'Optimización descartada'}
               </span>
             </div>
             {!r.applied && r.discardedReason && (
@@ -108,6 +107,23 @@ export default function TravelPathOptimizerPanel({
             </div>
           </div>
 
+          {/* Optimization actions */}
+          <div className="bg-[#161a23] border border-[#1e2130] rounded-lg p-2.5 space-y-1">
+            <div className="text-[9px] text-slate-600 uppercase tracking-wider mb-1">Acciones</div>
+            <MetricRow icon={Activity} label="Saltos convertidos a puntadas" value={r.convertedShortJumps} color="text-cyan-400" />
+            <MetricRow icon={Scissors} label="Trims eliminados" value={r.removedTrims} color="text-violet-400" />
+            <div className="flex items-center gap-1.5 pt-1 border-t border-[#1e2130] mt-1">
+              <span className="text-[10px] text-slate-600">Bloques:</span>
+              <span className="text-[10px] text-slate-400 font-bold">{r.blocksBuilt}</span>
+              <span className="text-slate-700 ml-2">·</span>
+              <span className="text-[10px] text-slate-600">Largas:</span>
+              <span className={`text-[10px] font-bold ${r.longAfter > r.longBefore ? 'text-red-400' : 'text-emerald-400'}`}>{r.longBefore}→{r.longAfter}</span>
+              <span className="text-slate-700">·</span>
+              <span className="text-[10px] text-slate-600">Dups:</span>
+              <span className={`text-[10px] font-bold ${r.dupAfter > r.dupBefore + 2 ? 'text-red-400' : 'text-emerald-400'}`}>{r.dupBefore}→{r.dupAfter}</span>
+            </div>
+          </div>
+
           {/* Reduction percentages */}
           {r.applied && (
             <div className="flex items-center gap-3 text-[10px] bg-cyan-900/10 border border-cyan-500/20 rounded-lg px-2.5 py-2">
@@ -121,25 +137,6 @@ export default function TravelPathOptimizerPanel({
               </span>
             </div>
           )}
-
-          {/* Block breakdown */}
-          <div className="bg-[#161a23] border border-[#1e2130] rounded-lg p-2.5">
-            <div className="text-[9px] text-slate-600 uppercase tracking-wider mb-1.5">Bloques</div>
-            <div className="grid grid-cols-3 gap-1.5">
-              <BlockStat icon={Layers} label="Fills" value={r.fills} color="text-violet-400" />
-              <BlockStat icon={Activity} label="Detalles" value={r.details} color="text-cyan-400" />
-              <BlockStat icon={Route} label="Contornos" value={r.outlines} color="text-amber-400" />
-            </div>
-            <div className="flex items-center gap-3 mt-2 text-[10px]">
-              <span className="text-slate-600">Total: <span className="text-slate-400 font-bold">{r.blocksBuilt}</span></span>
-              <span className={r.detailBlocksPreserved ? 'text-emerald-400' : 'text-red-400'}>
-                {r.detailBlocksPreserved ? '✓' : '✗'} Detalles preservados
-              </span>
-              <span className={r.outlineBlocksPreserved ? 'text-emerald-400' : 'text-red-400'}>
-                {r.outlineBlocksPreserved ? '✓' : '✗'} Contornos preservados
-              </span>
-            </div>
-          </div>
         </div>
       )}
     </div>
@@ -152,16 +149,6 @@ function MetricRow({ icon: Icon, label, value, color }) {
       <Icon className={`w-3 h-3 ${color} flex-shrink-0`} />
       <span className="text-[10px] text-slate-500">{label}</span>
       <span className={`text-xs font-bold ${color} ml-auto`}>{value}</span>
-    </div>
-  );
-}
-
-function BlockStat({ icon: Icon, label, value, color }) {
-  return (
-    <div className="bg-[#0d0f14] rounded p-1.5 text-center border border-[#1e2130]">
-      <Icon className={`w-3 h-3 ${color} mx-auto mb-0.5`} />
-      <div className={`text-sm font-bold ${color}`}>{value}</div>
-      <div className="text-[8px] text-slate-600">{label}</div>
     </div>
   );
 }

@@ -228,7 +228,7 @@ function _generateAtSpacing(polygon, safePolygon, spacing, angleDeg, offX, offY,
         if (connDist < MIN_STITCH_MM) {
           needles = needles.slice(1);
           if (needles.length === 0) continue;
-        } else if (connDist > CONNECT_THRESHOLD || !_segmentInside(prevX, prevY, nx, ny, polygon)) {
+        } else if (connDist > CONNECT_THRESHOLD || !_segmentInsideTolerant(prevX, prevY, nx, ny, polygon)) {
           // Connection would cross outside → jump instead
           const proj = _projectInside(nx, ny, polygon, BORDER_PROJ_MM);
           const [jx, jy] = proj || [nx, ny];
@@ -449,6 +449,18 @@ function _segmentInside(x1, y1, x2, y2, poly) {
     const px = x1 + (x2 - x1) * t;
     const py = y1 + (y2 - y1) * t;
     if (!_pointInPolygon(px, py, poly)) return false;
+  }
+  return true;
+}
+
+/** Tolerant segment-inside check — allows points near the border (within toleranceMm) */
+function _segmentInsideTolerant(x1, y1, x2, y2, poly, toleranceMm = BORDER_PROJ_MM) {
+  for (let t = 0; t <= 1.0001; t += 0.2) {
+    const px = x1 + (x2 - x1) * t;
+    const py = y1 + (y2 - y1) * t;
+    if (_pointInPolygon(px, py, poly)) continue;
+    if (_projectInside(px, py, poly, toleranceMm)) continue;
+    return false;
   }
   return true;
 }
