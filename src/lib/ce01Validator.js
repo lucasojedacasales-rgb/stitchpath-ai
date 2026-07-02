@@ -162,10 +162,50 @@ export function validateCE01(commands, objects = [], regions = [], config = {}, 
     score -= 30;
   }
 
-  // ── 2. Jump count (informational — excessive jumps = warning) ─────────────
-  if (jumps > 50) {
-    warnings.push({ check: 2, message: `${jumps} saltos — revisar eficiencia de pathing.` });
+  // ── 2. Jump count (strong penalty for excessive jumps) ────────────────────
+  // CE01 home machines struggle with >500 jumps (thread tangling, long travel).
+  // >800 jumps = no SAFE status (force RISKY).
+  if (jumps > 800) {
+    warnings.push({
+      check: 2,
+      message: `${jumps} saltos — excesivo. La máquina puede bordear mal o perder detalles. Usar Travel Path Optimizer.`,
+    });
+    score -= 15;
+  } else if (jumps > 500) {
+    warnings.push({
+      check: 2,
+      message: `${jumps} saltos — revisar eficiencia de pathing. Considera optimizar travel path.`,
+    });
+    score -= 10;
+  } else if (jumps > 200) {
+    warnings.push({
+      check: 2,
+      message: `${jumps} saltos — eficiencia de pathing mejorable.`,
+    });
+    score -= Math.min(8, (jumps - 200) * 0.04);
+  } else if (jumps > 50) {
+    warnings.push({ check: 2, message: `${jumps} saltos — revisar pathing.` });
     score -= Math.min(5, (jumps - 50) * 0.1);
+  }
+
+  // ── 2b. Trim count (strong penalty for excessive trims) ──────────────────
+  // >150 trims = no SAFE status (force RISKY). Excessive trims slow production
+  // and increase thread break risk on home machines.
+  if (trims > 150) {
+    warnings.push({
+      check: 2,
+      message: `${trims} cortes (trim) — excesivo. Ralentiza la producción y aumenta riesgo de rotura de hilo.`,
+    });
+    score -= 12;
+  } else if (trims > 100) {
+    warnings.push({
+      check: 2,
+      message: `${trims} cortes — considerar reducir trims innecesarios.`,
+    });
+    score -= 8;
+  } else if (trims > 50) {
+    warnings.push({ check: 2, message: `${trims} cortes — algo elevado.` });
+    score -= Math.min(6, (trims - 50) * 0.1);
   }
 
   // ── 3. Jumps > 3.5mm without trim ─────────────────────────────────────────
@@ -298,7 +338,11 @@ export function validateCE01(commands, objects = [], regions = [], config = {}, 
 
   // ── Determine status ──────────────────────────────────────────────────────
   score = Math.max(0, Math.min(100, Math.round(score)));
-  const status = blockingIssues.length > 0 ? 'INVALID' : score >= 80 ? 'SAFE' : 'RISKY';
+  // Force RISKY when jumps > 800 or trims > 150 — never SAFE with excessive travel
+  const excessiveTravel = jumps > 800 || trims > 150;
+  const status = blockingIssues.length > 0
+    ? 'INVALID'
+    : (excessiveTravel || score < 80) ? 'RISKY' : 'SAFE';
   const ce01Ready = status !== 'INVALID';
 
   const spm = machineSettings.maxSpeed || machineSettings.max_speed_spm || 800;
