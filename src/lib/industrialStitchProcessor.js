@@ -12,7 +12,7 @@
  *   6. Clipped scanline fill — polygon-accurate fill stitches (no bbox overflow)
  */
 
-import { generateClippedFillStitches } from './clippedFillGenerator.js';
+import { generateClippedFillStitches, validateFillPoints } from './clippedFillGenerator.js';
 
 // ─── Physical constants (mm) — tuned for home machines (Caydo CE01) ──────────
 const TIE_SIZE = 0.5;           // locking stitch length
@@ -352,13 +352,31 @@ export function processObjectStitches(obj, machine) {
 
   // 8. Main stitches
   if (obj.stitch_type === 'fill') {
-    // Clipped scanline fill — stitches inside polygon only, jumps between spans
-    const fillPoints = generateClippedFillStitches(obj.points, {
+    // Clipped scanline fill — stitches inside polygon only
+    const safeMode = obj.ce01SafeFillMode === true;
+    let fillPoints = generateClippedFillStitches(obj.points, {
       densityMm: obj.density || 0.4,
       stitchLenMm: 3.0,
       angleDeg: obj.angle ?? 45,
       regionId: obj.id,
+      ce01SafeFillMode: safeMode,
     });
+
+    // Auto-fallback: if normal mode produces bad metrics, regenerate in safe mode
+    if (!safeMode && fillPoints.length > 0) {
+      const m = validateFillPoints(fillPoints, obj.points);
+      if (m.jumps > 80 || m.outsideRegion > 20 || m.longStitches > 20 || m.stitches > 2000) {
+        console.log(`[ce01-safe-fill] Auto-fallback for region ${obj.id}: jumps=${m.jumps} outside=${m.outsideRegion} long=${m.longStitches} stitches=${m.stitches}`);
+        fillPoints = generateClippedFillStitches(obj.points, {
+          densityMm: 0.65,
+          stitchLenMm: 3.5,
+          angleDeg: obj.angle ?? 45,
+          regionId: obj.id,
+          ce01SafeFillMode: true,
+        });
+      }
+    }
+
     if (fillPoints.length > 0) {
       result.push(...fillPoints);
     } else {

@@ -80,6 +80,7 @@ export function buildStitchObjects(regions, config = {}) {
       angle: r.angle || 45,
       points: mmPoints,
       rawRegion: r,
+      ce01SafeFillMode: config.ce01SafeFillMode === true,
     });
   }
 
