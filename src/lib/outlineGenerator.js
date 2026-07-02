@@ -20,6 +20,7 @@
  */
 
 import { classifyRegionGroups, convexHull, sameObjectGroup } from './contourGroupClassifier.js';
+import { overlapsDarkStrokeMask } from './darkStrokeDetector.js';
 
 const HIGH_CONTRAST_THRESHOLD = 80;
 const DARK_LUM_THRESHOLD = 60;
@@ -271,6 +272,19 @@ function generateInnerOutlines(regions, config) {
 
     if (!hasHighContrastNeighbor) continue;
 
+    // ── Dark stroke gate: when the mask is available, skip fill boundaries
+    //    that have no real dark line. This stops inferring contours from
+    //    color changes between fills (e.g. light pink / dark pink junction).
+    //    Mouth/eyes are still created downstream by ensureMouthDetailExported.
+    const darkStroke = config.darkStroke;
+    if (darkStroke) {
+      const { ratio } = overlapsDarkStrokeMask(fill.path_points, darkStroke, true);
+      if (ratio < 0.6) {
+        console.log(`[outline-generator] fill_boundary skipped (no dark stroke, ratio ${(ratio * 100).toFixed(0)}%): ${fill.name || fill.id}`);
+        continue;
+      }
+    }
+
     // Check if this fill already has an outer outline generated
     // (don't duplicate the outer silhouette as an inner outline)
     if (regions.some(r => r.region_class === 'outer_outline' && r.parentRegionId === fill.id)) continue;
@@ -384,10 +398,14 @@ function deduplicateOutlines(outlines) {
   if (outlines.length < 2) return outlines;
   const keep = [];
   for (const o of outlines) {
-    const dup = keep.find(k =>
-      k.contour_color === o.contour_color &&
-      bboxSimilar(computeBbox(k.contour_points), computeBbox(o.contour_points))
-    );
+    const dup = keep.find(k => {
+      if (k.contour_color !== o.contour_color) return false;
+      // Never dedup outer outlines across different groups (body vs foot) —
+      // that deletes valid foot / lower-body contours.
+      if (k.region_class === 'outer_outline' && o.region_class === 'outer_outline' &&
+          (k.parentGroupName || '') !== (o.parentGroupName || '')) return false;
+      return bboxSimilar(computeBbox(k.contour_points), computeBbox(o.contour_points));
+    });
     if (!dup) keep.push(o);
   }
   return keep;

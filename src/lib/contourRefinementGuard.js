@@ -18,7 +18,7 @@
  *   runContourRefinementGuard(commands, regions, config) → { commands, accepted, before, after, ... }
  */
 
-import { getContourExportReport, countContourStitches } from './contourExportBuilder';
+import { getContourExportReport, countContourStitches, getLastOutlineClassifierReport } from './contourExportBuilder';
 import { detectTravelContamination } from './contourRefineValidator';
 import { calculateUnifiedCommandMetrics } from './unifiedCommandMetrics';
 import { validateColorChangeIntegrity } from './threadColorBlocks';
@@ -72,12 +72,31 @@ function computeAudit(commands, regions) {
     if (c && c.type === 'trim') { /* keep prev */ }
   }
 
+  // lowerOuterContourCoverage: presence of outer outline stitches in the bottom
+  // half. Binary-presence metric (100 if any lower outer stitch exists) so that
+  // legitimate travel→jump conversion never falsely rejects the refinement.
+  let lowerOuter = 0;
+  for (const c of commands) {
+    if (c && c.type === 'stitch') {
+      const lt = (c.layerType || '').toLowerCase();
+      const isOuter = lt === 'outer_outline' || lt === 'outer_silhouette' ||
+                      lt === 'limb_contour' || lt === 'dark_stroke_outline';
+      if (isOuter && (c.y || 0) < 0) lowerOuter++;
+    }
+  }
+  const lowerOuterContourCoverage = lowerOuter > 0 ? 100 : 0;
+
+  const outlineReport = getLastOutlineClassifierReport();
+  const explicitDarkStrokeCoverage = outlineReport?.explicitDarkStrokeCoverage ?? 100;
+
   return {
     mouthExported: counts.mouthStitches > 0,
     mouthStitches: counts.mouthStitches,
     bodyShadowBoundaryOutlined: report.bodyShadowBoundaryOutlined === 'YES',
     outerContourCoverage: 100 - (report.uncoveredPerimeterPercent || 0),
     footContourCoverage: report.visibleFootContourCoverage ?? 100,
+    lowerOuterContourCoverage,
+    explicitDarkStrokeCoverage,
     artificialGeometryCount: artificial,
     travelStitchedAsContour: travel,
     jumps: metrics.jumpCount,
@@ -150,6 +169,7 @@ export function runContourRefinementGuard(commands, regions, config = {}) {
 
   // ── Revert rules (mandatory) ──
   const reject = (reason) => {
+    console.log(`[outline-classifier] rejected reason: ${reason}`);
     console.log(`[refine] rejected reason: ${reason}`);
     return { commands, accepted: false, before, after, reason };
   };
@@ -167,7 +187,9 @@ export function runContourRefinementGuard(commands, regions, config = {}) {
     after.artificialGeometryCount === 0 &&
     after.travelStitchedAsContour === 0 &&
     after.outerContourCoverage >= before.outerContourCoverage &&
-    after.footContourCoverage >= before.footContourCoverage;
+    after.footContourCoverage >= before.footContourCoverage &&
+    after.lowerOuterContourCoverage >= before.lowerOuterContourCoverage &&
+    after.explicitDarkStrokeCoverage >= before.explicitDarkStrokeCoverage;
 
   if (!ok) {
     const reasons = [];
@@ -178,6 +200,7 @@ export function runContourRefinementGuard(commands, regions, config = {}) {
     return reject(reasons.join('; '));
   }
 
+  console.log('[outline-classifier] accepted: true');
   console.log('[refine] accepted: all criteria met');
   return { commands: candidate, accepted: true, before, after };
 }

@@ -170,8 +170,11 @@ export function refineContourPath(points, preset, isOuter) {
   // 1. Smoothing
   refined = smoothPath(refined, preset.smoothingPasses || 2);
 
-  // 2. Remove short segments
-  refined = removeShortSegments(refined, preset.minSegmentMm || 0.8);
+  // 2. Remove short segments — skipped for OUTER outlines so the lower-body
+  //    arc and foot edges aren't dropped (short arc segments are valid borders).
+  if (!isOuter) {
+    refined = removeShortSegments(refined, preset.minSegmentMm || 0.8);
+  }
 
   // 3. Close small gaps
   refined = closeSmallGaps(refined, preset.gapCloseThresholdMm || 1.2);

@@ -90,6 +90,21 @@ function computeBbox(pts) {
 export function classifyRegionGroups(regions) {
   const enriched = regions.map(r => ({ ...r }));
 
+  // ── Pre-scan: body base lightness from large pink regions ──
+  // A small pink region DARKER than the body base is a SHADOW (→ body group),
+  // not a foot. This prevents the false contour between light pink and dark pink.
+  let bodyBaseLum = Infinity;
+  for (const r of enriched) {
+    const color = r.color || r.hex || '#888888';
+    if (isPinkHue(color)) {
+      const lum = hexToHsl(color).l;
+      const bb = computeBbox(r.path_points || []);
+      const isLarge = (r.area_mm2 || 0) > 500 || (bb.w * bb.h > 0.25);
+      if (isLarge && lum < bodyBaseLum) bodyBaseLum = lum;
+    }
+  }
+  const SHADOW_DELTA = 12;
+
   for (const r of enriched) {
     const name = (r.name || '').toLowerCase();
     const color = r.color || r.hex || '#888888';
@@ -125,8 +140,19 @@ export function classifyRegionGroups(regions) {
         r.object_group = 'body';
         r.contour_policy = 'no_contour_boundary';
       } else if (isPinkHue(color) && !isLarge && isAtBottom) {
-        r.object_group = isAtLeft ? 'foot_left' : 'foot_right';
-        r.contour_policy = 'outer_only';
+        // Distinguish foot (same lightness as body) from shadow (darker).
+        // A dark-pink shadow at the bottom must stay in the body group, otherwise
+        // a contour appears at the light-pink / dark-pink junction.
+        const lum = hexToHsl(color).l;
+        const isShadow = bodyBaseLum !== Infinity && lum < bodyBaseLum - SHADOW_DELTA;
+        if (isShadow) {
+          r.object_group = 'body';
+          r.contour_policy = 'no_contour_boundary';
+          console.log('[outline-grouping] dark-pink shadow reclassified → body (no contour)');
+        } else {
+          r.object_group = isAtLeft ? 'foot_left' : 'foot_right';
+          r.contour_policy = 'outer_only';
+        }
       } else if (isPinkHue(color) && !isLarge) {
         r.object_group = 'body';
         r.contour_policy = 'no_contour_boundary';
