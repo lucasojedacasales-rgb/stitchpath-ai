@@ -34,6 +34,12 @@ export function buildThreadColorBlocks(commands = []) {
       continue;
     }
 
+    // Trim — belongs to the current block (preserves thread context)
+    if (c.type === 'trim') {
+      if (currentBlock) currentBlock.commands.push(c);
+      continue;
+    }
+
     if (c.type !== 'stitch' && c.type !== 'jump') continue;
 
     const cmdColor = c.color || currentColor || '#000000';

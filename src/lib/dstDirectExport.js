@@ -9,7 +9,7 @@
  */
 
 import { encodeDSTDelta, encodeDSTMove } from './dstEncoder';
-import { buildThreadColorBlocks, ensureColorChangesBetweenBlocks } from './threadColorBlocks';
+import { buildThreadColorBlocks, ensureColorChangesBetweenBlocks, validateColorChangeIntegrity } from './threadColorBlocks';
 
 const HEADER_SIZE = 512;
 const RECORD_SIZE = 3;
@@ -37,6 +37,20 @@ export function buildDSTFromCommands(commands, { label = 'design', ce01Strict = 
   // here so the DST file always has real STOP records.
   const safeCommands = ensureColorChangesBetweenBlocks(commands || []);
   const threadBlocks = buildThreadColorBlocks(safeCommands);
+
+  // ── Color sequence validation ──────────────────────────────────────────
+  // Each block must have ≥1 stitch, and colorChange count must equal blocks−1.
+  const ccIntegrity = validateColorChangeIntegrity(safeCommands);
+  console.log('[dst-color-seq] blocks:', threadBlocks.length);
+  console.log('[dst-color-seq] colorChanges:', ccIntegrity.colorChangeCount);
+  console.log('[dst-color-seq] expected:', ccIntegrity.expectedColorChanges);
+  console.log('[dst-color-seq] valid:', ccIntegrity.valid);
+  for (let i = 0; i < threadBlocks.length; i++) {
+    console.log(`[dst-color-seq] block ${i + 1}: color=${threadBlocks[i].colorHex} stitches=${threadBlocks[i].stitchCount} layers=[${threadBlocks[i].layerTypes.join(',')}]`);
+  }
+  if (!ccIntegrity.valid) {
+    console.warn(`[dst-color-seq] MISMATCH: ${ccIntegrity.colorChangeCount} STOP records vs ${ccIntegrity.expectedColorChanges} expected for ${ccIntegrity.blockCount} blocks`);
+  }
 
   const records = [];
   let prevX = 0, prevY = 0; // 0.1mm units (DST coordinate space)
@@ -95,6 +109,22 @@ export function buildDSTFromCommands(commands, { label = 'design', ce01Strict = 
 
   const recordCount = records.length;
   const bounds = { plusX: maxX, minusX: -minX, plusY: maxY, minusY: -minY };
+
+  // ── Post-encode validation: count real STOP records (b2 === 0xC3) ──────
+  let binaryStopCount = 0;
+  for (const rec of records) {
+    if (rec[2] === 0xC3) binaryStopCount++;
+  }
+  console.log('[dst-color-seq] binary STOP records (0xC3):', binaryStopCount);
+  console.log('[dst-color-seq] header CO will be:', colorChanges);
+  if (binaryStopCount !== colorChanges) {
+    console.error(`[dst-color-seq] FATAL: binary STOPs (${binaryStopCount}) ≠ CO (${colorChanges})`);
+    throw new Error(`DST color mismatch: ${binaryStopCount} STOP records in binary but CO=${colorChanges}`);
+  }
+  if (binaryStopCount !== Math.max(0, threadBlocks.length - 1)) {
+    console.error(`[dst-color-seq] FATAL: STOPs (${binaryStopCount}) ≠ blocks−1 (${threadBlocks.length - 1})`);
+    throw new Error(`DST color mismatch: ${binaryStopCount} STOPs for ${threadBlocks.length} color blocks`);
+  }
 
   // ── Build header (512 bytes, CR line breaks, signed AX/AY, 0x1A after PD) ──
   const fields = [
@@ -159,6 +189,8 @@ export function buildDSTFromCommands(commands, { label = 'design', ce01Strict = 
       stitchRecords,
       colorChanges,
       threadBlocks: threadBlocks.length,
+      colorSequence: threadBlocks.map(b => b.colorHex),
+      colorValid: binaryStopCount === colorChanges && binaryStopCount === Math.max(0, threadBlocks.length - 1),
       bounds,
       finalX: prevX,
       finalY: prevY,
