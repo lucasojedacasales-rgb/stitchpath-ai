@@ -13,8 +13,10 @@ export default function ExportRealityCheck({ reality }) {
 
   const rows = [
     { label: 'Visual colors', value: reality.visualColors, mismatch: reality.colorMismatch },
+    { label: 'Command thread blocks', value: reality.threadBlocks, mismatch: reality.colorChangeMismatch },
     { label: 'Command colors', value: reality.commandColors, mismatch: reality.colorMismatch },
-    { label: 'Color changes', value: reality.colorChanges, mismatch: reality.colorMismatch },
+    { label: 'ColorChange commands', value: reality.colorChanges, mismatch: reality.colorMismatch },
+    { label: 'Expected machine color steps', value: reality.expectedMachineColors },
     { label: 'Fill objects', value: reality.fillObjects },
     { label: 'Detail objects', value: reality.detailObjects },
     { label: 'Contour objects visuales', value: reality.contourVisual, mismatch: reality.contourMismatch },
@@ -42,6 +44,7 @@ export default function ExportRealityCheck({ reality }) {
         <div className="mb-2 text-[10px] text-amber-300 bg-amber-900/20 rounded px-2 py-1.5">
           ⚠ No se recomienda exportar: el diseño en máquina no coincidirá con la previsualización.
           {reality.colorMismatch && <div>• Color mismatch: el DST saldría como 1 color.</div>}
+          {reality.colorChangeMismatch && <div>• ColorChange insuficientes para los bloques de color.</div>}
           {reality.contourMismatch && <div>• Contornos visuales no exportados como stitches.</div>}
           {reality.mouthMismatch && <div>• Boca visible pero no exportada.</div>}
         </div>

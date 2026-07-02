@@ -6,6 +6,8 @@
  * the machine to sew a different design than the preview shows.
  */
 
+import { buildThreadColorBlocks } from './threadColorBlocks';
+
 /**
  * @param {Array} regions  — visual regions from the editor
  * @param {Array} commands — finalEmbroideryCommands
@@ -30,6 +32,10 @@ export function computeExportReality(regions = [], commands = []) {
 
   // ── Color changes ───────────────────────────────────────────────────────
   const colorChanges = commands.filter(c => c.type === 'colorChange').length;
+
+  // ── Thread blocks (from real commands, not visual regions) ──────────────
+  const threadBlocks = buildThreadColorBlocks(commands);
+  const expectedMachineColors = colorChanges + 1;
 
   // ── Fill objects (visual) ───────────────────────────────────────────────
   const fillObjects = regions.filter(r => r.visible !== false && r.stitch_type === 'fill').length;
@@ -93,14 +99,17 @@ export function computeExportReality(regions = [], commands = []) {
   const colorMismatch = visualColors > 1 && colorChanges === 0;
   const contourMismatch = contourVisual > contourExported;
   const mouthMismatch = mouthVisual && !mouthExported;
+  const colorChangeMismatch = threadBlocks.length > 1 && colorChanges !== threadBlocks.length - 1;
 
-  const ready = !colorMismatch && !contourMismatch && !mouthMismatch;
+  const ready = !colorMismatch && !contourMismatch && !mouthMismatch && !colorChangeMismatch;
   const status = ready ? 'OK' : 'RISKY';
 
   // ── Logs ────────────────────────────────────────────────────────────────
   console.log('[export-reality] visual colors:', visualColors);
   console.log('[export-reality] command colors:', commandColors);
   console.log('[export-reality] color changes:', colorChanges);
+  console.log('[export-reality] thread blocks:', threadBlocks.length);
+  console.log('[export-reality] expected machine colors:', expectedMachineColors);
   console.log('[export-reality] visual contours:', contourVisual);
   console.log('[export-reality] exported contours:', contourExported);
   console.log('[export-reality] mouth visual:', mouthVisual ? 'YES' : 'NO');
@@ -113,6 +122,8 @@ export function computeExportReality(regions = [], commands = []) {
     visualColors,
     commandColors,
     colorChanges,
+    threadBlocks: threadBlocks.length,
+    expectedMachineColors,
     fillObjects,
     detailObjects,
     contourVisual,
@@ -124,6 +135,7 @@ export function computeExportReality(regions = [], commands = []) {
     colorMismatch,
     contourMismatch,
     mouthMismatch,
+    colorChangeMismatch,
     status,
     ready,
   };

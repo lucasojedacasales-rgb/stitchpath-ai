@@ -95,9 +95,11 @@ export function encodeDSTDelta(dx, dy, flag = 'stitch') {
   if (yT[3] === 1) b1 |= 0x04; else if (yT[3] === -1) b1 |= 0x08; // ±27
   if (yT[4] === 1) b2 |= 0x04; else if (yT[4] === -1) b2 |= 0x08; // ±81
 
-  // Flag bits
+  // Flag bits — colorChange needs BOTH jump (0x80) and color (0x40) bits
+  // to produce 0xC3, which machines like the Caydo CE01 recognize as a real
+  // STOP / color change. Using only 0x40 (→ 0x43) is not recognized.
   if (flag === 'jump') b2 |= 0x80;
-  else if (flag === 'colorChange') b2 |= 0x40;
+  else if (flag === 'colorChange') b2 |= 0xC0; // 0x80 | 0x40 → b2 = 0xC3
 
   return [b0, b1, b2];
 }
@@ -138,10 +140,12 @@ export function decodeDSTRecord(record) {
   if (b2 & 0x04) dy += 81;
   if (b2 & 0x08) dy -= 81;
 
+  // Check colorChange (0x40) BEFORE jump (0x80) — a colorChange record (0xC3)
+  // has both bits set and must decode as colorChange, not jump.
   let flag = 'stitch';
   if (b2 === 0xF3) flag = 'end';
-  else if (b2 & 0x80) flag = 'jump';
   else if (b2 & 0x40) flag = 'colorChange';
+  else if (b2 & 0x80) flag = 'jump';
 
   return { dx, dy, flag };
 }

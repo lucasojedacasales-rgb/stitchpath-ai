@@ -9,6 +9,7 @@
  */
 
 import { encodeDSTDelta, encodeDSTMove } from './dstEncoder';
+import { buildThreadColorBlocks, ensureColorChangesBetweenBlocks } from './threadColorBlocks';
 
 const HEADER_SIZE = 512;
 const RECORD_SIZE = 3;
@@ -31,13 +32,19 @@ function formatCoord(v) {
  * @returns {{ bytes: Uint8Array, blob: Blob, meta: Object }}
  */
 export function buildDSTFromCommands(commands, { label = 'design', ce01Strict = true } = {}) {
+  // ── Guarantee colorChange records between distinct color blocks ──────
+  // Even if optimizers stripped some colorChange commands, re-insert them
+  // here so the DST file always has real STOP records.
+  const safeCommands = ensureColorChangesBetweenBlocks(commands || []);
+  const threadBlocks = buildThreadColorBlocks(safeCommands);
+
   const records = [];
   let prevX = 0, prevY = 0; // 0.1mm units (DST coordinate space)
   let minX = 0, maxX = 0, minY = 0, maxY = 0;
   let colorChanges = 0;
   let stitchRecords = 0;
 
-  for (const cmd of commands || []) {
+  for (const cmd of safeCommands) {
     if (!cmd || !cmd.type) continue;
 
     if (cmd.type === 'end') {
@@ -128,6 +135,21 @@ export function buildDSTFromCommands(commands, { label = 'design', ce01Strict = 
   fileBytes.set(recordBytes, HEADER_SIZE);
   if (ce01Strict) fileBytes[totalSize - 1] = EOF_BYTE;
 
+  // ── Color export logs ──────────────────────────────────────────────────
+  const visualColorSet = new Set();
+  for (const c of safeCommands) {
+    if (c.color && (c.type === 'stitch' || c.type === 'jump')) visualColorSet.add(c.color);
+  }
+  console.log('[color-export] visual colors:', visualColorSet.size);
+  console.log('[color-export] thread blocks:', threadBlocks.length);
+  console.log('[color-export] color changes inserted:', colorChanges);
+  console.log('[color-export] header CO:', colorChanges);
+  console.log('[color-export] expected machine colors:', colorChanges + 1);
+  if (threadBlocks[0]) console.log('[color-export] first block color:', threadBlocks[0].colorHex);
+  if (threadBlocks[1]) console.log('[color-export] second block color:', threadBlocks[1].colorHex);
+  console.log('[color-export] dst color stop records:', colorChanges);
+  console.log('[color-export] ready:', colorChanges === Math.max(0, threadBlocks.length - 1));
+
   return {
     bytes: fileBytes,
     blob: new Blob([fileBytes], { type: 'application/octet-stream' }),
@@ -136,6 +158,7 @@ export function buildDSTFromCommands(commands, { label = 'design', ce01Strict = 
       recordCount,
       stitchRecords,
       colorChanges,
+      threadBlocks: threadBlocks.length,
       bounds,
       finalX: prevX,
       finalY: prevY,

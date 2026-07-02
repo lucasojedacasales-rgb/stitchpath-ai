@@ -15,6 +15,8 @@ import { sanitizeCommandsForCE01 } from '@/lib/ce01CommandSanitizer';
 import { prepareCE01ProductionExport, encodeCE01ProductionToFile } from '@/lib/ce01ProductionExport';
 import { buildDSTFromCommands } from '@/lib/dstDirectExport';
 import { computeExportReality } from '@/lib/exportRealityCheck';
+import { validateColorChangeIntegrity } from '@/lib/threadColorBlocks';
+import { generate3ColorTestDST } from '@/lib/ce01ColorTestFile';
 import ExportRealityCheck from './ExportRealityCheck';
 import { calculateUnifiedCommandMetrics, metricsMatch } from '@/lib/unifiedCommandMetrics';
 import CE01ProductionPanel from './CE01ProductionPanel';
@@ -241,8 +243,13 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       // ── Color mismatch validation — block if multi-color design exports as 1 color ──
       const colorChanges = sourceCommands.filter(c => c.type === 'colorChange').length;
       const visualColorCount = new Set(regions.map(r => r.color).filter(Boolean)).size;
+      const ccIntegrity = validateColorChangeIntegrity(sourceCommands);
       if (visualColorCount > 1 && colorChanges === 0) {
-        setExportError('Color mismatch: el DST saldría como 1 color');
+        setExportError('El DST saldría como un solo color. Faltan paradas de color.');
+        return;
+      }
+      if (!ccIntegrity.valid && ccIntegrity.blockCount > 1) {
+        setExportError(`Color mismatch: ${ccIntegrity.blockCount} bloques de color pero ${ccIntegrity.colorChangeCount} colorChanges (esperados ${ccIntegrity.expectedColorChanges}).`);
         return;
       }
       if (realityCheck && !realityCheck.ready) {
@@ -589,6 +596,27 @@ export default function ExportModal({ project, config: editorConfig, regions: in
 
               {/* Export Reality Check — visual vs exported comparison */}
               <ExportRealityCheck reality={realityCheck} />
+
+              {/* 3-color CE01 test — generates minimal DST with 2 real colorChange records */}
+              <button
+                onClick={() => {
+                  try {
+                    const { blob, meta } = generate3ColorTestDST();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'CE01_3COLOR_TEST.dst';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  } catch (e) {
+                    setExportError(`Test failed: ${e.message}`);
+                  }
+                }}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-cyan-900/20 border border-cyan-500/30 text-cyan-300 text-xs font-bold hover:bg-cyan-900/30 transition-colors"
+              >
+                <Palette className="w-3.5 h-3.5" />
+                Exportar test 3 colores CE01
+              </button>
 
               {/* CE01 pre-export validation report — before/after sanitizer */}
               {!ce01ProductionMode && (
