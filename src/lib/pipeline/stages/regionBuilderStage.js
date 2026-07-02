@@ -81,22 +81,39 @@ export async function runRegionBuilder(ctx) {
 
   const enrichedRaw = enrichAllRegions(named, width_mm, height_mm, fabric_type, ctx._useAdaptiveEngine);
 
-  // ── Detail preservation: score every region for visual importance ────────
-  // Preserved details (detailScore >= 55) are NEVER removed, merged, or absorbed.
-  const { regions: preservedRegions, report: detailReport } = preserveDetails(enrichedRaw, ctx.config);
-  ctx.detailReport = detailReport;
+  // ══ ROLLBACK SAFETY GATES ════════════════════════════════════════════════
+  // Experimental detail/outline modules are OFF by default. When OFF, the
+  // stable pipeline is used: enrichedRaw → contourSafeMode directly.
+  // This restores the pre-experimental state where fills were clean, the
+  // canvas didn't break, and DST export worked reliably.
+  const experimentalDetail = ctx.config?.experimentalDetailPreservation === true;
+  const experimentalOutlines = ctx.config?.experimentalOutlineGenerator === true;
 
-  // ── Region classification: assign semantic classes + priorities ──────────
-  // Classes: outer_outline, inner_outline, detail_run, detail_satin, micro_fill, decorative_detail, fill
-  const { regions: classifiedRegions, report: classReport } = classifyAllRegions(preservedRegions, ctx.config);
-  ctx.classReport = classReport;
+  let enriched;
+  if (experimentalDetail) {
+    // ── Detail preservation: score every region for visual importance ──────
+    const { regions: preservedRegions, report: detailReport } = preserveDetails(enrichedRaw, ctx.config);
+    ctx.detailReport = detailReport;
 
-  // ── Centerline extraction: convert thin details to run stitch paths ──────
-  // Mouth, eyebrows, facial lines → centerline + run stitch metadata
-  const { regions: processedRegions, report: centerlineReport } = processDetailRegions(classifiedRegions, ctx.config);
-  ctx.centerlineReport = centerlineReport;
+    // ── Region classification: assign semantic classes + priorities ────────
+    const { regions: classifiedRegions, report: classReport } = classifyAllRegions(preservedRegions, ctx.config);
+    ctx.classReport = classReport;
 
-  const enriched = processedRegions;
+    // ── Centerline extraction: convert thin details to run stitch paths ────
+    const { regions: processedRegions, report: centerlineReport } = processDetailRegions(classifiedRegions, ctx.config);
+    ctx.centerlineReport = centerlineReport;
+
+    enriched = processedRegions;
+  } else {
+    // ── STABLE PATH: skip all experimental detail modules ──────────────────
+    console.log('[rollback-safe] experimentalDetailPreservation OFF');
+    console.log('[rollback-safe] using stable contourSafeMode');
+    console.log('[rollback-safe] visual regions restored');
+    enriched = enrichedRaw;
+    ctx.detailReport = null;
+    ctx.classReport = null;
+    ctx.centerlineReport = null;
+  }
 
   // ── Contour separation ───────────────────────────────────────────────────
   // Safe mode: clean outlines from fill boundaries only, no edgeMap, no micro-fragments.
@@ -128,10 +145,19 @@ export async function runRegionBuilder(ctx) {
   ctx.contourObjects = contours;
 
   // ── Generate independent outline objects (outer silhouette + inner outlines) ──
-  // These are real embroidery entities, not canvas borders. They get their own
-  // stitch type, color, and priority (outer = 7 = sewn last for max definition).
-  const { outlines, report: outlineReport } = generateOutlines(enriched, ctx.config);
-  ctx.outlineReport = outlineReport;
+  // GATED: only runs when experimentalOutlineGenerator is explicitly ON.
+  // When OFF, no synthetic outlines are created — contourSafeMode contours
+  // are the only contour source (stable behaviour).
+  let outlines = [];
+  if (experimentalOutlines) {
+    const { outlines: genOutlines, report: outlineReport } = generateOutlines(enriched, ctx.config);
+    outlines = genOutlines;
+    ctx.outlineReport = outlineReport;
+  } else {
+    console.log('[rollback-safe] experimentalOutlineGenerator OFF');
+    console.log('[rollback-safe] no synthetic outlines generated');
+    ctx.outlineReport = null;
+  }
 
   // ctx.regions contains fill objects + contour objects + generated outlines.
   // Contour objects from safe mode + generated outlines are all type: "contour"
@@ -148,9 +174,13 @@ export async function runRegionBuilder(ctx) {
 
   ctx.regions = [...fills, ...contourObjects];
 
+  console.log('[rollback-safe] export pipeline untouched');
+  console.log('[rollback-safe] commands source preserved');
   console.log(`[RegionBuilder] Regiones finales: ${ctx.regions.length} (${fills.length} fills + ${contours.length} safe contours + ${outlines.length} generated outlines)`);
-  console.log(`[RegionBuilder] Detalles preservados: ${detailReport.preserved}/${detailReport.total}`);
-  console.log(`[RegionBuilder] Centerlines extraídas: ${centerlineReport.totalDetails}`);
+  if (experimentalDetail) {
+    console.log(`[RegionBuilder] Detalles preservados: ${ctx.detailReport?.preserved || 0}/${ctx.detailReport?.total || 0}`);
+    console.log(`[RegionBuilder] Centerlines extraídas: ${ctx.centerlineReport?.totalDetails || 0}`);
+  }
 }
 
 // ─── Contour geometry helpers (for contour object production stats) ───────────

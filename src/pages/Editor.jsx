@@ -47,8 +47,15 @@ const DEFAULT_CONFIG = {
   contourSafeMode: true,
   ce01SafeFillMode: true,
   ce01ProductionMode: true,
-  preserveAestheticDetails: true,
-  generateOutlines: true,
+  // ── Rollback safety flags — experimental modules OFF by default ──
+  // When false, the stable pipeline is used (contourSafeMode only, no
+  // detail preservation / outline generation / centerline extraction).
+  preserveAestheticDetails: false,
+  generateOutlines: false,
+  experimentalDetailPreservation: false,
+  experimentalOutlineGenerator: false,
+  experimentalFinalLookSimulator: false,
+  experimentalAestheticPreservation: false,
 };
 
 export default function Editor() {

@@ -20,6 +20,15 @@ export default function FinalLookSimulator({ regions, config, machineSettings, d
   const w = config.width_mm || 100;
   const h = config.height_mm || 100;
 
+  // ── Rollback safety: FinalLookSimulator is READ-ONLY ────────────────────
+  // It never modifies regions, commands, or sewing order. It only reads
+  // from buildFinalCommands (the same pipeline export uses) and renders.
+  const experimentalEnabled = config?.experimentalFinalLookSimulator === true;
+  useEffect(() => {
+    console.log('[rollback-safe] experimentalFinalLookSimulator', experimentalEnabled ? 'ON' : 'OFF');
+    console.log('[rollback-safe] FinalLookSimulator is read-only: no region/command mutation');
+  }, [experimentalEnabled]);
+
   // Build stitch commands from regions (same pipeline as export)
   const { commands, objects } = useMemo(() => {
     const objs = buildStitchObjects(regions, config);
