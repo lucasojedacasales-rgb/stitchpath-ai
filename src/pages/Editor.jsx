@@ -16,6 +16,8 @@ import EmbroideryPreview from '@/components/editor/EmbroideryPreview.jsx';
 import ExportModal from '@/components/editor/ExportModal';
 import MachineValidatorPanel from '@/components/editor/MachineValidatorPanel';
 import SewingSimulator from '@/components/editor/SewingSimulator';
+import MachineSimulator from '@/components/editor/MachineSimulator';
+import SimulationReportPanel from '@/components/editor/SimulationReportPanel';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
 import MaskCanvas from '@/components/editor/MaskCanvas';
@@ -301,18 +303,35 @@ export default function Editor() {
               />
             </div>
           ) : activeTab === 'simulate' ? (
-            <div className="flex-1 flex flex-col overflow-hidden">
-              <SewingSimulator
-                regions={regions}
-                config={config}
-                machineSettings={{
-                  maxStitchLength: 12.1,
-                  maxJumpLength: 12.1,
-                  hoopSize: [config.width_mm || 100, config.height_mm || 100],
-                  designOffset: [0, 0],
-                  trimThreshold: 3.5,
-                }}
-              />
+            <div className="flex-1 flex overflow-hidden">
+              <div className="flex-1 flex flex-col overflow-hidden">
+                <MachineSimulator
+                  regions={regions}
+                  config={config}
+                  machineSettings={{
+                    maxStitchLength: 12.1,
+                    maxJumpLength: 12.1,
+                    hoopSize: [config.width_mm || 100, config.height_mm || 100],
+                    designOffset: [0, 0],
+                    trimThreshold: 3.5,
+                  }}
+                  onRegionsRepaired={handleRegionsUpdate}
+                />
+              </div>
+              <div className="w-72 flex-shrink-0 border-l border-[#1e2130] overflow-y-auto p-3 bg-[#0a0c12]">
+                <SimulationReportPanel
+                  regions={regions}
+                  config={config}
+                  machineSettings={{
+                    maxStitchLength: 12.1,
+                    maxJumpLength: 12.1,
+                    hoopSize: [config.width_mm || 100, config.height_mm || 100],
+                    designOffset: [0, 0],
+                    trimThreshold: 3.5,
+                  }}
+                  onRegionsRepaired={handleRegionsUpdate}
+                />
+              </div>
             </div>
           ) : activeTab === 'validate' ? (
             <div className="flex-1 overflow-y-auto p-4">

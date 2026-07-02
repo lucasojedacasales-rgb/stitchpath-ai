@@ -1,0 +1,179 @@
+import { useState, useMemo } from 'react';
+import {
+  ShieldCheck, ShieldAlert, AlertTriangle, Wrench, TrendingUp, Activity,
+  Zap, Scissors, Palette, Ruler, Clock, Route, RefreshCw, CheckCircle, XCircle,
+} from 'lucide-react';
+import { analyzeSimulation } from '@/lib/simulationMetrics';
+import { buildStitchObjects, flattenToCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
+import { runRepairEngine } from '@/lib/repairEngine';
+
+/**
+ * SimulationReportPanel — metrics, recommendations, quality score, and
+ * integrated auto-fixer loop. Runs the repair engine on detected errors,
+ * re-simulates, and repeats until SAFE or iteration limit.
+ */
+export default function SimulationReportPanel({ regions, config, machineSettings, onRegionsRepaired }) {
+  const [repairing, setRepairing] = useState(false);
+  const [repairLog, setRepairLog] = useState(null);
+
+  const ms = { ...DEFAULT_MACHINE, ...machineSettings };
+
+  // Full analysis (recomputed when regions change — e.g. after repair)
+  const analysis = useMemo(() => {
+    const objs = buildStitchObjects(regions, config);
+    const cmds = flattenToCommands(objs, ms);
+    return analyzeSimulation(cmds, objs, ms);
+  }, [regions, config, ms.maxStitchLength, ms.maxJumpLength, ms.trimThreshold, ms.designOffset]);
+
+  const m = analysis.metrics;
+  const rec = analysis.recommendations;
+
+  const statusStyle = analysis.status === 'SAFE'
+    ? { wrap: 'bg-emerald-900/20 border-emerald-500/40', text: 'text-emerald-400', icon: ShieldCheck }
+    : analysis.status === 'RISKY'
+      ? { wrap: 'bg-amber-900/20 border-amber-500/40', text: 'text-amber-400', icon: ShieldAlert }
+      : { wrap: 'bg-red-900/20 border-red-500/40', text: 'text-red-400', icon: ShieldAlert };
+  const StatusIcon = statusStyle.icon;
+
+  const handleAutoFix = async () => {
+    setRepairing(true);
+    setRepairLog(null);
+    await new Promise(r => setTimeout(r, 50));
+    try {
+      const res = runRepairEngine(regions, config, ms, 'DST');
+      setRepairLog(res);
+      if (res.regions && onRegionsRepaired) {
+        onRegionsRepaired(res.regions);
+      }
+    } finally {
+      setRepairing(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Quality score banner */}
+      <div className={`${statusStyle.wrap} border rounded-lg p-4`}>
+        <div className="flex items-center gap-2 mb-2">
+          <StatusIcon className={`w-5 h-5 ${statusStyle.text}`} />
+          <span className={`text-sm font-bold ${statusStyle.text}`}>
+            {analysis.status === 'SAFE' ? 'Diseño SAFE — listo para bordar' : analysis.status === 'RISKY' ? 'Diseño RISKY — revisar advertencias' : 'Diseño INVALID — bloquear exportación'}
+          </span>
+          <span className="text-2xl font-bold text-white ml-auto">{analysis.qualityScore}</span>
+          <span className="text-xs text-slate-500">/100</span>
+        </div>
+        <div className="flex items-center gap-3 text-[10px]">
+          <span className="text-red-400">{analysis.recommendations.critical.length > 0 ? `${analysis.recommendations.critical.length} crítico(s)` : '0 críticos'}</span>
+          <span className="text-amber-400">{analysis.recommendations.warnings.length} advertencia(s)</span>
+          <span className="text-cyan-400">{analysis.recommendations.improvements.length} mejora(s)</span>
+        </div>
+      </div>
+
+      {/* Metrics grid */}
+      <div>
+        <div className="text-[11px] text-slate-500 uppercase tracking-wider mb-2 font-medium">Métricas de producción</div>
+        <div className="grid grid-cols-2 gap-2">
+          <Metric icon={Zap} label="Total puntadas" value={m.totalStitches.toLocaleString()} color="text-violet-400" />
+          <Metric icon={Activity} label="Saltos" value={m.totalJumps} color="text-slate-300" />
+          <Metric icon={Scissors} label="Cortes (trim)" value={m.totalTrims} color="text-amber-400" />
+          <Metric icon={Palette} label="Cambios color" value={m.colorChanges} color="text-cyan-400" />
+          <Metric icon={Ruler} label="Dist. cosida" value={`${m.sewingDistance}mm`} color="text-emerald-400" />
+          <Metric icon={Route} label="Dist. sin coser" value={`${m.jumpDistance}mm`} color="text-red-400" />
+          <Metric icon={TrendingUp} label="Eficiencia" value={`${m.routeEfficiency}%`} color={m.routeEfficiency >= 70 ? 'text-emerald-400' : 'text-amber-400'} />
+          <Metric icon={Clock} label="Tiempo est." value={`${m.estimatedTimeMin}min`} color="text-violet-400" />
+        </div>
+      </div>
+
+      {/* Recommendations */}
+      <div className="space-y-2">
+        {rec.critical.length > 0 && (
+          <RecSection title="Errores críticos" items={rec.critical} icon={XCircle} color="red" />
+        )}
+        {rec.warnings.length > 0 && (
+          <RecSection title="Advertencias" items={rec.warnings} icon={AlertTriangle} color="amber" />
+        )}
+        {rec.improvements.length > 0 && (
+          <RecSection title="Mejoras sugeridas" items={rec.improvements} icon={CheckCircle} color="cyan" />
+        )}
+      </div>
+
+      {/* Auto-fixer integration */}
+      <div className="border-t border-[#1e2130] pt-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <Wrench className="w-4 h-4 text-violet-400" />
+          <span className="text-xs font-bold text-white">Auto-Fixer integrado</span>
+        </div>
+        <p className="text-[10px] text-slate-500">
+          Ejecuta el motor de reparación iterativa sobre las zonas con errores y vuelve a simular automáticamente.
+        </p>
+        <button
+          onClick={handleAutoFix}
+          disabled={repairing || analysis.status === 'SAFE'}
+          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-xs font-bold transition-colors"
+        >
+          {repairing
+            ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Reparando y resimulando...</>
+            : analysis.status === 'SAFE'
+              ? <><CheckCircle className="w-3.5 h-3.5" /> Diseño SAFE — no necesita reparación</>
+              : <><Wrench className="w-3.5 h-3.5" /> Reparar zonas afectadas y resimular</>}
+        </button>
+
+        {repairLog && (
+          <div className="bg-[#0d0f14] border border-[#1e2130] rounded-lg p-2.5">
+            <div className="flex items-center gap-2 mb-1.5">
+              <Activity className="w-3 h-3 text-violet-400" />
+              <span className="text-[10px] font-bold text-violet-300">
+                Reparación: {repairLog.iterations} iteración(es) · score {repairLog.score}
+              </span>
+              <span className={`text-[10px] font-bold ml-auto ${repairLog.status === 'SAFE' ? 'text-emerald-400' : repairLog.status === 'RISKY' ? 'text-amber-400' : 'text-red-400'}`}>
+                {repairLog.status}
+              </span>
+            </div>
+            <pre className="text-[9px] text-slate-400 whitespace-pre-wrap font-mono leading-relaxed">
+              {repairLog.report}
+            </pre>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Metric({ icon: Icon, label, value, color }) {
+  return (
+    <div className="bg-[#0d0f14] rounded-lg p-2.5 border border-[#1e2130] flex items-center gap-2">
+      <Icon className={`w-3.5 h-3.5 ${color} flex-shrink-0`} />
+      <div className="min-w-0">
+        <div className={`text-sm font-bold ${color}`}>{value}</div>
+        <div className="text-[9px] text-slate-600 truncate">{label}</div>
+      </div>
+    </div>
+  );
+}
+
+const REC_STYLES = {
+  red:   { wrap: 'bg-red-900/10 border-red-500/20',     text: 'text-red-300',     icon: 'text-red-400'     },
+  amber: { wrap: 'bg-amber-900/10 border-amber-500/20', text: 'text-amber-300',   icon: 'text-amber-400'   },
+  cyan:  { wrap: 'bg-cyan-900/10 border-cyan-500/20',   text: 'text-cyan-300',    icon: 'text-cyan-400'    },
+};
+
+function RecSection({ title, items, icon: Icon, color }) {
+  const st = REC_STYLES[color] || REC_STYLES.amber;
+  return (
+    <div className={`${st.wrap} border rounded-lg p-2.5`}>
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <Icon className={`w-3.5 h-3.5 ${st.icon}`} />
+        <span className={`text-[11px] font-bold ${st.text}`}>{title}</span>
+        <span className="text-[10px] text-slate-500 ml-auto">{items.length}</span>
+      </div>
+      <div className="space-y-1">
+        {items.map((item, i) => (
+          <div key={i} className={`text-[10px] ${st.text} flex items-start gap-1`}>
+            <span className="text-slate-600 shrink-0">•</span>
+            <span>{item}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
