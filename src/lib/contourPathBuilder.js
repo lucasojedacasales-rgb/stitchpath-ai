@@ -20,6 +20,7 @@
  */
 
 import { snapContourToEdges, measureContourAlignment } from './edgeSnapper.js';
+import { scoreAndClassifyContour, mergeFragments } from './contourScorer.js';
 
 const DEFAULT_WIDTH_MM = 1.2;
 const INNER_WIDTH_MM   = 0.8;
@@ -118,43 +119,102 @@ export function buildContourPath(region, allRegions = [], options = {}) {
 }
 
 /**
- * Builds contours for all regions in a batch. Returns { contours, report }.
+ * Builds contours for all regions in a batch.
+ *
+ * Pipeline:
+ *   1. Build raw contour per region (clean + snap + validate)
+ *   2. Deduplicate near-identical contours
+ *   3. Merge nearby aligned fragments
+ *   4. Score + classify each candidate (outer_silhouette | inner_detail | decorative_line | noise)
+ *   5. Accept/reject based on thresholds (75+ general, 55+ outer/important detail)
+ *   6. Suppress clusters of micro-fragments
+ *
+ * Returns { contours (accepted only), noiseRejectedContours, report }
  */
 export function buildContoursForRegions(regions, options = {}) {
   const input = regions.length;
-  const contours = new Map();
-  let outer = 0, inner = 0, rejected = 0;
+  const rawContours = new Map();
+  let preRejected = 0;
 
+  // ── 1. Build raw candidates ─────────────────────────────────────────────
   for (const region of regions) {
     const contour = buildContourPath(region, regions, options);
     if (contour) {
-      contours.set(region.id, contour);
-      if (contour.contour_type === 'outer') outer++;
-      else if (contour.contour_type === 'inner') inner++;
+      rawContours.set(region.id, contour);
     } else {
-      rejected++;
+      preRejected++;
     }
   }
 
-  // Deduplicate: remove contours nearly identical to another
-  const deduped = deduplicateContours(contours, regions);
-  const duplicatesRemoved = contours.size - deduped.size;
+  // ── 2. Deduplicate ──────────────────────────────────────────────────────
+  const deduped = deduplicateContours(rawContours, regions);
+  const duplicatesRemoved = rawContours.size - deduped.size;
 
-  console.log(`[contour] regions input: ${input}`);
-  console.log(`[contour] outer contours detected: ${outer}`);
-  console.log(`[contour] inner contours detected: ${inner}`);
-  console.log(`[contour] contour colors: ${[...deduped.values()].map(c => c.contour_color).join(', ')}`);
-  console.log(`[contour] contour widths: ${[...deduped.values()].map(c => c.contour_width_mm.toFixed(1) + 'mm').join(', ')}`);
-  console.log(`[contour] rejected noisy contours: ${rejected}`);
-  console.log(`[contour] final contour objects: ${deduped.size}`);
-  const alignments = [...deduped.values()].filter(c => c.edge_alignment);
-  if (alignments.length > 0) {
-    const avgAlign = (alignments.reduce((s, c) => s + c.edge_alignment.alignmentScore, 0) / alignments.length).toFixed(0);
-    const totalWeak = alignments.reduce((s, c) => s + c.edge_alignment.weakPoints, 0);
-    console.log(`[contour] edge alignment: avg ${avgAlign}/100, ${totalWeak} weak points across ${alignments.length} contours`);
+  // ── 3. Merge nearby fragments ───────────────────────────────────────────
+  const candidates = [...deduped.entries()].map(([id, contour]) => ({
+    id, contour, region: regions.find(r => r.id === id) || {},
+  }));
+  const merged = mergeFragments(candidates);
+
+  // ── 4+5+6. Score, classify, accept/reject ───────────────────────────────
+  const allContours = merged.map(c => c.contour);
+  const accepted = new Map();
+  const noiseRejectedContours = [];
+
+  let outerAccepted = 0, innerAccepted = 0, decorativeAccepted = 0, noiseRejected = 0;
+
+  for (const { id, contour, region } of merged) {
+    const result = scoreAndClassifyContour(contour, region, regions, options.edgeMap, allContours);
+
+    if (result.accepted) {
+      // Use a stable id: original region id, or generated for merged
+      const finalId = id || `merged_${Math.random().toString(36).slice(2, 7)}`;
+      accepted.set(finalId, result.contour);
+      if (result.contourClass === 'outer_silhouette') outerAccepted++;
+      else if (result.contourClass === 'inner_detail') innerAccepted++;
+      else if (result.contourClass === 'decorative_line') decorativeAccepted++;
+    } else {
+      noiseRejectedContours.push({
+        id,
+        score: result.score,
+        contourClass: result.contourClass,
+        reason: result.reason,
+        contourColor: contour.contour_color,
+        pointCount: contour.contour_points.length,
+      });
+      noiseRejected++;
+    }
   }
 
-  return { contours: deduped, duplicatesRemoved };
+  // ── Required logs ───────────────────────────────────────────────────────
+  console.log(`[contour] candidates total: ${input}`);
+  console.log(`[contour] outer silhouette accepted: ${outerAccepted}`);
+  console.log(`[contour] inner detail accepted: ${innerAccepted}`);
+  console.log(`[contour] decorative lines accepted: ${decorativeAccepted}`);
+  console.log(`[contour] noise rejected: ${noiseRejected} (pre-validation: ${preRejected}, duplicates: ${duplicatesRemoved})`);
+  console.log(`[contour] contour scores: ${[...accepted.values()].map(c => c.contour_class + ':' + c.score).join(', ') || 'none'}`);
+  console.log(`[contour] final visible contours: ${accepted.size}`);
+
+  const alignments = [...accepted.values()].filter(c => c.edge_alignment);
+  if (alignments.length > 0) {
+    const avgAlign = (alignments.reduce((s, c) => s + c.edge_alignment.alignmentScore, 0) / alignments.length).toFixed(0);
+    console.log(`[contour] edge alignment: avg ${avgAlign}/100 across ${alignments.length} contours`);
+  }
+
+  return {
+    contours: accepted,
+    noiseRejectedContours,
+    duplicatesRemoved,
+    report: {
+      candidatesTotal: input,
+      outerSilhouetteAccepted: outerAccepted,
+      innerDetailAccepted: innerAccepted,
+      decorativeAccepted,
+      noiseRejected,
+      preRejected,
+      finalVisible: accepted.size,
+    },
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
