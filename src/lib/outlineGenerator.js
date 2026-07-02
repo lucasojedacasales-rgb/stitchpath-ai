@@ -82,6 +82,23 @@ function ensureClosed(pts) {
   return pts;
 }
 
+// ── Safe closure: only close if the gap is small enough to avoid artificial
+//    straight segments crossing the design interior. Returns { points, closed }.
+const MAX_CLOSURE_GAP_NORM = 0.05;
+
+function safeClosePath(pts) {
+  if (pts.length < 3) return { points: pts, closed: false };
+  const [fx, fy] = pts[0];
+  const [lx, ly] = pts[pts.length - 1];
+  const gap = Math.hypot(fx - lx, fy - ly);
+  if (gap > MAX_CLOSURE_GAP_NORM) {
+    console.log(`[travel-audit] artificial closure removed: gap ${gap.toFixed(3)} exceeds threshold`);
+    return { points: pts, closed: false };
+  }
+  if (gap > 0.01) return { points: [...pts, [fx, fy]], closed: true };
+  return { points: pts, closed: true };
+}
+
 // ─── Stitch type selection ─────────────────────────────────────────────────────
 
 export function stitchTypeForWidth(widthMm) {
@@ -132,17 +149,21 @@ function generateOuterSilhouettes(regions, config) {
     const totalArea = groupFills.reduce((s, f) => s + (f.area_mm2 || 0), 0);
     if (totalArea < 80 && groupName !== 'foot_left' && groupName !== 'foot_right') continue;
 
-    // Build union silhouette
+    // Build outer silhouette — use largest fill's boundary (no convex hull)
+    // Convex hull creates artificial straight edges that cross the design.
     let outlinePts;
+    let outlineClosed = true;
     if (groupFills.length === 1) {
-      outlinePts = ensureClosed(dedupePoints(groupFills[0].path_points));
+      const sc = safeClosePath(dedupePoints(groupFills[0].path_points));
+      outlinePts = sc.points;
+      outlineClosed = sc.closed;
     } else {
-      // Union via convex hull — covers all fills in the group
-      const allPoints = [];
-      for (const fill of groupFills) {
-        for (const p of fill.path_points) allPoints.push([p[0], p[1]]);
-      }
-      outlinePts = ensureClosed(convexHull(allPoints));
+      const largest = groupFills.reduce((max, f) =>
+        (f.area_mm2 || 0) > (max.area_mm2 || 0) ? f : max, groupFills[0]);
+      const sc = safeClosePath(dedupePoints(largest.path_points));
+      outlinePts = sc.points;
+      outlineClosed = sc.closed;
+      console.log(`[travel-audit] disjoint contours kept separate: ${groupName} uses largest fill (${groupFills.length} fills in group)`);
     }
 
     if (outlinePts.length < 8) continue;
@@ -169,7 +190,7 @@ function generateOuterSilhouettes(regions, config) {
       contour_width_mm: 1.15,
       confidence: 85,
       source: 'outline_generator_outer_group',
-      closed: true,
+      closed: outlineClosed,
       name: `${groupName}_outer_outline`,
       visible: true,
       priority: 90,
@@ -254,7 +275,9 @@ function generateInnerOutlines(regions, config) {
     // (don't duplicate the outer silhouette as an inner outline)
     if (regions.some(r => r.region_class === 'outer_outline' && r.parentRegionId === fill.id)) continue;
 
-    const outlinePts = ensureClosed(dedupePoints(fill.path_points));
+    const scInner = safeClosePath(dedupePoints(fill.path_points));
+    const outlinePts = scInner.points;
+    const innerClosed = scInner.closed;
     if (outlinePts.length < 8) continue;
 
     const perim = perimeterNorm(outlinePts);
@@ -279,7 +302,7 @@ function generateInnerOutlines(regions, config) {
       contour_width_mm: 0.6,
       confidence: 70,
       source: 'outline_generator_inner',
-      closed: true,
+      closed: innerClosed,
       name: `${(fill.name || 'region').replace(/_(fill|sat|run|contour|outline|detail)$/i, '')}_inner_outline`,
       visible: true,
       priority: 6,

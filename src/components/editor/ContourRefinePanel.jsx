@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { ShieldCheck, ShieldAlert, Eye, EyeOff, Route, Scissors, Palette, Bug } from 'lucide-react';
 import { countContourStitches, getLastContourAudit } from '@/lib/contourExportBuilder';
+import { classifyStitchSegments } from '@/lib/geometryAudit';
 import { detectTravelContamination } from '@/lib/contourRefineValidator';
 
 /**
@@ -201,6 +202,27 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
         }
         ctx.setLineDash([]);
       }
+    } else if (viewMode === 'classification') {
+      // Classify all segments by type: contour / detail / fill / travel / suspicious
+      const segments = classifyStitchSegments(commands);
+      for (const seg of segments) {
+        const [sx, sy] = toPx(seg.start.x, seg.start.y);
+        const [ex, ey] = toPx(seg.end.x, seg.end.y);
+        ctx.lineWidth = seg.category === 'suspicious' ? 2.5 : 1.5;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(ex, ey);
+        switch (seg.category) {
+          case 'contour': ctx.strokeStyle = '#22c55e'; break;
+          case 'detail': ctx.strokeStyle = '#3b82f6'; break;
+          case 'fill': ctx.strokeStyle = '#a78bfa'; break;
+          case 'travel': ctx.strokeStyle = '#64748b'; ctx.setLineDash([2, 2]); break;
+          case 'suspicious': ctx.strokeStyle = '#ef4444'; break;
+          default: ctx.strokeStyle = '#94a3b8'; break;
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
     }
   }, [viewMode, commands, config]);
 
@@ -240,6 +262,12 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
           viewMode === 'discarded' ? 'bg-orange-900/30 border-orange-500 text-orange-300' : 'bg-[#161a23] border-[#2a2d3a] text-slate-500'
         }`}
         >Fronteras descartadas</button>
+        <button
+        onClick={() => setViewMode('classification')}
+        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-colors ${
+          viewMode === 'classification' ? 'bg-violet-900/30 border-violet-500 text-violet-300' : 'bg-[#161a23] border-[#2a2d3a] text-slate-500'
+        }`}
+        >Clasificación</button>
         </div>
 
       {viewMode === 'metrics' ? (
@@ -339,6 +367,15 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
             <div className="flex items-center gap-3 text-[10px] text-slate-500">
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#1a1a1a]"></span> Contorno real</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 border-t border-dashed border-[#f97316]"></span> Frontera descartada</span>
+            </div>
+          )}
+          {viewMode === 'classification' && (
+            <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#22c55e]"></span> Contorno</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#3b82f6]"></span> Detalle</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#a78bfa]"></span> Relleno</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#64748b]"></span> Travel</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#ef4444]"></span> Sospechoso</span>
             </div>
           )}
         </div>

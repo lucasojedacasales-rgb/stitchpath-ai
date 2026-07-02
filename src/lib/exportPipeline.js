@@ -30,6 +30,7 @@ import { optimizeCE01TravelPath } from './ce01TravelPathOptimizer.js';
 import { optimizeCE01Trims } from './ce01TrimOptimizer.js';
 import { buildContourObjects, generateContourStitches, contoursPreservedInOptimization } from './contourExportBuilder.js';
 import { contourRefineGuard, validateContourRefinement } from './contourRefineValidator.js';
+import { auditAndCleanGeometry } from './geometryAudit.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -1156,6 +1157,17 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     console.log('[outline-refine] reverting to pre-optimizer commands');
     commands = preOptCommands;
   }
+
+  // ── Stage 6: Geometry audit — remove artificial segments, fix end position ──
+  // Converts any long visible stitch that isn't contour/detail/fill into a jump,
+  // and ensures no return-to-origin is stitched visibly.
+  const geometryResult = auditAndCleanGeometry(commands, config);
+  if (geometryResult.segmentsRemoved > 0 || geometryResult.endPositionFixed) {
+    commands = geometryResult.commands;
+  }
+  console.log(`[travel-audit] suspicious detected: ${geometryResult.suspiciousDetected}`);
+  console.log(`[travel-audit] segments removed: ${geometryResult.segmentsRemoved}`);
+  console.log(`[travel-audit] end position fixed: ${geometryResult.endPositionFixed}`);
 
   const stitchCount = commands.filter(c => c.type === 'stitch').length;
   const jumpCount = commands.filter(c => c.type === 'jump').length;
