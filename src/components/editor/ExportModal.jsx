@@ -124,7 +124,10 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   // Pipeline: finalCommands → repair (if improves) → sanitize (if improves) → CE01 validate → encode
   const ce01ProductionMode = config.ce01ProductionMode === true;
 
-  // Format: user selects freely — DST validated on CE01, DSB also works. No forced format.
+  // CE01 Production Mode: default to DST — last validated format on Caydo CE01.
+  useEffect(() => {
+    if (ce01ProductionMode) setFormat('DST');
+  }, [ce01ProductionMode]);
 
   // Clear stale adaptive/stability states when opening in production mode —
   // old adaptiveReport or stabilityScore must never block CE01 production export.
@@ -228,7 +231,57 @@ export default function ExportModal({ project, config: editorConfig, regions: in
         const { blob } = await encodeCE01ProductionToFile(
           sourceCommands, regions, config, machineSettings, sourceObjects, format, base44
         );
-        const url = URL.createObjectURL(blob);
+
+        // ── Binary validation before download ──────────────────────────────
+        const arrayBuffer = await blob.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+        const hasHeader512 = bytes.length >= 512;
+        const headerStr = hasHeader512
+          ? new TextDecoder('ascii').decode(bytes.slice(0, 512))
+          : '';
+
+        const stMatch = headerStr.match(/ST:\s*(\d+)/);
+        const stValue = stMatch ? parseInt(stMatch[1], 10) : -1;
+        const hasEof = bytes[bytes.length - 1] === 0x1A;
+        const dataEnd = hasEof ? bytes.length - 1 : bytes.length;
+        const recordCount = Math.floor((dataEnd - 512) / 3);
+        const stMatches = stValue === recordCount;
+
+        const axOk = /AX:[+-]\d{5}/.test(headerStr);
+        const ayOk = /AY:[+-]\d{5}/.test(headerStr);
+        const ayMalformed = /AY:0-/.test(headerStr);
+
+        // END present: DST → third byte 0xF3, DSB → first byte 0xF8
+        let hasEnd = false;
+        if (format === 'DST') {
+          hasEnd = bytes[bytes.length - 1] === 0xF3;
+        } else if (format === 'DSB') {
+          hasEnd = bytes[bytes.length - 4] === 0xF8;
+        } else {
+          hasEnd = true;
+        }
+
+        console.log('[dst-export-stable] format:', format);
+        console.log('[dst-export-stable] bytes instanceof Uint8Array: true');
+        console.log('[dst-export-stable] header 512:', hasHeader512);
+        console.log('[dst-export-stable] ST matches records:', stMatches);
+        console.log('[dst-export-stable] AX/AY formatted correctly:', axOk && ayOk && !ayMalformed);
+        console.log('[dst-export-stable] END present:', hasEnd);
+        console.log('[dst-export-stable] using DSB:', format === 'DSB');
+
+        // DSB strict validation — block download if malformed
+        if (format === 'DSB') {
+          if (!stMatches || !axOk || !ayOk || ayMalformed || !hasEnd) {
+            console.error('[dsb-export-strict] validation FAILED — blocking download');
+            setExportError('DSB validation failed — file malformed. Use DST instead.');
+            return;
+          }
+          console.log('[dsb-export-strict] validation passed');
+        }
+
+        // Download validated file
+        const downloadBlob = new Blob([bytes], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(downloadBlob);
         const a = document.createElement('a');
         a.href = url;
         a.download = `${(project?.name || 'design').replace(/[^a-zA-Z0-9_-]/g, '_')}.${format.toLowerCase()}`;
@@ -552,9 +605,14 @@ export default function ExportModal({ project, config: editorConfig, regions: in
               {/* Format */}
               <div>
                 <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-2 block">Formato de salida</label>
-                <div className="mb-2 text-[10px] text-slate-400 bg-[#0d0f14] border border-[#1e2130] rounded-lg px-2 py-1">
-                  Formato actual: {format} — DST y DSB validados en Caydo CE01
+                <div className="mb-2 text-[10px] text-cyan-400 bg-cyan-900/15 border border-cyan-500/30 rounded-lg px-2 py-1">
+                  Formato recomendado para CE01: DST — último formato funcional probado
                 </div>
+                {format === 'DSB' && (
+                  <div className="mb-2 text-[10px] text-amber-400 bg-amber-900/15 border border-amber-500/30 rounded-lg px-2 py-1">
+                    ⚠ DSB experimental. No usar para Caydo CE01 salvo prueba manual.
+                  </div>
+                )}
                 <div className="grid grid-cols-5 gap-2">
                   {FORMATS.map(f => (
                     <button key={f} onClick={() => setFormat(f)}

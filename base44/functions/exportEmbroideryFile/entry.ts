@@ -585,59 +585,13 @@ function encodeEXP(stitches) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function encodeDSB(stitches, ms) {
-  // ── Compute design extents for header ──────────────────────────────────
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  let stitchCount = 0, colorCount = 0;
-  let finalX = 0, finalY = 0;
-
-  for (const s of stitches) {
-    if (s.type === 'end') { stitchCount++; break; }
-    if (s.type === 'trim') continue; // no record for trim in DSB
-    stitchCount++;
-
-    if (s.type === 'colorChange') {
-      colorCount++;
-      continue;
-    }
-
-    if (s.type === 'stitch' || s.type === 'jump') {
-      if (s.x < minX) minX = s.x;
-      if (s.y < minY) minY = s.y;
-      if (s.x > maxX) maxX = s.x;
-      if (s.y > maxY) maxY = s.y;
-      finalX = s.x;
-      finalY = s.y;
-    }
-  }
-  if (minX === Infinity) { minX = 0; minY = 0; maxX = 0; maxY = 0; }
-
-  // ── Build header (512 bytes, CR line breaks, 0x1A after PD) ─────────────
-  const header = new Uint8Array(512).fill(0x20);
-  let hpos = 0;
-  const writeStr = (s) => {
-    for (let i = 0; i < s.length && hpos < 512; i++) header[hpos++] = s.charCodeAt(i);
-    header[hpos++] = 0x0D;
-  };
-
-  writeStr(`LA:${'StitchPath'.padEnd(16, ' ').slice(0, 16)}`);
-  writeStr(`ST:${String(stitchCount).padStart(7, '0')}`);
-  writeStr(`CO:${String(colorCount).padStart(3, '0')}`);
-  writeStr(`+X:${String(Math.round(maxX * 10)).padStart(5, '0')}`);
-  writeStr(`-X:${String(Math.round(-minX * 10)).padStart(5, '0')}`);
-  writeStr(`+Y:${String(Math.round(maxY * 10)).padStart(5, '0')}`);
-  writeStr(`-Y:${String(Math.round(-minY * 10)).padStart(5, '0')}`);
-  writeStr(`AX:${String(Math.round(finalX * 10)).padStart(5, '0')}`);
-  writeStr(`AY:${String(Math.round(finalY * 10)).padStart(5, '0')}`);
-  writeStr('MX:+00000');
-  writeStr('MY:+00000');
-  writeStr('PD:******');
-  // 0x1A after PD
-  if (hpos < 512) header[hpos++] = 0x1A;
-
-  // ── Build stitch records ────────────────────────────────────────────────
+  // ── Build stitch records FIRST (so ST matches actual record count) ──────
   const records = [];
   let cx = 0, cy = 0;
   const UNIT = 0.1; // mm per unit
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let finalX = 0, finalY = 0;
+  let colorCount = 0;
 
   const toSignedByte = (v) => {
     const c = Math.max(-127, Math.min(127, Math.round(v)));
@@ -656,10 +610,11 @@ function encodeDSB(stitches, ms) {
       records.push(DSB_CMD.end, 0x00, 0x00);
       break;
     }
-    if (s.type === 'trim') continue; // skip — DSB has no explicit trim
+    if (s.type === 'trim') continue;
 
     if (s.type === 'colorChange') {
       records.push(DSB_CMD.colorChange, 0x00, 0x00);
+      colorCount++;
       continue;
     }
 
@@ -667,6 +622,15 @@ function encodeDSB(stitches, ms) {
     const ty = Math.round(s.y / UNIT);
     const dx = tx - cx;
     const dy = ty - cy;
+
+    if (s.type === 'stitch' || s.type === 'jump') {
+      if (s.x < minX) minX = s.x;
+      if (s.y < minY) minY = s.y;
+      if (s.x > maxX) maxX = s.x;
+      if (s.y > maxY) maxY = s.y;
+      finalX = s.x;
+      finalY = s.y;
+    }
 
     const cmd = s.type === 'jump' ? DSB_CMD.jump : DSB_CMD.stitch;
     const maxDisp = 127;
@@ -685,6 +649,39 @@ function encodeDSB(stitches, ms) {
     cx = tx;
     cy = ty;
   }
+  if (minX === Infinity) { minX = 0; minY = 0; maxX = 0; maxY = 0; }
+
+  // ── ST = actual record count (after split) — fixes ST ≠ records bug ─────
+  const stitchCount = records.length / 3;
+
+  // ── AX/AY formatting with explicit sign — fixes AX:00249 / AY:0-373 ─────
+  const formatCoord = (v) => {
+    const rounded = Math.round(v * 10);
+    const sign = rounded >= 0 ? '+' : '-';
+    return sign + String(Math.abs(rounded)).padStart(5, '0');
+  };
+
+  // ── Build header (512 bytes, CR line breaks, 0x1A after PD) ─────────────
+  const header = new Uint8Array(512).fill(0x20);
+  let hpos = 0;
+  const writeStr = (s) => {
+    for (let i = 0; i < s.length && hpos < 512; i++) header[hpos++] = s.charCodeAt(i);
+    header[hpos++] = 0x0D;
+  };
+
+  writeStr(`LA:${'StitchPath'.padEnd(16, ' ').slice(0, 16)}`);
+  writeStr(`ST:${String(stitchCount).padStart(7, '0')}`);
+  writeStr(`CO:${String(colorCount).padStart(3, '0')}`);
+  writeStr(`+X:${String(Math.round(maxX * 10)).padStart(5, '0')}`);
+  writeStr(`-X:${String(Math.round(-minX * 10)).padStart(5, '0')}`);
+  writeStr(`+Y:${String(Math.round(maxY * 10)).padStart(5, '0')}`);
+  writeStr(`-Y:${String(Math.round(-minY * 10)).padStart(5, '0')}`);
+  writeStr(`AX:${formatCoord(finalX)}`);
+  writeStr(`AY:${formatCoord(finalY)}`);
+  writeStr('MX:+00000');
+  writeStr('MY:+00000');
+  writeStr('PD:******');
+  if (hpos < 512) header[hpos++] = 0x1A;
 
   // ── Combine: header + records + EOF 0x1A ────────────────────────────────
   const buf = new Uint8Array(512 + records.length + 1);
