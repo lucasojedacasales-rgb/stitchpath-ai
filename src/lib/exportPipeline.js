@@ -59,6 +59,32 @@ export const DEFAULT_MACHINE = {
  * @returns {Array<{ id, color, name, stitch_type, points, priority }>}
  *   points: Array<[x_mm, y_mm]> absolute coordinates (already scaled to mm)
  */
+/**
+ * Assigns embroidery layer priority based on region metadata.
+ *   fill → 10, micro_fill → 20, detail_run → 70, inner_outline → 80, outer_outline → 90
+ * Lower priority = sewn first (fills before details before outlines).
+ */
+function getRegionPriority(r) {
+  // Explicit priority from region (if already set by region builder)
+  if (r.priority != null && r.priority > 0) return r.priority;
+
+  const rc = r.region_class || r.layerType || '';
+  if (rc === 'outer_outline') return 90;
+  if (rc === 'inner_outline') return 80;
+  if (rc === 'detail_run' || rc === 'detail') return 70;
+  if (rc === 'micro_fill') return 20;
+
+  // Infer from name + stitch type
+  const name = (r.name || '').toLowerCase();
+  if (name.includes('outer_outline') || name.includes('outer outline')) return 90;
+  if (name.includes('inner_outline') || name.includes('inner outline')) return 80;
+  if (name.includes('mouth') || name.includes('detail')) return 70;
+  if (name.includes('outline') || name.includes('contour')) return 85;
+  if (r.stitch_type === 'running_stitch') return 70;
+  if (r.stitch_type === 'satin') return 20;
+  return 10; // fill default
+}
+
 export function buildStitchObjects(regions, config = {}) {
   const w = config.width_mm || 100;
   const h = config.height_mm || 100;
@@ -83,7 +109,8 @@ export function buildStitchObjects(regions, config = {}) {
       color: r.color || '#000000',
       name: r.name || 'region',
       stitch_type: r.stitch_type || 'fill',
-      priority: r.priority || 5,
+      priority: getRegionPriority(r),
+      layerType: r.region_class || r.layerType || '',
       density: r.density || 0.4,
       angle: r.angle || 45,
       points: mmPoints,
@@ -1046,25 +1073,60 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     commands = repairResult.commands;
   }
 
+  // ── colorChange preservation guard ──────────────────────────────────────
+  // No optimizer may remove colorChange commands or reduce distinct colors.
+  const _ccCount = (cmds) => cmds.filter(c => c.type === 'colorChange').length;
+  const _distinctColors = (cmds) => {
+    const s = new Set();
+    for (const c of cmds) {
+      if (c.color && (c.type === 'stitch' || c.type === 'jump')) s.add(c.color);
+    }
+    return s.size;
+  };
+  const _contourStitchCount = (cmds) => cmds.filter(c => c.type === 'stitch' && c.stitchType === 'running_stitch').length;
+  const _detailStitchCount = (cmds) => cmds.filter(c => {
+    if (c.type !== 'stitch') return false;
+    const rid = (c.regionId || '').toLowerCase();
+    return rid.includes('mouth') || rid.includes('detail') || c.stitchType === 'running_stitch';
+  }).length;
+  const _preserveColorChange = (before, after, label) => {
+    const ccBefore = _ccCount(before);
+    const ccAfter = _ccCount(after);
+    const colorsBefore = _distinctColors(before);
+    const colorsAfter = _distinctColors(after);
+    const contourBefore = _contourStitchCount(before);
+    const contourAfter = _contourStitchCount(after);
+    const detailBefore = _detailStitchCount(before);
+    const detailAfter = _detailStitchCount(after);
+    if (ccAfter !== ccBefore || colorsAfter < colorsBefore ||
+        contourAfter < contourBefore * 0.9 || detailAfter < detailBefore * 0.9) {
+      console.warn(`[colorChange-guard] ${label}: cc ${ccBefore}→${ccAfter}, colors ${colorsBefore}→${colorsAfter}, contour ${contourBefore}→${contourAfter}, detail ${detailBefore}→${detailAfter} — DISCARDED`);
+      return false;
+    }
+    return true;
+  };
+
   // Stage 3c: Travel path optimization — collapse jumps, convert short jumps to stitches
   const travelResult = optimizeCE01TravelPath(commands, regions, config, ms);
-  if (travelResult.applied) {
+  if (travelResult.applied && _preserveColorChange(commands, travelResult.commands, 'travel-opt')) {
     commands = travelResult.commands;
   }
 
   // Stage 4: CE01 sanitize (dedupe, merge micro, split long, optimize jumps + trims)
   const { commands: sanitizedCommands, report: sanitizeReport } = sanitizeCommandsForCE01(commands, ms);
-  commands = sanitizedCommands;
+  if (_preserveColorChange(commands, sanitizedCommands, 'sanitize')) {
+    commands = sanitizedCommands;
+  }
 
   // Stage 4b: Second light travel pass — clean up any new jumps/trims from sanitize
   const finalTravelResult = optimizeCE01TravelPath(commands, regions, config, ms);
-  if (finalTravelResult.applied) {
+  if (finalTravelResult.applied && _preserveColorChange(commands, finalTravelResult.commands, 'travel-opt-2')) {
     commands = finalTravelResult.commands;
   }
 
   // Stage 4c: Trim optimization — remove unnecessary trims between close blocks
   const trimResult = optimizeCE01Trims(commands, regions, config, ms);
-  if (trimResult.applied) {
+  if (trimResult.applied && _preserveColorChange(commands, trimResult.commands, 'trim-opt')) {
     commands = trimResult.commands;
   }
 

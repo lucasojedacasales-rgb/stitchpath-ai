@@ -14,6 +14,8 @@ import { validateCE01 } from '@/lib/ce01Validator';
 import { sanitizeCommandsForCE01 } from '@/lib/ce01CommandSanitizer';
 import { prepareCE01ProductionExport, encodeCE01ProductionToFile } from '@/lib/ce01ProductionExport';
 import { buildDSTFromCommands } from '@/lib/dstDirectExport';
+import { computeExportReality } from '@/lib/exportRealityCheck';
+import ExportRealityCheck from './ExportRealityCheck';
 import { calculateUnifiedCommandMetrics, metricsMatch } from '@/lib/unifiedCommandMetrics';
 import CE01ProductionPanel from './CE01ProductionPanel';
 import BinaryInspectorPanel from './BinaryInspectorPanel';
@@ -182,6 +184,12 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     console.log('[metrics-sync] mismatch false: single source');
   }, [unifiedMetrics, commandVersion]);
 
+  // ── Export Reality Check — visual vs exported comparison ──────────────────
+  const realityCheck = useMemo(() => {
+    const cmds = editorFinalCommands || pipelineResult.commands;
+    return computeExportReality(regions, cmds);
+  }, [editorFinalCommands, pipelineResult.commands, regions]);
+
   // In production mode, stale adaptive/stability states are ignored entirely
   const effectiveAdaptiveReport = ce01ProductionMode ? null : adaptiveReport;
 
@@ -227,6 +235,18 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       // ── CE01 Production: force DST, block DSB entirely ───────────────────
       if (format !== 'DST') {
         setExportError('CE01 Production Mode requiere formato DST. DSB no está permitido.');
+        return;
+      }
+
+      // ── Color mismatch validation — block if multi-color design exports as 1 color ──
+      const colorChanges = sourceCommands.filter(c => c.type === 'colorChange').length;
+      const visualColorCount = new Set(regions.map(r => r.color).filter(Boolean)).size;
+      if (visualColorCount > 1 && colorChanges === 0) {
+        setExportError('Color mismatch: el DST saldría como 1 color');
+        return;
+      }
+      if (realityCheck && !realityCheck.ready) {
+        setExportError(`Export Reality Check: ${realityCheck.colorMismatch ? 'color mismatch' : realityCheck.contourMismatch ? 'contornos no exportados' : 'boca no exportada'}. Revisa el panel Export Reality Check.`);
         return;
       }
       console.log('[ce01-production-export] export allowed: true');
@@ -566,6 +586,9 @@ export default function ExportModal({ project, config: editorConfig, regions: in
               {ce01ProductionMode && productionReport && (
                 <CE01ProductionPanel report={productionReport} />
               )}
+
+              {/* Export Reality Check — visual vs exported comparison */}
+              <ExportRealityCheck reality={realityCheck} />
 
               {/* CE01 pre-export validation report — before/after sanitizer */}
               {!ce01ProductionMode && (

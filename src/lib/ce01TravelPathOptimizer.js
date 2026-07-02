@@ -281,11 +281,22 @@ export function optimizeCE01TravelPath(commands, regions = [], config = {}, mach
   const dupBefore = countDuplicates(commands);
   const dupAfter = countDuplicates(step3);
 
+  // ── colorChange preservation — never allow colorChange removal ──────────
+  const colorChangesBefore = commands.filter(c => c.type === 'colorChange').length;
+  const colorChangesAfter = step3.filter(c => c.type === 'colorChange').length;
+  const colorChangePreserved = colorChangesAfter === colorChangesBefore;
+
+  // ── contour/detail stitch preservation ──────────────────────────────────
+  const contourBefore = commands.filter(c => c.type === 'stitch' && c.stitchType === 'running_stitch').length;
+  const contourAfter = step3.filter(c => c.type === 'stitch' && c.stitchType === 'running_stitch').length;
+  const contourPreserved = contourAfter >= contourBefore * 0.9;
+
   const jumpImproved = jumpsAfter < jumpsBefore;
   const trimImproved = trimsAfter < trimsBefore;
   const noLongRegression = longAfter <= longBefore;
   const noDupRegression = dupAfter <= dupBefore + 2;
-  const applied = (jumpImproved || trimImproved) && noLongRegression && noDupRegression;
+  const applied = (jumpImproved || trimImproved) && noLongRegression && noDupRegression
+    && colorChangePreserved && contourPreserved;
 
   console.log('[travel-opt] applied:', applied);
 
