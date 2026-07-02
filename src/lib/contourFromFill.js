@@ -238,7 +238,7 @@ export function buildContourFromFillBoundary(region, sampler, edgeMap, options =
   if (alignment) confidence = Math.round(confidence * 0.8 + alignment.alignmentScore * 0.2);
   confidence = Math.max(0, Math.min(100, confidence));
 
-  const baseName = (region.name || region.object || 'body').replace(/_(fill|sat|run|contour)$/i, '');
+  const baseName = (region.name || region.object || 'body').replace(/_(fill|sat|run|contour|outline|detail)$/i, '');
   const shortType = stitchType === 'satin' ? 'satin' : 'run';
   const contourName = `${baseName}_outline_${shortType}`;
 
@@ -360,6 +360,67 @@ export function isBorderLikeBlackRegion(region, nearbyFills = []) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+//  DETAIL-LIKE DARK REGION DETECTION (eyes, mouth, nose — inner features)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Determines if a dark region is an inner DETAIL (eye, mouth, nose) rather
+ * than a fill body or an outer border.
+ *
+ * A dark region is a DETAIL if:
+ *   1. Dark color (lum < DARK_LUM_THRESHOLD)
+ *   2. Small area (area < 120mm² — eyes/mouth are small features)
+ *   3. Sits INSIDE a larger lighter fill region (its bbox is within the parent)
+ *   4. The parent fill is significantly larger (parent area > 3× detail area)
+ *
+ * Details become running_stitch contours — tatami fill on a 5mm eye is
+ * machine-impractical and visually wrong.
+ *
+ * @param {Object} region      — candidate dark region (enriched)
+ * @param {Array}  allRegions  — all regions (to find containing parent)
+ * @returns {boolean}
+ */
+export function isDetailLikeDarkRegion(region, allRegions = []) {
+  if (!region) return false;
+
+  const color = region.color || region.hex || '#888888';
+  const { r, g, b } = hexToRgb(color);
+  const lum = (r + g + b) / 3;
+  if (lum >= DARK_LUM_THRESHOLD) return false;
+
+  const area = region.area_mm2 || 0;
+  if (area <= 0 || area > 120) return false; // details are small
+
+  const bbox = computeBbox(region.path_points || []);
+  if (bbox.w <= 0) return false;
+
+  // Find a lighter fill that CONTAINS this region
+  for (const fill of allRegions) {
+    if (fill.id === region.id) continue;
+    const fillColor = fill.color || fill.hex || '#888888';
+    const fc = hexToRgb(fillColor);
+    const fillLum = (fc.r + fc.g + fc.b) / 3;
+    if (fillLum < DARK_LUM_THRESHOLD) continue; // skip other dark regions
+
+    const fb = computeBbox(fill.path_points || []);
+    if (fb.w <= 0) continue;
+
+    // This region's bbox is inside the fill's bbox
+    const contained =
+      bbox.minX >= fb.minX - 0.02 && bbox.maxX <= fb.maxX + 0.02 &&
+      bbox.minY >= fb.minY - 0.02 && bbox.maxY <= fb.maxY + 0.02;
+
+    const fillArea = fill.area_mm2 || 0;
+
+    if (contained && fillArea > 3 * area) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 //  SEPARATE FILLS AND CONTOURS
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -387,30 +448,48 @@ export function separateFillsAndContours(regions, sampler, edgeMap) {
 
   const borderRegions = blackCandidates.filter(r => isBorderLikeBlackRegion(r, regions));
   const borderIds = new Set(borderRegions.map(r => r.id));
-  console.log(`[contour-fix] black fills converted to contours: ${borderRegions.length}`);
+  console.log(`[contour-fix] black fills converted to outline contours: ${borderRegions.length}`);
   for (const br of borderRegions) {
     const w = (br.mean_width_mm || 0).toFixed(1);
     const a = (br.area_mm2 || 0).toFixed(0);
-    console.log(`  ↳ "${br.name}" → contour (area=${a}mm², width=${w}mm)`);
-  }
-  const notConverted = blackCandidates.filter(r => !borderIds.has(r.id));
-  for (const nc of notConverted) {
-    const a = (nc.area_mm2 || 0).toFixed(0);
-    console.log(`  ↳ "${nc.name}" stays fill (area=${a}mm² — no lighter fill bordered)`);
+    console.log(`  ↳ "${br.name}" → outline contour (area=${a}mm², width=${w}mm)`);
   }
 
-  // ── 2. Remaining fills (exclude border-like black regions) ──────────────
-  let fills = regions.filter(r => !borderIds.has(r.id));
+  // ── 1b. Identify detail-like dark regions (eyes, mouth — inner features) ─
+  const remainingAfterBorders = blackCandidates.filter(r => !borderIds.has(r.id));
+  const detailRegions = remainingAfterBorders.filter(r => isDetailLikeDarkRegion(r, regions));
+  const detailIds = new Set(detailRegions.map(r => r.id));
+  console.log(`[contour-fix] dark details converted to detail contours: ${detailRegions.length}`);
+  for (const dr of detailRegions) {
+    const a = (dr.area_mm2 || 0).toFixed(0);
+    console.log(`  ↳ "${dr.name}" → detail contour (area=${a}mm²)`);
+  }
+
+  const notConverted = remainingAfterBorders.filter(r => !detailIds.has(r.id));
+  for (const nc of notConverted) {
+    const a = (nc.area_mm2 || 0).toFixed(0);
+    console.log(`  ↳ "${nc.name}" stays fill (area=${a}mm²)`);
+  }
+
+  // ── 2. Remaining fills (exclude borders AND details) ────────────────────
+  const allContourIds = new Set([...borderIds, ...detailIds]);
+  let fills = regions.filter(r => !allContourIds.has(r.id));
 
   // Mark fills with type: "fill"
   for (const f of fills) {
     f.type = 'fill';
   }
 
-  // ── 3. Convert border regions to contour objects ────────────────────────
+  // ── 3. Convert border regions to outline contours ───────────────────────
   const contours = [];
   for (const br of borderRegions) {
-    const contour = convertBlackRegionToContour(br, fills);
+    const contour = convertBlackRegionToContour(br, fills, 'outline');
+    if (contour) contours.push(contour);
+  }
+
+  // ── 3b. Convert detail regions to detail contours ───────────────────────
+  for (const dr of detailRegions) {
+    const contour = convertBlackRegionToContour(dr, fills, 'detail');
     if (contour) contours.push(contour);
   }
 
@@ -437,7 +516,7 @@ export function separateFillsAndContours(regions, sampler, edgeMap) {
   // ── 6. Logs ─────────────────────────────────────────────────────────────
   console.log(`[contour-fix] final fill objects: ${fills.length}`);
   console.log(`[contour-fix] final contour objects: ${dedupedContours.length}`);
-  console.log(`[contour-fix] contour stitch types: ${dedupedContours.map(c => c.parentRegionId?.slice(0, 8) + ':' + c.stitch_type).join(', ') || 'none'}`);
+  console.log(`[contour-fix] contour names: ${dedupedContours.map(c => c.name).join(', ') || 'none'}`);
 
   return {
     fills,
@@ -445,7 +524,8 @@ export function separateFillsAndContours(regions, sampler, edgeMap) {
     report: {
       fillRegionsInput: regions.length,
       blackFillCandidates: blackCandidates.length,
-      blackFillsConverted: borderRegions.length,
+      blackBordersConverted: borderRegions.length,
+      darkDetailsConverted: detailRegions.length,
       boundaryContoursGenerated: boundaryGenerated,
       edgeMapFragmentsRejected: edgeMapRejected,
       finalFillObjects: fills.length,
@@ -459,10 +539,14 @@ export function separateFillsAndContours(regions, sampler, edgeMap) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Converts a black border-like fill region into a contour object.
+ * Converts a dark fill region into a contour object.
  * Uses the region's own path_points as the contour path.
+ *
+ * @param {Object}  region  — dark region (enriched)
+ * @param {Array}   fills   — remaining fill regions (for parent lookup)
+ * @param {String}  role    — 'outline' (border) | 'detail' (inner feature)
  */
-function convertBlackRegionToContour(region, fills) {
+function convertBlackRegionToContour(region, fills, role = 'outline') {
   const pts = region.path_points;
   if (!pts || pts.length < MIN_CONTOUR_PTS) return null;
 
@@ -478,12 +562,21 @@ function convertBlackRegionToContour(region, fills) {
   // Find the nearest fill region (parent)
   const parent = findNearestFill(region, fills);
   const widthMm = region.mean_width_mm || 1.2;
-  const stitchType = widthMm >= SATIN_WIDTH_THRESHOLD ? 'satin' : 'running_stitch';
 
-  const parentName = parent?.name || parent?.object || 'body';
-  const baseName = parentName.replace(/_(fill|sat|run|contour)$/i, '');
+  // Outline: stitch type from width (satin if thick, run if thin)
+  // Detail: always running_stitch — eyes/mouth are tiny features
+  const stitchType = role === 'detail'
+    ? 'running_stitch'
+    : (widthMm >= SATIN_WIDTH_THRESHOLD ? 'satin' : 'running_stitch');
+
+  // Naming: use the region's OWN name for details (eye, mouth),
+  //         the parent's name for outlines (body, foot).
+  const nameSource = role === 'detail'
+    ? (region.name || region.object || 'detail')
+    : (parent?.name || parent?.object || 'body');
+  const baseName = nameSource.replace(/_(fill|sat|run|contour|outline|detail)$/i, '');
   const shortType = stitchType === 'satin' ? 'satin' : 'run';
-  const contourName = `${baseName}_outline_${shortType}`;
+  const contourName = `${baseName}_${role}_${shortType}`;
 
   return {
     id: `contour_${region.id}`,
@@ -496,9 +589,9 @@ function convertBlackRegionToContour(region, fills) {
     hex: region.color || '#1a1a1a',
     contour_color: region.color || '#1a1a1a',
     contour_width_mm: Math.max(0.8, Math.min(4.0, widthMm)),
-    contour_class: 'outer_silhouette',
-    confidence: 85,
-    source: 'black_region_conversion',
+    contour_class: role === 'detail' ? 'inner_detail' : 'outer_silhouette',
+    confidence: role === 'detail' ? 80 : 85,
+    source: role === 'detail' ? 'dark_detail_conversion' : 'black_border_conversion',
     closed: true,
     name: contourName,
     visible: true,
