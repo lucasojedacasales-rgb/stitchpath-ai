@@ -85,52 +85,27 @@ function computeStabilityScore(sim) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function groupErrorsByRegion(errors, objects, commands) {
-  // Map command index → object id by scanning perCommand block boundaries.
-  // Build a command-index → objectId map.
-  const indexToObjectId = new Map();
-  let currentObjId = null;
-  for (let i = 0; i < commands.length; i++) {
-    const c = commands[i];
-    if (c.type === 'colorChange') {
-      // Find next object with this color — but simpler: objects are sequential
-    }
-    if (c.type === 'stitch' || c.type === 'jump') {
-      indexToObjectId.set(i, currentObjId);
-    }
-  }
-
-  // Build object segment ranges from objects (each object produces a contiguous command run)
-  let cmdIdx = 0;
-  const objRanges = [];
-  for (const obj of objects) {
-    const start = cmdIdx;
-    // Count commands this object generates — we don't know exactly, so approximate
-    // by assigning errors with objectId directly, or by index proximity
-    objRanges.push({ id: obj.id, startIndex: start, color: obj.color });
-    cmdIdx = start; // will be updated by colorChange boundaries below
-  }
-
-  // Simpler robust approach: errors that carry objectId → direct. Others → nearest object by centroid.
+  // Commands now carry `regionId` (set in flattenToCommands), so errors propagated
+  // by simulationMetrics inherit it directly. This makes attribution exact instead
+  // of the previous broken nearest-guess.
   const byRegion = new Map();
 
   for (const e of errors) {
-    let regionId = e.objectId || e.regionId;
+    let regionId = e.regionId || e.objectId;
 
-    // If no direct id, try mapping via command index to the object active at that index
-    if (!regionId && e.index !== undefined) {
-      regionId = indexToObjectId.get(e.index);
+    // Fallback: read regionId from the command at the error's index
+    if (!regionId && e.index !== undefined && commands[e.index]) {
+      regionId = commands[e.index].regionId;
     }
 
-    // Fallback: attribute to the object whose color matches the error's color context
+    // Last resort: attribute by color match
     if (!regionId && e.color) {
       const obj = objects.find(o => o.color === e.color);
       if (obj) regionId = obj.id;
     }
 
-    if (!regionId) {
-      // Unattributable command-level error (e.g. jump between blocks)
-      regionId = '__global__';
-    }
+    // Unattributable command-level error (e.g. jump between blocks)
+    if (!regionId) regionId = '__global__';
 
     if (!byRegion.has(regionId)) byRegion.set(regionId, []);
     byRegion.get(regionId).push(e);

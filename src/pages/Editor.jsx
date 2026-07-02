@@ -180,8 +180,9 @@ export default function Editor() {
         initialCtx: aiStrategy ? { aiStrategy } : {},
       });
 
-      const enrichedRegions = ctx.regions || [];
-      if (enrichedRegions.length === 0) throw new Error('No regions generated');
+      const rawRegions = ctx.regions || [];
+      const enrichedRegions = filterValidVisualRegions(rawRegions);
+      if (enrichedRegions.length === 0) throw new Error('No valid regions generated after pipeline');
 
       const totalCalculatedStitches = enrichedRegions.reduce((s, r) => s + (r.stitch_count || 0), 0);
 

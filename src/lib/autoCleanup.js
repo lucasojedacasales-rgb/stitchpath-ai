@@ -20,17 +20,14 @@
 
 const STITCH_CAP = 12000;
 
+import { computeStitchCount } from './stitchCount.js';
+
 /**
- * Canonical stitch count for a region (matches regionBuilder + backend formula).
- * Used to recompute after density scaling.
+ * Canonical stitch count for a region — delegates to the shared module so
+ * counts never diverge from regionBuilder / stitchPlanner / export.
  */
 function regionStitchCount(r, w, h) {
-  const area  = r.area_mm2 || ((r.coverage || 0.01) * w * h);
-  const perim = r.perimeter_mm || (Math.sqrt(area) * 3.8);
-  const dens  = Math.max(0.2, r.density || 0.4);
-  if (r.stitch_type === 'fill')    return Math.round(area / (dens * 2.4));
-  if (r.stitch_type === 'satin')   return Math.round(Math.max(1, (perim / 2) / dens));
-  return Math.round(perim / 1.8); // running_stitch
+  return computeStitchCount(r, undefined, { w, h });
 }
 
 /**

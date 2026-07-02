@@ -119,7 +119,7 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
 
     // Color change (skip if same as previous)
     if (prevColor !== null && obj.color !== prevColor) {
-      cmds.push({ type: 'colorChange', x: prevX, y: prevY, color: obj.color });
+      cmds.push({ type: 'colorChange', x: prevX, y: prevY, color: obj.color, regionId: obj.id });
     }
     prevColor = obj.color;
 
@@ -130,13 +130,13 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
     if (startDist > 0.5) {
       // Insert jump(s) from current position to first stitch point
       if (!firstCmd && startDist > ms.trimThreshold) {
-        cmds.push({ type: 'trim', x: prevX, y: prevY, color: obj.color });
+        cmds.push({ type: 'trim', x: prevX, y: prevY, color: obj.color, regionId: obj.id });
       }
       const steps = Math.ceil(startDist / ms.maxJumpLength);
       for (let s = 1; s <= steps; s++) {
         const jx = prevX + (startX - prevX) * s / steps;
         const jy = prevY + (startY - prevY) * s / steps;
-        cmds.push({ type: 'jump', x: jx, y: jy, color: obj.color });
+        cmds.push({ type: 'jump', x: jx, y: jy, color: obj.color, regionId: obj.id });
       }
       prevX = startX;
       prevY = startY;
@@ -154,10 +154,10 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
         for (let s = 1; s < steps; s++) {
           const sx = prevX + (x - prevX) * s / steps;
           const sy = prevY + (y - prevY) * s / steps;
-          cmds.push({ type: 'stitch', x: sx, y: sy, color: obj.color });
+          cmds.push({ type: 'stitch', x: sx, y: sy, color: obj.color, regionId: obj.id });
         }
       }
-      cmds.push({ type: 'stitch', x, y, color: obj.color });
+      cmds.push({ type: 'stitch', x, y, color: obj.color, regionId: obj.id });
       prevX = x; prevY = y;
       firstCmd = false;
     }

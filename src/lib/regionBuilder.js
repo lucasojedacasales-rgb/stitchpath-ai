@@ -38,6 +38,7 @@
 
 import { adaptRegion } from './adaptiveEngine.js';
 import { eieOptimizeTravelOrder } from './stitchIntelligence.js';
+import { computeStitchCount } from './stitchCount.js';
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 
@@ -275,22 +276,9 @@ function recommendThread(colorHex) {
  * Impact: eliminates systematic over-count on fill (old: ~2.5×, new: ~1.67× at 0.4mm density/2.4mm length)
  * and fixes satin count which was using wrong physical model entirely.
  */
+// Canonical stitch count now lives in stitchCount.js — thin alias for readability.
 function estimateStitchCount(region, density) {
-  const type  = region.stitch_type  || 'fill';
-  const area  = region.area_mm2     || 0;
-  const perim = region.perimeter_mm || Math.sqrt(area) * 3.8;
-  const dens  = Math.max(0.2, density || region.density || 0.4);
-
-  if (type === 'fill') {
-    // rows = area / (rowSpacing × stitchLength); stitchLength nominal = 2.4mm
-    return Math.round(area / (dens * 2.4));
-  }
-  if (type === 'satin') {
-    // columns along half-perimeter at density spacing
-    return Math.round(Math.max(1, (perim / 2) / dens));
-  }
-  // running_stitch: one stitch every 1.8mm
-  return Math.round(perim / 1.8);
+  return computeStitchCount(region, density);
 }
 
 function estimateTime(stitches) {

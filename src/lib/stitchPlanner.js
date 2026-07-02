@@ -11,6 +11,8 @@
  * - Score de viabilidad
  */
 
+import { computeStitchCount } from './stitchCount.js';
+
 // ─── Constantes de decisión ───────────────────────────────────────────────────
 
 const STITCH_RULES = {
@@ -289,13 +291,10 @@ export function generateStitchPlan(regions, config = {}) {
       const perim = region.perimeter_mm || 1;
       let estimatedStitches = region.stitch_count || 0;
       if (!estimatedStitches) {
-        if (classification.type === 'fill') {
-          estimatedStitches = Math.round(area / (Math.max(0.25, density) * 2.4));
-        } else if (classification.type === 'satin') {
-          estimatedStitches = Math.round(Math.max(1, (perim / 2) / Math.max(0.25, density)));
-        } else {
-          estimatedStitches = Math.round(perim / 1.8);
-        }
+        estimatedStitches = computeStitchCount(
+          { ...region, stitch_type: classification.type, area_mm2: area, perimeter_mm: perim, density },
+          density
+        );
       }
 
       return {

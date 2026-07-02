@@ -530,6 +530,12 @@ function removeBackgroundRegions(regions, W, H) {
   if (regions.length === 0) return regions;
 
   const edgeMargin = 3; // px tolerance for "touching" an edge
+  // Compute the true largest region by pixel count — the old check compared
+  // identity with regions[0] (the first blob of the first color), which only
+  // worked when the largest region happened to be processed first.
+  let maxPixelCount = 0;
+  for (const r of regions) maxPixelCount = Math.max(maxPixelCount, r.pixelCount || 0);
+
   const result = [];
 
   for (const r of regions) {
@@ -545,7 +551,7 @@ function removeBackgroundRegions(regions, W, H) {
     const coverage = r.pixelCount / (W * H);
 
     // Background criteria
-    const isLargestAndBorders = (r === regions[0]) && edgeCount >= 3;
+    const isLargestAndBorders = (r.pixelCount === maxPixelCount) && maxPixelCount > 0 && edgeCount >= 3;
     const isLargeAndBorders = coverage > 0.35 && edgeCount >= 2;
 
     if (isLargestAndBorders || isLargeAndBorders) {
