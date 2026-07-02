@@ -4,7 +4,7 @@ import { ShieldCheck, ShieldAlert, AlertTriangle, Cpu } from 'lucide-react';
  * CE01ReportPanel — Displays the Caydo CE01 pre-export validation report.
  * Shows status, score, export summary, blocking issues, and warnings.
  */
-export default function CE01ReportPanel({ report }) {
+export default function CE01ReportPanel({ report, beforeReport, sanitizeReport }) {
   if (!report) return null;
 
   const { status, score, blockingIssues, warnings, exportSummary } = report;
@@ -44,6 +44,45 @@ export default function CE01ReportPanel({ report }) {
           <span className="text-[10px] text-slate-600">/100</span>
         </div>
       </div>
+
+      {/* Before/after comparison */}
+      {beforeReport && report && (
+        <div className="bg-[#0d0f14] rounded-lg p-2 border border-[#1e2130]">
+          <div className="text-[9px] font-bold text-slate-500 uppercase mb-1.5">Antes / Después</div>
+          <div className="grid grid-cols-3 gap-x-2 gap-y-0.5 text-[9px]">
+            <div className="text-slate-600 uppercase font-bold">Métrica</div>
+            <div className="text-slate-600 uppercase font-bold text-center">Antes</div>
+            <div className="text-slate-600 uppercase font-bold text-center">Después</div>
+
+            {_compareRow('Score', beforeReport.score, report.score, true)}
+            {_compareRow('Cortas <0.8', beforeReport.rawMetrics?.shortStitches, report.rawMetrics?.shortStitches)}
+            {_compareRow('Largas >8mm', beforeReport.rawMetrics?.longStitches, report.rawMetrics?.longStitches)}
+            {_compareRow('Duplicados', beforeReport.rawMetrics?.duplicates, report.rawMetrics?.duplicates)}
+            {_compareRow('Saltos', beforeReport.rawMetrics?.jumps, report.rawMetrics?.jumps)}
+          </div>
+        </div>
+      )}
+
+      {/* Sanitizer report */}
+      {sanitizeReport && (
+        <div className="bg-[#0d0f14] rounded-lg p-2 border border-[#1e2130]">
+          <div className="text-[9px] font-bold text-cyan-400 uppercase mb-1.5">Saneamiento CE01</div>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px]">
+            <div className="text-slate-500">Duplicados eliminados</div>
+            <div className="text-slate-300 text-right">{sanitizeReport.removedDuplicates}</div>
+            <div className="text-slate-500">Micro-puntadas fusionadas</div>
+            <div className="text-slate-300 text-right">{sanitizeReport.mergedMicroStitches}</div>
+            <div className="text-slate-500">Puntadas largas divididas</div>
+            <div className="text-slate-300 text-right">{sanitizeReport.splitLongStitches}</div>
+            <div className="text-slate-500">Saltos reducidos</div>
+            <div className="text-slate-300 text-right">{sanitizeReport.jumpsReduced}</div>
+            <div className="text-slate-500">Trims insertados</div>
+            <div className="text-slate-300 text-right">{sanitizeReport.trimsInserted}</div>
+            <div className="text-slate-500">Comandos</div>
+            <div className="text-slate-300 text-right">{sanitizeReport.before} → {sanitizeReport.after}</div>
+          </div>
+        </div>
+      )}
 
       {/* Export summary */}
       <div className="grid grid-cols-6 gap-1.5">
@@ -111,4 +150,20 @@ export default function CE01ReportPanel({ report }) {
       )}
     </div>
   );
+
+  // ── Helper: before/after comparison row ──────────────────────────────────
+  function _compareRow(label, beforeVal, afterVal, higherIsBetter = false) {
+    const b = beforeVal ?? '—';
+    const a = afterVal ?? '—';
+    const improved = higherIsBetter
+      ? (typeof a === 'number' && typeof b === 'number' && a > b)
+      : (typeof a === 'number' && typeof b === 'number' && a < b);
+    return (
+      <>
+        <div className="text-slate-400">{label}</div>
+        <div className="text-slate-500 text-center">{b}</div>
+        <div className={`text-center font-bold ${improved ? 'text-emerald-400' : 'text-slate-300'}`}>{a}</div>
+      </>
+    );
+  }
 }

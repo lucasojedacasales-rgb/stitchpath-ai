@@ -11,6 +11,7 @@ import CE01ReportPanel from './CE01ReportPanel';
 import { runExportPipeline, encodeOptimizedToFile } from '@/lib/exportPipeline';
 import { autoCleanupRegions } from '@/lib/autoCleanup';
 import { validateCE01 } from '@/lib/ce01Validator';
+import { sanitizeCommandsForCE01 } from '@/lib/ce01CommandSanitizer';
 
 const FORMATS = ['DST', 'PES', 'JEF', 'EXP'];
 
@@ -59,16 +60,26 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
     return runExportPipeline(regions, config, machineSettings, format);
   }, [regions, format, widthMm, heightMm]);
 
-  // CE01 pre-export validation — analyzes final commands, does NOT modify anything
-  const ce01Report = useMemo(() => {
-    return validateCE01(
-      pipelineResult.commands,
-      pipelineResult.objects,
-      regions,
-      config,
+  // CE01 validation + sanitization — before/after comparison
+  const { ce01ReportBefore, ce01ReportAfter, sanitizeReport } = useMemo(() => {
+    const before = validateCE01(
+      pipelineResult.commands, pipelineResult.objects, regions, config,
       { ...machineSettings, maxSpeed: speed }
     );
+    const { commands: sanitizedCommands, report: sanReport } = sanitizeCommandsForCE01(
+      pipelineResult.commands, machineSettings
+    );
+    const after = validateCE01(
+      sanitizedCommands, pipelineResult.objects, regions, config,
+      { ...machineSettings, maxSpeed: speed }
+    );
+    console.log(`[ce01-sanitize] CE01 score before: ${before.score}`);
+    console.log(`[ce01-sanitize] CE01 score after: ${after.score}`);
+    return { ce01ReportBefore: before, ce01ReportAfter: after, sanitizeReport: sanReport };
   }, [pipelineResult.commands, pipelineResult.objects, regions, config, machineSettings, speed]);
+
+  // ce01Report = after-sanitizer report (used for export gate + display)
+  const ce01Report = ce01ReportAfter;
 
   const handleExport = async () => {
     const commands = wizardResult?.commands || pipelineResult.commands;
@@ -298,8 +309,12 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
                 </div>
               )}
 
-              {/* CE01 pre-export validation report */}
-              <CE01ReportPanel report={ce01Report} />
+              {/* CE01 pre-export validation report — before/after sanitizer */}
+              <CE01ReportPanel
+                report={ce01ReportAfter}
+                beforeReport={ce01ReportBefore}
+                sanitizeReport={sanitizeReport}
+              />
 
               {/* Visual preview — highlights problematic stitches in red */}
               <ValidationPreview

@@ -797,6 +797,7 @@ export function runExportPipeline(regions, config, machineSettings, format) {
 export async function encodeOptimizedToFile(regions, config, format, machineSettings, base44Client) {
   // Lazy import to avoid circular dependency at module load time.
   const { runAdaptiveOptimization } = await import('./adaptiveOptimizationEngine');
+  const { sanitizeCommandsForCE01 } = await import('./ce01CommandSanitizer');
 
   const result = runAdaptiveOptimization(regions, config, machineSettings, format);
 
@@ -810,10 +811,17 @@ export async function encodeOptimizedToFile(regions, config, format, machineSett
     throw err;
   }
 
-  // Encode the optimized commands + objects
+  // Sanitize commands for Caydo CE01 before encoding — removes duplicates,
+  // merges micro-stitches, splits long stitches, optimizes jumps + trims.
+  const { commands: sanitizedCommands, report: sanitizeReport } = sanitizeCommandsForCE01(
+    result.commands, machineSettings
+  );
+
+  // Encode the sanitized commands + objects
   return {
-    blob: await encodeToFile(result.commands, result.objects, format, machineSettings, base44Client),
+    blob: await encodeToFile(sanitizedCommands, result.objects, format, machineSettings, base44Client),
     optimizationResult: result,
+    sanitizeReport,
   };
 }
 

@@ -66,7 +66,7 @@ export function validateCE01(commands, objects = [], regions = [], config = {}, 
   // ── 15. Empty or invalid commands ─────────────────────────────────────────
   if (!commands || commands.length === 0) {
     blockingIssues.push({ check: 15, message: 'Secuencia de comandos vacía — no se puede exportar.' });
-    return _buildReport('INVALID', 0, blockingIssues, warnings, _emptySummary());
+    return _buildReport('INVALID', 0, blockingIssues, warnings, _emptySummary(), _emptyMetrics());
   }
 
   // ── Tally stats in a single pass ──────────────────────────────────────────
@@ -314,7 +314,10 @@ export function validateCE01(commands, objects = [], regions = [], config = {}, 
     estimatedTime,
   };
 
-  return { status, ce01Ready, score, blockingIssues, warnings, exportSummary };
+  return {
+    status, ce01Ready, score, blockingIssues, warnings, exportSummary,
+    rawMetrics: { shortStitches, longStitches, duplicates, jumps, longJumpsNoTrim, outOfHoop },
+  };
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -323,7 +326,11 @@ function _emptySummary() {
   return { stitches: 0, jumps: 0, trims: 0, colors: 0, widthMm: 0, heightMm: 0, estimatedTime: 0 };
 }
 
-function _buildReport(status, score, blockingIssues, warnings, exportSummary) {
+function _emptyMetrics() {
+  return { shortStitches: 0, longStitches: 0, duplicates: 0, jumps: 0, longJumpsNoTrim: 0, outOfHoop: 0 };
+}
+
+function _buildReport(status, score, blockingIssues, warnings, exportSummary, rawMetrics = _emptyMetrics()) {
   return {
     status,
     ce01Ready: status !== 'INVALID',
@@ -331,5 +338,6 @@ function _buildReport(status, score, blockingIssues, warnings, exportSummary) {
     blockingIssues,
     warnings,
     exportSummary,
+    rawMetrics,
   };
 }
