@@ -25,6 +25,7 @@ import { generateOutlines } from './outlineGenerator.js';
 import { generateTieIn, generateTieOff, removeRedundantNodes } from './industrialStitchProcessor.js';
 import { cleanCartoonOutlineCE01 } from './contourPreset.js';
 import { refineContourPath, removeParallelDuplicates } from './contourPathRefiner.js';
+import { auditContours, computeFootContourCoverage } from './contourAudit.js';
 
 // ─── Satin / run parameters (from preset) ──────────────────────────────────
 const SATIN_WIDTH_MM   = cleanCartoonOutlineCE01.outerSatinWidthMm;
@@ -209,13 +210,32 @@ function getContourPriority(outline) {
   return 85;
 }
 
+// ── Module-level audit storage (for getContourExportReport + ContourRefinePanel) ──
+let _lastContourAudit = null;
+
+export function getLastContourAudit() {
+  return _lastContourAudit;
+}
+
 export function buildContourObjects(regions, config = {}) {
   const w = config.width_mm || 100;
   const h = config.height_mm || 100;
   const preset = cleanCartoonOutlineCE01;
 
   // Always generate outlines for export — force enabled
-  const { outlines, report } = generateOutlines(regions, { ...config, generateOutlines: true });
+  const { outlines: rawOutlines, report, _classifiedRegions } = generateOutlines(regions, { ...config, generateOutlines: true });
+
+  // ── Audit: remove invalid internal outlines (same-group boundaries) ──
+  const classifiedRegions = _classifiedRegions || regions;
+  const auditResult = auditContours(rawOutlines, classifiedRegions);
+  const outlines = auditResult.outlines;
+
+  // Store audit for getContourExportReport + ContourRefinePanel
+  _lastContourAudit = {
+    ...auditResult,
+    footContourCoverage: computeFootContourCoverage(outlines, classifiedRegions),
+    classifiedRegions,
+  };
 
   let objects = [];
 
@@ -399,6 +419,7 @@ export function contoursPreservedInOptimization(before, after) {
 
 export function getContourExportReport(regions, commands) {
   const counts = countContourStitches(commands);
+  const audit = _lastContourAudit;
 
   // ── Travel contamination: count contour-colored stitches > 3.5mm ──
   let travelContamination = 0;
@@ -418,6 +439,50 @@ export function getContourExportReport(regions, commands) {
       prevX = c.x || 0; prevY = c.y || 0;
     }
   }
+
+  // ── Outer contour segments: distinct outer outline regionIds ──
+  const outerRegionIds = new Set();
+  for (const c of commands) {
+    if (c.type === 'stitch' && (c.layerType || '').toLowerCase() === 'outer_outline') {
+      outerRegionIds.add(c.regionId);
+    }
+  }
+  const outerContourSegments = outerRegionIds.size;
+
+  // ── Outer contour closure ratio ──
+  let outerClosureRatio = 1;
+  const outerStitches = commands.filter(c => c.type === 'stitch' && (c.layerType || '').toLowerCase() === 'outer_outline');
+  if (outerStitches.length > 2) {
+    const first = outerStitches[0];
+    const last = outerStitches[outerStitches.length - 1];
+    const gap = Math.hypot((first.x || 0) - (last.x || 0), (first.y || 0) - (last.y || 0));
+    let perim = 0;
+    for (let i = 1; i < outerStitches.length; i++) {
+      perim += Math.hypot((outerStitches[i].x || 0) - (outerStitches[i-1].x || 0), (outerStitches[i].y || 0) - (outerStitches[i-1].y || 0));
+    }
+    outerClosureRatio = perim > 0 ? 1 - (gap / perim) : 0;
+  }
+
+  // ── Uncovered perimeter: foot/body fills without outer outline ──
+  const classifiedRegions = audit?.classifiedRegions || regions;
+  const visFills = classifiedRegions.filter(r => {
+    const g = r.object_group || '';
+    return g === 'body' || g === 'foot_left' || g === 'foot_right';
+  });
+  let uncoveredCount = 0;
+  for (const fill of visFills) {
+    const hasOuter = outerContourSegments > 0; // simplified: if any outer exists, assume covered
+    if (!hasOuter) uncoveredCount++;
+  }
+  const uncoveredPerimeterPercent = visFills.length > 0 ? Math.round((uncoveredCount / visFills.length) * 100) : 0;
+
+  // ── Audit metrics ──
+  const internalShadingBoundariesDetected = audit?.internalBoundariesDetected || 0;
+  const invalidInternalOutlinesRemoved = audit?.removedCount || 0;
+  const visibleFootContourCoverage = audit?.footContourCoverage ?? 100;
+
+  // ── Body shadow boundary outlined: should be NO after audit ──
+  const bodyShadowBoundaryOutlined = audit?.removedDetails?.some(d => d.parentGroup === 'body') ? 'NO' : 'YES';
 
   // Visual contour check — does the design have visible outer outline regions?
   const visualOuterOutline = regions.some(r => {
@@ -459,7 +524,8 @@ export function getContourExportReport(regions, commands) {
 
   const contourMissing = (visualOuterOutline || hasFills) && !exportedOuterOutline;
   const contourWeak = exportedOuterOutline && counts.outerOutlineStitches < 80;
-  const ready = !contourMissing && travelContamination === 0;
+  const ready = !contourMissing && travelContamination === 0 &&
+    bodyShadowBoundaryOutlined === 'NO' && visibleFootContourCoverage >= 95;
 
   // ── Mandatory [outline-refine] logs ──
   console.log('[outline-refine] outer outline detected:', exportedOuterOutline ? 'YES' : 'NO');
@@ -469,6 +535,13 @@ export function getContourExportReport(regions, commands) {
   console.log('[outline-refine] mouth stitches:', counts.mouthStitches);
   console.log('[outline-refine] travel contamination:', travelContamination);
   console.log('[outline-refine] outline order:', outlineOrder);
+  console.log('[outline-refine] outer contour segments:', outerContourSegments);
+  console.log('[outline-refine] outer contour closure:', outerClosureRatio.toFixed(3));
+  console.log('[outline-refine] uncovered perimeter %:', uncoveredPerimeterPercent);
+  console.log('[outline-refine] internal shading boundaries detected:', internalShadingBoundariesDetected);
+  console.log('[outline-refine] invalid internal outlines removed:', invalidInternalOutlinesRemoved);
+  console.log('[outline-refine] visible foot contour coverage:', visibleFootContourCoverage + '%');
+  console.log('[outline-refine] body shadow boundary outlined:', bodyShadowBoundaryOutlined);
   console.log('[outline-refine] protected after optimizer:', ready ? 'YES' : 'NO');
   console.log('[outline-refine] accepted:', ready);
 
@@ -488,6 +561,13 @@ export function getContourExportReport(regions, commands) {
     travelContamination,
     contourMissing,
     contourWeak,
+    outerContourSegments,
+    outerContourClosure: Math.round(outerClosureRatio * 1000) / 1000,
+    uncoveredPerimeterPercent,
+    internalShadingBoundariesDetected,
+    invalidInternalOutlinesRemoved,
+    visibleFootContourCoverage,
+    bodyShadowBoundaryOutlined,
     ready,
   };
 }

@@ -19,6 +19,8 @@
  *   stitchTypeForWidth(widthMm)       → 'running_stitch' | 'satin' | 'fill'
  */
 
+import { classifyRegionGroups, convexHull, sameObjectGroup } from './contourGroupClassifier.js';
+
 const HIGH_CONTRAST_THRESHOLD = 80;
 const DARK_LUM_THRESHOLD = 60;
 
@@ -88,79 +90,117 @@ export function stitchTypeForWidth(widthMm) {
   return 'fill';
 }
 
-// ─── Outer silhouette outline ──────────────────────────────────────────────────
+// ─── Outer silhouette outline (per object_group) ──────────────────────────────
 
 /**
- * Generates the outer silhouette outline from the outermost fill region.
- * The outermost fill = largest bounding box that contains other fills.
+ * Generates outer silhouette outlines per object_group.
  *
- * @returns {Object|null} outline object
+ * - body group: unions ALL body fills via convex hull → one outer outline
+ * - foot groups: each foot group gets its own outer outline
+ * - inner_detail groups (eyes, mouth): skipped (they get inner outlines only)
+ *
+ * This replaces the old single-fill approach that missed feet and left gaps.
+ *
+ * @returns {Array} outer outline objects
  */
-function generateOuterSilhouette(regions, config) {
+function generateOuterSilhouettes(regions, config) {
   const fills = regions.filter(r =>
     (r.region_class === 'fill' || (!r.region_class && r.stitch_type === 'fill')) &&
     r.path_points && r.path_points.length >= 8
   );
-  if (fills.length === 0) return null;
+  if (fills.length === 0) return [];
 
-  // Find the fill with the largest bbox that contains other fills
-  let bestFill = null, bestScore = -1;
-  for (const f of fills) {
-    const bbox = computeBbox(f.path_points);
-    let containedCount = 0;
-    for (const other of fills) {
-      if (other.id === f.id) continue;
-      const ob = computeBbox(other.path_points);
-      if (ob.minX >= bbox.minX - 0.02 && ob.maxX <= bbox.maxX + 0.02 &&
-          ob.minY >= bbox.minY - 0.02 && ob.maxY <= bbox.maxY + 0.02) {
-        containedCount++;
-      }
-    }
-    const score = bbox.w * bbox.h + containedCount * 0.5;
-    if (score > bestScore) { bestScore = score; bestFill = f; }
+  // Group fills by object_group
+  const groups = {};
+  for (const fill of fills) {
+    const g = fill.object_group || 'other';
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(fill);
   }
-  if (!bestFill) return null;
 
-  const outlinePts = ensureClosed(dedupePoints(bestFill.path_points));
-  if (outlinePts.length < 8) return null;
-
-  const perim = perimeterNorm(outlinePts);
-  if (perim < 0.15) return null;
-
+  const outlines = [];
   const widthMm = config.width_mm || 100;
   const heightMm = config.height_mm || 100;
-  const perimMm = perim * Math.max(widthMm, heightMm);
-  // Estimate outline width from area/perimeter ratio
-  const areaNorm = bestFill.area_mm2 / (widthMm * heightMm) || 0;
-  const estWidthMm = areaNorm > 0 && perim > 0 ? (areaNorm * widthMm * heightMm) / perimMm : 1.0;
+  const outlineColor = '#1a1a1a';
 
-  const outlineColor = '#1a1a1a'; // dark outline for cartoon clean look
-  const stitchType = stitchTypeForWidth(Math.max(0.5, Math.min(1.5, estWidthMm)));
+  for (const [groupName, groupFills] of Object.entries(groups)) {
+    const policy = groupFills[0]?.contour_policy;
+    // Skip inner_detail groups — they get inner outlines, not outer
+    if (policy === 'inner_detail') continue;
 
-  console.log(`[outline-generator] outer silhouette from ${bestFill.name || bestFill.id}: pts=${outlinePts.length} stitch=${stitchType}`);
+    // Skip tiny groups that aren't feet
+    const totalArea = groupFills.reduce((s, f) => s + (f.area_mm2 || 0), 0);
+    if (totalArea < 80 && groupName !== 'foot_left' && groupName !== 'foot_right') continue;
 
-  return {
-    id: `outline_outer_${bestFill.id}`,
-    parentRegionId: bestFill.id,
-    type: 'contour',
-    region_class: 'outer_outline',
-    stitch_type: stitchType,
-    contour_class: 'outer_silhouette',
-    contour_points: outlinePts,
-    path_points: outlinePts,
-    hex: outlineColor,
-    color: outlineColor,
-    contour_color: outlineColor,
-    contour_width_mm: Math.max(0.5, Math.min(1.5, estWidthMm)),
-    confidence: 85,
-    source: 'outline_generator_outer',
-    closed: true,
-    name: `${(bestFill.name || 'body').replace(/_(fill|sat|run|contour|outline|detail)$/i, '')}_outer_outline`,
-    visible: true,
-    priority: 7, // sewn last for maximum definition
-    area_mm2: bestFill.area_mm2,
-    perimeter_mm: perimMm,
-  };
+    // Build union silhouette
+    let outlinePts;
+    if (groupFills.length === 1) {
+      outlinePts = ensureClosed(dedupePoints(groupFills[0].path_points));
+    } else {
+      // Union via convex hull — covers all fills in the group
+      const allPoints = [];
+      for (const fill of groupFills) {
+        for (const p of fill.path_points) allPoints.push([p[0], p[1]]);
+      }
+      outlinePts = ensureClosed(convexHull(allPoints));
+    }
+
+    if (outlinePts.length < 8) continue;
+
+    const perim = perimeterNorm(outlinePts);
+    if (perim < 0.12) continue;
+
+    const perimMm = perim * Math.max(widthMm, heightMm);
+    const parentFill = groupFills[0];
+
+    outlines.push({
+      id: `outline_outer_${groupName}`,
+      parentRegionId: parentFill.id,
+      parentGroupName: groupName,
+      type: 'contour',
+      region_class: 'outer_outline',
+      stitch_type: 'satin',
+      contour_class: groupName === 'body' ? 'outer_silhouette' : 'outer_part',
+      contour_points: outlinePts,
+      path_points: outlinePts,
+      hex: outlineColor,
+      color: outlineColor,
+      contour_color: outlineColor,
+      contour_width_mm: 1.15,
+      confidence: 85,
+      source: 'outline_generator_outer_group',
+      closed: true,
+      name: `${groupName}_outer_outline`,
+      visible: true,
+      priority: 90,
+      area_mm2: totalArea,
+      perimeter_mm: perimMm,
+      groupFillCount: groupFills.length,
+    });
+
+    console.log(`[outline-generator] outer silhouette for group ${groupName}: fills=${groupFills.length} pts=${outlinePts.length}`);
+  }
+
+  return outlines;
+}
+
+// ─── Closure validation ───────────────────────────────────────────────────────
+
+/**
+ * Validates that an outline path is properly closed.
+ * closureRatio = 1 - (gap / perimeter). Must be > 0.98.
+ */
+function validateClosure(points) {
+  if (!points || points.length < 3) return { closed: false, closureRatio: 0 };
+  const [fx, fy] = points[0];
+  const [lx, ly] = points[points.length - 1];
+  const gap = Math.hypot(fx - lx, fy - ly);
+  let perim = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    perim += Math.hypot(points[i + 1][0] - points[i][0], points[i + 1][1] - points[i][1]);
+  }
+  const closureRatio = perim > 0 ? 1 - (gap / perim) : 0;
+  return { closed: closureRatio > 0.98, closureRatio };
 }
 
 // ─── Inner outlines ────────────────────────────────────────────────────────────
@@ -188,6 +228,8 @@ function generateInnerOutlines(regions, config) {
     let hasHighContrastNeighbor = false;
     for (const other of fills) {
       if (other.id === fill.id) continue;
+      // ── Same object_group → skip (internal_fill_boundary, no contour) ──
+      if (sameObjectGroup(fill, other)) continue;
       const ob = computeBbox(other.path_points);
       if (ob.w <= 0) continue;
       // Check bbox overlap or adjacency
@@ -269,27 +311,39 @@ export function generateOutlines(regions, config = {}) {
     return { outlines: [], report: { enabled: false, outerCount: 0, innerCount: 0, total: 0 } };
   }
 
-  const outer = generateOuterSilhouette(regions, config);
-  const inner = generateInnerOutlines(regions, config);
+  // ── Classify regions into object_groups ──
+  const classifiedRegions = classifyRegionGroups(regions);
 
-  const outlines = [];
-  if (outer) outlines.push(outer);
-  outlines.push(...inner);
+  const outerOutlines = generateOuterSilhouettes(classifiedRegions, config);
+  const innerOutlines = generateInnerOutlines(classifiedRegions, config);
 
-  // Deduplicate: don't add inner outline if it duplicates the outer
-  const deduped = deduplicateOutlines(outlines);
+  let outlines = [...outerOutlines, ...innerOutlines];
+  outlines = deduplicateOutlines(outlines);
 
-  console.log(`[outline-generator] total outlines: ${deduped.length} (outer: ${outer ? 1 : 0}, inner: ${inner.length})`);
-  console.log(`[outline-generator] outline names: ${deduped.map(o => o.name).join(', ') || 'none'}`);
+  // ── Closure validation: ensure outer outlines are properly closed ──
+  for (const outline of outlines) {
+    if (outline.region_class === 'outer_outline') {
+      const pts = outline.contour_points || outline.path_points;
+      const closure = validateClosure(pts);
+      if (!closure.closed) {
+        outline.contour_points = [...pts, pts[0]];
+        outline.path_points = outline.contour_points;
+        console.log(`[outline-refine] outer contour regenerated (closure: ${closure.closureRatio.toFixed(3)})`);
+      }
+    }
+  }
+
+  console.log(`[outline-generator] total outlines: ${outlines.length} (outer: ${outerOutlines.length}, inner: ${innerOutlines.length})`);
+  console.log(`[outline-generator] outline names: ${outlines.map(o => o.name).join(', ') || 'none'}`);
 
   return {
-    outlines: deduped,
+    outlines,
     report: {
       enabled,
-      outerCount: outer ? 1 : 0,
-      innerCount: inner.length,
-      total: deduped.length,
-      outlines: deduped.map(o => ({
+      outerCount: outerOutlines.length,
+      innerCount: innerOutlines.length,
+      total: outlines.length,
+      outlines: outlines.map(o => ({
         id: o.id,
         name: o.name,
         class: o.region_class,
@@ -298,6 +352,7 @@ export function generateOutlines(regions, config = {}) {
         priority: o.priority,
       })),
     },
+    _classifiedRegions: classifiedRegions,
   };
 }
 
