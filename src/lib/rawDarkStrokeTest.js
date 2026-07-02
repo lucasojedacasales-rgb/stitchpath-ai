@@ -3,25 +3,29 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * FULLY ISOLATED diagnostic test for the lower contour + feet.
  *
- * Uses ONLY:
- *   1. the original image (loaded fresh from imageUrl)
- *   2. a raw dark-stroke mask (threshold + clean + close + thin)
- *   3. direct vectorization of the skeleton
- *   4. simple running/triple-run stitches
+ * Uses ONLY the original image + a raw dark-stroke mask (threshold + clean +
+ * Zhang-Suen skeleton). Paths come ONLY from skeleton pixels (the centerline
+ * of real dark strokes). NEVER from bbox, crop border, ROI frame, or fallback.
  *
- * Uses NONE of:
- *   finalEmbroideryCommands, contourObjects, region/fill boundaries,
- *   object_group body/foot from fills, optimizers, cached outlines,
- *   autoClose, travel/trim optimizers, the existing darkStrokeDetector.
+ * Hard rules:
+ *   - No rectangleToPath / bboxToPath / cropBoundsToPath / roiBorderToPath.
+ *   - If no real dark paths are found → 0 paths (never invent a rectangle).
+ *   - Every exported path must have pathDarkSupportRatio >= 0.85 (sampled
+ *     against the raw dark mask, within 1px).
+ *   - Paths touching the canvas border or forming long axis-aligned frame
+ *     lines are rejected as ROI/crop artifacts.
+ *   - filterLowerFootDarkPaths only filters existing paths — never creates,
+ *     closes, or rectangularizes.
  *
  * Public API:
- *   extractRawDarkStrokePaths(imageData, params) → { mask, skeleton, paths, components }
- *   filterLowerFootDarkPaths(paths, W, H)        → filtered paths
- *   buildRawLowerCommands(paths, W, H, wMm, hMm) → commands[]
- *   runRawDarkStrokeTest(imageUrl, config)       → { mask, skeleton, paths, filteredPaths, commands, diagnostics, ... }
+ *   extractRawDarkStrokePaths(imageData, params)   → { mask, skeleton, paths, ... }
+ *   pathDarkSupportRatio(path, mask, W, H)          → 0..1
+ *   validatePaths(paths, mask, W, H)                → { exported, rejected, ... }
+ *   filterLowerFootDarkPaths(paths, W, H)           → filtered paths (zone only)
+ *   buildRawLowerCommands(paths, W, H, wMm, hMm)    → commands[]
+ *   runRawDarkStrokeTest(imageUrl, config)          → { ...result, diagnostics }
  */
 
-// ── Params ───────────────────────────────────────────────────────────────────
 export const RAW_PARAMS = {
   lumaThreshold: 90,
   saturationMax: 120,
@@ -29,6 +33,10 @@ export const RAW_PARAMS = {
   closeGapPx: 2,
   minPathLengthPx: 6,
   maxProcessWidth: 320,
+  darkSupportMin: 0.85,
+  borderMarginPx: 3,
+  frameLineMinFrac: 0.5,   // span >= 50% of W or H = frame line
+  frameLineThicknessPx: 6,
 };
 
 function luma(r, g, b) { return 0.299 * r + 0.587 * g + 0.114 * b; }
@@ -68,7 +76,7 @@ function erode(m, W, H) {
   return o;
 }
 
-// ── Zhang-Suen thinning → 1px skeleton ───────────────────────────────────────
+// ── Zhang-Suen thinning → 1px skeleton (centerline of real dark strokes) ─────
 function transitions(P) {
   let c = 0;
   for (let i = 0; i < 8; i++) if (P[i] === 0 && P[(i + 1) % 8] === 1) c++;
@@ -81,19 +89,16 @@ function thinZhangSuen(mask, W, H) {
   let guard = 0;
   while (changed && guard++ < 200) {
     changed = false;
-    // Sub-iteration 1
     const rm1 = [];
     for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
       const p = y * W + x;
       if (!img[p]) continue;
-      // P2..P9 = top, top-right, right, br, bottom, bl, left, tl
       const P = [img[p - W], img[p - W + 1], img[p + 1], img[p + W + 1], img[p + W], img[p + W - 1], img[p - 1], img[p - W - 1]];
       const A = transitions(P);
       const B = P[0] + P[1] + P[2] + P[3] + P[4] + P[5] + P[6] + P[7];
       if (A === 1 && B >= 2 && B <= 6 && P[0] * P[2] * P[4] === 0 && P[2] * P[4] * P[6] === 0) rm1.push(p);
     }
     if (rm1.length) { for (const p of rm1) img[p] = 0; changed = true; }
-    // Sub-iteration 2
     const rm2 = [];
     for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
       const p = y * W + x;
@@ -108,7 +113,7 @@ function thinZhangSuen(mask, W, H) {
   return img;
 }
 
-// ── Skeleton tracing → ordered paths (no auto-close) ──────────────────────────
+// ── Skeleton tracing → ordered paths (no auto-close, no bbox fallback) ───────
 function neighborsOf(p, W, H, arr) {
   const x = p % W, y = (p / W) | 0;
   const res = [];
@@ -130,7 +135,6 @@ function traceSkeleton(skel, W, H, minLen) {
     if (!skel[i]) continue;
     if (neighborsOf(i, W, H, skel).length === 1) endpoints.push(i);
   }
-  // Walk from each endpoint (open strokes first)
   for (const ep of endpoints) {
     if (visited[ep]) continue;
     const path = [ep]; visited[ep] = 1;
@@ -142,7 +146,6 @@ function traceSkeleton(skel, W, H, minLen) {
     }
     if (path.length >= minLen) paths.push(path.map(p => ({ x: p % W, y: (p / W) | 0 })));
   }
-  // Loops (no endpoints) — walk from any unvisited skeleton pixel
   for (let i = 0; i < W * H; i++) {
     if (skel[i] && !visited[i]) {
       const path = [i]; visited[i] = 1;
@@ -158,7 +161,8 @@ function traceSkeleton(skel, W, H, minLen) {
   return paths;
 }
 
-// ── MAIN: extract raw dark stroke paths from ImageData ───────────────────────
+// ── MAIN: extract raw dark stroke skeleton paths from ImageData ──────────────
+// No bbox/crop/rectangle fallback. Paths come ONLY from skeleton pixels.
 export function extractRawDarkStrokePaths(imageData, params = {}) {
   const p = { ...RAW_PARAMS, ...params };
   const { width: W, height: H, data } = imageData;
@@ -180,12 +184,12 @@ export function extractRawDarkStrokePaths(imageData, params = {}) {
   const stack = [];
   for (let i = 0; i < W * H; i++) {
     if (mask[i] && !labels[i]) {
-      cur++; const comp = { label: cur, pixels: [], area: 0, bbox: null };
+      cur++; const comp = { label: cur, area: 0, bbox: null };
       let minX = W, minY = H, maxX = 0, maxY = 0;
       labels[i] = cur; stack.push(i);
       while (stack.length) {
         const q = stack.pop(); const x = q % W, y = (q / W) | 0;
-        comp.pixels.push(q); comp.area++;
+        comp.area++;
         if (x < minX) minX = x; if (x > maxX) maxX = x;
         if (y < minY) minY = y; if (y > maxY) maxY = y;
         for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
@@ -208,16 +212,95 @@ export function extractRawDarkStrokePaths(imageData, params = {}) {
   for (let it = 0; it < p.closeGapPx; it++) m = dilate(m, W, H);
   for (let it = 0; it < p.closeGapPx; it++) m = erode(m, W, H);
 
-  // 4. Skeleton (Zhang-Suen)
+  // 4. Skeleton (Zhang-Suen) — centerline of real dark strokes
   const skeleton = thinZhangSuen(m, W, H);
 
-  // 5. Vectorize skeleton → ordered paths (no auto-close)
+  // 5. Vectorize skeleton → ordered paths (no auto-close, no bbox)
   const paths = traceSkeleton(skeleton, W, H, p.minPathLengthPx);
 
   return { mask: m, skeleton, paths, components: comps, darkPixelsCount, width: W, height: H };
 }
 
-// ── Filter: keep only lower body + feet, exclude mouth/eyes/cheeks/upper ─────
+// ── Dark support: fraction of path points on (or within 1px of) a dark pixel ─
+export function pathDarkSupportRatio(path, mask, W, H) {
+  if (path.length === 0) return 0;
+  let supported = 0;
+  for (const pt of path) {
+    let on = false;
+    for (let dy = -1; dy <= 1 && !on; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = pt.x + dx, ny = pt.y + dy;
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      if (mask[ny * W + nx]) { on = true; break; }
+    }
+    if (on) supported++;
+  }
+  return supported / path.length;
+}
+
+// ── ROI border / frame-line detection ─────────────────────────────────────────
+function isBorderPath(path, W, H, margin) {
+  return path.some(p => p.x < margin || p.y < margin || p.x > W - margin || p.y > H - margin);
+}
+
+function pathBbox(path) {
+  let minX = Infinity, minY = Infinity, maxX = 0, maxY = 0;
+  for (const p of path) {
+    if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+  }
+  return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
+}
+
+function isFrameLine(path, W, H, minFrac, thickPx) {
+  const b = pathBbox(path);
+  if (b.w >= minFrac * W && b.h <= thickPx) return true;   // long horizontal frame
+  if (b.h >= minFrac * H && b.w <= thickPx) return true;   // long vertical frame
+  return false;
+}
+
+// ── Validate + reject crop/border/low-support paths ───────────────────────────
+export function validatePaths(paths, mask, W, H, params = {}) {
+  const p = { ...RAW_PARAMS, ...params };
+  const exported = [];
+  const rejectedCropBorder = [];
+  const rejectedLowSupport = [];
+  let supportSum = 0;
+  let minSupport = 1;
+
+  for (const path of paths) {
+    // Reject ROI border / frame-line paths first
+    if (isBorderPath(path, W, H, p.borderMarginPx) || isFrameLine(path, W, H, p.frameLineMinFrac, p.frameLineThicknessPx)) {
+      rejectedCropBorder.push(path);
+      console.log('[raw-dark-test] rejected ROI border path');
+      continue;
+    }
+    const support = pathDarkSupportRatio(path, mask, W, H);
+    if (support < p.darkSupportMin) {
+      rejectedLowSupport.push(path);
+      console.log(`[raw-dark-test] rejected low dark support path (support=${support.toFixed(2)})`);
+      continue;
+    }
+    exported.push(path);
+    supportSum += support;
+    if (support < minSupport) minSupport = support;
+  }
+
+  const avgSupport = exported.length ? supportSum / exported.length : 0;
+  const minSup = exported.length ? minSupport : 0;
+  return {
+    exported,
+    rejectedCropBorder,
+    rejectedLowSupport,
+    rejected: [
+      ...rejectedCropBorder.map(path => ({ path, reason: 'crop_border' })),
+      ...rejectedLowSupport.map(path => ({ path, reason: 'low_dark_support' })),
+    ],
+    averagePathDarkSupport: avgSupport,
+    minPathDarkSupport: minSup,
+  };
+}
+
+// ── Filter: keep only lower body + feet (zone only — NEVER creates paths) ─────
 export function filterLowerFootDarkPaths(paths, W, H) {
   const lowerY = 0.55 * H;
   const footBottomY = 0.70 * H;
@@ -232,10 +315,8 @@ export function filterLowerFootDarkPaths(paths, W, H) {
     const isMouth = normX > 0.30 && normX < 0.70 && normY > 0.45 && normY < 0.62 && path.length < 50;
     if (isMouth) continue;
 
-    // Exclude eyes/upper (centroid above lower line)
-    if (cy < lowerY) continue;
+    if (cy < lowerY) continue; // upper area
 
-    // Keep: lower body edge (long horizontal-ish) or feet (reach bottom zone)
     const reachesFoot = path.some(pt => pt.y > footBottomY);
     const isLower = cy >= lowerY;
     if (isLower || reachesFoot) out.push(path);
@@ -249,7 +330,6 @@ export function buildRawLowerCommands(paths, W, H, widthMm, heightMm) {
   let pathIdx = 0;
   for (const path of paths) {
     const mm = path.map(pt => [(pt.x / W - 0.5) * widthMm, (pt.y / H - 0.5) * heightMm]);
-    // triple run: forward → backward → forward (self-locking, no caps)
     const triple = [...mm, ...[...mm].reverse(), ...mm];
     if (triple.length < 2) continue;
     if (cmds.length > 0) cmds.push({ type: 'trim' });
@@ -288,18 +368,22 @@ export async function runRawDarkStrokeTest(imageUrl, config = {}) {
   const heightMm = config.height_mm || 100;
 
   const { imageData, naturalW, naturalH } = await loadImageData(imageUrl, RAW_PARAMS.maxProcessWidth);
-  const { mask, skeleton, paths, components, darkPixelsCount, width: W, height: H } =
+  const { mask, skeleton, paths: rawPaths, components, darkPixelsCount, width: W, height: H } =
     extractRawDarkStrokePaths(imageData, RAW_PARAMS);
 
-  const filteredPaths = filterLowerFootDarkPaths(paths, W, H);
-  const commands = buildRawLowerCommands(filteredPaths, W, H, widthMm, heightMm);
+  const rawPathsBeforeFilter = rawPaths.length;
+  const zonePaths = filterLowerFootDarkPaths(rawPaths, W, H);
+  const rawPathsAfterFilter = zonePaths.length;
 
-  const longestPath = paths.reduce((m, p) => p.length > m ? p.length : m, 0);
-  const openPaths = paths.filter(p => {
+  const validation = validatePaths(zonePaths, mask, W, H, RAW_PARAMS);
+  const exportedPaths = validation.exported;
+  const commands = buildRawLowerCommands(exportedPaths, W, H, widthMm, heightMm);
+
+  const longestPath = rawPaths.reduce((m, p) => p.length > m ? p.length : m, 0);
+  const openPaths = rawPaths.filter(p => {
     const f = p[0], l = p[p.length - 1];
     return Math.hypot(f.x - l.x, f.y - l.y) > 2;
   }).length;
-
   const lowerComponents = components.filter(c => {
     const cy = (c.bbox.minY + c.bbox.maxY) / 2;
     return cy > 0.55 * H;
@@ -309,10 +393,13 @@ export async function runRawDarkStrokeTest(imageUrl, config = {}) {
     darkPixelsCount,
     componentsCount: components.length,
     lowerComponentsCount: lowerComponents,
-    pathsCount: paths.length,
-    exportedPaths: filteredPaths.length,
-    longestPath,
-    openPaths,
+    rawPathsBeforeFilter,
+    rawPathsAfterFilter,
+    exportedPaths: exportedPaths.length,
+    rejectedCropBorderPaths: validation.rejectedCropBorder.length,
+    rejectedLowDarkSupportPaths: validation.rejectedLowSupport.length,
+    averagePathDarkSupport: validation.averagePathDarkSupport,
+    minPathDarkSupport: validation.minPathDarkSupport,
     usedFinalEmbroideryCommands: false,
     usedRegionBoundaries: false,
     usedCachedContours: false,
@@ -322,18 +409,26 @@ export async function runRawDarkStrokeTest(imageUrl, config = {}) {
     processDims: `${W}x${H}`,
     naturalDims: `${naturalW}x${naturalH}`,
     designMm: `${widthMm}x${heightMm}`,
+    longestPath,
+    openPaths,
   };
 
-  // Mandatory diagnostic logs
+  // Mandatory source + rejection logs
+  console.log('[raw-dark-test] source originalImage=true');
+  console.log('[raw-dark-test] source darkStrokeMask=true');
+  console.log('[raw-dark-test] source finalEmbroideryCommands=false');
+  console.log('[raw-dark-test] source regionBoundaries=false');
+  console.log('[raw-dark-test] source cachedContours=false');
   console.log(`[raw-dark-test] dark pixels count: ${darkPixelsCount}`);
   console.log(`[raw-dark-test] components count: ${components.length}`);
   console.log(`[raw-dark-test] lower components count: ${lowerComponents}`);
-  console.log(`[raw-dark-test] paths count: ${paths.length}`);
-  console.log(`[raw-dark-test] exported paths: ${filteredPaths.length}`);
-  console.log(`[raw-dark-test] longest path: ${longestPath}px`);
-  console.log(`[raw-dark-test] open paths: ${openPaths}`);
-  console.log(`[raw-dark-test] used finalEmbroideryCommands: false`);
-  console.log(`[raw-dark-test] used regionBoundaries: false`);
+  console.log(`[raw-dark-test] raw paths before filter: ${rawPathsBeforeFilter}`);
+  console.log(`[raw-dark-test] raw paths after filter: ${rawPathsAfterFilter}`);
+  console.log(`[raw-dark-test] rejected ROI border paths: ${validation.rejectedCropBorder.length}`);
+  console.log(`[raw-dark-test] rejected low dark support paths: ${validation.rejectedLowSupport.length}`);
+  console.log(`[raw-dark-test] exported paths with dark support: ${exportedPaths.length}`);
+  console.log(`[raw-dark-test] average path dark support: ${validation.averagePathDarkSupport.toFixed(3)}`);
+  console.log(`[raw-dark-test] min path dark support: ${validation.minPathDarkSupport.toFixed(3)}`);
   console.log(`[raw-dark-test] coordinate transform: ${diagnostics.coordinateTransform}`);
   console.log(`[raw-dark-test] scale: ${diagnostics.scale}`);
   console.log(`[raw-dark-test] rotation/mirror: none`);
@@ -341,7 +436,10 @@ export async function runRawDarkStrokeTest(imageUrl, config = {}) {
   return {
     originalData: imageData,
     mask, skeleton,
-    paths, filteredPaths, commands,
+    rawPaths, zonePaths,
+    exportedPaths,
+    rejected: validation.rejected,
+    commands,
     diagnostics,
     width: W, height: H,
   };

@@ -9,8 +9,8 @@ import { buildDSTFromCommands } from '@/lib/dstDirectExport';
  * Uses ONLY the original image + a raw dark-stroke mask. Does NOT receive
  * finalEmbroideryCommands, regions, darkStroke, or contourObjects.
  *
- * If a finalCommands prop is ever passed, the test is blocked with
- * "TEST INVALID: using finalEmbroideryCommands".
+ * Overlay: cyan = darkStrokeMask, yellow = exported paths (dark-supported),
+ * red = rejected paths (crop border / low dark support).
  */
 export default function RawDarkStrokeTestPanel({ project, config, finalCommands }) {
   const [running, setRunning] = useState(false);
@@ -18,7 +18,6 @@ export default function RawDarkStrokeTestPanel({ project, config, finalCommands 
   const [error, setError] = useState(null);
   const canvasRef = useRef(null);
 
-  // Hard source declaration — must be exactly this for the isolated test.
   const sourceUsed = {
     originalImage: true,
     darkStrokeMask: true,
@@ -63,35 +62,51 @@ export default function RawDarkStrokeTestPanel({ project, config, finalCommands 
     }
   };
 
-  // Overlay render: original image + cyan mask + yellow filtered paths
+  // Overlay: original image + cyan mask + yellow exported + red rejected
   useEffect(() => {
     if (!result) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const { width: W, height: H, originalData, mask, filteredPaths } = result;
+    const { width: W, height: H, originalData, mask, exportedPaths, rejected } = result;
     canvas.width = W; canvas.height = H;
     const ctx = canvas.getContext('2d');
+
     // 1. original image
     ctx.putImageData(originalData, 0, 0);
+
     // 2. cyan mask overlay (semi-transparent)
     const overlay = ctx.createImageData(W, H);
     for (let i = 0; i < W * H; i++) {
       if (mask[i]) {
-        overlay.data[i * 4] = 34;       // R
-        overlay.data[i * 4 + 1] = 211;  // G
-        overlay.data[i * 4 + 2] = 238;  // B
-        overlay.data[i * 4 + 3] = 140;  // A
+        overlay.data[i * 4] = 34;
+        overlay.data[i * 4 + 1] = 211;
+        overlay.data[i * 4 + 2] = 238;
+        overlay.data[i * 4 + 3] = 140;
       }
     }
     const tmp = document.createElement('canvas');
     tmp.width = W; tmp.height = H;
     tmp.getContext('2d').putImageData(overlay, 0, 0);
     ctx.drawImage(tmp, 0, 0);
-    // 3. yellow filtered paths
-    ctx.strokeStyle = '#eab308';
+
+    // 3. red rejected paths (crop border / low dark support)
+    ctx.strokeStyle = '#ef4444';
     ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 2]);
+    for (const r of rejected) {
+      const path = r.path;
+      if (path.length < 2) continue;
+      ctx.beginPath();
+      ctx.moveTo(path[0].x, path[0].y);
+      for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
+      ctx.stroke();
+    }
     ctx.setLineDash([]);
-    for (const path of filteredPaths) {
+
+    // 4. yellow exported paths (dark-supported)
+    ctx.strokeStyle = '#eab308';
+    ctx.lineWidth = 1.8;
+    for (const path of exportedPaths) {
       if (path.length < 2) continue;
       ctx.beginPath();
       ctx.moveTo(path[0].x, path[0].y);
@@ -101,6 +116,8 @@ export default function RawDarkStrokeTestPanel({ project, config, finalCommands 
   }, [result]);
 
   const d = result?.diagnostics;
+  const accepted =
+    d && d.exportedPaths > 0 && d.averagePathDarkSupport >= 0.85;
 
   return (
     <div className="bg-[#0d0f14] border border-cyan-500/30 rounded-lg p-3 space-y-2">
@@ -111,11 +128,11 @@ export default function RawDarkStrokeTestPanel({ project, config, finalCommands 
 
       {/* Source declaration */}
       <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-        <SourceRow label="originalImage" ok={sourceUsed.originalImage} />
-        <SourceRow label="darkStrokeMask" ok={sourceUsed.darkStrokeMask} />
-        <SourceRow label="finalEmbroideryCommands" ok={!sourceUsed.finalEmbroideryCommands} bad />
-        <SourceRow label="regionBoundaries" ok={!sourceUsed.regionBoundaries} bad />
-        <SourceRow label="cachedContours" ok={!sourceUsed.cachedContours} bad />
+        <SourceRow label="originalImage" value="true" ok />
+        <SourceRow label="darkStrokeMask" value="true" ok />
+        <SourceRow label="finalEmbroideryCommands" value="false" ok />
+        <SourceRow label="regionBoundaries" value="false" ok />
+        <SourceRow label="cachedContours" value="false" ok />
       </div>
 
       {invalid && (
@@ -142,7 +159,8 @@ export default function RawDarkStrokeTestPanel({ project, config, finalCommands 
           <canvas ref={canvasRef} className="w-full bg-[#0d0f14] border border-[#1e2130] rounded-lg" />
           <div className="flex items-center gap-3 text-[9px] text-slate-500">
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#22d3ee]"></span> Máscara</span>
-            <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#eab308]"></span> Paths exportados</span>
+            <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#eab308]"></span> Exportados</span>
+            <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 border-t border-dashed border-[#ef4444]"></span> Rechazados</span>
           </div>
 
           {/* Diagnostics */}
@@ -150,15 +168,22 @@ export default function RawDarkStrokeTestPanel({ project, config, finalCommands 
             <Diag label="dark pixels" value={d?.darkPixelsCount} />
             <Diag label="components" value={d?.componentsCount} />
             <Diag label="lower comps" value={d?.lowerComponentsCount} />
-            <Diag label="paths" value={d?.pathsCount} />
+            <Diag label="raw before filter" value={d?.rawPathsBeforeFilter} />
+            <Diag label="raw after filter" value={d?.rawPathsAfterFilter} />
             <Diag label="exported paths" value={d?.exportedPaths} color={d?.exportedPaths > 0 ? 'text-emerald-400' : 'text-red-400'} />
-            <Diag label="longest path" value={d?.longestPath + 'px'} />
-            <Diag label="open paths" value={d?.openPaths} />
-            <Diag label="process dims" value={d?.processDims} />
+            <Diag label="rejected crop border" value={d?.rejectedCropBorderPaths} color={d?.rejectedCropBorderPaths > 0 ? 'text-amber-400' : 'text-slate-400'} />
+            <Diag label="rejected low support" value={d?.rejectedLowDarkSupportPaths} color={d?.rejectedLowDarkSupportPaths > 0 ? 'text-amber-400' : 'text-slate-400'} />
+            <Diag label="avg dark support" value={d?.averagePathDarkSupport != null ? d.averagePathDarkSupport.toFixed(3) : '—'} color={d?.averagePathDarkSupport >= 0.85 ? 'text-emerald-400' : 'text-red-400'} />
+            <Diag label="min dark support" value={d?.minPathDarkSupport != null ? d.minPathDarkSupport.toFixed(3) : '—'} color={d?.minPathDarkSupport >= 0.85 ? 'text-emerald-400' : 'text-red-400'} />
             <Diag label="scale" value={d?.scale} />
             <Diag label="transform" value={d?.coordinateTransform} />
-            <Diag label="used finalCmds" value="false" color="text-emerald-400" />
-            <Diag label="used regions" value="false" color="text-emerald-400" />
+          </div>
+
+          {/* Acceptance status */}
+          <div className={`text-[10px] rounded px-2 py-1.5 border ${accepted ? 'text-emerald-300 bg-emerald-900/20 border-emerald-500/30' : 'text-red-300 bg-red-900/20 border-red-500/30'}`}>
+            {accepted
+              ? '✓ Aceptado: paths amarillos con soporte oscuro >= 0.85'
+              : '✗ No aceptado: sin paths válidos o soporte bajo. Revisa overlay (rojo = rechazados).'}
           </div>
 
           <button
@@ -171,8 +196,8 @@ export default function RawDarkStrokeTestPanel({ project, config, finalCommands 
           </button>
 
           <div className="text-[9px] text-slate-600 leading-relaxed">
-            Si el overlay coincide con la imagen pero el DST sale mal → fallo en conversión path→puntadas (D).
-            Si el overlay NO coincide → fallo en máscara/vectorización (A/B).
+            Amarillo debe estar pegado al trazo negro real. Rojo = borde de crop/caja o sin soporte oscuro.
+            Si el overlay cian NO cubre los trazos → fallo A (máscara). Si cian sí pero amarillo no coincide → fallo B (vectorización). Si coincide pero DST mal → fallo D.
           </div>
         </>
       )}
@@ -180,14 +205,12 @@ export default function RawDarkStrokeTestPanel({ project, config, finalCommands 
   );
 }
 
-function SourceRow({ label, ok, bad }) {
+function SourceRow({ label, value, ok }) {
   return (
     <div className="flex items-center gap-1.5">
       <span className={`inline-block w-2 h-2 rounded-full ${ok ? 'bg-emerald-400' : 'bg-red-400'}`} />
       <span className="text-slate-400">{label}</span>
-      <span className={`ml-auto font-bold ${bad ? (ok ? 'text-emerald-400' : 'text-red-400') : (ok ? 'text-emerald-400' : 'text-red-400')}`}>
-        {bad ? (ok ? 'false' : 'TRUE') : (ok ? 'true' : 'false')}
-      </span>
+      <span className={`ml-auto font-bold ${ok ? 'text-emerald-400' : 'text-red-400'}`}>{value}</span>
     </div>
   );
 }
