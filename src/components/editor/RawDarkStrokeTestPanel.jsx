@@ -63,7 +63,7 @@ export default function RawDarkStrokeTestPanel({ project, config, finalCommands 
     if (!result) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const { width: W, height: H, strictMask, exportedPaths, rejected } = result;
+    const { width: W, height: H, strictMask, exportedPaths, rejected, consolidatedLowerOutlinePaths, consolidationRejected } = result;
     canvas.width = W; canvas.height = H;
     const ctx = canvas.getContext('2d');
 
@@ -81,7 +81,7 @@ export default function RawDarkStrokeTestPanel({ project, config, finalCommands 
         }
       }
       ctx.putImageData(overlay, 0, 0);
-    } else {
+    } else if (viewMode === 'paths_over_mask') {
       // B) Exported paths over strict dark mask
       // faint white bg + cyan mask
       ctx.fillStyle = '#0d0f14';
@@ -124,6 +124,46 @@ export default function RawDarkStrokeTestPanel({ project, config, finalCommands 
         for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
         ctx.stroke();
       }
+    } else if (viewMode === 'consolidated') {
+      // C) Consolidated contours: micro-paths grey, consolidated by zone, rejected red
+      ctx.fillStyle = '#0d0f14';
+      ctx.fillRect(0, 0, W, H);
+      const overlay = ctx.createImageData(W, H);
+      for (let i = 0; i < W * H; i++) {
+        if (strictMask[i]) {
+          overlay.data[i * 4] = 34; overlay.data[i * 4 + 1] = 211; overlay.data[i * 4 + 2] = 238; overlay.data[i * 4 + 3] = 90;
+        }
+      }
+      const tmp = document.createElement('canvas'); tmp.width = W; tmp.height = H;
+      tmp.getContext('2d').putImageData(overlay, 0, 0); ctx.drawImage(tmp, 0, 0);
+      // micro-paths grey thin
+      ctx.strokeStyle = '#64748b'; ctx.lineWidth = 0.8;
+      for (const path of exportedPaths) {
+        if (path.length < 2) continue;
+        ctx.beginPath(); ctx.moveTo(path[0].x, path[0].y);
+        for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
+        ctx.stroke();
+      }
+      // rejected red dashed
+      ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 1.2; ctx.setLineDash([3, 2]);
+      for (const r of (consolidationRejected || [])) {
+        const path = r.path; if (!path || path.length < 2) continue;
+        ctx.beginPath(); ctx.moveTo(path[0].x, path[0].y);
+        for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      // consolidated colored by zone
+      ctx.lineWidth = 2;
+      for (const c of (consolidatedLowerOutlinePaths || [])) {
+        const path = c.path; if (!path || path.length < 2) continue;
+        ctx.strokeStyle = c.zone === 'body_lower_outline' ? '#22c55e'
+          : c.zone === 'left_foot_outer_outline' ? '#3b82f6'
+          : c.zone === 'right_foot_outer_outline' ? '#f97316' : '#a78bfa';
+        ctx.beginPath(); ctx.moveTo(path[0].x, path[0].y);
+        for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
+        ctx.stroke();
+      }
     }
   }, [result, viewMode]);
 
@@ -132,7 +172,11 @@ export default function RawDarkStrokeTestPanel({ project, config, finalCommands 
     d.exportedPaths > 0 &&
     d.averagePathDarkSupport >= 0.90 &&
     d.hasMouth && d.hasEyes && d.hasLowerContour &&
-    !d.hasPinkBoundary;
+    !d.hasPinkBoundary &&
+    d.consolidatedLowerPaths >= 3 && d.consolidatedLowerPaths <= 12 &&
+    d.bodyLowerDetected && d.leftFootDetected && d.rightFootDetected &&
+    (d.footCoverageLeft ?? 0) >= 85 && (d.footCoverageRight ?? 0) >= 85 && (d.bodyLowerCoverage ?? 0) >= 85 &&
+    !d.consolidationFailReason;
 
   return (
     <div className="bg-[#0d0f14] border border-cyan-500/30 rounded-lg p-3 space-y-2">
@@ -186,6 +230,10 @@ export default function RawDarkStrokeTestPanel({ project, config, finalCommands 
               onClick={() => setViewMode('paths_over_mask')}
               className={`flex-1 px-2 py-1.5 rounded-lg text-[10px] font-bold border ${viewMode === 'paths_over_mask' ? 'bg-cyan-900/30 border-cyan-500 text-cyan-300' : 'bg-[#161a23] border-[#2a2d3a] text-slate-500'}`}
             >B) Paths sobre máscara</button>
+            <button
+              onClick={() => setViewMode('consolidated')}
+              className={`flex-1 px-2 py-1.5 rounded-lg text-[10px] font-bold border ${viewMode === 'consolidated' ? 'bg-cyan-900/30 border-cyan-500 text-cyan-300' : 'bg-[#161a23] border-[#2a2d3a] text-slate-500'}`}
+            >C) Consolidados</button>
           </div>
 
           <canvas ref={canvasRef} className="w-full bg-[#0d0f14] border border-[#1e2130] rounded-lg" />
@@ -219,6 +267,13 @@ export default function RawDarkStrokeTestPanel({ project, config, finalCommands 
             <Diag label="lower subpaths" value={d?.lowerRawSubpaths} color={d?.lowerRawSubpaths > 0 ? 'text-emerald-400' : 'text-red-400'} />
             <Diag label="L foot subpaths" value={d?.leftFootRawSubpaths} color={d?.leftFootRawSubpaths > 0 ? 'text-emerald-400' : 'text-red-400'} />
             <Diag label="R foot subpaths" value={d?.rightFootRawSubpaths} color={d?.rightFootRawSubpaths > 0 ? 'text-emerald-400' : 'text-red-400'} />
+            <Diag label="consolidated" value={d?.consolidatedLowerPaths} color={d?.consolidatedLowerPaths >= 3 && d?.consolidatedLowerPaths <= 12 ? 'text-emerald-400' : 'text-red-400'} />
+            <Diag label="body lower" value={d?.bodyLowerDetected ? 'YES' : 'NO'} color={d?.bodyLowerDetected ? 'text-emerald-400' : 'text-red-400'} />
+            <Diag label="L foot" value={d?.leftFootDetected ? 'YES' : 'NO'} color={d?.leftFootDetected ? 'text-emerald-400' : 'text-red-400'} />
+            <Diag label="R foot" value={d?.rightFootDetected ? 'YES' : 'NO'} color={d?.rightFootDetected ? 'text-emerald-400' : 'text-red-400'} />
+            <Diag label="cov L foot" value={(d?.footCoverageLeft ?? 0) + '%'} color={(d?.footCoverageLeft ?? 0) >= 85 ? 'text-emerald-400' : 'text-red-400'} />
+            <Diag label="cov R foot" value={(d?.footCoverageRight ?? 0) + '%'} color={(d?.footCoverageRight ?? 0) >= 85 ? 'text-emerald-400' : 'text-red-400'} />
+            <Diag label="cov body" value={(d?.bodyLowerCoverage ?? 0) + '%'} color={(d?.bodyLowerCoverage ?? 0) >= 85 ? 'text-emerald-400' : 'text-red-400'} />
             <Diag label="oval used" value={d?.ovalBoundaryUsed ? 'YES' : 'NO'} color={d?.ovalBoundaryUsed ? 'text-red-400' : 'text-emerald-400'} />
             <Diag label="largest only" value={d?.largestComponentOnly ? 'YES' : 'NO'} color={d?.largestComponentOnly ? 'text-red-400' : 'text-emerald-400'} />
             <Diag label="scale" value={d?.scale} />

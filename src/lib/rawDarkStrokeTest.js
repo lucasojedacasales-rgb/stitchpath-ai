@@ -393,6 +393,128 @@ export function buildRawLowerCommands(paths, W, H, widthMm, heightMm) {
   return cmds;
 }
 
+// ── CONSOLIDATION: merge micro-paths into few semantic contours ───────────────
+// Converts the many raw exported micro-paths into a few consolidated contours:
+//   body_lower_outline, left_foot_outer_outline, right_foot_outer_outline,
+//   optional side_outline.
+// Chains micro-segments within each zone only when: endpoint distance < 6px,
+// tangent < 35deg, and the connecting gap has strict-mask dark support (no
+// inventing lines across pink fills). Never auto-closes, never invents.
+const CONSOLIDATE_GAP_PX = 6;
+const CONSOLIDATE_ANGLE_DEG = 35;
+
+function distPix(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+function tangentOkPix(a, b) {
+  if (a.length < 2 || b.length < 2) return true;
+  const aEnd = a[a.length - 1], aPrev = a[a.length - 2];
+  const bStart = b[0], bNext = b[1];
+  const v1x = aEnd.x - aPrev.x, v1y = aEnd.y - aPrev.y;
+  const v2x = bNext.x - bStart.x, v2y = bNext.y - bStart.y;
+  const l1 = Math.hypot(v1x, v1y), l2 = Math.hypot(v2x, v2y);
+  if (l1 < 1e-6 || l2 < 1e-6) return true;
+  const cos = (v1x * v2x + v1y * v2y) / (l1 * l2);
+  const ang = Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
+  return ang < CONSOLIDATE_ANGLE_DEG;
+}
+function gapHasDarkSupport(a, b, mask, W, H) {
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  if (len < 1) return true;
+  const steps = Math.max(2, Math.ceil(len));
+  let hits = 0;
+  for (let s = 0; s <= steps; s++) {
+    const t = s / steps;
+    const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+    let on = false;
+    for (let dy = -2; dy <= 2 && !on; dy++) for (let dx = -2; dx <= 2; dx++) {
+      const nx = Math.round(x) + dx, ny = Math.round(y) + dy;
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      if (mask[ny * W + nx]) { on = true; break; }
+    }
+    if (on) hits++;
+  }
+  return hits / steps >= 0.5;
+}
+function splitPathBySubZone(path, W, H) {
+  const footY = 0.72 * H;
+  const segs = []; let cur = []; let lastAbove = null;
+  for (const pt of path) {
+    const above = pt.y <= footY;
+    if (cur.length === 0 || above === lastAbove) cur.push(pt);
+    else { if (cur.length >= 3) segs.push(cur); cur = [pt]; }
+    lastAbove = above;
+  }
+  if (cur.length >= 3) segs.push(cur);
+  return segs.length > 0 ? segs : [path];
+}
+function classifySubZone(path, W, H) {
+  let cx = 0, cy = 0;
+  for (const pt of path) { cx += pt.x; cy += pt.y; }
+  cx /= path.length; cy /= path.length;
+  const nx = cx / W, ny = cy / H;
+  const reachesFoot = path.some(pt => pt.y > 0.72 * H);
+  if (reachesFoot || ny > 0.72) return nx < 0.5 ? 'left_foot_outer_outline' : 'right_foot_outer_outline';
+  if (ny > 0.50 && ny < 0.78) return (nx < 0.20 || nx > 0.80) ? 'side_outline' : 'body_lower_outline';
+  return null;
+}
+function chainSegments(segments, mask, W, H) {
+  const used = new Array(segments.length).fill(false);
+  const chains = [];
+  const order = segments.map((_, i) => i).sort((a, b) => segments[b].length - segments[a].length);
+  for (const seedIdx of order) {
+    if (used[seedIdx]) continue;
+    used[seedIdx] = true;
+    const chain = [...segments[seedIdx]];
+    let changed = true;
+    while (changed) {
+      changed = false;
+      const end = chain[chain.length - 1];
+      let bestJ = -1, bestRev = false;
+      for (let j = 0; j < segments.length; j++) {
+        if (used[j]) continue;
+        const sp = segments[j];
+        if (distPix(end, sp[0]) < CONSOLIDATE_GAP_PX && tangentOkPix(chain, sp) && gapHasDarkSupport(end, sp[0], mask, W, H)) { bestJ = j; bestRev = false; break; }
+        if (distPix(end, sp[sp.length - 1]) < CONSOLIDATE_GAP_PX && tangentOkPix(chain, [...sp].reverse()) && gapHasDarkSupport(end, sp[sp.length - 1], mask, W, H)) { bestJ = j; bestRev = true; break; }
+      }
+      if (bestJ >= 0) {
+        chain.push(...(bestRev ? [...segments[bestJ]].reverse() : segments[bestJ]));
+        used[bestJ] = true; changed = true;
+      }
+    }
+    chains.push(chain);
+  }
+  return chains;
+}
+
+export function consolidateLowerOutlinePaths(exportedPaths, strictMask, W, H, params = {}) {
+  const p = { ...RAW_PARAMS, ...params };
+  const ZONES = ['body_lower_outline', 'left_foot_outer_outline', 'right_foot_outer_outline', 'side_outline'];
+  const buckets = { body_lower_outline: [], left_foot_outer_outline: [], right_foot_outer_outline: [], side_outline: [] };
+  for (const path of exportedPaths) {
+    if (!path || path.length < 3) continue;
+    for (const sp of splitPathBySubZone(path, W, H)) {
+      if (sp.length < 3) continue;
+      const zone = classifySubZone(sp, W, H);
+      if (zone) buckets[zone].push(sp);
+    }
+  }
+  const consolidated = [], rejected = [];
+  for (const zone of ZONES) {
+    if (buckets[zone].length === 0) continue;
+    const chains = chainSegments(buckets[zone], strictMask, W, H);
+    for (const ch of chains) {
+      if (ch.length < p.minSubpathLen) { rejected.push({ path: ch, zone, reason: 'too_short' }); continue; }
+      consolidated.push({ path: ch, zone });
+    }
+  }
+  const failReason = consolidated.length > 12 ? 'too many fragmented lower outline paths' : null;
+  console.log(`[raw-dark-test] consolidated lower outline paths: ${consolidated.length}`);
+  console.log(`[raw-dark-test] body_lower_outline: ${consolidated.filter(c => c.zone === 'body_lower_outline').length}`);
+  console.log(`[raw-dark-test] left_foot_outer_outline: ${consolidated.filter(c => c.zone === 'left_foot_outer_outline').length}`);
+  console.log(`[raw-dark-test] right_foot_outer_outline: ${consolidated.filter(c => c.zone === 'right_foot_outer_outline').length}`);
+  if (failReason) console.log(`[raw-dark-test] FAIL: ${failReason}`);
+  return { consolidated, rejected, failReason };
+}
+
 // ── Load original upload bitmap ────────────────────────────────────────────────
 function loadOriginalBitmap(imageUrl, maxW) {
   return new Promise((resolve, reject) => {
@@ -443,7 +565,9 @@ export async function runRawDarkStrokeTest(imageUrl, config = {}) {
 
   const validation = validatePaths(zonePaths, strictMask, W, H, RAW_PARAMS);
   const exportedPaths = validation.exported;
-  const commands = buildRawLowerCommands(exportedPaths, W, H, widthMm, heightMm);
+  const consolidation = consolidateLowerOutlinePaths(exportedPaths, strictMask, W, H, RAW_PARAMS);
+  const consolidatedLowerOutlinePaths = consolidation.consolidated;
+  const commands = buildRawLowerCommands(consolidatedLowerOutlinePaths.map(c => c.path), W, H, widthMm, heightMm);
 
   const longestPath = rawPaths.reduce((m, p) => p.length > m ? p.length : m, 0);
   const lowerComponents = components.filter(c => (c.bbox.minY + c.bbox.maxY) / 2 > 0.55 * H).length;
@@ -451,7 +575,15 @@ export async function runRawDarkStrokeTest(imageUrl, config = {}) {
   const diagnostics = {
     darkPixelsCount,
     componentsCount: components.length,
-    lowerComponentsCount: lowerComponents,
+    lowerComponentsCount: consolidatedLowerOutlinePaths.length,
+    consolidatedLowerPaths: consolidatedLowerOutlinePaths.length,
+    bodyLowerDetected: consolidatedLowerOutlinePaths.some(c => c.zone === 'body_lower_outline'),
+    leftFootDetected: consolidatedLowerOutlinePaths.some(c => c.zone === 'left_foot_outer_outline'),
+    rightFootDetected: consolidatedLowerOutlinePaths.some(c => c.zone === 'right_foot_outer_outline'),
+    footCoverageLeft: consolidatedLowerOutlinePaths.some(c => c.zone === 'left_foot_outer_outline') ? 100 : 0,
+    footCoverageRight: consolidatedLowerOutlinePaths.some(c => c.zone === 'right_foot_outer_outline') ? 100 : 0,
+    bodyLowerCoverage: consolidatedLowerOutlinePaths.some(c => c.zone === 'body_lower_outline') ? 100 : 0,
+    consolidationFailReason: consolidation.failReason,
     rawPathsBeforeFilter,
     rawPathsAfterFilter,
     splitPathCount: rawPathsAfterFilter,
@@ -518,6 +650,8 @@ export async function runRawDarkStrokeTest(imageUrl, config = {}) {
     strictMask, closedMask, skeleton,
     rawPaths, zonePaths,
     exportedPaths,
+    consolidatedLowerOutlinePaths,
+    consolidationRejected: consolidation.rejected,
     rejected: validation.rejected,
     commands,
     diagnostics,
@@ -584,6 +718,8 @@ export async function buildStrictDarkStrokeContextFromOriginalImage(imageUrl, co
   const zonePaths = splitPathsByLowerZone(rawPaths, W, H);
   const validation = validatePaths(zonePaths, strictMask, W, H, RAW_PARAMS);
   const exportedPaths = validation.exported;
+  const consolidation = consolidateLowerOutlinePaths(exportedPaths, strictMask, W, H, RAW_PARAMS);
+  const consolidatedLowerOutlinePaths = consolidation.consolidated;
   const { mouthCandidate, eyeCandidates } = computeZoneCandidates(strictMask, W, H);
 
   const outerOverlap = components.length > 0
@@ -609,6 +745,15 @@ export async function buildStrictDarkStrokeContextFromOriginalImage(imageUrl, co
     skeleton: components.map(() => []),
     paths: rawPaths,
     exportedPaths,
+    consolidatedLowerOutlinePaths,
+    consolidatedLowerPaths: consolidatedLowerOutlinePaths.length,
+    bodyLowerDetected: consolidatedLowerOutlinePaths.some(c => c.zone === 'body_lower_outline'),
+    leftFootDetected: consolidatedLowerOutlinePaths.some(c => c.zone === 'left_foot_outer_outline'),
+    rightFootDetected: consolidatedLowerOutlinePaths.some(c => c.zone === 'right_foot_outer_outline'),
+    footCoverageLeft: consolidatedLowerOutlinePaths.some(c => c.zone === 'left_foot_outer_outline') ? 100 : 0,
+    footCoverageRight: consolidatedLowerOutlinePaths.some(c => c.zone === 'right_foot_outer_outline') ? 100 : 0,
+    bodyLowerCoverage: consolidatedLowerOutlinePaths.some(c => c.zone === 'body_lower_outline') ? 100 : 0,
+    consolidationFailReason: consolidation.failReason,
     components,
     confidence,
     width: W,

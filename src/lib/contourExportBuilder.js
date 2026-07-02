@@ -297,6 +297,10 @@ export function buildContourObjects(regions, config = {}) {
   console.log(`[dark-mask-source] config.darkStroke exists: ${!!darkStroke}`);
   console.log(`[dark-mask-source] darkStroke source: ${darkStroke?.source || 'none'}`);
   console.log(`[dark-mask-source] exportedPaths: ${darkStroke?.exportedPaths?.length || 0}`);
+  console.log(`[dark-mask-source] consolidatedLowerPaths: ${darkStroke?.consolidatedLowerPaths || 0}`);
+  console.log(`[dark-mask-source] bodyLowerDetected: ${darkStroke?.bodyLowerDetected ? 'YES' : 'NO'}`);
+  console.log(`[dark-mask-source] leftFootDetected: ${darkStroke?.leftFootDetected ? 'YES' : 'NO'}`);
+  console.log(`[dark-mask-source] rightFootDetected: ${darkStroke?.rightFootDetected ? 'YES' : 'NO'}`);
   console.log(`[dark-mask-source] hasLowerContour: ${darkStroke?.hasLowerContour ? 'YES' : 'NO'}`);
   console.log(`[dark-mask-source] hasMouth: ${darkStroke?.hasMouth ? 'YES' : 'NO'}`);
   console.log(`[dark-mask-source] hasEyes: ${darkStroke?.hasEyes ? 'YES' : 'NO'}`);

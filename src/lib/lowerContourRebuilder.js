@@ -262,17 +262,25 @@ function buildLowerContoursFromExportedPaths(darkStroke, config, baseReport) {
   const lowerWidth = config.lowerContourWidth || LOWER_CONTOUR_WIDTH;
   const w = darkStroke.width, h = darkStroke.height;
 
+  const sourcePaths = (darkStroke.consolidatedLowerOutlinePaths && darkStroke.consolidatedLowerOutlinePaths.length)
+    ? darkStroke.consolidatedLowerOutlinePaths
+    : (darkStroke.exportedPaths || []).map(p => ({ path: p, zone: null }));
   const grouped = { lower_body: [], lower_foot_left: [], lower_foot_right: [] };
-  for (const path of darkStroke.exportedPaths) {
+  for (const cp of sourcePaths) {
+    const path = cp.path || cp;
     if (!path || path.length < MIN_CONTOUR_POINTS) continue;
-    const g = classifySubpathByZone(path, w, h);
+    let g;
+    if (cp.zone === 'body_lower_outline' || cp.zone === 'side_outline') g = 'lower_body';
+    else if (cp.zone === 'left_foot_outer_outline') g = 'lower_foot_left';
+    else if (cp.zone === 'right_foot_outer_outline') g = 'lower_foot_right';
+    else g = classifySubpathByZone(path, w, h);
     if (!g) continue;
     const mm = dedupeMm(path.map(p => pixelToMm(p, w, h, widthMm, heightMm)));
     if (mm.length < MIN_CONTOUR_POINTS) continue;
     grouped[g].push(mm);
   }
 
-  console.log(`[lower-outline-fix] using strict exportedPaths: ${darkStroke.exportedPaths.length}`);
+  console.log(`[lower-outline-fix] using consolidated lower outline paths: ${sourcePaths.length}`);
   console.log(`[lower-outline-fix] body=${grouped.lower_body.length}, L=${grouped.lower_foot_left.length}, R=${grouped.lower_foot_right.length}`);
   console.log(`[lower-outline-fix] oval boundary used: false`);
   console.log(`[lower-outline-fix] largest component only: false`);
@@ -448,6 +456,7 @@ export function rebuildLowerOuterContoursFromDarkStroke(regions, config, darkStr
     artificialLowerGeometry: 0,
     pinkBoundaryOutlined: false,
     rebuiltCount: finalContours.length,
+    consolidatedLowerPaths: finalContours.length,
     ovalBoundaryUsed: false,
     largestComponentOnly: false,
     discardedLargestOnlyBug: false,
