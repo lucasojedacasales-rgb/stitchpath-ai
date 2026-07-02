@@ -59,6 +59,9 @@ export function buildStitchObjects(regions, config = {}) {
   const w = config.width_mm || 100;
   const h = config.height_mm || 100;
   const objects = [];
+  const ce01Flag = config.ce01SafeFillMode !== false;
+  console.log(`[ce01-safe-fill-wire] ce01SafeFillMode: ${ce01Flag}`);
+  console.log(`[ce01-safe-fill-wire] config received by planner: ${JSON.stringify({ width_mm: w, height_mm: h, mode: config.mode, ce01SafeFillMode: ce01Flag })}`);
 
   for (const r of regions) {
     if (r.visible === false) continue;
@@ -81,7 +84,7 @@ export function buildStitchObjects(regions, config = {}) {
       angle: r.angle || 45,
       points: mmPoints,
       rawRegion: r,
-      ce01SafeFillMode: config.ce01SafeFillMode === true,
+      ce01SafeFillMode: ce01Flag,
     });
   }
 
@@ -111,6 +114,12 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
 
   // Industrial: optimize object order — color grouping + nearest-neighbor
   const ordered = optimizeObjectOrder(objects);
+  const fillRouted = ordered.filter(o => o.stitch_type === 'fill' && o.ce01SafeFillMode).length;
+  const contourRouted = ordered.filter(o => o.stitch_type === 'contour' || o.stitch_type === 'running_stitch').length;
+  console.log(`[ce01-safe-fill-wire] regions input: ${ordered.length}`);
+  console.log(`[ce01-safe-fill-wire] fill regions routed to CE01 generator: ${fillRouted}`);
+  console.log(`[ce01-safe-fill-wire] contour regions routed to running: ${contourRouted}`);
+  console.log(`[ce01-safe-fill-wire] old fill generator bypassed: ${fillRouted}`);
 
   for (const obj of ordered) {
     if (!obj.points || obj.points.length === 0) continue;
@@ -220,6 +229,20 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
     cmds.push({ type: 'end', x: last.x, y: last.y, color: null });
   } else {
     cmds.push({ type: 'end', x: 0, y: 0, color: null });
+  }
+
+  // ── Source validation ──────────────────────────────────────────────────
+  const sourceStats = {};
+  for (const c of cmds) {
+    if (c.type === 'stitch' || c.type === 'jump') {
+      const s = c.source || 'unknown';
+      sourceStats[s] = (sourceStats[s] || 0) + 1;
+    }
+  }
+  console.log('[ce01-safe-fill-wire] commands regenerated:', cmds.length);
+  console.log('[ce01-safe-fill-wire] command sources:', sourceStats);
+  if (sourceStats.clipped_fill_optimized > 0 && fillRouted > 0) {
+    console.warn('[ce01-safe-fill-wire] WARNING: old fill generator still active — clipped_fill_optimized:', sourceStats.clipped_fill_optimized);
   }
 
   return cmds;

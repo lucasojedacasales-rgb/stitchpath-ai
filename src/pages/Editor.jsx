@@ -40,6 +40,7 @@ const DEFAULT_CONFIG = {
   fill_angle: null, tatami_density: 0.4, vector_engine: 'hybrid',
   useVectorFusion: false,
   contourSafeMode: true,
+  ce01SafeFillMode: true,
 };
 
 export default function Editor() {
