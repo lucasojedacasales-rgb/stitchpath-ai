@@ -179,6 +179,15 @@ export default function Editor() {
     return m;
   }, [finalEmbroideryCommands, regions, editorMachineSettings]);
 
+  // ── Command versioning — bumps whenever finalEmbroideryCommands changes ──
+  const [commandVersion, setCommandVersion] = useState(() => Date.now());
+  useEffect(() => {
+    const v = Date.now();
+    setCommandVersion(v);
+    console.log('[metrics-sync] commandVersion:', v);
+    console.log('[metrics-sync] bottom metrics:', { stitches: unifiedMetrics.stitchCount, jumps: unifiedMetrics.jumpCount, trims: unifiedMetrics.trimCount, colors: unifiedMetrics.colorCount });
+  }, [finalEmbroideryCommands]);
+
   const handleOptimizationApplied = useCallback((commands) => {
     setOptimizedCommandsOverride(commands);
     setCandidateOptimizedCommands(null);
@@ -632,6 +641,12 @@ export default function Editor() {
              <span className="text-slate-600">Panels synced:</span>
              <span className="text-emerald-400 font-bold">YES</span>
              <span className="text-slate-700">·</span>
+             <span className="text-slate-600">Metrics source:</span>
+             <span className="text-emerald-400 font-bold">unified</span>
+             <span className="text-slate-700">·</span>
+             <span className="text-slate-600">Cmd version:</span>
+             <span className="text-slate-400 font-mono">{commandVersion}</span>
+             <span className="text-slate-700">·</span>
              <span className="text-slate-600">{unifiedMetrics.stitchCount} stitches</span>
              <span className="text-slate-600">{unifiedMetrics.jumpCount} jumps</span>
              <span className="text-slate-600">{unifiedMetrics.trimCount} trims</span>
@@ -688,7 +703,7 @@ export default function Editor() {
         </div>
       </div>
 
-      {showExport && <ExportModal project={project} config={config} regions={regions} finalCommands={finalEmbroideryCommands.commands} finalObjects={finalEmbroideryCommands.objects} onClose={() => setShowExport(false)} />}
+      {showExport && <ExportModal project={project} config={config} regions={regions} finalCommands={finalEmbroideryCommands.commands} finalObjects={finalEmbroideryCommands.objects} commandVersion={commandVersion} onClose={() => setShowExport(false)} />}
     </div>);
 
 }

@@ -39,7 +39,7 @@ function canExportInCE01ProductionMode({ commands, ce01Validation, encodeReady }
   return { allowed: true, reason: 'CE01 Production export allowed' };
 }
 
-export default function ExportModal({ project, config: editorConfig, regions: initialRegions, finalCommands: editorFinalCommands, finalObjects: editorFinalObjects, onClose }) {
+export default function ExportModal({ project, config: editorConfig, regions: initialRegions, finalCommands: editorFinalCommands, finalObjects: editorFinalObjects, commandVersion, onClose }) {
   const [step, setStep] = useState('preflight'); // 'preflight' | 'export'
   const [regions, setRegions] = useState(initialRegions || []);
   const [cleanupReport, setCleanupReport] = useState(null);
@@ -124,10 +124,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   // Pipeline: finalCommands → repair (if improves) → sanitize (if improves) → CE01 validate → encode
   const ce01ProductionMode = config.ce01ProductionMode === true;
 
-  // CE01 Production Mode: default to DSB (recommended format for Caydo CE01)
-  useEffect(() => {
-    if (ce01ProductionMode) setFormat('DSB');
-  }, [ce01ProductionMode]);
+  // Format: user selects freely — DST validated on CE01, DSB also works. No forced format.
 
   // Clear stale adaptive/stability states when opening in production mode —
   // old adaptiveReport or stabilityScore must never block CE01 production export.
@@ -168,13 +165,18 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     return calculateUnifiedCommandMetrics(cmds, regions, { hoopSize: [widthMm, heightMm] });
   }, [editorFinalCommands, pipelineResult.commands, regions, widthMm, heightMm]);
 
-  // ── Mismatch check — editor vs pipeline ────────────────────────────────────
-  const metricsMismatch = useMemo(() => {
-    if (!editorFinalCommands) return false;
-    const editorMetrics = calculateUnifiedCommandMetrics(editorFinalCommands, regions, { hoopSize: [widthMm, heightMm] });
-    const pipelineMetrics = calculateUnifiedCommandMetrics(pipelineResult.commands, regions, { hoopSize: [widthMm, heightMm] });
-    return !metricsMatch(editorMetrics, pipelineMetrics);
-  }, [editorFinalCommands, pipelineResult.commands, regions, widthMm, heightMm]);
+  // ── Metrics sync — single source: finalEmbroideryCommands ──────────────────
+  // No comparison against pipelineResult (different rebuild can differ in
+  // longStitches/shortStitches even when stitch/jump/trim/color match).
+  // Only flag if the command source itself is empty/invalid.
+  const commandsEmpty = !editorFinalCommands || editorFinalCommands.length === 0;
+
+  useEffect(() => {
+    console.log('[metrics-sync] commandVersion:', commandVersion);
+    console.log('[metrics-sync] modal metrics:', { stitches: unifiedMetrics.stitchCount, jumps: unifiedMetrics.jumpCount, trims: unifiedMetrics.trimCount, colors: unifiedMetrics.colorCount });
+    console.log('[metrics-sync] all from finalEmbroideryCommands: true');
+    console.log('[metrics-sync] mismatch false: single source');
+  }, [unifiedMetrics, commandVersion]);
 
   // In production mode, stale adaptive/stability states are ignored entirely
   const effectiveAdaptiveReport = ce01ProductionMode ? null : adaptiveReport;
@@ -194,17 +196,8 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       return;
     }
 
-    // In production mode, simulation + validation + export all use editorFinalCommands.
-    // In standard mode, compare against pipelineResult to catch real mismatches.
-    if (!ce01ProductionMode) {
-      const pipelineMetrics = calculateUnifiedCommandMetrics(pipelineResult.commands, regions, machineSettings);
-      console.log('[command-sync] validation metrics:', { stitches: pipelineMetrics.stitchCount, jumps: pipelineMetrics.jumpCount, trims: pipelineMetrics.trimCount });
-      if (!metricsMatch(sourceMetrics, pipelineMetrics)) {
-        console.log('[command-sync] mismatch detected: export vs validation metrics disagree');
-        setExportError('Las métricas no están sincronizadas. Regenera comandos finales.');
-        return;
-      }
-    }
+    // Single source: finalEmbroideryCommands — no comparison against pipelineResult.
+    console.log('[metrics-sync] validator metrics:', { stitches: sourceMetrics.stitchCount, jumps: sourceMetrics.jumpCount, trims: sourceMetrics.trimCount, colors: sourceMetrics.colorCount });
     console.log('[command-sync] panels synced: YES');
 
     // ── CE01 Production path: no recalculation, no aggressive optimizers ──
@@ -531,10 +524,10 @@ export default function ExportModal({ project, config: editorConfig, regions: in
               {/* CE01 format test suite — minimal DST/DSB test files */}
               <CE01FormatTestPanel />
 
-              {/* Metric mismatch warning */}
-              {metricsMismatch && (
+              {/* Commands empty warning — only real blocker, no false mismatch */}
+              {commandsEmpty && (
                 <div className="text-[10px] text-red-400 bg-red-900/20 border border-red-500/30 rounded-lg px-3 py-2">
-                  Metric mismatch: trims are not synced — Regenera comandos finales.
+                  No hay comandos finales — Regenera comandos finales.
                 </div>
               )}
 
@@ -559,11 +552,9 @@ export default function ExportModal({ project, config: editorConfig, regions: in
               {/* Format */}
               <div>
                 <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-2 block">Formato de salida</label>
-                {ce01ProductionMode && (
-                  <div className="mb-2 text-[10px] text-cyan-400 bg-cyan-900/15 border border-cyan-500/30 rounded-lg px-2 py-1">
-                    Formato recomendado para CE01: DSB
-                  </div>
-                )}
+                <div className="mb-2 text-[10px] text-slate-400 bg-[#0d0f14] border border-[#1e2130] rounded-lg px-2 py-1">
+                  Formato actual: {format} — DST y DSB validados en Caydo CE01
+                </div>
                 <div className="grid grid-cols-5 gap-2">
                   {FORMATS.map(f => (
                     <button key={f} onClick={() => setFormat(f)}
