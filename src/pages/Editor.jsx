@@ -15,6 +15,7 @@ import TravelOptimizerPanel from '@/components/editor/TravelOptimizerPanel.jsx';
 import EmbroideryPreview from '@/components/editor/EmbroideryPreview.jsx';
 import ExportModal from '@/components/editor/ExportModal';
 import MachineValidatorPanel from '@/components/editor/MachineValidatorPanel';
+import SewingSimulator from '@/components/editor/SewingSimulator';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
 import MaskCanvas from '@/components/editor/MaskCanvas';
@@ -250,6 +251,7 @@ export default function Editor() {
               { id: 'mask',    label: '✂ Máscara' },
               { id: 'planner', label: '✦ Planner' },
               { id: 'travel',  label: '⚡ Travel' },
+              { id: 'simulate',label: '▶ Simular' },
               { id: 'validate',label: '✓ Validar' },
               { id: 'panel',   label: 'Panel' },
             ].map(({ id, label }) =>
@@ -275,7 +277,7 @@ export default function Editor() {
         </div>
 
         <div className="flex-1 flex flex-col overflow-hidden">
-          {activeTab !== 'mask' && activeTab !== 'planner' && activeTab !== 'preview' && activeTab !== 'travel' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
+          {activeTab !== 'mask' && activeTab !== 'planner' && activeTab !== 'preview' && activeTab !== 'travel' && activeTab !== 'simulate' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
             <SliderControl label="Imagen" value={imageOpacity} onChange={setImageOpacity} color="text-amber-400" />
             <SliderControl label="Puntadas" value={stitchOpacity} onChange={setStitchOpacity} color="text-violet-400" />
             <div className="flex items-center gap-2 ml-auto">
@@ -303,6 +305,20 @@ export default function Editor() {
                     if (!upd) return r;
                     return { ...r, stitch_type: upd.stitch_type, angle: upd.angle, underlay: upd.underlay };
                   }));
+                }}
+              />
+            </div>
+          ) : activeTab === 'simulate' ? (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <SewingSimulator
+                regions={regions}
+                config={config}
+                machineSettings={{
+                  maxStitchLength: 12.1,
+                  maxJumpLength: 12.1,
+                  hoopSize: [config.width_mm || 100, config.height_mm || 100],
+                  designOffset: [0, 0],
+                  trimThreshold: 3.5,
                 }}
               />
             </div>
