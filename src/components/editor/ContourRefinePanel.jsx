@@ -213,14 +213,14 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
         ctx.moveTo(sx, sy);
         ctx.lineTo(ex, ey);
         switch (seg.category) {
-          case 'outer_silhouette': ctx.strokeStyle = '#22c55e'; break;
-          case 'limb_contour': ctx.strokeStyle = '#06b6d4'; break;
-          case 'facial_detail': ctx.strokeStyle = '#3b82f6'; break;
-          case 'eye_detail': ctx.strokeStyle = '#eab308'; break;
-          case 'fill': ctx.strokeStyle = '#a78bfa'; break;
-          case 'fill_boundary': ctx.strokeStyle = '#f97316'; break;
-          case 'travel': ctx.strokeStyle = '#64748b'; ctx.setLineDash([2, 2]); break;
-          case 'artifact': ctx.strokeStyle = '#ef4444'; break;
+          case 'outer_silhouette': ctx.strokeStyle = '#22c55e'; break; // verde
+          case 'limb_contour': ctx.strokeStyle = '#3b82f6'; break;     // azul
+          case 'facial_detail': ctx.strokeStyle = '#eab308'; break;    // amarillo
+          case 'eye_detail': ctx.strokeStyle = '#06b6d4'; break;       // cian
+          case 'fill': ctx.strokeStyle = '#a78bfa'; break;             // morado
+          case 'fill_boundary': ctx.strokeStyle = '#f97316'; break;    // naranja
+          case 'travel': ctx.strokeStyle = '#64748b'; ctx.setLineDash([2, 2]); break; // gris
+          case 'artifact': ctx.strokeStyle = '#ef4444'; break;         // rojo
           default: ctx.strokeStyle = '#94a3b8'; break;
         }
         ctx.stroke();
@@ -408,9 +408,9 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
           {viewMode === 'classification' && (
             <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#22c55e]"></span> Silueta</span>
-              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#06b6d4]"></span> Extremidad</span>
-              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#3b82f6]"></span> Detalle facial</span>
-              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#eab308]"></span> Ojo</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#3b82f6]"></span> Extremidad</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#eab308]"></span> Detalle facial</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#06b6d4]"></span> Ojo</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#a78bfa]"></span> Relleno</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#f97316]"></span> Frontera relleno</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#64748b]"></span> Travel</span>

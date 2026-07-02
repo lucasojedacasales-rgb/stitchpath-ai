@@ -26,7 +26,7 @@ import { generateTieIn, generateTieOff, removeRedundantNodes } from './industria
 import { cleanCartoonOutlineCE01 } from './contourPreset.js';
 import { refineContourPath, removeParallelDuplicates } from './contourPathRefiner.js';
 import { auditContours, computeFootContourCoverage } from './contourAudit.js';
-import { classifySegment, isExportable, validateFinalClassification } from './segmentClassifier.js';
+import { classifyContourSegment, isExportable, ensureMouthDetailExported, removeArtificialContourSegments, validateContourExport } from './segmentClassifier.js';
 
 // ─── Satin / run parameters (from preset) ──────────────────────────────────
 const SATIN_WIDTH_MM   = cleanCartoonOutlineCE01.outerSatinWidthMm;
@@ -147,9 +147,10 @@ export function generateContourStitches(obj, machineSettings = {}) {
   if (stitchType === 'satin') {
     stitches = generateSatinColumnPath(points, widthMm, densityMm, closed);
   } else {
-    // Classify internal contour by name
-    const isMouth = name.includes('mouth') || name.includes('boca') || layerType === 'mouth_detail_run';
-    const isEye = name.includes('eye') || name.includes('ojo');
+    // Classify internal contour by name + new layerType names
+    const isMouth = name.includes('mouth') || name.includes('boca') || 
+                    layerType === 'mouth_detail_run' || layerType === 'facial_detail';
+    const isEye = name.includes('eye') || name.includes('ojo') || layerType === 'eye_detail';
     const isDetail = name.includes('detail') || name.includes('line') ||
                      layerType === 'detail_run';
 
@@ -205,9 +206,14 @@ export function generateContourStitches(obj, machineSettings = {}) {
 
 function getContourPriority(outline) {
   const rc = outline.region_class || outline.layerType || '';
-  if (rc === 'outer_outline') return 90;
+  const parentGroup = (outline.parentGroupName || '').toLowerCase();
+  if (rc === 'outer_outline') {
+    if (parentGroup.includes('foot') || parentGroup.includes('arm')) return 85; // limb
+    return 90; // outer silhouette
+  }
+  if (rc === 'mouth_detail_run' || rc === 'facial_detail') return 75;
+  if (rc === 'detail_run') return 70;
   if (rc === 'inner_outline') return 80;
-  if (rc === 'detail_run' || rc === 'mouth_detail_run') return 70;
   return 85;
 }
 
@@ -314,28 +320,77 @@ export function buildContourObjects(regions, config = {}) {
   // ── Remove parallel duplicates ──
   objects = removeParallelDuplicates(objects, preset.parallelDedupIoU);
 
-  // ── Semantic classification — only export valid categories ──
-  const classified = objects.map(obj => ({ obj, category: classifySegment(obj) }));
-  const exportable = classified.filter(c => isExportable(c.category));
-  const excluded = classified.filter(c => !isExportable(c.category));
+  // ── Central semantic classification — classifyContourSegment ──
+  const classifiedCtx = { regions: classifiedRegions, config };
+  const classified = objects.map(obj => ({
+    obj,
+    classification: classifyContourSegment(obj, classifiedCtx),
+  }));
 
+  // Mandatory logs
+  const counts = { outer_silhouette: 0, limb_contour: 0, facial_detail: 0, eye_detail: 0, fill_boundary: 0, travel: 0, artifact: 0 };
+  for (const c of classified) counts[c.classification.className] = (counts[c.classification.className] || 0) + 1;
+  console.log(`[contour-classifier] total candidates: ${classified.length}`);
+  console.log(`[contour-classifier] outer_silhouette: ${counts.outer_silhouette}`);
+  console.log(`[contour-classifier] limb_contour: ${counts.limb_contour}`);
+  console.log(`[contour-classifier] facial_detail: ${counts.facial_detail}`);
+  console.log(`[contour-classifier] eye_detail: ${counts.eye_detail}`);
+  console.log(`[contour-classifier] fill_boundary skipped: ${counts.fill_boundary}`);
+  console.log(`[contour-classifier] travel skipped: ${counts.travel}`);
+  console.log(`[contour-classifier] artifact skipped: ${counts.artifact}`);
+
+  // ── Filter: only export valid categories ──
+  const exportable = classified.filter(c => c.classification.exportable);
+  const excluded = classified.filter(c => !c.classification.exportable);
   for (const c of excluded) {
-    console.log(`[segment-classifier] excluded ${c.category}: ${c.obj.name}`);
+    console.log(`[contour-classifier] excluded ${c.classification.className}: ${c.obj.name} — ${c.classification.reason}`);
   }
+
+  // ── Update priority + layerType + openCurve based on classification ──
   for (const c of exportable) {
-    console.log(`[segment-classifier] exported ${c.category}: ${c.obj.name}`);
+    const cls = c.classification;
+    const obj = c.obj;
+    // Priority: eye(70) < mouth(75) < limb(85) < outer(90)
+    if (cls.className === 'outer_silhouette') obj.priority = 90;
+    else if (cls.className === 'limb_contour') obj.priority = 85;
+    else if (cls.className === 'facial_detail') obj.priority = 75;
+    else if (cls.className === 'eye_detail') obj.priority = 70;
+    // Set layerType to classified name for downstream processing
+    obj.layerType = cls.className;
+    // Open curve protection — no auto-close for facial/eye details
+    if (cls.openCurve) {
+      obj.rawRegion.closed = false;
+      // Remove closing point if it was added by refineContourPath
+      const pts = obj.points;
+      if (pts.length >= 3) {
+        const first = pts[0], last = pts[pts.length - 1];
+        if (Math.hypot(first[0] - last[0], first[1] - last[1]) < 0.01) {
+          obj.points = pts.slice(0, -1);
+        }
+      }
+    }
+    // Set stitch type from classification
+    if (cls.stitchType === 'triple_run') obj.stitch_type = 'running_stitch';
+    else if (cls.stitchType === 'satin') obj.stitch_type = 'satin';
   }
 
   objects = exportable.map(c => c.obj);
 
-  // Store classification for panel + final validation
+  // ── Remove artificial contour segments ──
+  objects = removeArtificialContourSegments(objects);
+
+  // ── Mouth protection — ensure mouth is exported as facial_detail ──
+  objects = ensureMouthDetailExported(objects, classifiedRegions, { config });
+
+  // Store classification for panel
   _lastSegmentClassification = {
     classified: classified.map(c => ({
       name: c.obj.name,
-      category: c.category,
-      exportable: isExportable(c.category),
+      category: c.classification.className,
+      exportable: c.classification.exportable,
+      reason: c.classification.reason,
     })),
-    exportableCount: exportable.length,
+    exportableCount: objects.length,
     excludedCount: excluded.length,
   };
 
@@ -379,16 +434,16 @@ export function countContourStitches(commands) {
     const lt = (c.layerType || '').toLowerCase();
     const st = (c.stitchType || '').toLowerCase();
 
-    if (rid.includes('outer') || lt === 'outer_outline') {
+    if (rid.includes('outer') || lt === 'outer_outline' || lt === 'outer_silhouette' || lt === 'limb_contour') {
       outerOutlineStitches++;
       if (outerOutlineOrder < 0) outerOutlineOrder = i;
       if (!outerOutlineColor) outerOutlineColor = c.color;
-    } else if (rid.includes('inner') || lt === 'inner_outline') {
+    } else if (rid.includes('inner') || lt === 'inner_outline' || lt === 'fill_boundary') {
       innerOutlineStitches++;
       innerRegionIds.add(c.regionId);
-    } else if (rid.includes('mouth')) {
+    } else if (rid.includes('mouth') || lt === 'facial_detail') {
       mouthStitches++;
-    } else if (rid.includes('detail') || lt === 'detail_run' || st === 'running_stitch' && rid.includes('outline')) {
+    } else if (rid.includes('eye') || lt === 'eye_detail' || rid.includes('detail') || lt === 'detail_run') {
       detailRunStitches++;
       detailRegionIds.add(c.regionId);
     }
@@ -451,6 +506,15 @@ export function contoursPreservedInOptimization(before, after) {
 export function getContourExportReport(regions, commands) {
   const counts = countContourStitches(commands);
   const audit = _lastContourAudit;
+
+  // ── Final validation — check all acceptance criteria ──
+  if (_lastSegmentClassification) {
+    const classified = _lastSegmentClassification.classified.map(c => ({
+      obj: { name: c.name, rawRegion: {} },
+      classification: { className: c.category, exportable: c.exportable },
+    }));
+    validateContourExport(classified, commands, regions);
+  }
 
   // ── Travel contamination: count contour-colored stitches > 3.5mm ──
   let travelContamination = 0;

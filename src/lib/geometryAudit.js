@@ -184,9 +184,13 @@ export function classifyStitchSegments(commands) {
           category = 'facial_detail';
         } else if (layerType.includes('eye') || regionId.includes('eye')) {
           category = 'eye_detail';
-        } else if (layerType.includes('detail')) {
+        } else if (layerType === 'facial_detail') {
           category = 'facial_detail';
-        } else if (layerType.includes('outer_outline') || stitchType === 'satin') {
+        } else if (layerType === 'eye_detail') {
+          category = 'eye_detail';
+        } else if (layerType === 'limb_contour') {
+          category = 'limb_contour';
+        } else if (layerType === 'outer_silhouette' || layerType.includes('outer_outline') || stitchType === 'satin') {
           category = 'outer_silhouette';
         } else if (layerType.includes('inner_outline')) {
           category = 'fill_boundary';
