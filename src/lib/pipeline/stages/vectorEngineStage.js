@@ -23,6 +23,7 @@ import {
   clampColorToPalette,
   diagnosticValidate,
 } from '../regionNormalize.js';
+import { runVectorizationFusion } from '../../vectorizationFusionEngine.js';
 
 export async function runVectorEngine(ctx) {
   const strategy = getModeStrategy(ctx.config.mode || 'hybrid');
@@ -31,6 +32,54 @@ export async function runVectorEngine(ctx) {
   const aiStrategy = ctx.aiStrategy || null;
 
   console.log(`[vector] contours detected: ${ctx.contours?.regions?.length ?? 0}`);
+
+  // ── Opt-in: Vectorization Fusion Engine ──────────────────────────────
+  // When enabled, use the fusion orchestrator instead of the standard flow.
+  // Falls back to the standard flow if fusion fails or returns 0 regions.
+  if (cfg.useVectorFusion === true) {
+    try {
+      const fusionResult = await runVectorizationFusion({
+        imageData: ctx.enhanced?.enhancedUrl || ctx.imageUrl,
+        ctx,
+        config: cfg,
+      });
+
+      if (fusionResult.regions.length > 0) {
+        // Apply the same background filter + color clamping as the standard flow
+        const contourPalette = (ctx.contours?.regions || [])
+          .map(r => r.hex || r.color)
+          .filter(Boolean);
+
+        const normalized = fusionResult.regions
+          .map(r => normalizeRegionForPipeline(r, ctx, cfg))
+          .filter(Boolean)
+          .map(r => ({
+            ...r,
+            color: clampColorToPalette(r.color, contourPalette),
+            hex: clampColorToPalette(r.color, contourPalette),
+          }));
+
+        const filtered = filterBackgroundRegions(normalized, ctx);
+
+        if (filtered.length > 0) {
+          ctx.vectorRegions = filtered;
+          ctx._fusionMeta = {
+            selectedEngine: fusionResult.selectedEngine,
+            confidence: fusionResult.confidence,
+            report: fusionResult.report,
+          };
+          diagnosticValidate(filtered, ctx);
+          console.log(`[vector] fusion engine → ${filtered.length} regions (engine: ${fusionResult.selectedEngine})`);
+          return;
+        }
+      }
+
+      console.warn('[vector] fusion engine returned 0 valid regions — falling back to standard flow');
+    } catch (err) {
+      console.error('[vector] fusion engine failed, falling back:', err.message);
+    }
+    // Fall through to standard flow
+  }
 
   // Real color palette from contour engine — the only source of truth for color
   const contourPalette = (ctx.contours?.regions || [])

@@ -38,6 +38,7 @@ const DEFAULT_CONFIG = {
   fabric_type: 'Algodón', width_mm: 100, height_mm: 100, color_count: 6,
   mode: 'hybrid', remove_bg: false, tension_comp: 0.5,
   fill_angle: null, tatami_density: 0.4, vector_engine: 'hybrid',
+  useVectorFusion: false,
 };
 
 export default function Editor() {
