@@ -15,6 +15,7 @@ import TravelOptimizerPanel from '@/components/editor/TravelOptimizerPanel.jsx';
 import EmbroideryPreview from '@/components/editor/EmbroideryPreview.jsx';
 import ExportModal from '@/components/editor/ExportModal';
 import MachineValidatorPanel from '@/components/editor/MachineValidatorPanel';
+import StabilityOptimizerPanel from '@/components/editor/StabilityOptimizerPanel';
 import SewingSimulator from '@/components/editor/SewingSimulator';
 import MachineSimulator from '@/components/editor/MachineSimulator';
 import SimulationReportPanel from '@/components/editor/SimulationReportPanel';
@@ -335,7 +336,19 @@ export default function Editor() {
             </div>
           ) : activeTab === 'validate' ? (
             <div className="flex-1 overflow-y-auto p-4">
-              <div className="max-w-md mx-auto">
+              <div className="max-w-md mx-auto space-y-4">
+                <StabilityOptimizerPanel
+                  regions={regions}
+                  config={config}
+                  machineSettings={{
+                    maxStitchLength: 12.1,
+                    maxJumpLength: 12.1,
+                    hoopSize: [config.width_mm || 100, config.height_mm || 100],
+                    designOffset: [0, 0],
+                    trimThreshold: 3.5,
+                  }}
+                  onOptimized={handleRegionsUpdate}
+                />
                 <div className="flex items-center gap-2 mb-3">
                   <ShieldCheck className="w-4 h-4 text-violet-400" />
                   <h3 className="text-sm font-bold text-white">Validación de Máquina Doméstica</h3>
