@@ -161,8 +161,9 @@ function optimizeColorSequence(regionPlans) {
   // Sort by layer first (fill=3 < satin=2 < run=1), then by EIE travelOrder when available,
   // then group same-layer same-color together to minimize changes.
   const layerSorted = [...regionPlans].sort((a, b) => {
-    const la = LAYER_ORDER[a.stitchType] || 0;
-    const lb = LAYER_ORDER[b.stitchType] || 0;
+    // Use layerOrder from the plan (respects region_class when available)
+    const la = a.layerOrder || LAYER_ORDER[a.stitchType] || 0;
+    const lb = b.layerOrder || LAYER_ORDER[b.stitchType] || 0;
     if (la !== lb) return la - lb; // base layers first
     // Within same layer: group by color to minimize thread changes
     if (a.color !== b.color) return a.color.localeCompare(b.color);
