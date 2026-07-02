@@ -19,6 +19,9 @@ import StabilityOptimizerPanel from '@/components/editor/StabilityOptimizerPanel
 import SewingSimulator from '@/components/editor/SewingSimulator';
 import MachineSimulator from '@/components/editor/MachineSimulator';
 import SimulationReportPanel from '@/components/editor/SimulationReportPanel';
+import FinalLookSimulator from '@/components/editor/FinalLookSimulator.jsx';
+import DetailDiagnosticPanel from '@/components/editor/DetailDiagnosticPanel.jsx';
+import AestheticPreservationPanel from '@/components/editor/AestheticPreservationPanel.jsx';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
 import MaskToolbar from '@/components/editor/MaskToolbar';
 import MaskCanvas from '@/components/editor/MaskCanvas';
@@ -44,6 +47,8 @@ const DEFAULT_CONFIG = {
   contourSafeMode: true,
   ce01SafeFillMode: true,
   ce01ProductionMode: true,
+  preserveAestheticDetails: true,
+  generateOutlines: true,
 };
 
 export default function Editor() {
@@ -72,6 +77,10 @@ export default function Editor() {
   const [preprocessedUrl, setPreprocessedUrl] = useState(null);
   const [pathMetrics, setPathMetrics] = useState(null);
   const [processingError, setProcessingError] = useState(null);
+  const [detailReport, setDetailReport] = useState(null);
+  const [classReport, setClassReport] = useState(null);
+  const [centerlineReport, setCenterlineReport] = useState(null);
+  const [outlineReport, setOutlineReport] = useState(null);
   const timerRef = useRef(null);
 
   const maskCanvasRef = useRef(null);
@@ -216,6 +225,10 @@ export default function Editor() {
     setSelectedRegionId(null);
     setPathMetrics(null);
     setProcessingError(null);
+    setDetailReport(null);
+    setClassReport(null);
+    setCenterlineReport(null);
+    setOutlineReport(null);
     setPreprocessedUrl(null);
     setShowExport(false);
     setActiveTab('editor');
@@ -259,6 +272,10 @@ export default function Editor() {
 
       setRegions(enrichedRegions);
       setPathMetrics(ctx.pathMetrics || null);
+      setDetailReport(ctx.detailReport || null);
+      setClassReport(ctx.classReport || null);
+      setCenterlineReport(ctx.centerlineReport || null);
+      setOutlineReport(ctx.outlineReport || null);
       setStep(3);
       setShowDecisionPanel(false);
 
@@ -370,13 +387,15 @@ export default function Editor() {
         <div className="flex items-center justify-between px-4 py-1.5 border-t border-[#1a1d27]">
           <div className="flex items-center gap-1">
             {[
-              { id: 'editor',  label: 'Editor' },
-              { id: 'mask',    label: '✂ Máscara' },
-              { id: 'planner', label: '✦ Planner' },
-              { id: 'travel',  label: '⚡ Travel' },
-              { id: 'simulate',label: '▶ Simular' },
-              { id: 'validate',label: '✓ Validar' },
-              { id: 'panel',   label: 'Panel' },
+              { id: 'editor',    label: 'Editor' },
+              { id: 'mask',      label: '✂ Máscara' },
+              { id: 'planner',   label: '✦ Planner' },
+              { id: 'travel',    label: '⚡ Travel' },
+              { id: 'simulate',  label: '▶ Simular' },
+              { id: 'finallook', label: '🎨 Final' },
+              { id: 'validate',  label: '✓ Validar' },
+              { id: 'details',   label: '🔍 Detalles' },
+              { id: 'panel',     label: 'Panel' },
             ].map(({ id, label }) =>
               <button key={id} onClick={() => setActiveTab(id)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
                 {label}
@@ -394,13 +413,14 @@ export default function Editor() {
       <div className="flex-1 flex overflow-hidden">
         <div className="w-64 flex-shrink-0 border-r border-[#1e2130] overflow-y-auto space-y-4 p-4">
           <ConfigPanel config={config} onChange={setConfig} regions={regions} selectedRegionIds={selectedRegionId ? [selectedRegionId] : []} onRegionsUpdate={handleRegionsUpdate} />
+          <AestheticPreservationPanel config={config} onChange={setConfig} />
           <QualityAnalysisPanel projectId={project?.id} onAnalysisComplete={(analysis) => console.log('Quality:', analysis)} />
           <PreprocessingPanel settings={preprocessSettings} onChange={setPreprocessSettings} />
           <NeedlePathPanel regions={regions} pathMetrics={pathMetrics} config={config} />
         </div>
 
         <div className="flex-1 flex flex-col overflow-hidden">
-          {activeTab !== 'mask' && activeTab !== 'planner' && activeTab !== 'travel' && activeTab !== 'simulate' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
+          {activeTab !== 'mask' && activeTab !== 'planner' && activeTab !== 'travel' && activeTab !== 'simulate' && activeTab !== 'finallook' && activeTab !== 'details' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
             <SliderControl label="Imagen" value={imageOpacity} onChange={setImageOpacity} color="text-amber-400" />
             <SliderControl label="Puntadas" value={stitchOpacity} onChange={setStitchOpacity} color="text-violet-400" />
             <div className="flex items-center gap-2 ml-auto">
@@ -448,6 +468,31 @@ export default function Editor() {
                   finalCommands={finalEmbroideryCommands.commands}
                   finalObjects={finalEmbroideryCommands.objects}
                   onRegionsRepaired={handleRegionsUpdate}
+                />
+              </div>
+            </div>
+          ) : activeTab === 'finallook' ? (
+            <div className="flex-1 flex overflow-hidden">
+              <div className="flex-1 flex flex-col overflow-hidden">
+                <FinalLookSimulator
+                  regions={regions}
+                  config={config}
+                  machineSettings={editorMachineSettings}
+                  detailReport={detailReport}
+                />
+              </div>
+            </div>
+          ) : activeTab === 'details' ? (
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="max-w-md mx-auto space-y-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-sm font-bold text-white">🔍 Diagnóstico de Detalles</span>
+                </div>
+                <DetailDiagnosticPanel
+                  detailReport={detailReport}
+                  classReport={classReport}
+                  centerlineReport={centerlineReport}
+                  outlineReport={outlineReport}
                 />
               </div>
             </div>

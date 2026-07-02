@@ -249,41 +249,55 @@ export function optimizeObjectOrder(objects) {
   if (count === 0) return objects;
   gcx /= count; gcy /= count;
 
-  // Group by color
-  const colorGroups = new Map();
+  // ── Priority-layered ordering ───────────────────────────────────────────
+  // Sort by priority FIRST (fills=2 → micro_fills=4 → details=5 → inner=6 → outer=7)
+  // This ensures embroidery order: fills before details before outlines.
+  // Within each priority layer: group by color, then nearest-neighbor.
+  const priorityLayers = new Map();
   for (const obj of objects) {
-    const color = obj.color || '#000000';
-    if (!colorGroups.has(color)) colorGroups.set(color, []);
-    colorGroups.get(color).push(obj);
+    const p = obj.priority || 5;
+    if (!priorityLayers.has(p)) priorityLayers.set(p, []);
+    priorityLayers.get(p).push(obj);
   }
 
-  // Within each color: sort by distance from design center (interior→exterior)
-  // then nearest-neighbor for objects at similar distances
   const ordered = [];
   let lastPos = [0, 0];
 
-  for (const [, group] of colorGroups) {
-    // Sort by centroid distance from design center (interior first)
-    const sorted = [...group].sort((a, b) => {
-      const da = a._centroid ? Math.hypot(a._centroid[0] - gcx, a._centroid[1] - gcy) : Infinity;
-      const db = b._centroid ? Math.hypot(b._centroid[0] - gcx, b._centroid[1] - gcy) : Infinity;
-      return da - db;
-    });
+  const sortedPriorities = [...priorityLayers.keys()].sort((a, b) => a - b);
+  for (const pri of sortedPriorities) {
+    const layer = priorityLayers.get(pri);
 
-    // Nearest-neighbor within each spatial layer (±5mm tolerance)
-    const remaining = [...sorted];
-    while (remaining.length > 0) {
-      let bestIdx = 0, bestDist = Infinity;
-      for (let i = 0; i < remaining.length; i++) {
-        const pts = remaining[i].points;
-        if (!pts || pts.length === 0) continue;
-        const d = Math.hypot(pts[0][0] - lastPos[0], pts[0][1] - lastPos[1]);
-        if (d < bestDist) { bestDist = d; bestIdx = i; }
-      }
-      const next = remaining.splice(bestIdx, 1)[0];
-      ordered.push(next);
-      if (next.points && next.points.length > 0) {
-        lastPos = next.points[next.points.length - 1];
+    // Group by color (within priority layer)
+    const colorGroups = new Map();
+    for (const obj of layer) {
+      const color = obj.color || '#000000';
+      if (!colorGroups.has(color)) colorGroups.set(color, []);
+      colorGroups.get(color).push(obj);
+    }
+
+    for (const [, group] of colorGroups) {
+      // Sort by centroid distance from design center (interior first)
+      const sorted = [...group].sort((a, b) => {
+        const da = a._centroid ? Math.hypot(a._centroid[0] - gcx, a._centroid[1] - gcy) : Infinity;
+        const db = b._centroid ? Math.hypot(b._centroid[0] - gcx, b._centroid[1] - gcy) : Infinity;
+        return da - db;
+      });
+
+      // Nearest-neighbor within spatial layer
+      const remaining = [...sorted];
+      while (remaining.length > 0) {
+        let bestIdx = 0, bestDist = Infinity;
+        for (let i = 0; i < remaining.length; i++) {
+          const pts = remaining[i].points;
+          if (!pts || pts.length === 0) continue;
+          const d = Math.hypot(pts[0][0] - lastPos[0], pts[0][1] - lastPos[1]);
+          if (d < bestDist) { bestDist = d; bestIdx = i; }
+        }
+        const next = remaining.splice(bestIdx, 1)[0];
+        ordered.push(next);
+        if (next.points && next.points.length > 0) {
+          lastPos = next.points[next.points.length - 1];
+        }
       }
     }
   }

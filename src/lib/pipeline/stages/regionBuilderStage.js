@@ -9,6 +9,10 @@ import { getModeStrategy } from '../../digitizeModes.js';
 import { normalizeRegionForPipeline, filterBackgroundRegions } from '../regionNormalize.js';
 import { buildImageSampler, separateFillsAndContours } from '../../contourFromFill.js';
 import { separateFillsAndContoursSafe } from '../../contourSafeMode.js';
+import { preserveDetails } from '../../detailPreservation.js';
+import { classifyAllRegions } from '../../regionClassifier.js';
+import { processDetailRegions } from '../../centerlineExtractor.js';
+import { generateOutlines } from '../../outlineGenerator.js';
 
 export async function runRegionBuilder(ctx) {
   if (!ctx.vectorRegions || ctx.vectorRegions.length === 0) {
@@ -75,7 +79,24 @@ export async function runRegionBuilder(ctx) {
   // separateFillsAndContours() — contours are built from fill boundaries,
   // not from edgeMap fragments. See below.
 
-  const enriched = enrichAllRegions(named, width_mm, height_mm, fabric_type, ctx._useAdaptiveEngine);
+  const enrichedRaw = enrichAllRegions(named, width_mm, height_mm, fabric_type, ctx._useAdaptiveEngine);
+
+  // ── Detail preservation: score every region for visual importance ────────
+  // Preserved details (detailScore >= 55) are NEVER removed, merged, or absorbed.
+  const { regions: preservedRegions, report: detailReport } = preserveDetails(enrichedRaw, ctx.config);
+  ctx.detailReport = detailReport;
+
+  // ── Region classification: assign semantic classes + priorities ──────────
+  // Classes: outer_outline, inner_outline, detail_run, detail_satin, micro_fill, decorative_detail, fill
+  const { regions: classifiedRegions, report: classReport } = classifyAllRegions(preservedRegions, ctx.config);
+  ctx.classReport = classReport;
+
+  // ── Centerline extraction: convert thin details to run stitch paths ──────
+  // Mouth, eyebrows, facial lines → centerline + run stitch metadata
+  const { regions: processedRegions, report: centerlineReport } = processDetailRegions(classifiedRegions, ctx.config);
+  ctx.centerlineReport = centerlineReport;
+
+  const enriched = processedRegions;
 
   // ── Contour separation ───────────────────────────────────────────────────
   // Safe mode: clean outlines from fill boundaries only, no edgeMap, no micro-fragments.
@@ -105,21 +126,31 @@ export async function runRegionBuilder(ctx) {
 
   // Store contour objects separately for the canvas and stitch planner
   ctx.contourObjects = contours;
-  // ctx.regions contains only fill objects (contour objects are in ctx.contourObjects)
-  // but we also keep contour objects in regions for backward compatibility with the canvas,
-  // marked with type: "contour" so the renderer can distinguish them.
-  ctx.regions = [...fills, ...contours.map(c => ({
+
+  // ── Generate independent outline objects (outer silhouette + inner outlines) ──
+  // These are real embroidery entities, not canvas borders. They get their own
+  // stitch type, color, and priority (outer = 7 = sewn last for max definition).
+  const { outlines, report: outlineReport } = generateOutlines(enriched, ctx.config);
+  ctx.outlineReport = outlineReport;
+
+  // ctx.regions contains fill objects + contour objects + generated outlines.
+  // Contour objects from safe mode + generated outlines are all type: "contour"
+  // with region_class assigned for the stitch planner to sequence correctly.
+  const contourObjects = [...contours, ...outlines].map(c => ({
     ...c,
-    // Canvas-compatible fields
     visible: true,
     stitch_count: c.stitch_type === 'satin'
       ? Math.round(shoelaceArea(c.contour_points) * 100 * 2 / (c.contour_width_mm || 1.2))
       : Math.round(perimeterNorm(c.contour_points) * 100 / 1.8),
     area_mm2: shoelaceArea(c.contour_points) * width_mm * height_mm,
     perimeter_mm: perimeterNorm(c.contour_points) * Math.max(width_mm, height_mm),
-  }))];
+  }));
 
-  console.log(`[RegionBuilder] Regiones finales: ${ctx.regions.length} (${fills.length} fills + ${contours.length} contours)`);
+  ctx.regions = [...fills, ...contourObjects];
+
+  console.log(`[RegionBuilder] Regiones finales: ${ctx.regions.length} (${fills.length} fills + ${contours.length} safe contours + ${outlines.length} generated outlines)`);
+  console.log(`[RegionBuilder] Detalles preservados: ${detailReport.preserved}/${detailReport.total}`);
+  console.log(`[RegionBuilder] Centerlines extraídas: ${centerlineReport.totalDetails}`);
 }
 
 // ─── Contour geometry helpers (for contour object production stats) ───────────

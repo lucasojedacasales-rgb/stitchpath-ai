@@ -80,6 +80,8 @@ export function buildSafeOutlineFromFill(region, options = {}) {
     type: 'contour',
     stitch_type: 'running_stitch',
     contour_class: 'outer_silhouette',
+    region_class: 'outer_outline',
+    priority: 7,
     contour_points: contour,
     path_points: contour,
     hex: color,
@@ -117,7 +119,14 @@ export function separateFillsAndContoursSafe(regions, config = {}) {
   console.log(`[contour-safe] fill regions input: ${regions.length}`);
 
   // ── 1. Identify black border-like regions ────────────────────────────────
+  // Skip regions already classified by regionClassifier (detail_run, etc.)
+  // — they have their own stitch_type and should not be re-processed here.
+  const skipClassified = (r) => {
+    const cls = r.region_class;
+    return cls && cls !== 'fill' && cls !== 'outer_outline' && cls !== 'inner_outline';
+  };
   const blackCandidates = regions.filter(r => {
+    if (skipClassified(r)) return false;
     const color = r.color || r.hex || '#888888';
     const { r: rr, g, b } = hexToRgb(color);
     return (rr + g + b) / 3 < DARK_LUM_THRESHOLD;
@@ -140,11 +149,16 @@ export function separateFillsAndContoursSafe(regions, config = {}) {
   const detailsRejected = remainingDark.length - detailRegions.length;
 
   // ── 3. Remaining fills (exclude borders + whitelisted details) ───────────
+  // Respect region_class + detailPreserved from the new classifier — don't
+  // force everything to 'fill'. Preserved details keep their assigned stitch_type.
   const allContourIds = new Set([...borderIds, ...detailIds]);
   const fills = regions.filter(r => !allContourIds.has(r.id));
   for (const f of fills) {
-    f.type = 'fill';
-    f.stitch_type = 'fill';
+    // Only force fill type for regions without a specific region_class
+    if (!f.region_class || f.region_class === 'fill') {
+      f.type = 'fill';
+      f.stitch_type = 'fill';
+    }
     f.contour = null;
   }
 
@@ -290,6 +304,8 @@ function convertDarkRegionToSafeContour(region, fills, role = 'outline') {
     type: 'contour',
     stitch_type: 'running_stitch',
     contour_class: role === 'detail' ? 'inner_detail' : 'outer_silhouette',
+    region_class: role === 'detail' ? 'inner_outline' : 'outer_outline',
+    priority: role === 'detail' ? 6 : 7,
     contour_points: contour,
     path_points: contour,
     hex: color,

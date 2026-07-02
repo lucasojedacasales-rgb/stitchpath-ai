@@ -45,6 +45,18 @@ const LAYER_ORDER = {
   detail:          4,
 };
 
+// ─── Region class → layer order (used when region_class is set) ───────────────
+// Ensures embroidery order: fills → micro_fills → details → inner outlines → outer outline
+const CLASS_LAYER_ORDER = {
+  fill:              3,  // large fills first
+  micro_fill:        4,  // small closed details after large fills
+  detail_run:        5,  // mouth, facial lines — on top of fills
+  detail_satin:      5,  // narrow satin details
+  decorative_detail: 5,  // other preserved details
+  inner_outline:     6,  // inner borders after details
+  outer_outline:     7,  // outer silhouette last — maximum definition
+};
+
 // ─── Clasificador de región ───────────────────────────────────────────────────
 // When the Adaptive Engine has already processed the region (region.adaptive === true),
 // we trust its stitch_type, fill_angle, density, stitch_length_mm, and priority directly.
@@ -264,7 +276,16 @@ export function generateStitchPlan(regions, config = {}) {
   const regionPlans = regions
     .filter(r => r.path_points?.length >= 3)
     .map(region => {
-      const classification = classifyRegion(region);
+      // When region_class is set (by regionClassifier.js), use it directly
+      // for layer ordering instead of re-classifying by stitch type.
+      const classification = region.region_class
+        ? {
+            type:       region.stitch_type,
+            reason:     region.classification_reason || `Class: ${region.region_class}`,
+            confidence: 0.95,
+            class:      region.region_class,
+          }
+        : classifyRegion(region);
 
       // Angle: trust Adaptive Engine / contourTracer PCA, fallback to recompute
       const angle = resolveAngle(region);
@@ -297,6 +318,11 @@ export function generateStitchPlan(regions, config = {}) {
         );
       }
 
+      // Layer order: prefer region_class mapping (new system) over stitch type
+      const layerOrder = classification.class
+        ? (CLASS_LAYER_ORDER[classification.class] || 3)
+        : (LAYER_ORDER[classification.type] || 0);
+
       return {
         regionId:          region.id,
         regionName:        region.name,
@@ -311,7 +337,7 @@ export function generateStitchPlan(regions, config = {}) {
         pullCompensation:  region.pull_compensation || 0,
         underlay,
         estimatedStitches,
-        layerOrder:        LAYER_ORDER[classification.type] || 0,
+        layerOrder,
         adaptive:          region.adaptive || false,
       };
     });
