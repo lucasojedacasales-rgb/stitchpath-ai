@@ -12,6 +12,7 @@
 import { traceContoursProf } from '../../contourEngine.js';
 import { getModeStrategy }   from '../../digitizeModes.js';
 import { buildContoursForRegions } from '../../contourPathBuilder.js';
+import { buildEdgeMap } from '../../edgeSnapper.js';
 
 // Per-mode quality presets — map strategy knobs to contourEngine options.
 // RDP epsilons raised across all modes to prevent sub-pixel micro-segmentation
@@ -53,14 +54,21 @@ export async function runContourEngine(ctx) {
   const contourRegions = ctx.contours?.regions || [];
   console.log(`[ContourEngine] Contornos detectados: ${contourRegions.length}`);
 
+  // ── Build edge map from the ORIGINAL image (not the color-quantized mask) ─
+  // This is used to snap inferred contours to the REAL visible border,
+  // preventing offsets from color quantization and anti-aliasing.
+  ctx.edgeMap = await buildEdgeMap(sourceUrl);
+  console.log(`[ContourEngine] Edge map construido: ${ctx.edgeMap ? ctx.edgeMap.width + '×' + ctx.edgeMap.height : 'falló'}`);
+
   // ── Build dedicated contour paths (separate from fill path_points) ──────
   // Each region gets region.contour = { contour_points, closed, width, color, type }
+  // Contours are snapped to real edges via the edge map.
   if (contourRegions.length > 0) {
     // Ensure each region has an id (builder uses id as key)
     for (const r of contourRegions) {
       if (!r.id) r.id = `contour_${Math.random().toString(36).slice(2, 9)}`;
     }
-    const { contours } = buildContoursForRegions(contourRegions);
+    const { contours } = buildContoursForRegions(contourRegions, { edgeMap: ctx.edgeMap });
     for (const region of contourRegions) {
       const contour = contours.get(region.id);
       if (contour) region.contour = contour;

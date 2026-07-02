@@ -75,7 +75,7 @@ export async function runRegionBuilder(ctx) {
   // Fallback regions (from contours) may already have them — skip those.
   const needsContours = named.some(r => !r.contour);
   if (needsContours && named.length > 0) {
-    const { contours } = buildContoursForRegions(named);
+    const { contours } = buildContoursForRegions(named, { edgeMap: ctx.edgeMap });
     for (const r of named) {
       if (!r.contour) {
         const c = contours.get(r.id);

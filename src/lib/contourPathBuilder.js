@@ -19,6 +19,8 @@
  * }
  */
 
+import { snapContourToEdges, measureContourAlignment } from './edgeSnapper.js';
+
 const DEFAULT_WIDTH_MM = 1.2;
 const INNER_WIDTH_MM   = 0.8;
 const MIN_CONTOUR_PTS  = 3;
@@ -63,6 +65,21 @@ export function buildContourPath(region, allRegions = [], options = {}) {
   // 5. Re-close after smoothing (Chaikin can drift endpoints)
   contour = ensureClosed(contour);
 
+  // 5b. EDGE SNAP — align to the REAL visible border in the original image.
+  //    The fill mask boundary drifts from the true edge due to color
+  //    quantization and anti-aliasing. This searches ±4px along the local
+  //    normal for the strongest Sobel gradient and snaps to it.
+  let alignment = null;
+  if (options.edgeMap) {
+    contour = snapContourToEdges(contour, options.edgeMap, {
+      searchRadius: options.searchRadius,
+      threshold: options.snapThreshold,
+    });
+    alignment = measureContourAlignment(contour, options.edgeMap);
+    contour = ensureClosed(contour);
+    if (contour.length < MIN_CONTOUR_PTS) return null;
+  }
+
   // 6. Validate
   const validation = validateContour(contour);
   if (!validation.valid) {
@@ -82,8 +99,12 @@ export function buildContourPath(region, allRegions = [], options = {}) {
   // 10. Color resolution
   const contour_color = resolveContourColor(region, cartoon);
 
-  // 11. Confidence
-  const confidence = validation.confidence;
+  // 11. Confidence — geometric + edge alignment
+  let confidence = validation.confidence;
+  if (alignment) {
+    // Blend: 70% geometric, 30% edge alignment
+    confidence = Math.round(confidence * 0.7 + alignment.alignmentScore * 0.3);
+  }
 
   return {
     contour_points: contour,
@@ -92,6 +113,7 @@ export function buildContourPath(region, allRegions = [], options = {}) {
     contour_color,
     contour_type: contourType,
     confidence,
+    edge_alignment: alignment,
   };
 }
 
@@ -125,6 +147,12 @@ export function buildContoursForRegions(regions, options = {}) {
   console.log(`[contour] contour widths: ${[...deduped.values()].map(c => c.contour_width_mm.toFixed(1) + 'mm').join(', ')}`);
   console.log(`[contour] rejected noisy contours: ${rejected}`);
   console.log(`[contour] final contour objects: ${deduped.size}`);
+  const alignments = [...deduped.values()].filter(c => c.edge_alignment);
+  if (alignments.length > 0) {
+    const avgAlign = (alignments.reduce((s, c) => s + c.edge_alignment.alignmentScore, 0) / alignments.length).toFixed(0);
+    const totalWeak = alignments.reduce((s, c) => s + c.edge_alignment.weakPoints, 0);
+    console.log(`[contour] edge alignment: avg ${avgAlign}/100, ${totalWeak} weak points across ${alignments.length} contours`);
+  }
 
   return { contours: deduped, duplicatesRemoved };
 }
