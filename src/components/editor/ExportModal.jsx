@@ -7,8 +7,10 @@ import ExportFixWizard from './ExportFixWizard';
 import ValidationPreview from './ValidationPreview';
 import RepairProgressPanel from './RepairProgressPanel';
 import AdaptiveOptimizationReport from './AdaptiveOptimizationReport';
+import CE01ReportPanel from './CE01ReportPanel';
 import { runExportPipeline, encodeOptimizedToFile } from '@/lib/exportPipeline';
 import { autoCleanupRegions } from '@/lib/autoCleanup';
+import { validateCE01 } from '@/lib/ce01Validator';
 
 const FORMATS = ['DST', 'PES', 'JEF', 'EXP'];
 
@@ -57,6 +59,17 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
     return runExportPipeline(regions, config, machineSettings, format);
   }, [regions, format, widthMm, heightMm]);
 
+  // CE01 pre-export validation — analyzes final commands, does NOT modify anything
+  const ce01Report = useMemo(() => {
+    return validateCE01(
+      pipelineResult.commands,
+      pipelineResult.objects,
+      regions,
+      config,
+      { ...machineSettings, maxSpeed: speed }
+    );
+  }, [pipelineResult.commands, pipelineResult.objects, regions, config, machineSettings, speed]);
+
   const handleExport = async () => {
     const commands = wizardResult?.commands || pipelineResult.commands;
     const objects = wizardResult?.objects || pipelineResult.objects;
@@ -64,6 +77,12 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
     // GATE: block export if validation fails and no wizard result
     if (!pipelineResult.ready && !wizardResult) {
       setExportError('Exportación cancelada: el diseño no supera todas las validaciones. Usa el asistente de corrección.');
+      return;
+    }
+
+    // GATE: block export if CE01 validation returns INVALID
+    if (ce01Report.status === 'INVALID') {
+      setExportError(`Exportación bloqueada por validación CE01: ${ce01Report.blockingIssues.length} problema(s) crítico(s). Revisa el informe CE01.`);
       return;
     }
     setExporting(true);
@@ -279,6 +298,9 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
                 </div>
               )}
 
+              {/* CE01 pre-export validation report */}
+              <CE01ReportPanel report={ce01Report} />
+
               {/* Visual preview — highlights problematic stitches in red */}
               <ValidationPreview
                 commands={pipelineResult.commands}
@@ -389,11 +411,13 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
                 )}
                 <button
                   onClick={handleExport}
-                  disabled={exporting || (blockingErrors.length > 0 && !wizardResult)}
+                  disabled={exporting || (blockingErrors.length > 0 && !wizardResult) || ce01Report.status === 'INVALID'}
                   className={`w-full py-2.5 rounded-lg text-white text-sm font-bold transition-colors flex items-center justify-center gap-2 disabled:cursor-not-allowed ${
-                    blockingErrors.length > 0 && !wizardResult
+                    (blockingErrors.length > 0 && !wizardResult) || ce01Report.status === 'INVALID'
                       ? 'bg-red-900/40 border border-red-500/30 text-red-300 cursor-not-allowed'
-                      : 'bg-violet-600 hover:bg-violet-500 disabled:opacity-50'
+                      : ce01Report.status === 'RISKY'
+                        ? 'bg-amber-600 hover:bg-amber-500'
+                        : 'bg-violet-600 hover:bg-violet-500 disabled:opacity-50'
                   }`}
                 >
                   {blockingErrors.length > 0 && !wizardResult ? (
