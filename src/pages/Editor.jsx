@@ -43,6 +43,7 @@ const DEFAULT_CONFIG = {
   useVectorFusion: false,
   contourSafeMode: true,
   ce01SafeFillMode: true,
+  ce01ProductionMode: true,
 };
 
 export default function Editor() {
@@ -571,7 +572,7 @@ export default function Editor() {
         </div>
       </div>
 
-      {showExport && <ExportModal project={project} regions={regions} onClose={() => setShowExport(false)} />}
+      {showExport && <ExportModal project={project} regions={regions} finalCommands={finalEmbroideryCommands.commands} finalObjects={finalEmbroideryCommands.objects} onClose={() => setShowExport(false)} />}
     </div>);
 
 }

@@ -12,10 +12,12 @@ import { runExportPipeline, encodeOptimizedToFile, buildFinalCommands, logComman
 import { autoCleanupRegions } from '@/lib/autoCleanup';
 import { validateCE01 } from '@/lib/ce01Validator';
 import { sanitizeCommandsForCE01 } from '@/lib/ce01CommandSanitizer';
+import { prepareCE01ProductionExport, encodeCE01ProductionToFile } from '@/lib/ce01ProductionExport';
+import CE01ProductionPanel from './CE01ProductionPanel';
 
 const FORMATS = ['DST', 'PES', 'JEF', 'EXP'];
 
-export default function ExportModal({ project, regions: initialRegions, onClose }) {
+export default function ExportModal({ project, regions: initialRegions, finalCommands: editorFinalCommands, finalObjects: editorFinalObjects, onClose }) {
   const [step, setStep] = useState('preflight'); // 'preflight' | 'export'
   const [regions, setRegions] = useState(initialRegions || []);
   const [cleanupReport, setCleanupReport] = useState(null);
@@ -94,7 +96,50 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
   // ce01Report = after-sanitizer report (used for export gate + display)
   const ce01Report = ce01ReportAfter;
 
+  // ── CE01 Production Mode ──────────────────────────────────────────────
+  // When enabled, export uses finalEmbroideryCommands directly — no adaptive
+  // optimization engine, no stability optimizer, no region regeneration.
+  // Pipeline: finalCommands → repair (if improves) → sanitize (if improves) → CE01 validate → encode
+  const ce01ProductionMode = config.ce01ProductionMode === true;
+  const productionReport = useMemo(() => {
+    if (!ce01ProductionMode) return null;
+    const sourceCommands = editorFinalCommands || pipelineResult.commands;
+    const sourceObjects = editorFinalObjects || pipelineResult.objects;
+    return prepareCE01ProductionExport(sourceCommands, regions, config, machineSettings, sourceObjects, format);
+  }, [ce01ProductionMode, editorFinalCommands, editorFinalObjects, regions, config, machineSettings, format]);
+
   const handleExport = async () => {
+    // ── CE01 Production path: no recalculation, no aggressive optimizers ──
+    if (ce01ProductionMode) {
+      if (!productionReport || !productionReport.exportAllowed) {
+        setExportError(`Exportación bloqueada por validación CE01: ${productionReport?.ce01Report?.blockingIssues?.length || 0} problema(s) crítico(s).`);
+        return;
+      }
+      setExporting(true);
+      setExportError(null);
+      try {
+        const sourceCommands = editorFinalCommands || pipelineResult.commands;
+        const sourceObjects = editorFinalObjects || pipelineResult.objects;
+        const { blob } = await encodeCE01ProductionToFile(
+          sourceCommands, regions, config, machineSettings, sourceObjects, format, base44
+        );
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${(project?.name || 'design').replace(/[^a-zA-Z0-9_-]/g, '_')}.${format.toLowerCase()}`;
+        a.click();
+        URL.revokeObjectURL(url);
+        onClose();
+      } catch (e) {
+        console.error(e);
+        setExportError(e.message || 'Error al exportar el diseño');
+      } finally {
+        setExporting(false);
+      }
+      return;
+    }
+
+    // ── Standard path (adaptive optimization engine) ─────────────────────
     const commands = wizardResult?.commands || pipelineResult.commands;
     const objects = wizardResult?.objects || pipelineResult.objects;
 
@@ -244,8 +289,8 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
                   </div>
                 </div>
               )}
-              {/* Validation status banner */}
-              {wizardResult && wizardResult.remainingErrors === 0 ? (
+              {/* Validation status banner — hidden in CE01 production mode */}
+              {!ce01ProductionMode && wizardResult && wizardResult.remainingErrors === 0 ? (
                 <div className="bg-emerald-900/20 border border-emerald-500/40 rounded-lg p-3">
                   <div className="flex items-center gap-2 mb-1">
                     <ShieldCheck className="w-4 h-4 text-emerald-400" />
@@ -255,7 +300,7 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
                     El asistente corrigió todos los errores bloqueantes. Puedes exportar con seguridad.
                   </p>
                 </div>
-              ) : blockingErrors.length > 0 ? (
+              ) : !ce01ProductionMode && blockingErrors.length > 0 ? (
                 <div className="bg-red-900/20 border border-red-500/40 rounded-lg p-3">
                   <div className="flex items-center gap-2 mb-2">
                     <ShieldAlert className="w-4 h-4 text-red-400" />
@@ -305,7 +350,7 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
                     Iniciar asistente de corrección
                   </button>
                 </div>
-              ) : (
+              ) : !ce01ProductionMode ? null : (
                 <div className="bg-emerald-900/15 border border-emerald-500/30 rounded-lg p-3">
                   <div className="flex items-center gap-2 mb-1">
                     <ShieldCheck className="w-4 h-4 text-emerald-400" />
@@ -322,12 +367,19 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
                 </div>
               )}
 
+              {/* CE01 Production mode panel — shows command source + protected metrics */}
+              {ce01ProductionMode && productionReport && (
+                <CE01ProductionPanel report={productionReport} />
+              )}
+
               {/* CE01 pre-export validation report — before/after sanitizer */}
-              <CE01ReportPanel
-                report={ce01ReportAfter}
-                beforeReport={ce01ReportBefore}
-                sanitizeReport={sanitizeReport}
-              />
+              {!ce01ProductionMode && (
+                <CE01ReportPanel
+                  report={ce01ReportAfter}
+                  beforeReport={ce01ReportBefore}
+                  sanitizeReport={sanitizeReport}
+                />
+              )}
 
               {/* Visual preview — highlights problematic stitches in red */}
               <ValidationPreview
@@ -439,23 +491,39 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
                 )}
                 <button
                   onClick={handleExport}
-                  disabled={exporting || (blockingErrors.length > 0 && !wizardResult) || ce01Report.status === 'INVALID'}
+                  disabled={exporting || (ce01ProductionMode ? !productionReport?.exportAllowed : ((blockingErrors.length > 0 && !wizardResult) || ce01Report.status === 'INVALID'))}
                   className={`w-full py-2.5 rounded-lg text-white text-sm font-bold transition-colors flex items-center justify-center gap-2 disabled:cursor-not-allowed ${
-                    (blockingErrors.length > 0 && !wizardResult) || ce01Report.status === 'INVALID'
-                      ? 'bg-red-900/40 border border-red-500/30 text-red-300 cursor-not-allowed'
-                      : ce01Report.status === 'RISKY'
-                        ? 'bg-amber-600 hover:bg-amber-500'
-                        : 'bg-violet-600 hover:bg-violet-500 disabled:opacity-50'
+                    ce01ProductionMode
+                      ? (!productionReport?.exportAllowed
+                        ? 'bg-red-900/40 border border-red-500/30 text-red-300 cursor-not-allowed'
+                        : productionReport.ce01Report.status === 'RISKY'
+                          ? 'bg-amber-600 hover:bg-amber-500'
+                          : 'bg-violet-600 hover:bg-violet-500 disabled:opacity-50')
+                      : ((blockingErrors.length > 0 && !wizardResult) || ce01Report.status === 'INVALID'
+                        ? 'bg-red-900/40 border border-red-500/30 text-red-300 cursor-not-allowed'
+                        : ce01Report.status === 'RISKY'
+                          ? 'bg-amber-600 hover:bg-amber-500'
+                          : 'bg-violet-600 hover:bg-violet-500 disabled:opacity-50')
                   }`}
                 >
-                  {blockingErrors.length > 0 && !wizardResult ? (
-                    <><ShieldAlert className="w-4 h-4" /> Exportación bloqueada</>
-                  ) : exporting ? (
-                    <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>
-                  ) : wizardResult ? (
-                    <><Download className="w-4 h-4" /> Exportar (corregido)</>
+                  {ce01ProductionMode ? (
+                    !productionReport?.exportAllowed ? (
+                      <><ShieldAlert className="w-4 h-4" /> Exportación bloqueada</>
+                    ) : exporting ? (
+                      <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>
+                    ) : (
+                      <><Download className="w-4 h-4" /> Exportar versión actual</>
+                    )
                   ) : (
-                    <><Download className="w-4 h-4" /> Confirmar y exportar</>
+                    blockingErrors.length > 0 && !wizardResult ? (
+                      <><ShieldAlert className="w-4 h-4" /> Exportación bloqueada</>
+                    ) : exporting ? (
+                      <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>
+                    ) : wizardResult ? (
+                      <><Download className="w-4 h-4" /> Exportar (corregido)</>
+                    ) : (
+                      <><Download className="w-4 h-4" /> Confirmar y exportar</>
+                    )
                   )}
                 </button>
               </div>
