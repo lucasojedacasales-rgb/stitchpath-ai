@@ -83,8 +83,6 @@ Deno.serve(async (req) => {
       fileBuffer = encodeEXP(stitches);
       mimeType = 'application/octet-stream';
       ext = 'exp';
-    } else if (fmt === 'DSB') {
-      return Response.json({ error: 'DSB real no implementado todavía. El archivo generado no es compatible Barudan/Wilcom.' }, { status: 501 });
     } else if (fmt === 'VP3') {
       return Response.json({ error: 'VP3 format not yet implemented. Use DST, PES, JEF, or EXP.' }, { status: 501 });
     } else {
@@ -234,119 +232,91 @@ function validateStitches(stitches, ms) {
 //  DST ENCODER (Tajima)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// ─── DST balanced ternary helpers (correct CE01 bit mapping) ───────────
-
-function toBalancedTernary(n) {
-  const digits = [0, 0, 0, 0, 0]; // [d1, d3, d9, d27, d81]
-  if (n === 0) return digits;
-  let val = n;
-  for (let place = 0; place < 5 && val !== 0; place++) {
-    let rem = val % 3;
-    if (rem === 2) { rem = -1; val = (val + 1) / 3; }
-    else if (rem === -2) { rem = 1; val = (val - 1) / 3; }
-    else if (rem === -1) { val = (val + 1) / 3; }
-    else { val = (val - rem) / 3; }
-    digits[place] = rem;
-  }
-  if (val !== 0) throw new Error(`Delta ${n} exceeds DST range (max ±121)`);
-  return digits;
-}
-
-function decodeDSTRecord(record) {
-  const [b0, b1, b2] = record;
-  if (b2 === 0xF3) return { dx: 0, dy: 0, flag: 'end' };
-
-  let dx = 0, dy = 0;
-  // X
-  if (b0 & 0x80) dx += 1;
-  if (b0 & 0x40) dx -= 1;
-  if (b0 & 0x20) dx += 9;
-  if (b0 & 0x10) dx -= 9;
-  if (b1 & 0x80) dx += 3;
-  if (b1 & 0x40) dx -= 3;
-  if (b1 & 0x20) dx += 27;
-  if (b1 & 0x10) dx -= 27;
-  if (b2 & 0x20) dx += 81;
-  if (b2 & 0x10) dx -= 81;
-  // Y
-  if (b0 & 0x01) dy += 1;
-  if (b0 & 0x02) dy -= 1;
-  if (b0 & 0x04) dy += 9;
-  if (b0 & 0x08) dy -= 9;
-  if (b1 & 0x01) dy += 3;
-  if (b1 & 0x02) dy -= 3;
-  if (b1 & 0x04) dy += 27;
-  if (b1 & 0x08) dy -= 27;
-  if (b2 & 0x04) dy += 81;
-  if (b2 & 0x08) dy -= 81;
-
-  let flag = 'stitch';
-  if (b2 & 0x40) flag = 'colorChange';
-  else if (b2 & 0x80) flag = 'jump';
-  return { dx, dy, flag };
-}
-
-function encodeDSTDelta(dx, dy, flag) {
-  dx = Math.max(-121, Math.min(121, Math.round(dx)));
-  dy = Math.max(-121, Math.min(121, Math.round(dy)));
-
-  if (flag === 'end') {
-    if (dx !== 0 || dy !== 0) throw new Error('END record must have dx=0 dy=0');
-    return [0x00, 0x00, 0xF3];
-  }
-
-  const xD = toBalancedTernary(dx);
-  const yD = toBalancedTernary(dy);
-
-  let b2 = 0x03;
-  if (flag === 'jump') b2 = 0x83;
-  else if (flag === 'colorChange') b2 = 0xC3;
-
-  let b0 = 0, b1 = 0;
-
-  // X: place[0]=1, place[1]=3, place[2]=9, place[3]=27, place[4]=81
-  if (xD[0] === 1) b0 |= 0x80; else if (xD[0] === -1) b0 |= 0x40;
-  if (xD[1] === 1) b1 |= 0x80; else if (xD[1] === -1) b1 |= 0x40;
-  if (xD[2] === 1) b0 |= 0x20; else if (xD[2] === -1) b0 |= 0x10;
-  if (xD[3] === 1) b1 |= 0x20; else if (xD[3] === -1) b1 |= 0x10;
-  if (xD[4] === 1) b2 |= 0x20; else if (xD[4] === -1) b2 |= 0x10;
-
-  // Y: place[0]=1, place[1]=3, place[2]=9, place[3]=27, place[4]=81
-  if (yD[0] === 1) b0 |= 0x01; else if (yD[0] === -1) b0 |= 0x02;
-  if (yD[1] === 1) b1 |= 0x01; else if (yD[1] === -1) b1 |= 0x02;
-  if (yD[2] === 1) b0 |= 0x04; else if (yD[2] === -1) b0 |= 0x08;
-  if (yD[3] === 1) b1 |= 0x04; else if (yD[3] === -1) b1 |= 0x08;
-  if (yD[4] === 1) b2 |= 0x04; else if (yD[4] === -1) b2 |= 0x08;
-
-  const record = [b0, b1, b2];
-
-  // Mandatory roundtrip validation
-  const decoded = decodeDSTRecord(record);
-  if (decoded.dx !== dx || decoded.dy !== dy) {
-    throw new Error(`[dst-encoder] roundtrip FAILED: requested dx=${dx} dy=${dy}, decoded dx=${decoded.dx} dy=${decoded.dy}, record=${b0.toString(16)} ${b1.toString(16)} ${b2.toString(16)}`);
-  }
-
-  return record;
-}
-
-function splitLongMove(dx, dy, flag) {
-  if (Math.abs(dx) <= 121 && Math.abs(dy) <= 121) return [[dx, dy, flag]];
-  const steps = Math.max(Math.ceil(Math.abs(dx) / 121), Math.ceil(Math.abs(dy) / 121));
-  const result = [];
-  for (let s = 1; s <= steps; s++) {
-    const sdx = Math.round((dx * s) / steps) - Math.round((dx * (s - 1)) / steps);
-    const sdy = Math.round((dy * s) / steps) - Math.round((dy * (s - 1)) / steps);
-    result.push([sdx, sdy, flag]);
-  }
-  return result;
-}
-
-// ─── DST ENCODER (Tajima, CE01-correct bit mapping) ─────────────────────
-
 function encodeDST(stitches, ms) {
+  // ── Compute design extents for header ──────────────────────────────────
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let stitchCount = 0, colorCount = 0;
+  for (const s of stitches) {
+    // Count ALL DST records per Tajima spec (ST includes jumps, colorChanges, trims, END)
+    // Trim generates 3 jump records in the Tajima trim sequence
+    if (s.type === 'trim') stitchCount += 3;
+    else stitchCount++;
+
+    if (s.type === 'colorChange') colorCount++;
+
+    // Extents from stitch/jump positions only
+    if (s.type === 'stitch' || s.type === 'jump') {
+      if (s.x < minX) minX = s.x;
+      if (s.y < minY) minY = s.y;
+      if (s.x > maxX) maxX = s.x;
+      if (s.y > maxY) maxY = s.y;
+    }
+  }
+  if (minX === Infinity) { minX = 0; minY = 0; maxX = 0; maxY = 0; }
+
+  // ── Build header (512 bytes, ASCII metadata per Tajima spec) ────────────
+  const header = new Uint8Array(512).fill(0x20);
+  let hpos = 0;
+  const writeStr = (s) => { for (let i = 0; i < s.length && hpos < 512; i++) header[hpos++] = s.charCodeAt(i); header[hpos++] = 0x0D; };
+
+  writeStr(`LA:${'StitchPath'.padEnd(16, ' ').slice(0, 16)}`);
+  writeStr(`ST:${String(stitchCount).padStart(7, '0')}`);
+  writeStr(`CO:${String(colorCount).padStart(3, '0')}`);
+  writeStr(`+X:${String(Math.round(maxX * 10)).padStart(5, '0')}`);
+  writeStr(`-X:${String(Math.round(-minX * 10)).padStart(5, '0')}`);
+  writeStr(`+Y:${String(Math.round(maxY * 10)).padStart(5, '0')}`);
+  writeStr(`-Y:${String(Math.round(-minY * 10)).padStart(5, '0')}`);
+  writeStr('AX:+00000');
+  writeStr('AY:+00000');
+  writeStr('MX:+00000');
+  writeStr('MY:+00000');
+  writeStr('PD:******');
+
   const records = [];
   let cx = 0, cy = 0;
   const UNIT = 0.1; // mm per DST unit
+
+  /**
+   * Encodes a DST record using balanced ternary decomposition.
+   * Each coordinate is decomposed into signed digits: ±1, ±3, ±9, ±27, ±81.
+   *
+   * Byte 1: y±1, y±9 | x±9, x±1
+   * Byte 2: y±3, y±27 | x±27, x±3
+   * Byte 3: ctrl, y±81 | x±81, set(0x03)
+   */
+  const encodeRecord = (dx, dy, flags) => {
+    dx = Math.max(-121, Math.min(121, Math.round(dx)));
+    dy = Math.max(-121, Math.min(121, Math.round(dy)));
+
+    let b0 = 0, b1 = 0, b2 = flags;
+    let y = dy, x = dx;
+
+    // Y: balanced ternary (places 81, 27, 9, 3, 1)
+    if (y > 40)       { b2 |= 0x20; y -= 81; }
+    else if (y < -40) { b2 |= 0x10; y += 81; }
+    if (y > 13)       { b1 |= 0x20; y -= 27; }
+    else if (y < -13) { b1 |= 0x10; y += 27; }
+    if (y > 4)        { b0 |= 0x20; y -= 9; }
+    else if (y < -4)  { b0 |= 0x10; y += 9; }
+    if (y > 1)        { b1 |= 0x80; y -= 3; }
+    else if (y < -1)  { b1 |= 0x40; y += 3; }
+    if (y > 0)        { b0 |= 0x80; }
+    else if (y < 0)   { b0 |= 0x40; }
+
+    // X: balanced ternary (places 81, 27, 9, 3, 1)
+    if (x > 40)       { b2 |= 0x04; x -= 81; }
+    else if (x < -40) { b2 |= 0x08; x += 81; }
+    if (x > 13)       { b1 |= 0x04; x -= 27; }
+    else if (x < -13) { b1 |= 0x08; x += 27; }
+    if (x > 4)        { b0 |= 0x04; x -= 9; }
+    else if (x < -4)  { b0 |= 0x08; x += 9; }
+    if (x > 1)        { b1 |= 0x01; x -= 3; }
+    else if (x < -1)  { b1 |= 0x02; x += 3; }
+    if (x > 0)        { b0 |= 0x01; }
+    else if (x < 0)   { b0 |= 0x02; }
+
+    records.push(b0, b1, b2);
+  };
 
   for (const s of stitches) {
     const tx = Math.round(s.x / UNIT);
@@ -355,92 +325,27 @@ function encodeDST(stitches, ms) {
     const dy = ty - cy;
 
     if (s.type === 'end') {
-      records.push([0x00, 0x00, 0xF3]);
+      records.push(0x00, 0x00, 0xF3);
       break;
-    }
-
-    let flag = 'stitch';
-    if (s.type === 'jump') flag = 'jump';
-    else if (s.type === 'colorChange') flag = 'colorChange';
-    else if (s.type === 'trim') {
-      // Trim = 3 jump records at current position (Tajima convention)
-      records.push(encodeDSTDelta(0, 0, 'jump'));
-      records.push(encodeDSTDelta(0, 0, 'jump'));
-      records.push(encodeDSTDelta(0, 0, 'jump'));
-      continue;
-    }
-
-    // Split long moves (>±121 units)
-    const parts = splitLongMove(dx, dy, flag);
-    for (const [pdx, pdy, pflag] of parts) {
-      records.push(encodeDSTDelta(pdx, pdy, pflag));
+    } else if (s.type === 'colorChange') {
+      encodeRecord(0, 0, 0xC3);
+    } else if (s.type === 'trim') {
+      // Trim en DST: 3 jump records at position 0,0 (Tajima trim sequence)
+      encodeRecord(0, 0, 0x83);
+      encodeRecord(0, 0, 0x83);
+      encodeRecord(0, 0, 0x83);
+    } else if (s.type === 'jump') {
+      encodeRecord(dx, dy, 0x83);
+    } else {
+      encodeRecord(dx, dy, 0x03);
     }
 
     cx = tx; cy = ty;
   }
 
-  // Ensure END exists
-  if (records.length === 0 || records[records.length - 1][2] !== 0xF3) {
-    records.push([0x00, 0x00, 0xF3]);
-  }
-
-  // ── Recalculate bounds from decoded records ──
-  let cumX = 0, cumY = 0;
-  let minX = 0, maxX = 0, minY = 0, maxY = 0;
-  let colorChanges = 0;
-
-  for (const rec of records) {
-    const decoded = decodeDSTRecord(rec);
-    cumX += decoded.dx;
-    cumY += decoded.dy;
-    if (decoded.flag === 'colorChange') colorChanges++;
-    if (cumX < minX) minX = cumX;
-    if (cumX > maxX) maxX = cumX;
-    if (cumY < minY) minY = cumY;
-    if (cumY > maxY) maxY = cumY;
-  }
-
-  const stitchCount = records.length; // All records including END
-  const finalX = cumX;
-  const finalY = cumY;
-
-  console.log(`[dst-encoder] decoded bounds: minX=${minX} maxX=${maxX} minY=${minY} maxY=${maxY}`);
-  console.log(`[dst-encoder] header bounds: plusX=${maxX} minusX=${-minX} plusY=${maxY} minusY=${-minY}`);
-  console.log(`[dst-encoder] header matches decoded: true`);
-  console.log(`[dst-encoder] binary ready: ${records.length} records, ST=${stitchCount}, CO=${colorChanges}`);
-
-  // ── Build header (512 bytes, CR line endings, 0x1A after PD) ──
-  const header = new Uint8Array(512).fill(0x20);
-  let hpos = 0;
-  const writeStr = (s) => { for (let i = 0; i < s.length && hpos < 510; i++) header[hpos++] = s.charCodeAt(i); header[hpos++] = 0x0D; };
-
-  writeStr(`LA:${'StitchPath'.padEnd(16, ' ').slice(0, 16)}`);
-  writeStr(`ST:${String(stitchCount).padStart(7, '0')}`);
-  writeStr(`CO:${String(colorChanges).padStart(3, '0')}`);
-  writeStr(`+X:${String(maxX).padStart(5, '0')}`);
-  writeStr(`-X:${String(-minX).padStart(5, '0')}`);
-  writeStr(`+Y:${String(maxY).padStart(5, '0')}`);
-  writeStr(`-Y:${String(-minY).padStart(5, '0')}`);
-  writeStr(`AX:${finalX >= 0 ? '+' : '-'}${String(Math.abs(finalX)).padStart(5, '0')}`);
-  writeStr(`AY:${finalY >= 0 ? '+' : '-'}${String(Math.abs(finalY)).padStart(5, '0')}`);
-  writeStr('MX:+00000');
-  writeStr('MY:+00000');
-  writeStr('PD:******');
-
-  // 0x1A after PD line, within the 512-byte header
-  if (hpos < 512) header[hpos++] = 0x1A;
-
-  // ── Assemble file (header + records + EOF 0x1A) ──
-  const buf = new Uint8Array(512 + records.length * 3 + 1);
+  const buf = new Uint8Array(512 + records.length);
   buf.set(header, 0);
-  let pos = 512;
-  for (const rec of records) {
-    buf[pos++] = rec[0];
-    buf[pos++] = rec[1];
-    buf[pos++] = rec[2];
-  }
-  buf[pos++] = 0x1A; // EOF byte (CE01 strict)
-
+  buf.set(new Uint8Array(records), 512);
   return buf;
 }
 

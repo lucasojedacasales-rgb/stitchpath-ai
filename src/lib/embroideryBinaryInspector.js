@@ -15,8 +15,6 @@
  *   - Bounds and header are coherent
  */
 
-import { decodeDSTRecord } from './dstEncoder';
-
 const HEADER_SIZE = 512;
 const EOF_BYTE = 0x1A;
 const RECORD_SIZE = 3;
@@ -101,15 +99,60 @@ export function parseEmbroideryHeader(buffer) {
   return header;
 }
 
-// ─── Record decoder (uses dstEncoder for DST; DSB not implemented) ──────
+// ─── Record decoders ────────────────────────────────────────────────────
+
+/**
+ * Tajima DST record: 3 bytes, bit-packed x/y displacement + control flags.
+ * Byte 0 low nibble = x (1,2,4,8), high nibble = y (1,2,4,8)
+ * Byte 1: x+16, x+32, x_sign, y+16, y+32, y_sign, always-set bits
+ * Byte 2: control (0x80=jump, 0x40=colorChange, 0xF3=END)
+ */
+function decodeDSTRecord(b0, b1, b2) {
+  let x = 0, y = 0;
+
+  if (b0 & 0x01) x += 1;
+  if (b0 & 0x02) x += 2;
+  if (b0 & 0x04) x += 4;
+  if (b0 & 0x08) x += 8;
+  if (b0 & 0x10) y += 1;
+  if (b0 & 0x20) y += 2;
+  if (b0 & 0x40) y += 4;
+  if (b0 & 0x80) y += 8;
+
+  if (b1 & 0x01) x += 16;
+  if (b1 & 0x02) x += 32;
+  if (b1 & 0x08) y += 16;
+  if (b1 & 0x10) y += 32;
+
+  if (b1 & 0x04) x = -x;
+  if (b1 & 0x20) y = -y;
+
+  let type = 'stitch';
+  if (b2 === 0xF3) type = 'end';
+  else if (b2 & 0x80) type = 'jump';
+  else if (b2 & 0x40) type = 'colorChange';
+
+  return { x, y, type };
+}
+
+/**
+ * Barudan DSB record: 3 bytes, signed byte x/y + control byte.
+ */
+function decodeDSBRecord(b0, b1, b2) {
+  let x = b0 > 127 ? b0 - 256 : b0;
+  let y = b1 > 127 ? b1 - 256 : b1;
+
+  let type = 'stitch';
+  if (b2 === 0xF3) type = 'end';
+  else if (b2 & 0x80) type = 'jump';
+  else if (b2 & 0x40) type = 'colorChange';
+
+  return { x, y, type };
+}
 
 function decodeRecord(format, b0, b1, b2) {
-  if (format === 'DSB') {
-    console.warn('[binary-inspector] DSB real no implementado. El archivo no es compatible Barudan/Wilcom.');
-    return { x: 0, y: 0, type: 'stitch', unsupported: true };
-  }
-  const result = decodeDSTRecord([b0, b1, b2]);
-  return { x: result.dx, y: result.dy, type: result.flag };
+  if (format === 'DSB') return decodeDSBRecord(b0, b1, b2);
+  return decodeDSTRecord(b0, b1, b2);
 }
 
 // ─── 2. validateRecordStructure ─────────────────────────────────────────
