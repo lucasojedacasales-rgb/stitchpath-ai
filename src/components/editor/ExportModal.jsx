@@ -14,6 +14,7 @@ import { validateCE01 } from '@/lib/ce01Validator';
 import { sanitizeCommandsForCE01 } from '@/lib/ce01CommandSanitizer';
 import { prepareCE01ProductionExport, encodeCE01ProductionToFile } from '@/lib/ce01ProductionExport';
 import CE01ProductionPanel from './CE01ProductionPanel';
+import BinaryInspectorPanel from './BinaryInspectorPanel';
 
 const FORMATS = ['DST', 'PES', 'JEF', 'EXP'];
 
@@ -465,6 +466,17 @@ export default function ExportModal({ project, config: editorConfig, regions: in
               {debugMode && (
                 <ExportDebugPanel pipeline={pipelineResult} />
               )}
+
+              {/* Binary inspector — diagnostic tool for CE01 rejection analysis */}
+              <BinaryInspectorPanel
+                commands={pipelineResult.commands}
+                objects={pipelineResult.objects}
+                format={format}
+                machineSettings={machineSettings}
+                ce01ProductionMode={ce01ProductionMode}
+                editorFinalCommands={editorFinalCommands}
+                editorFinalObjects={editorFinalObjects}
+              />
 
               {/* Stats */}
               <div className="grid grid-cols-4 gap-2">
