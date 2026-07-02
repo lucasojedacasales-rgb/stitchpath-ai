@@ -101,6 +101,19 @@ export default function ExportModal({ project, regions: initialRegions, finalCom
   // optimization engine, no stability optimizer, no region regeneration.
   // Pipeline: finalCommands → repair (if improves) → sanitize (if improves) → CE01 validate → encode
   const ce01ProductionMode = config.ce01ProductionMode === true;
+
+  // Clear stale adaptive/stability states when opening in production mode —
+  // old adaptiveReport or stabilityScore must never block CE01 production export.
+  useEffect(() => {
+    if (ce01ProductionMode) {
+      console.log('[ce01-production-export] mode enabled:', true);
+      console.log('[ce01-production-export] adaptive skipped: true');
+      console.log('[ce01-production-export] stability gate skipped: true');
+      setAdaptiveReport(null);
+      setShowAdaptiveReport(false);
+      setWizardResult(null);
+    }
+  }, [ce01ProductionMode]);
   const productionReport = useMemo(() => {
     if (!ce01ProductionMode) return null;
     const sourceCommands = editorFinalCommands || pipelineResult.commands;
@@ -111,14 +124,26 @@ export default function ExportModal({ project, regions: initialRegions, finalCom
   const handleExport = async () => {
     // ── CE01 Production path: no recalculation, no aggressive optimizers ──
     if (ce01ProductionMode) {
+      console.log('[ce01-production-export] command source: finalEmbroideryCommands');
+      console.log('[ce01-production-export] ce01 status:', productionReport?.ce01Report?.status);
+
+      // In production mode, block ONLY on: empty commands, CE01 INVALID, or corrupt data.
+      // Never block on stabilityScore, adaptiveReport, or geometryWarnings.
+      const sourceCommands = editorFinalCommands || pipelineResult.commands;
+      if (!sourceCommands || sourceCommands.length === 0) {
+        console.log('[ce01-production-export] export blocked reason: empty commands');
+        setExportError('Exportación bloqueada: no hay comandos de bordado.');
+        return;
+      }
       if (!productionReport || !productionReport.exportAllowed) {
+        console.log('[ce01-production-export] export blocked reason: CE01 INVALID');
         setExportError(`Exportación bloqueada por validación CE01: ${productionReport?.ce01Report?.blockingIssues?.length || 0} problema(s) crítico(s).`);
         return;
       }
+      console.log('[ce01-production-export] export allowed: true');
       setExporting(true);
       setExportError(null);
       try {
-        const sourceCommands = editorFinalCommands || pipelineResult.commands;
         const sourceObjects = editorFinalObjects || pipelineResult.objects;
         const { blob } = await encodeCE01ProductionToFile(
           sourceCommands, regions, config, machineSettings, sourceObjects, format, base44

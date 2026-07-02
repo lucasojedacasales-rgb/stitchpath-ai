@@ -170,7 +170,7 @@ export default function Editor() {
     try {
       const p = await base44.entities.Project.get(id);
       setProject(p);
-      setConfig(p.config || DEFAULT_CONFIG);
+      setConfig({ ...DEFAULT_CONFIG, ...(p.config || {}) });
       setRegions(p.regions || []);
       setImageUrl(p.image_url || null);
       setStep(p.step || 1);

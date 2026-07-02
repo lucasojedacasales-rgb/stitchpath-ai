@@ -86,12 +86,14 @@ function metricsNotWorse(after, before) {
 export function prepareCE01ProductionExport(finalCommands, regions, config, machineSettings, objects, format = 'DST') {
   const ms = { ...DEFAULT_MACHINE, ...machineSettings };
 
-  console.log('[ce01-production] enabled: true');
-  console.log('[ce01-production] command source: finalEmbroideryCommands');
+  console.log('[ce01-production-export] mode enabled: true');
+  console.log('[ce01-production-export] adaptive skipped: true');
+  console.log('[ce01-production-export] stability gate skipped: true');
+  console.log('[ce01-production-export] command source: finalEmbroideryCommands');
 
   let commands = (finalCommands || []).map(c => ({ ...c }));
   const baseMetrics = extractMetrics(commands, objects, regions, config, ms);
-  console.log('[ce01-production] base metrics:', baseMetrics);
+  console.log('[ce01-production-export] base metrics:', baseMetrics);
 
   // ── Stage 1: ce01FinalCommandRepair (transactional) ─────────────────────
   const repairResult = repairCE01FinalCommands(commands, regions, { config, machineSettings: ms, objects });
@@ -103,13 +105,13 @@ export function prepareCE01ProductionExport(finalCommands, regions, config, mach
     if (metricsNotWorse(afterRepair, baseMetrics)) {
       commands = repairResult.commands;
       repairApplied = true;
-      console.log('[ce01-production] repair applied: true');
+      console.log('[ce01-production-export] repair applied: true');
     } else {
-      console.log('[ce01-production] repair applied: false (metrics worsened — discarded)');
+      console.log('[ce01-production-export] repair applied: false (metrics worsened — discarded)');
       repairReport = { ...repairResult.report, discarded: true, reason: 'metrics worsened' };
     }
   } else {
-    console.log('[ce01-production] repair applied: false (no improvement)');
+    console.log('[ce01-production-export] repair applied: false (no improvement)');
   }
 
   // ── Stage 2: ce01CommandSanitizer (transactional) ───────────────────────
@@ -121,9 +123,9 @@ export function prepareCE01ProductionExport(finalCommands, regions, config, mach
   if (metricsNotWorse(afterSanitize, preSanitize)) {
     commands = sanitizedCommands;
     sanitizeApplied = true;
-    console.log('[ce01-production] sanitizer applied: true');
+    console.log('[ce01-production-export] sanitizer applied: true');
   } else {
-    console.log('[ce01-production] sanitizer applied: false (metrics worsened — discarded)');
+    console.log('[ce01-production-export] sanitizer applied: false (metrics worsened — discarded)');
   }
 
   // ── Stage 3: CE01 validation ────────────────────────────────────────────
@@ -131,10 +133,14 @@ export function prepareCE01ProductionExport(finalCommands, regions, config, mach
 
   // ── Final metrics ───────────────────────────────────────────────────────
   const finalMetrics = extractMetrics(commands, objects, regions, config, ms);
-  console.log('[ce01-production] final metrics:', finalMetrics);
+  console.log('[ce01-production-export] final metrics:', finalMetrics);
 
   const exportAllowed = ce01Report.status !== 'INVALID';
-  console.log('[ce01-production] export allowed:', exportAllowed);
+  console.log('[ce01-production-export] ce01 status:', ce01Report.status);
+  console.log('[ce01-production-export] export allowed:', exportAllowed);
+  if (!exportAllowed) {
+    console.log('[ce01-production-export] export blocked reason: CE01 INVALID');
+  }
 
   return {
     commands,
@@ -160,6 +166,7 @@ export async function encodeCE01ProductionToFile(finalCommands, regions, config,
   const prepared = prepareCE01ProductionExport(finalCommands, regions, config, machineSettings, objects, format);
 
   if (!prepared.exportAllowed) {
+    console.log('[ce01-production-export] export blocked reason: CE01 INVALID');
     const err = new Error(
       `Exportación bloqueada por validación CE01: ${prepared.ce01Report.blockingIssues.length} problema(s) crítico(s).`
     );
