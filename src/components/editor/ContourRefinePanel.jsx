@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { ShieldCheck, ShieldAlert, Eye, EyeOff, Route, Scissors, Palette, Bug, Layers } from 'lucide-react';
-import { countContourStitches, getLastContourAudit, getLastSegmentClassification } from '@/lib/contourExportBuilder';
+import { ShieldCheck, ShieldAlert, Eye, EyeOff, Route, Scissors, Palette, Bug, Layers, Brush } from 'lucide-react';
+import { countContourStitches, getLastContourAudit, getLastSegmentClassification, getLastDarkStroke } from '@/lib/contourExportBuilder';
 import { classifyStitchSegments } from '@/lib/geometryAudit';
 import { detectTravelContamination } from '@/lib/contourRefineValidator';
 
@@ -213,6 +213,7 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
         ctx.moveTo(sx, sy);
         ctx.lineTo(ex, ey);
         switch (seg.category) {
+          case 'dark_stroke_outline': ctx.strokeStyle = '#22d3ee'; break; // cian
           case 'outer_silhouette': ctx.strokeStyle = '#22c55e'; break; // verde
           case 'limb_contour': ctx.strokeStyle = '#3b82f6'; break;     // azul
           case 'facial_detail': ctx.strokeStyle = '#eab308'; break;    // amarillo
@@ -226,6 +227,80 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
         ctx.stroke();
         ctx.setLineDash([]);
       }
+    } else if (viewMode === 'dark_stroke') {
+      // Dark stroke detection view:
+      //   - dark stroke pixels/components in cyan
+      //   - exportable contours in green
+      //   - facial details (mouth) in yellow
+      //   - discarded fill boundaries in orange
+      //   - artifacts/travel in red/grey
+      const ds = getLastDarkStroke();
+      if (ds && ds.mask) {
+        // Render mask pixels scaled to canvas
+        const imgData = ctx.createImageData(cw, ch);
+        for (let y = 0; y < ds.height; y++) {
+          for (let x = 0; x < ds.width; x++) {
+            if (!ds.mask[y * ds.width + x]) continue;
+            // Scale to canvas
+            const px = Math.floor((x / ds.width) * cw);
+            const py = Math.floor((y / ds.height) * ch);
+            if (px < 0 || px >= cw || py < 0 || py >= ch) continue;
+            const di = (py * cw + px) * 4;
+            imgData.data[di] = 34;     // R
+            imgData.data[di + 1] = 211; // G
+            imgData.data[di + 2] = 238; // B
+            imgData.data[di + 3] = 180; // A
+          }
+        }
+        ctx.putImageData(imgData, 0, 0);
+
+        // Mark mouth candidate
+        if (ds.mouthCandidate) {
+          const mb = ds.mouthCandidate.bbox;
+          const [mx, my] = toPx((mb.minX - 0.5) * w, (mb.minY - 0.5) * h);
+          const [mx2, my2] = toPx((mb.maxX - 0.5) * w, (mb.maxY - 0.5) * h);
+          ctx.strokeStyle = '#eab308';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([]);
+          ctx.strokeRect(mx, my, mx2 - mx, my2 - my);
+        }
+        // Mark eye candidates
+        ctx.strokeStyle = '#06b6d4';
+        for (const eye of (ds.eyeCandidates || [])) {
+          const eb = eye.bbox;
+          const [ex, ey] = toPx((eb.minX - 0.5) * w, (eb.minY - 0.5) * h);
+          const [ex2, ey2] = toPx((eb.maxX - 0.5) * w, (eb.maxY - 0.5) * h);
+          ctx.strokeRect(ex, ey, ex2 - ex, ey2 - ey);
+        }
+      } else {
+        ctx.fillStyle = '#64748b';
+        ctx.font = '11px Inter';
+        ctx.fillText('Sin máscara de línea oscura (sube una imagen)', 20, ch / 2);
+      }
+
+      // Overlay exportable contours (green) + facial details (yellow) + discarded (orange)
+      let prev = null;
+      for (const c of commands) {
+        if (c.type !== 'stitch') { prev = null; continue; }
+        const lt = (c.layerType || '').toLowerCase();
+        const [px, py] = toPx(c.x || 0, c.y || 0);
+        if (lt === 'dark_stroke_outline' || lt === 'outer_silhouette' || lt === 'limb_contour') {
+          ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 1.5; ctx.setLineDash([]);
+        } else if (lt === 'facial_detail') {
+          ctx.strokeStyle = '#eab308'; ctx.lineWidth = 1.5; ctx.setLineDash([]);
+        } else if (lt === 'eye_detail') {
+          ctx.strokeStyle = '#06b6d4'; ctx.lineWidth = 1.5; ctx.setLineDash([]);
+        } else if (lt === 'fill_boundary') {
+          ctx.strokeStyle = '#f97316'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+        } else if (lt === 'artifact' || lt === 'travel') {
+          ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 1; ctx.setLineDash([2, 2]);
+        } else { prev = null; continue; }
+        if (prev) {
+          ctx.beginPath(); ctx.moveTo(prev[0], prev[1]); ctx.lineTo(px, py); ctx.stroke();
+        }
+        prev = [px, py];
+      }
+      ctx.setLineDash([]);
     }
   }, [viewMode, commands, config]);
 
@@ -271,6 +346,12 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
           viewMode === 'classification' ? 'bg-violet-900/30 border-violet-500 text-violet-300' : 'bg-[#161a23] border-[#2a2d3a] text-slate-500'
         }`}
         >Clasificación</button>
+        <button
+        onClick={() => setViewMode('dark_stroke')}
+        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-colors ${
+          viewMode === 'dark_stroke' ? 'bg-cyan-900/30 border-cyan-500 text-cyan-300' : 'bg-[#161a23] border-[#2a2d3a] text-slate-500'
+        }`}
+        >Dark Stroke</button>
         </div>
 
       {viewMode === 'metrics' ? (
@@ -362,6 +443,7 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
                 counts[c.category] = (counts[c.category] || 0) + 1;
               }
               const colors = {
+                dark_stroke_outline: 'text-cyan-400',
                 outer_silhouette: 'text-emerald-400',
                 limb_contour: 'text-cyan-400',
                 facial_detail: 'text-blue-400',
@@ -376,6 +458,28 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
                   ))}
                   <Metric label="Exportados" value={sc.exportableCount} color="text-emerald-400" />
                   <Metric label="Excluidos" value={sc.excludedCount} color="text-orange-400" />
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Dark stroke detection */}
+          <div className="bg-[#161a23] rounded-lg p-2.5 border border-[#1e2130]">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <Brush className="w-3 h-3 text-cyan-400" />
+              <span className="text-[10px] font-bold text-slate-400">Dark Stroke Detection</span>
+            </div>
+            {(() => {
+              const ds = getLastDarkStroke();
+              if (!ds) return <div className="text-[10px] text-slate-600">Sin máscara (sube una imagen)</div>;
+              return (
+                <div className="grid grid-cols-2 gap-1.5">
+                  <Metric label="Componentes" value={ds.components?.length || 0} color="text-cyan-400" />
+                  <Metric label="Confianza" value={(ds.confidence ?? 0) + '%'} color="text-violet-400" />
+                  <Metric label="Boca detectada" value={ds.mouthCandidate ? 'YES' : 'NO'} color={ds.mouthCandidate ? 'text-emerald-400' : 'text-red-400'} />
+                  <Metric label="Ojos" value={ds.eyeCandidates?.length || 0} color="text-yellow-400" />
+                  <Metric label="Overlap exterior" value={((ds.outerOverlap ?? 0) * 100).toFixed(0) + '%'} color="text-cyan-400" />
+                  <Metric label="Puntadas dark" value={report.darkStrokeStitches || 0} color={report.darkStrokeStitches > 0 ? 'text-emerald-400' : 'text-amber-400'} />
                 </div>
               );
             })()}
@@ -407,6 +511,7 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
           )}
           {viewMode === 'classification' && (
             <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#22d3ee]"></span> Dark stroke</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#22c55e]"></span> Silueta</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#3b82f6]"></span> Extremidad</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#eab308]"></span> Detalle facial</span>
@@ -414,6 +519,16 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#a78bfa]"></span> Relleno</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#f97316]"></span> Frontera relleno</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#64748b]"></span> Travel</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#ef4444]"></span> Artefacto</span>
+            </div>
+          )}
+          {viewMode === 'dark_stroke' && (
+            <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#22d3ee]"></span> Línea oscura</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#22c55e]"></span> Contorno exportable</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#eab308]"></span> Boca/facial</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#06b6d4]"></span> Ojo</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 border-t border-dashed border-[#f97316]"></span> Frontera descartada</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#ef4444]"></span> Artefacto</span>
             </div>
           )}

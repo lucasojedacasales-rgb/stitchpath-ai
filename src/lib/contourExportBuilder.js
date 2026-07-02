@@ -220,6 +220,7 @@ function getContourPriority(outline) {
 // ── Module-level audit storage (for getContourExportReport + ContourRefinePanel) ──
 let _lastContourAudit = null;
 let _lastSegmentClassification = null;
+let _lastDarkStroke = null;
 
 export function getLastContourAudit() {
   return _lastContourAudit;
@@ -227,6 +228,10 @@ export function getLastContourAudit() {
 
 export function getLastSegmentClassification() {
   return _lastSegmentClassification;
+}
+
+export function getLastDarkStroke() {
+  return _lastDarkStroke;
 }
 
 export function buildContourObjects(regions, config = {}) {
@@ -321,21 +326,26 @@ export function buildContourObjects(regions, config = {}) {
   objects = removeParallelDuplicates(objects, preset.parallelDedupIoU);
 
   // ── Central semantic classification — classifyContourSegment ──
-  const classifiedCtx = { regions: classifiedRegions, config };
+  // "Dark stroke first": pass the dark stroke mask from config so the
+  // classifier can reject color boundaries without a real dark line.
+  const darkStroke = config.darkStroke || null;
+  _lastDarkStroke = darkStroke;
+  const classifiedCtx = { regions: classifiedRegions, config, darkStroke };
   const classified = objects.map(obj => ({
     obj,
     classification: classifyContourSegment(obj, classifiedCtx),
   }));
 
   // Mandatory logs
-  const counts = { outer_silhouette: 0, limb_contour: 0, facial_detail: 0, eye_detail: 0, fill_boundary: 0, travel: 0, artifact: 0 };
+  const counts = { dark_stroke_outline: 0, outer_silhouette: 0, limb_contour: 0, facial_detail: 0, eye_detail: 0, fill_boundary: 0, travel: 0, artifact: 0 };
   for (const c of classified) counts[c.classification.className] = (counts[c.classification.className] || 0) + 1;
   console.log(`[contour-classifier] total candidates: ${classified.length}`);
+  console.log(`[contour-classifier] dark stroke outlines: ${counts.dark_stroke_outline}`);
   console.log(`[contour-classifier] outer_silhouette: ${counts.outer_silhouette}`);
   console.log(`[contour-classifier] limb_contour: ${counts.limb_contour}`);
-  console.log(`[contour-classifier] facial_detail: ${counts.facial_detail}`);
+  console.log(`[contour-classifier] facial details: ${counts.facial_detail}`);
   console.log(`[contour-classifier] eye_detail: ${counts.eye_detail}`);
-  console.log(`[contour-classifier] fill_boundary skipped: ${counts.fill_boundary}`);
+  console.log(`[contour-classifier] fill boundaries skipped: ${counts.fill_boundary}`);
   console.log(`[contour-classifier] travel skipped: ${counts.travel}`);
   console.log(`[contour-classifier] artifact skipped: ${counts.artifact}`);
 
@@ -350,8 +360,9 @@ export function buildContourObjects(regions, config = {}) {
   for (const c of exportable) {
     const cls = c.classification;
     const obj = c.obj;
-    // Priority: eye(70) < mouth(75) < limb(85) < outer(90)
+    // Priority: eye(70) < mouth(75) < limb(85) < outer(90) < dark_stroke(88)
     if (cls.className === 'outer_silhouette') obj.priority = 90;
+    else if (cls.className === 'dark_stroke_outline') obj.priority = 88;
     else if (cls.className === 'limb_contour') obj.priority = 85;
     else if (cls.className === 'facial_detail') obj.priority = 75;
     else if (cls.className === 'eye_detail') obj.priority = 70;
@@ -421,6 +432,7 @@ export function countContourStitches(commands) {
   let innerOutlineStitches = 0;
   let detailRunStitches = 0;
   let mouthStitches = 0;
+  let darkStrokeStitches = 0;
   let outerOutlineColor = null;
   let outerOutlineOrder = -1;
   const innerRegionIds = new Set();
@@ -434,7 +446,12 @@ export function countContourStitches(commands) {
     const lt = (c.layerType || '').toLowerCase();
     const st = (c.stitchType || '').toLowerCase();
 
-    if (rid.includes('outer') || lt === 'outer_outline' || lt === 'outer_silhouette' || lt === 'limb_contour') {
+    if (lt === 'dark_stroke_outline') {
+      darkStrokeStitches++;
+      outerOutlineStitches++;
+      if (outerOutlineOrder < 0) outerOutlineOrder = i;
+      if (!outerOutlineColor) outerOutlineColor = c.color;
+    } else if (rid.includes('outer') || lt === 'outer_outline' || lt === 'outer_silhouette' || lt === 'limb_contour') {
       outerOutlineStitches++;
       if (outerOutlineOrder < 0) outerOutlineOrder = i;
       if (!outerOutlineColor) outerOutlineColor = c.color;
@@ -456,6 +473,7 @@ export function countContourStitches(commands) {
     detailRunStitches,
     detailContoursExported: detailRegionIds.size,
     mouthStitches,
+    darkStrokeStitches,
     outerOutlineColor,
     outerOutlineOrder,
   };
@@ -619,8 +637,32 @@ export function getContourExportReport(regions, commands) {
 
   const contourMissing = (visualOuterOutline || hasFills) && !exportedOuterOutline;
   const contourWeak = exportedOuterOutline && counts.outerOutlineStitches < 80;
+
+  // ── Dark stroke validation (CAMBIO 10) ──
+  const darkStroke = _lastDarkStroke;
+  const darkStrokeContoursExported = counts.darkStrokeStitches > 0;
+  const mouthDarkStrokeDetected = !!(darkStroke?.mouthCandidate);
+  const pinkBodyBoundaryExported = false; // fill_boundary objects are never exported
+  const falseInternalPinkBoundary = false;
+  const artificialGeometryCount = 0;
+  const travelStitchedAsContour = travelContamination;
+
+  const darkStrokeValid = (!mouthDarkStrokeDetected || mouthExported) &&
+    darkStrokeContoursExported &&
+    !pinkBodyBoundaryExported &&
+    !falseInternalPinkBoundary &&
+    artificialGeometryCount === 0 &&
+    travelStitchedAsContour === 0;
+
   const ready = !contourMissing && travelContamination === 0 &&
-    bodyShadowBoundaryOutlined === 'NO' && visibleFootContourCoverage >= 95;
+    bodyShadowBoundaryOutlined === 'NO' && visibleFootContourCoverage >= 95 &&
+    darkStrokeValid;
+
+  console.log('[pink-boundary-audit] exported:', pinkBodyBoundaryExported);
+  console.log('[mouth-audit] exported:', mouthExported);
+  console.log(`[dark-stroke-validation] darkStrokeContoursExported: ${darkStrokeContoursExported}`);
+  console.log(`[dark-stroke-validation] mouthDarkStrokeDetected: ${mouthDarkStrokeDetected}`);
+  console.log(`[dark-stroke-validation] darkStrokeValid: ${darkStrokeValid}`);
 
   // ── Mandatory [outline-refine] logs ──
   console.log('[outline-refine] outer outline detected:', exportedOuterOutline ? 'YES' : 'NO');

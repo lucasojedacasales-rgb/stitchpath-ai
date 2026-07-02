@@ -18,6 +18,7 @@ import MachineValidatorPanel from '@/components/editor/MachineValidatorPanel';
 import StabilityOptimizerPanel from '@/components/editor/StabilityOptimizerPanel';
 import TravelPathOptimizerPanel from '@/components/editor/TravelPathOptimizerPanel';
 import TrimOptimizerPanel from '@/components/editor/TrimOptimizerPanel';
+import ContourRefinePanel from '@/components/editor/ContourRefinePanel';
 import SewingSimulator from '@/components/editor/SewingSimulator';
 import MachineSimulator from '@/components/editor/MachineSimulator';
 import SimulationReportPanel from '@/components/editor/SimulationReportPanel';
@@ -35,6 +36,7 @@ import { filterValidVisualRegions } from '@/lib/visualRegionGuard';
 import { buildFinalCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
 import { calculateUnifiedCommandMetrics } from '@/lib/unifiedCommandMetrics';
 import { simplifyGeometry } from '@/lib/industrialStitchProcessor';
+import { buildDarkStrokeContextFromUrl } from '@/lib/darkStrokeDetector';
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
 import { useDecisionEngine } from '@/hooks/useDecisionEngine.js';
@@ -91,7 +93,26 @@ export default function Editor() {
   const [classReport, setClassReport] = useState(null);
   const [centerlineReport, setCenterlineReport] = useState(null);
   const [outlineReport, setOutlineReport] = useState(null);
+  const [darkStroke, setDarkStroke] = useState(null);
   const timerRef = useRef(null);
+
+  // ── Dark stroke detection — "dark stroke first" contour system ──
+  // Computes a mask of real dark lines from the original image so the contour
+  // pipeline can reject color boundaries (e.g. between two pinks) that have no
+  // actual drawn line, and preserve the mouth/eyes as independent dark details.
+  useEffect(() => {
+    if (!imageUrl) { setDarkStroke(null); return; }
+    let cancelled = false;
+    buildDarkStrokeContextFromUrl(imageUrl)
+      .then(ctx => { if (!cancelled) setDarkStroke(ctx); })
+      .catch(err => { console.warn('[dark-stroke] detection failed:', err); if (!cancelled) setDarkStroke(null); });
+    return () => { cancelled = true; };
+  }, [imageUrl]);
+
+  // Config with dark stroke mask attached — flows through buildFinalCommands
+  // to the contour export builder + segment classifier. Not persisted (mask is
+  // a Uint8Array); saveProject uses the base configRef.
+  const configWithDarkStroke = useMemo(() => ({ ...config, darkStroke }), [config, darkStroke]);
 
   const maskCanvasRef = useRef(null);
   const [maskTool, setMaskTool] = useState('brush');
@@ -155,14 +176,14 @@ export default function Editor() {
       console.log('[commands-state] final commands metrics (override):', meta);
       return { commands: cmds, objects: [], meta };
     }
-    const built = buildFinalCommands(regions, config, editorMachineSettings);
+    const built = buildFinalCommands(regions, configWithDarkStroke, editorMachineSettings);
     console.log('[commands-state] final commands metrics:', {
       stitches: built.commands.filter(c => c.type === 'stitch').length,
       jumps: built.commands.filter(c => c.type === 'jump').length,
       trims: built.commands.filter(c => c.type === 'trim').length,
     });
     return built;
-  }, [regions, config, editorMachineSettings, optimizedCommandsOverride]);
+  }, [regions, configWithDarkStroke, editorMachineSettings, optimizedCommandsOverride]);
 
   // ═══ Unified metrics — single source of truth for all panels ═══
   const unifiedMetrics = useMemo(() => {

@@ -3,17 +3,23 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Central semantic classifier for embroidery contour segments.
  *
- * Classes:
- *   outer_silhouette  — outer boundary of body/main shape          (EXPORT)
- *   limb_contour      — outer boundary of feet/arms                 (EXPORT)
- *   facial_detail     — mouth, nose, other facial features          (EXPORT)
- *   eye_detail        — eyes                                        (EXPORT)
- *   fill_boundary     — border between different colored fills   (NO EXPORT)
- *   travel            — jump/trim movement                       (NO EXPORT)
- *   artifact          — artificial geometry                      (NO EXPORT)
+ * "Dark stroke first" — contours are only exportable when backed by a real
+ * dark stroke in the original image (config.darkStroke / context.darkStroke).
  *
- * Hierarchy: facial_detail > eye_detail > outer_silhouette > limb_contour > fill_boundary > travel/artifact
+ * Classes:
+ *   dark_stroke_outline — contour backed by real dark stroke line    (EXPORT)
+ *   outer_silhouette    — outer boundary of body/main shape          (EXPORT)
+ *   limb_contour        — outer boundary of feet/arms                (EXPORT)
+ *   facial_detail       — mouth, nose, other facial features         (EXPORT)
+ *   eye_detail          — eyes                                       (EXPORT)
+ *   fill_boundary       — border between different colored fills  (NO EXPORT)
+ *   travel              — jump/trim movement                     (NO EXPORT)
+ *   artifact            — artificial geometry                    (NO EXPORT)
+ *
+ * Hierarchy: facial_detail > eye_detail > dark_stroke_outline > outer_silhouette > limb_contour > fill_boundary > travel/artifact
  */
+
+import { overlapsDarkStrokeMask } from './darkStrokeDetector.js';
 
 // ─── Color helpers ───────────────────────────────────────────────────────────
 
@@ -90,31 +96,45 @@ function sameObjectGroup(a, b) {
 
 // ─── EXPORTABLE categories ────────────────────────────────────────────────────
 
-export const EXPORTABLE_CATEGORIES = ['outer_silhouette', 'limb_contour', 'facial_detail', 'eye_detail'];
+export const EXPORTABLE_CATEGORIES = ['dark_stroke_outline', 'outer_silhouette', 'limb_contour', 'facial_detail', 'eye_detail'];
 
 export function isExportable(className) {
   return EXPORTABLE_CATEGORIES.includes(className);
 }
 
 // ─── Dark stroke evidence ─────────────────────────────────────────────────────
-// Without the source image, we approximate: if both sides of a segment belong
-// to the same object_group and neither side is dark, there is no dark stroke.
+// "Dark stroke first": a contour is only real if it overlaps the dark stroke
+// mask extracted from the original image. Color-region boundaries without a
+// dark stroke are fill_boundary (not exported).
 
 export function hasDarkStrokeEvidence(segment, context = {}) {
   const rawRegion = segment.rawRegion || {};
-  const regions = context.regions || [];
+  const darkStroke = context.darkStroke || null;
 
-  // Find parent fill region
+  // ── Primary: overlap with dark stroke mask from the real image ──
+  if (darkStroke) {
+    const points = segment.points || rawRegion.path_points || rawRegion.contour_points || [];
+    if (points.length >= 2) {
+      // segment.points are in mm; rawRegion path_points are normalized [0-1].
+      // The mask works in normalized space — prefer rawRegion.path_points.
+      const normPts = (rawRegion.path_points || rawRegion.contour_points || []).length >= 2
+        ? (rawRegion.path_points || rawRegion.contour_points)
+        : points;
+      const closed = rawRegion.closed !== false;
+      const { ratio } = overlapsDarkStrokeMask(normPts, darkStroke, closed);
+      return ratio > 0.6;
+    }
+  }
+
+  // ── Fallback (no mask available): heuristic from region colors ──
+  const regions = context.regions || [];
   const parentFill = regions.find(r => r.id === rawRegion.parentRegionId);
-  if (!parentFill) return true; // no parent → assume outer boundary
+  if (!parentFill) return true;
 
   const parentColor = parentFill.color || parentFill.hex || '#888888';
   const parentLum = luminance(parentColor);
-
-  // If parent is dark → dark stroke evidence (mouth/eye detail itself)
   if (parentLum < 50) return true;
 
-  // For inner outlines — check neighbors
   const rc = (rawRegion.region_class || '').toLowerCase();
   if (rc === 'inner_outline' || segment.layerType === 'inner_outline') {
     const adjacent = regions.filter(r => {
@@ -122,29 +142,20 @@ export function hasDarkStrokeEvidence(segment, context = {}) {
       if (sameObjectGroup(parentFill, r)) return false;
       return isAdjacent(parentFill, r);
     });
-
     if (adjacent.length === 0) return false;
 
-    // Any dark neighbor → real contour (eyes, mouth border)
     const hasDarkNeighbor = adjacent.some(r => isDarkColor(r.color || r.hex));
     if (hasDarkNeighbor) return true;
 
-    // Both sides pink → internal pink boundary, NO dark stroke
     const allPink = isPinkHue(parentColor) && adjacent.every(r => isPinkHue(r.color || r.hex));
     if (allPink) {
       console.log('[pink-boundary-audit] internal pink boundary detected: true');
       console.log('[pink-boundary-audit] internal pink boundary exported: false');
       return false;
     }
-
-    // Both sides light → no dark stroke
-    const allLight = isLightColor(parentColor) && adjacent.every(r => isLightColor(r.color || r.hex));
-    if (allLight) return false;
-
     return false;
   }
 
-  // Outer outlines — dark stroke evidence by default
   return true;
 }
 
@@ -157,14 +168,34 @@ export function classifyContourSegment(segment, context = {}) {
   const rawRegion = obj.rawRegion || {};
   const parentGroup = (rawRegion.parentGroupName || '').toLowerCase();
   const rc = (rawRegion.region_class || '').toLowerCase();
+  const darkStroke = context.darkStroke || null;
+
+  // Helper: overlap ratio of this segment with the dark stroke mask
+  const darkOverlap = () => {
+    if (!darkStroke) return 0;
+    const pts = rawRegion.path_points || rawRegion.contour_points || obj.points || [];
+    if (pts.length < 2) return 0;
+    const closed = rawRegion.closed !== false;
+    return overlapsDarkStrokeMask(pts, darkStroke, closed).ratio;
+  };
 
   // A) Mouth → facial_detail (highest priority — never fill_boundary/artifact)
   const mouthKeywords = ['mouth', 'boca', 'smile', 'labio', 'lip', 'facial_feature'];
-  if (mouthKeywords.some(k => name.includes(k)) || layerType === 'mouth_detail_run' || parentGroup === 'mouth') {
+  const isMouthByName = mouthKeywords.some(k => name.includes(k)) || layerType === 'mouth_detail_run' || parentGroup === 'mouth';
+  // Dark-stroke-backed mouth: small dark curve in lower-center face
+  const darkMouthHit = darkStroke?.mouthCandidate && (() => {
+    const bb = darkStroke.mouthCandidate.bbox;
+    const cb = computeBbox(rawRegion.path_points || obj.points || []);
+    // overlap of bboxes
+    const ox = Math.max(0, Math.min(cb.maxX, bb.maxX) - Math.max(cb.minX, bb.minX));
+    const oy = Math.max(0, Math.min(cb.maxY, bb.maxY) - Math.max(cb.minY, bb.minY));
+    return ox > 0 && oy > 0;
+  })();
+  if (isMouthByName || darkMouthHit) {
     return {
       className: 'facial_detail',
       exportable: true,
-      reason: 'mouth/facial feature detected',
+      reason: darkMouthHit ? 'mouth backed by dark stroke' : 'mouth/facial feature detected',
       confidence: 95,
       preserve: true,
       openCurve: true,
@@ -174,17 +205,26 @@ export function classifyContourSegment(segment, context = {}) {
 
   // B) Eyes → eye_detail
   const eyeKeywords = ['eye', 'ojo', 'iris', 'pupil'];
-  if (eyeKeywords.some(k => name.includes(k)) || parentGroup.includes('eye')) {
+  const isEyeByName = eyeKeywords.some(k => name.includes(k)) || parentGroup.includes('eye');
+  const darkEyeHit = darkStroke?.eyeCandidates?.some(eye => {
+    const bb = eye.bbox;
+    const cb = computeBbox(rawRegion.path_points || obj.points || []);
+    const ox = Math.max(0, Math.min(cb.maxX, bb.maxX) - Math.max(cb.minX, bb.minX));
+    const oy = Math.max(0, Math.min(cb.maxY, bb.maxY) - Math.max(cb.minY, bb.minY));
+    return ox > 0 && oy > 0;
+  });
+  if (isEyeByName || darkEyeHit) {
     return {
       className: 'eye_detail',
       exportable: true,
-      reason: 'eye detail detected',
+      reason: darkEyeHit ? 'eye backed by dark stroke' : 'eye detail detected',
       confidence: 90,
+      stitchType: 'triple_run',
     };
   }
 
   // C) Other facial details (detail_run layer)
-  if (layerType === 'detail_run' || layerType === 'mouth_detail_run') {
+  if (layerType === 'detail_run' || layerType === 'mouth_detail_run' || layerType === 'facial_detail') {
     return {
       className: 'facial_detail',
       exportable: true,
@@ -195,42 +235,46 @@ export function classifyContourSegment(segment, context = {}) {
     };
   }
 
-  // D) Inner outline — check for fill_boundary vs facial/eye
+  // D) Inner outline — dark stroke first: only exportable if backed by dark stroke
   if (rc === 'inner_outline' || layerType === 'inner_outline') {
-    // Mouth/eye inner outline → facial_detail/eye_detail
-    if (parentGroup === 'mouth') {
-      return {
-        className: 'facial_detail',
-        exportable: true,
-        reason: 'mouth inner outline',
-        confidence: 90,
-        preserve: true,
-        openCurve: true,
-        stitchType: 'triple_run',
-      };
-    }
-    if (parentGroup.includes('eye')) {
-      return {
-        className: 'eye_detail',
-        exportable: true,
-        reason: 'eye inner outline',
-        confidence: 90,
-      };
-    }
-
-    // Check dark stroke evidence — cambio de color != contorno
+    const overlap = darkOverlap();
     const hasEvidence = hasDarkStrokeEvidence(segment, context);
-    if (!hasEvidence) {
+
+    // Pink body shading boundary without dark stroke → fill_boundary (CAMBIO 7)
+    if (overlap <= 0.6 && !hasEvidence) {
+      const regions = context.regions || [];
+      const parentFill = regions.find(r => r.id === rawRegion.parentRegionId);
+      const parentColor = parentFill?.color || parentFill?.hex || '#888888';
+      const adjacent = regions.filter(r => r && parentFill && r.id !== parentFill.id &&
+        !sameObjectGroup(parentFill, r) && isAdjacent(parentFill, r));
+      const allPink = isPinkHue(parentColor) && adjacent.every(r => isPinkHue(r.color || r.hex));
+      const reason = allPink
+        ? 'pink body shading boundary without dark stroke'
+        : 'internal color boundary — no dark stroke evidence';
+      if (allPink) {
+        console.log('[pink-boundary-audit] internal pink boundary detected: true');
+        console.log('[pink-boundary-audit] internal pink boundary exported: false');
+      }
       return {
         className: 'fill_boundary',
         exportable: false,
-        reason: 'internal color boundary — no dark stroke evidence',
+        reason,
         confidence: 85,
       };
     }
 
-    // Has dark stroke evidence but not mouth/eye → still fill_boundary
-    // (only export recognized facial/eye/outer/limb contours)
+    // Has dark stroke overlap → dark_stroke_outline (exportable)
+    if (overlap > 0.6) {
+      return {
+        className: 'dark_stroke_outline',
+        exportable: true,
+        reason: `inner outline backed by dark stroke (overlap ${(overlap * 100).toFixed(0)}%)`,
+        confidence: 80,
+        stitchType: 'triple_run',
+      };
+    }
+
+    // Has heuristic evidence but no mask overlap → keep as fill_boundary (no export)
     return {
       className: 'fill_boundary',
       exportable: false,
@@ -239,21 +283,25 @@ export function classifyContourSegment(segment, context = {}) {
     };
   }
 
-  // E) Outer outline — body vs limb
-  if (rc === 'outer_outline' || layerType === 'outer_outline') {
-    if (parentGroup.includes('foot') || parentGroup.includes('arm')) {
+  // E) Outer outline — body vs limb. Dark stroke first: prefer real dark line.
+  if (rc === 'outer_outline' || layerType === 'outer_outline' || layerType === 'outer_silhouette' || layerType === 'limb_contour') {
+    const overlap = darkOverlap();
+    const isLimb = parentGroup.includes('foot') || parentGroup.includes('arm') || layerType === 'limb_contour';
+    const className = isLimb ? 'limb_contour' : 'outer_silhouette';
+    // If there's a real dark stroke on the outer boundary, mark as dark_stroke_outline
+    if (overlap > 0.6 && !isLimb) {
       return {
-        className: 'limb_contour',
+        className: 'dark_stroke_outline',
         exportable: true,
-        reason: 'foot/arm outer boundary',
-        confidence: 90,
+        reason: `outer outline backed by dark stroke (overlap ${(overlap * 100).toFixed(0)}%)`,
+        confidence: 92,
         stitchType: 'satin',
       };
     }
     return {
-      className: 'outer_silhouette',
+      className,
       exportable: true,
-      reason: 'body outer silhouette',
+      reason: isLimb ? 'foot/arm outer boundary' : 'body outer silhouette',
       confidence: 90,
       stitchType: 'satin',
     };
