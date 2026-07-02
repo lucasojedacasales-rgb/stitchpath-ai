@@ -102,30 +102,45 @@ export function parseEmbroideryHeader(buffer) {
 // ─── Record decoders ────────────────────────────────────────────────────
 
 /**
- * Tajima DST record: 3 bytes, bit-packed x/y displacement + control flags.
- * Byte 0 low nibble = x (1,2,4,8), high nibble = y (1,2,4,8)
- * Byte 1: x+16, x+32, x_sign, y+16, y+32, y_sign, always-set bits
- * Byte 2: control (0x80=jump, 0x40=colorChange, 0xF3=END)
+ * DST record decoder — balanced ternary (powers of 3: 1, 3, 9, 27, 81).
+ * Matches the corrected dstEncoder.js encoding used by the Caydo CE01.
+ *
+ * X: b0 0x80=+1, 0x40=-1, 0x20=+9, 0x10=-9
+ *    b1 0x80=+3, 0x40=-3, 0x20=+27, 0x10=-27
+ *    b2 0x20=+81, 0x10=-81
+ *
+ * Y: b0 0x01=+1, 0x02=-1, 0x04=+9, 0x08=-9
+ *    b1 0x01=+3, 0x02=-3, 0x04=+27, 0x08=-27
+ *    b2 0x04=+81, 0x08=-81
+ *
+ * Control: b2 0x03=stitch, 0x80=jump, 0x40=colorChange, 0xF3=END
  */
 function decodeDSTRecord(b0, b1, b2) {
   let x = 0, y = 0;
 
-  if (b0 & 0x01) x += 1;
-  if (b0 & 0x02) x += 2;
-  if (b0 & 0x04) x += 4;
-  if (b0 & 0x08) x += 8;
-  if (b0 & 0x10) y += 1;
-  if (b0 & 0x20) y += 2;
-  if (b0 & 0x40) y += 4;
-  if (b0 & 0x80) y += 8;
+  // X
+  if (b0 & 0x80) x += 1;
+  if (b0 & 0x40) x -= 1;
+  if (b0 & 0x20) x += 9;
+  if (b0 & 0x10) x -= 9;
+  if (b1 & 0x80) x += 3;
+  if (b1 & 0x40) x -= 3;
+  if (b1 & 0x20) x += 27;
+  if (b1 & 0x10) x -= 27;
+  if (b2 & 0x20) x += 81;
+  if (b2 & 0x10) x -= 81;
 
-  if (b1 & 0x01) x += 16;
-  if (b1 & 0x02) x += 32;
-  if (b1 & 0x08) y += 16;
-  if (b1 & 0x10) y += 32;
-
-  if (b1 & 0x04) x = -x;
-  if (b1 & 0x20) y = -y;
+  // Y
+  if (b0 & 0x01) y += 1;
+  if (b0 & 0x02) y -= 1;
+  if (b0 & 0x04) y += 9;
+  if (b0 & 0x08) y -= 9;
+  if (b1 & 0x01) y += 3;
+  if (b1 & 0x02) y -= 3;
+  if (b1 & 0x04) y += 27;
+  if (b1 & 0x08) y -= 27;
+  if (b2 & 0x04) y += 81;
+  if (b2 & 0x08) y -= 81;
 
   let type = 'stitch';
   if (b2 === 0xF3) type = 'end';

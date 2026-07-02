@@ -135,6 +135,8 @@ export default function CE01FormatTestPanel() {
               <MiniRow label="Records" value={lastResult.meta.recordCount} />
               <MiniRow label="Tamaño" value={`${lastResult.meta.fileSize} B`} />
               <MiniRow label="Bounds" value={`${lastResult.meta.bounds.plusX}/${lastResult.meta.bounds.minusX}/${lastResult.meta.bounds.plusY}/${lastResult.meta.bounds.minusY}`} />
+              <MiniRow label="Decoded" value={`${lastResult.meta.decodedBounds.plusX}/${lastResult.meta.decodedBounds.minusX}/${lastResult.meta.decodedBounds.plusY}/${lastResult.meta.decodedBounds.minusY}`} />
+              <MiniRow label="AX/AY" value={`${lastResult.meta.finalX}/${lastResult.meta.finalY}`} />
             </div>
           ) : (
             <p className="text-[10px] text-red-300">{lastResult.error}</p>
