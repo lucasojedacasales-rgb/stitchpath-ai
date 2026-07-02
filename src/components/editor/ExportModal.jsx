@@ -6,7 +6,8 @@ import ExportDebugPanel from './ExportDebugPanel';
 import ExportFixWizard from './ExportFixWizard';
 import ValidationPreview from './ValidationPreview';
 import RepairProgressPanel from './RepairProgressPanel';
-import { runExportPipeline, encodeToFile } from '@/lib/exportPipeline';
+import AdaptiveOptimizationReport from './AdaptiveOptimizationReport';
+import { runExportPipeline, encodeOptimizedToFile } from '@/lib/exportPipeline';
 import { autoCleanupRegions } from '@/lib/autoCleanup';
 
 const FORMATS = ['DST', 'PES', 'JEF', 'EXP'];
@@ -33,6 +34,8 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
   const [pipeline, setPipeline] = useState(null);
   const [fixAttempted, setFixAttempted] = useState(false);
   const [wizardResult, setWizardResult] = useState(null);
+  const [adaptiveReport, setAdaptiveReport] = useState(null);
+  const [showAdaptiveReport, setShowAdaptiveReport] = useState(false);
 
   const config = project?.config || {};
   const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
@@ -65,8 +68,13 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
     }
     setExporting(true);
     setExportError(null);
+    setAdaptiveReport(null);
     try {
-      const blob = await encodeToFile(commands, objects, format, machineSettings, base44);
+      // Run adaptive optimization engine BEFORE encoding — blocks if not ready
+      const { blob, optimizationResult } = await encodeOptimizedToFile(
+        regions, config, format, machineSettings, base44
+      );
+      setAdaptiveReport(optimizationResult);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -76,7 +84,13 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
       onClose();
     } catch (e) {
       console.error(e);
-      setExportError(e.message || 'Error al exportar el diseño');
+      if (e.blocked && e.report) {
+        setAdaptiveReport(e.report);
+        setShowAdaptiveReport(true);
+        setExportError(`Exportación bloqueada: stability score ${e.report.finalScore}/${e.report.report.targetScore}. Revisa el informe del motor adaptativo.`);
+      } else {
+        setExportError(e.message || 'Error al exportar el diseño');
+      }
     } finally {
       setExporting(false);
     }
@@ -87,7 +101,7 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm">
       <div className="bg-[#161a23] border border-[#2a2d3a] rounded-xl shadow-2xl flex flex-col"
-           style={{ width: step === 'preflight' ? 480 : step === 'wizard' ? 460 : (debugMode ? 640 : 400), maxHeight: '90vh' }}>
+           style={{ width: step === 'preflight' ? 480 : step === 'wizard' ? 460 : showAdaptiveReport ? 560 : (debugMode ? 640 : 400), maxHeight: '90vh' }}>
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#1e2130] flex-shrink-0">
@@ -157,6 +171,13 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
               }}
               onCancel={() => setStep('export')}
             />
+          ) : showAdaptiveReport && adaptiveReport ? (
+            <div className="p-5">
+              <AdaptiveOptimizationReport
+                result={adaptiveReport}
+                onClose={() => { setShowAdaptiveReport(false); }}
+              />
+            </div>
           ) : (
             <div className="p-6 space-y-5">
               {/* Auto-cleanup report — stitch cap + jump trim guarantee */}

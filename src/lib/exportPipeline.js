@@ -787,6 +787,36 @@ export function runExportPipeline(regions, config, machineSettings, format) {
  * as the primary input. Also builds `stitchPaths` as a fallback so the backend
  * can use whichever format is available.
  */
+/**
+ * Adaptive-optimized encode: runs the adaptiveOptimizationEngine loop BEFORE
+ * encoding, and blocks the export (returns an error) if readyToExport is false.
+ *
+ * Returns the Blob on success, or throws with the engine report attached:
+ *   { blocked: true, report: <engineResult> }
+ */
+export async function encodeOptimizedToFile(regions, config, format, machineSettings, base44Client) {
+  // Lazy import to avoid circular dependency at module load time.
+  const { runAdaptiveOptimization } = await import('./adaptiveOptimizationEngine');
+
+  const result = runAdaptiveOptimization(regions, config, machineSettings, format);
+
+  if (!result.readyToExport) {
+    const err = new Error(
+      `Exportación bloqueada por motor adaptativo: score ${result.finalScore}/${result.report.targetScore}` +
+      (result.report.blockReasons.length ? ` — ${result.report.blockReasons.join('; ')}` : '')
+    );
+    err.blocked = true;
+    err.report = result;
+    throw err;
+  }
+
+  // Encode the optimized commands + objects
+  return {
+    blob: await encodeToFile(result.commands, result.objects, format, machineSettings, base44Client),
+    optimizationResult: result,
+  };
+}
+
 export async function encodeToFile(commands, objects, format, machineSettings, base44Client) {
   // ── Sanitize commands: filter out NaN/Infinity coordinates ──────────────
   const cleanCommands = (commands || []).filter(c => {
