@@ -23,6 +23,7 @@
  */
 
 import { optimizeObjectOrder, processObjectStitches } from './industrialStitchProcessor';
+import { generateCE01SafeFillCommands } from './ce01SafeFillGenerator.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -113,6 +114,34 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
 
   for (const obj of ordered) {
     if (!obj.points || obj.points.length === 0) continue;
+
+    // CE01 safe fill: generate commands directly, bypassing processObjectStitches
+    if (obj.stitch_type === 'fill' && obj.ce01SafeFillMode) {
+      const fillCmds = generateCE01SafeFillCommands(obj, { machineSettings: ms, designOffset: [offX, offY] });
+      if (fillCmds.length > 0) {
+        if (prevColor !== null && obj.color !== prevColor) {
+          cmds.push({ type: 'colorChange', x: prevX, y: prevY, color: obj.color, regionId: obj.id });
+        }
+        prevColor = obj.color;
+        const fc = fillCmds[0];
+        const startDist = Math.hypot(fc.x - prevX, fc.y - prevY);
+        if (startDist > 0.5) {
+          if (!firstCmd && startDist > ms.trimThreshold) {
+            cmds.push({ type: 'trim', x: prevX, y: prevY, color: obj.color, regionId: obj.id });
+          }
+          const steps = Math.ceil(startDist / ms.maxJumpLength);
+          for (let s = 1; s <= steps; s++) {
+            cmds.push({ type: 'jump', x: prevX + (fc.x - prevX) * s / steps, y: prevY + (fc.y - prevY) * s / steps, color: obj.color, regionId: obj.id });
+          }
+          prevX = fc.x; prevY = fc.y;
+        }
+        cmds.push(...fillCmds);
+        const last = fillCmds[fillCmds.length - 1];
+        prevX = last.x; prevY = last.y;
+        firstCmd = false;
+      }
+      continue;
+    }
 
     // Industrial: process object (redundant removal + density + underlay + tie-in/off)
     const stitchPoints = processObjectStitches(obj, ms);
