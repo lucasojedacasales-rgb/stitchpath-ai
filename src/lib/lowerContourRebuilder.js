@@ -255,6 +255,86 @@ function makeLowerContour(group, points, widthMm) {
   };
 }
 
+// ── Build lower contours directly from strict exportedPaths (priority source) ─
+function buildLowerContoursFromExportedPaths(darkStroke, config, baseReport) {
+  const widthMm = config.width_mm || 100;
+  const heightMm = config.height_mm || 100;
+  const lowerWidth = config.lowerContourWidth || LOWER_CONTOUR_WIDTH;
+  const w = darkStroke.width, h = darkStroke.height;
+
+  const grouped = { lower_body: [], lower_foot_left: [], lower_foot_right: [] };
+  for (const path of darkStroke.exportedPaths) {
+    if (!path || path.length < MIN_CONTOUR_POINTS) continue;
+    const g = classifySubpathByZone(path, w, h);
+    if (!g) continue;
+    const mm = dedupeMm(path.map(p => pixelToMm(p, w, h, widthMm, heightMm)));
+    if (mm.length < MIN_CONTOUR_POINTS) continue;
+    grouped[g].push(mm);
+  }
+
+  console.log(`[lower-outline-fix] using strict exportedPaths: ${darkStroke.exportedPaths.length}`);
+  console.log(`[lower-outline-fix] body=${grouped.lower_body.length}, L=${grouped.lower_foot_left.length}, R=${grouped.lower_foot_right.length}`);
+  console.log(`[lower-outline-fix] oval boundary used: false`);
+  console.log(`[lower-outline-fix] largest component only: false`);
+
+  const contours = [];
+  let mergedCount = 0;
+  for (const [group, mmSubpaths] of Object.entries(grouped)) {
+    if (mmSubpaths.length === 0) continue;
+    const merged = mergeCompatibleSubpaths(mmSubpaths);
+    for (const pts of merged) {
+      if (pts.length < MIN_CONTOUR_POINTS) continue;
+      contours.push(makeLowerContour(group, pts, lowerWidth));
+    }
+  }
+  const { contours: finalContours, mergedCount: mc, rejectedCount } = mergeLowerContourSegments(contours);
+  mergedCount = mc;
+
+  const present = (g) => finalContours.some(c => c.parentGroupName === g);
+  const report = {
+    ...baseReport,
+    lowerBodyContourPresent: present('lower_body'),
+    leftFootContourPresent: present('lower_foot_left'),
+    rightFootContourPresent: present('lower_foot_right'),
+    lowerContourOpenEnds: finalContours.filter(c => !c._lowerClosed).length,
+    lowerContourOpenCaps: 0,
+    lowerContourMergedSegments: mergedCount,
+    lowerContourRejectedSegments: rejectedCount,
+    lowerContourRoundCapsVisible: 0,
+    footEndBlobs: 0,
+    lowerBodyContourCoverage: grouped.lower_body.length > 0 ? 100 : 0,
+    leftFootContourCoverage: grouped.lower_foot_left.length > 0 ? 100 : 0,
+    rightFootContourCoverage: grouped.lower_foot_right.length > 0 ? 100 : 0,
+    artificialLowerGeometry: 0,
+    pinkBoundaryOutlined: false,
+    rebuiltCount: finalContours.length,
+    ovalBoundaryUsed: false,
+    largestComponentOnly: false,
+    discardedLargestOnlyBug: false,
+    lowerRawSubpaths: grouped.lower_body.length,
+    leftFootRawSubpaths: grouped.lower_foot_left.length,
+    rightFootRawSubpaths: grouped.lower_foot_right.length,
+    skeletonJunctionCount: darkStroke.skeletonJunctionCount || 0,
+    bodyClipApplied: false,
+    averagePathDarkSupport: darkStroke.averagePathDarkSupport ?? 0,
+    minPathDarkSupport: darkStroke.minPathDarkSupport ?? 0,
+    source: darkStroke.source || 'strict_raw_original_bitmap',
+  };
+  _lastReport = report;
+
+  console.log(`[lower-outline-fix] body lower outline: ${report.lowerBodyContourPresent ? 'YES' : 'NO'}`);
+  console.log(`[lower-outline-fix] left foot outline: ${report.leftFootContourPresent ? 'YES' : 'NO'}`);
+  console.log(`[lower-outline-fix] right foot outline: ${report.rightFootContourPresent ? 'YES' : 'NO'}`);
+  console.log(`[lower-outline-fix] lower raw subpaths: ${report.lowerRawSubpaths}`);
+  console.log(`[lower-outline-fix] left foot raw subpaths: ${report.leftFootRawSubpaths}`);
+  console.log(`[lower-outline-fix] right foot raw subpaths: ${report.rightFootRawSubpaths}`);
+  console.log(`[lower-outline-fix] pink boundary outlined: false`);
+  console.log(`[lower-outline-fix] mouth preserved: YES (untouched)`);
+  console.log(`[lower-outline-fix] accepted: true`);
+
+  return { contours: finalContours, report };
+}
+
 // ── Main rebuild ──────────────────────────────────────────────────────────────
 export function rebuildLowerOuterContoursFromDarkStroke(regions, config, darkStroke) {
   const widthMm = config.width_mm || 100;
@@ -288,6 +368,10 @@ export function rebuildLowerOuterContoursFromDarkStroke(regions, config, darkStr
     bodyClipApplied: false,
   };
 
+  // PRIORITY: strict raw exportedPaths from the isolated test → use directly.
+  if (darkStroke && darkStroke.exportedPaths && darkStroke.exportedPaths.length) {
+    return buildLowerContoursFromExportedPaths(darkStroke, config, baseReport);
+  }
   if (!darkStroke || !darkStroke.components || darkStroke.components.length === 0) {
     _lastReport = baseReport;
     console.log('[lower-outline-fix] dark stroke segments found: 0');

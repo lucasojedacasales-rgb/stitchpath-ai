@@ -524,3 +524,108 @@ export async function runRawDarkStrokeTest(imageUrl, config = {}) {
     width: W, height: H,
   };
 }
+
+// ── Zone candidates (mouth/eye bboxes) from the strict mask ───────────────────
+function computeZoneCandidates(mask, W, H) {
+  let mMinX = W, mMinY = H, mMaxX = 0, mMaxY = 0, mCount = 0, mSumX = 0, mSumY = 0;
+  const eyeSides = {
+    left: { minX: W, minY: H, maxX: 0, maxY: 0, count: 0, sumX: 0, sumY: 0 },
+    right: { minX: W, minY: H, maxX: 0, maxY: 0, count: 0, sumX: 0, sumY: 0 },
+  };
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (!mask[y * W + x]) continue;
+    const nx = x / W, ny = y / H;
+    if (ny > 0.42 && ny < 0.62 && nx > 0.30 && nx < 0.70) {
+      mCount++; mSumX += x; mSumY += y;
+      if (x < mMinX) mMinX = x; if (x > mMaxX) mMaxX = x;
+      if (y < mMinY) mMinY = y; if (y > mMaxY) mMaxY = y;
+    }
+    if (ny > 0.20 && ny < 0.45) {
+      const side = nx < 0.5 ? eyeSides.left : eyeSides.right;
+      side.count++; side.sumX += x; side.sumY += y;
+      if (x < side.minX) side.minX = x; if (x > side.maxX) side.maxX = x;
+      if (y < side.minY) side.minY = y; if (y > side.maxY) side.maxY = y;
+    }
+  }
+  const mouthCandidate = mCount > 0 ? {
+    centroid: { x: (mSumX / mCount) / W, y: (mSumY / mCount) / H },
+    area: mCount,
+    bbox: { minX: mMinX / W, maxX: mMaxX / W, minY: mMinY / H, maxY: mMaxY / H },
+  } : null;
+  const eyeCandidates = [];
+  for (const c of [eyeSides.left, eyeSides.right]) {
+    if (c.count > 0) {
+      eyeCandidates.push({
+        centroid: { x: (c.sumX / c.count) / W, y: (c.sumY / c.count) / H },
+        area: c.count,
+        bbox: { minX: c.minX / W, maxX: c.maxX / W, minY: c.minY / H, maxY: c.maxY / H },
+      });
+    }
+  }
+  return { mouthCandidate, eyeCandidates };
+}
+
+// ── PRODUCTION ADAPTER ─────────────────────────────────────────────────────────
+// Reuses the SAME logic as the isolated RAW test (createStrictDarkMask +
+// extractRawDarkStrokePaths + splitPathsByLowerZone + validatePaths) and returns
+// an object compatible with config.darkStroke so the production contour pipeline
+// (contourExportBuilder → segmentClassifier → lowerContourRebuilder) consumes
+// the strict mask + exportedPaths directly.
+export async function buildStrictDarkStrokeContextFromOriginalImage(imageUrl, config = {}) {
+  if (!imageUrl) return null;
+
+  console.log('[dark-mask-source] production using strict raw original bitmap: true');
+
+  const { imageData, naturalW, naturalH } = await loadOriginalBitmap(imageUrl, RAW_PARAMS.maxProcessWidth);
+  const { strictMask, closedMask, skeleton, paths: rawPaths, junctionCount, components, darkPixelsCount, width: W, height: H } =
+    extractRawDarkStrokePaths(imageData, RAW_PARAMS);
+
+  const maskAnalysis = analyzeStrictMask(strictMask, W, H);
+  const zonePaths = splitPathsByLowerZone(rawPaths, W, H);
+  const validation = validatePaths(zonePaths, strictMask, W, H, RAW_PARAMS);
+  const exportedPaths = validation.exported;
+  const { mouthCandidate, eyeCandidates } = computeZoneCandidates(strictMask, W, H);
+
+  const outerOverlap = components.length > 0
+    ? components.filter(c => c.bbox.minX <= 2 || c.bbox.maxX >= W - 3 || c.bbox.minY <= 2 || c.bbox.maxY >= H - 3).length / components.length
+    : 0;
+  const confidence = Math.min(100, Math.round(
+    (components.length > 0 ? 40 : 0) +
+    (mouthCandidate ? 25 : 0) +
+    (eyeCandidates.length > 0 ? 20 : 0) +
+    Math.min(15, outerOverlap * 15)
+  ));
+
+  console.log('[dark-mask-source] config.darkStroke exists: true');
+  console.log(`[dark-mask-source] exportedPaths: ${exportedPaths.length}`);
+  console.log(`[dark-mask-source] hasLowerContour: ${maskAnalysis.hasLowerContour ? 'YES' : 'NO'}`);
+  console.log(`[dark-mask-source] hasMouth: ${maskAnalysis.hasMouth ? 'YES' : 'NO'}`);
+  console.log(`[dark-mask-source] hasEyes: ${maskAnalysis.hasEyes ? 'YES' : 'NO'}`);
+
+  return {
+    mask: strictMask,
+    strictMask,
+    closedMask,
+    skeleton: components.map(() => []),
+    paths: rawPaths,
+    exportedPaths,
+    components,
+    confidence,
+    width: W,
+    height: H,
+    mouthCandidate,
+    eyeCandidates,
+    outerOverlap,
+    hasMouth: maskAnalysis.hasMouth,
+    hasEyes: maskAnalysis.hasEyes,
+    hasLowerContour: maskAnalysis.hasLowerContour,
+    hasPinkBoundary: false,
+    averagePathDarkSupport: validation.averagePathDarkSupport,
+    minPathDarkSupport: validation.minPathDarkSupport,
+    skeletonJunctionCount: junctionCount,
+    source: 'strict_raw_original_bitmap',
+    options: { strokeTolerancePx: 2 },
+    darkPixelsCount,
+    naturalDims: `${naturalW}x${naturalH}`,
+  };
+}

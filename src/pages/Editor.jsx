@@ -36,7 +36,7 @@ import { filterValidVisualRegions } from '@/lib/visualRegionGuard';
 import { buildFinalCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
 import { calculateUnifiedCommandMetrics } from '@/lib/unifiedCommandMetrics';
 import { simplifyGeometry } from '@/lib/industrialStitchProcessor';
-import { buildDarkStrokeContextFromUrl } from '@/lib/darkStrokeDetector';
+import { buildStrictDarkStrokeContextFromOriginalImage } from '@/lib/rawDarkStrokeTest';
 import { runContourRefinementGuard } from '@/lib/contourRefinementGuard';
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
@@ -104,9 +104,9 @@ export default function Editor() {
   useEffect(() => {
     if (!imageUrl) { setDarkStroke(null); return; }
     let cancelled = false;
-    buildDarkStrokeContextFromUrl(imageUrl)
+    buildStrictDarkStrokeContextFromOriginalImage(imageUrl, config)
       .then(ctx => { if (!cancelled) setDarkStroke(ctx); })
-      .catch(err => { console.warn('[dark-stroke] detection failed:', err); if (!cancelled) setDarkStroke(null); });
+      .catch(err => { console.warn('[dark-stroke] strict detection failed:', err); if (!cancelled) setDarkStroke(null); });
     return () => { cancelled = true; };
   }, [imageUrl]);
 

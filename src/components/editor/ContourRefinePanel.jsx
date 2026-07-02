@@ -477,11 +477,15 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
               if (!ds) return <div className="text-[10px] text-slate-600">Sin máscara (sube una imagen)</div>;
               return (
                 <div className="grid grid-cols-2 gap-1.5">
+                  <Metric label="Fuente" value={ds.source === 'strict_raw_original_bitmap' ? 'STRICT' : (ds.source || 'old')} color={ds.source === 'strict_raw_original_bitmap' ? 'text-emerald-400' : 'text-amber-400'} />
                   <Metric label="Componentes" value={ds.components?.length || 0} color="text-cyan-400" />
+                  <Metric label="ExportedPaths" value={ds.exportedPaths?.length || 0} color={ds.exportedPaths?.length ? 'text-emerald-400' : 'text-red-400'} />
                   <Metric label="Confianza" value={(ds.confidence ?? 0) + '%'} color="text-violet-400" />
-                  <Metric label="Boca detectada" value={ds.mouthCandidate ? 'YES' : 'NO'} color={ds.mouthCandidate ? 'text-emerald-400' : 'text-red-400'} />
-                  <Metric label="Ojos" value={ds.eyeCandidates?.length || 0} color="text-yellow-400" />
-                  <Metric label="Overlap exterior" value={((ds.outerOverlap ?? 0) * 100).toFixed(0) + '%'} color="text-cyan-400" />
+                  <Metric label="Boca detectada" value={ds.hasMouth ? 'YES' : (ds.mouthCandidate ? 'YES' : 'NO')} color={(ds.hasMouth || ds.mouthCandidate) ? 'text-emerald-400' : 'text-red-400'} />
+                  <Metric label="Ojos" value={ds.hasEyes ? 'YES' : (ds.eyeCandidates?.length ? 'YES' : 'NO')} color={(ds.hasEyes || ds.eyeCandidates?.length) ? 'text-emerald-400' : 'text-red-400'} />
+                  <Metric label="Contorno inferior" value={ds.hasLowerContour ? 'YES' : 'NO'} color={ds.hasLowerContour ? 'text-emerald-400' : 'text-red-400'} />
+                  <Metric label="Avg dark support" value={(ds.averagePathDarkSupport ?? 0).toFixed(3)} color={(ds.averagePathDarkSupport ?? 0) >= 0.90 ? 'text-emerald-400' : 'text-red-400'} />
+                  <Metric label="Frontera rosa" value={ds.hasPinkBoundary ? 'YES' : 'NO'} color={ds.hasPinkBoundary ? 'text-red-400' : 'text-emerald-400'} />
                   <Metric label="Puntadas dark" value={report.darkStrokeStitches || 0} color={report.darkStrokeStitches > 0 ? 'text-emerald-400' : 'text-amber-400'} />
                 </div>
               );

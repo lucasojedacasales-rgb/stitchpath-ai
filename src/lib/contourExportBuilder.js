@@ -294,6 +294,15 @@ export function buildContourObjects(regions, config = {}) {
   // ── Rebuild lower body + feet contours from real dark stroke (BEFORE the
   //    outline loop so the body fill-boundary outline can be clipped to the
   //    upper half and foot fill-boundary outlines skipped entirely). ──
+  console.log(`[dark-mask-source] config.darkStroke exists: ${!!darkStroke}`);
+  console.log(`[dark-mask-source] darkStroke source: ${darkStroke?.source || 'none'}`);
+  console.log(`[dark-mask-source] exportedPaths: ${darkStroke?.exportedPaths?.length || 0}`);
+  console.log(`[dark-mask-source] hasLowerContour: ${darkStroke?.hasLowerContour ? 'YES' : 'NO'}`);
+  console.log(`[dark-mask-source] hasMouth: ${darkStroke?.hasMouth ? 'YES' : 'NO'}`);
+  console.log(`[dark-mask-source] hasEyes: ${darkStroke?.hasEyes ? 'YES' : 'NO'}`);
+  if (!darkStroke || !darkStroke.exportedPaths || darkStroke.exportedPaths.length === 0) {
+    console.log('[lower-outline-fix] no strict exportedPaths — lower contour export blocked, no geometry invented');
+  }
   const lowerResult = rebuildLowerOuterContoursFromDarkStroke(
     classifiedRegions, { ...config, lowerContourWidth: preset.lowerContourWidth }, darkStroke);
   const lowerBodyRebuilt = lowerResult.report.lowerBodyContourPresent;
