@@ -600,6 +600,11 @@ export default function Editor() {
                   commands={finalEmbroideryCommands.commands}
                   onSimplifyGeometry={handleSimplifyGeometry}
                 />
+                <ContourRefinePanel
+                  commands={finalEmbroideryCommands.commands}
+                  regions={regions}
+                  config={config}
+                />
               </div>
             </div>
           ) : activeTab === 'travel' ? (
