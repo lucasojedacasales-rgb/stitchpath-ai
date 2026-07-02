@@ -151,16 +151,18 @@ function decodeDSTRecord(b0, b1, b2) {
 }
 
 /**
- * Barudan DSB record: 3 bytes, signed byte x/y + control byte.
+ * Barudan DSB record: [command, Y, X] — command byte first, then signed Y, X.
+ * command: 0x80=stitch, 0x81=jump, 0x88=colorChange, 0xF8=end
  */
 function decodeDSBRecord(b0, b1, b2) {
-  let x = b0 > 127 ? b0 - 256 : b0;
-  let y = b1 > 127 ? b1 - 256 : b1;
+  // b0 = command, b1 = Y (signed), b2 = X (signed)
+  const y = b1 > 127 ? b1 - 256 : b1;
+  const x = b2 > 127 ? b2 - 256 : b2;
 
   let type = 'stitch';
-  if (b2 === 0xF3) type = 'end';
-  else if (b2 & 0x80) type = 'jump';
-  else if (b2 & 0x40) type = 'colorChange';
+  if (b0 === 0xF8) type = 'end';
+  else if (b0 === 0x81) type = 'jump';
+  else if (b0 === 0x88) type = 'colorChange';
 
   return { x, y, type };
 }

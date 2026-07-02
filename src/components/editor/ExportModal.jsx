@@ -17,7 +17,7 @@ import CE01ProductionPanel from './CE01ProductionPanel';
 import BinaryInspectorPanel from './BinaryInspectorPanel';
 import CE01FormatTestPanel from './CE01FormatTestPanel';
 
-const FORMATS = ['DST', 'PES', 'JEF', 'EXP'];
+const FORMATS = ['DSB', 'DST', 'PES', 'JEF', 'EXP'];
 
 /**
  * CE01 Production export gate — the ONLY authority for blocking export in
@@ -122,6 +122,11 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   // optimization engine, no stability optimizer, no region regeneration.
   // Pipeline: finalCommands → repair (if improves) → sanitize (if improves) → CE01 validate → encode
   const ce01ProductionMode = config.ce01ProductionMode === true;
+
+  // CE01 Production Mode: default to DSB (recommended format for Caydo CE01)
+  useEffect(() => {
+    if (ce01ProductionMode) setFormat('DSB');
+  }, [ce01ProductionMode]);
 
   // Clear stale adaptive/stability states when opening in production mode —
   // old adaptiveReport or stabilityScore must never block CE01 production export.
@@ -501,7 +506,12 @@ export default function ExportModal({ project, config: editorConfig, regions: in
               {/* Format */}
               <div>
                 <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-2 block">Formato de salida</label>
-                <div className="grid grid-cols-4 gap-2">
+                {ce01ProductionMode && (
+                  <div className="mb-2 text-[10px] text-cyan-400 bg-cyan-900/15 border border-cyan-500/30 rounded-lg px-2 py-1">
+                    Formato recomendado para CE01: DSB
+                  </div>
+                )}
+                <div className="grid grid-cols-5 gap-2">
                   {FORMATS.map(f => (
                     <button key={f} onClick={() => setFormat(f)}
                       className={`py-2 rounded-lg border text-xs font-bold transition-all ${

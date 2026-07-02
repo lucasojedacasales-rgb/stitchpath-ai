@@ -83,6 +83,10 @@ Deno.serve(async (req) => {
       fileBuffer = encodeEXP(stitches);
       mimeType = 'application/octet-stream';
       ext = 'exp';
+    } else if (fmt === 'DSB') {
+      fileBuffer = encodeDSB(stitches, ms);
+      mimeType = 'application/octet-stream';
+      ext = 'dsb';
     } else if (fmt === 'VP3') {
       return Response.json({ error: 'VP3 format not yet implemented. Use DST, PES, JEF, or EXP.' }, { status: 501 });
     } else {
@@ -574,6 +578,120 @@ function encodeEXP(stitches) {
   }
 
   return new Uint8Array(records);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  DSB ENCODER (Barudan/Wilcom)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function encodeDSB(stitches, ms) {
+  // ── Compute design extents for header ──────────────────────────────────
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let stitchCount = 0, colorCount = 0;
+  let finalX = 0, finalY = 0;
+
+  for (const s of stitches) {
+    if (s.type === 'end') { stitchCount++; break; }
+    if (s.type === 'trim') continue; // no record for trim in DSB
+    stitchCount++;
+
+    if (s.type === 'colorChange') {
+      colorCount++;
+      continue;
+    }
+
+    if (s.type === 'stitch' || s.type === 'jump') {
+      if (s.x < minX) minX = s.x;
+      if (s.y < minY) minY = s.y;
+      if (s.x > maxX) maxX = s.x;
+      if (s.y > maxY) maxY = s.y;
+      finalX = s.x;
+      finalY = s.y;
+    }
+  }
+  if (minX === Infinity) { minX = 0; minY = 0; maxX = 0; maxY = 0; }
+
+  // ── Build header (512 bytes, CR line breaks, 0x1A after PD) ─────────────
+  const header = new Uint8Array(512).fill(0x20);
+  let hpos = 0;
+  const writeStr = (s) => {
+    for (let i = 0; i < s.length && hpos < 512; i++) header[hpos++] = s.charCodeAt(i);
+    header[hpos++] = 0x0D;
+  };
+
+  writeStr(`LA:${'StitchPath'.padEnd(16, ' ').slice(0, 16)}`);
+  writeStr(`ST:${String(stitchCount).padStart(7, '0')}`);
+  writeStr(`CO:${String(colorCount).padStart(3, '0')}`);
+  writeStr(`+X:${String(Math.round(maxX * 10)).padStart(5, '0')}`);
+  writeStr(`-X:${String(Math.round(-minX * 10)).padStart(5, '0')}`);
+  writeStr(`+Y:${String(Math.round(maxY * 10)).padStart(5, '0')}`);
+  writeStr(`-Y:${String(Math.round(-minY * 10)).padStart(5, '0')}`);
+  writeStr(`AX:${String(Math.round(finalX * 10)).padStart(5, '0')}`);
+  writeStr(`AY:${String(Math.round(finalY * 10)).padStart(5, '0')}`);
+  writeStr('MX:+00000');
+  writeStr('MY:+00000');
+  writeStr('PD:******');
+  // 0x1A after PD
+  if (hpos < 512) header[hpos++] = 0x1A;
+
+  // ── Build stitch records ────────────────────────────────────────────────
+  const records = [];
+  let cx = 0, cy = 0;
+  const UNIT = 0.1; // mm per unit
+
+  const toSignedByte = (v) => {
+    const c = Math.max(-127, Math.min(127, Math.round(v)));
+    return c < 0 ? c + 256 : c;
+  };
+
+  const DSB_CMD = {
+    stitch: 0x80,
+    jump: 0x81,
+    colorChange: 0x88,
+    end: 0xF8,
+  };
+
+  for (const s of stitches) {
+    if (s.type === 'end') {
+      records.push(DSB_CMD.end, 0x00, 0x00);
+      break;
+    }
+    if (s.type === 'trim') continue; // skip — DSB has no explicit trim
+
+    if (s.type === 'colorChange') {
+      records.push(DSB_CMD.colorChange, 0x00, 0x00);
+      continue;
+    }
+
+    const tx = Math.round(s.x / UNIT);
+    const ty = Math.round(s.y / UNIT);
+    const dx = tx - cx;
+    const dy = ty - cy;
+
+    const cmd = s.type === 'jump' ? DSB_CMD.jump : DSB_CMD.stitch;
+    const maxDisp = 127;
+    const steps = Math.max(
+      1,
+      Math.ceil(Math.abs(dx) / maxDisp),
+      Math.ceil(Math.abs(dy) / maxDisp)
+    );
+
+    for (let step = 1; step <= steps; step++) {
+      const stepDx = Math.round(dx * step / steps) - Math.round(dx * (step - 1) / steps);
+      const stepDy = Math.round(dy * step / steps) - Math.round(dy * (step - 1) / steps);
+      records.push(cmd, toSignedByte(stepDy), toSignedByte(stepDx));
+    }
+
+    cx = tx;
+    cy = ty;
+  }
+
+  // ── Combine: header + records + EOF 0x1A ────────────────────────────────
+  const buf = new Uint8Array(512 + records.length + 1);
+  buf.set(header, 0);
+  buf.set(new Uint8Array(records), 512);
+  buf[buf.length - 1] = 0x1A;
+  return buf;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

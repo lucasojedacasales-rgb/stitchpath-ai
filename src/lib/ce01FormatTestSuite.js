@@ -12,7 +12,11 @@
  *   TEST_03_DST_FILL     — 50×50mm filled square, 1 color
  */
 
-import { buildDSTFile, decodeDSTRecord, DSB_NOT_IMPLEMENTED } from './dstEncoder';
+import { buildDSTFile, decodeDSTRecord } from './dstEncoder';
+import { buildDSBFile, compareDSBToWilcom } from './dsbEncoder';
+
+// Re-export DSB comparison for panels that import from this module
+export { compareDSBToWilcom };
 
 const HEADER_SIZE = 512;
 const EOF_BYTE = 0x1A;
@@ -114,6 +118,48 @@ const TESTS = {
       const points = generateFillPoints(500, 30, 10);
       return buildDSTFile({
         label: 'TEST03_FILL',
+        stitchPoints: points,
+        colorChanges: 0,
+        ce01Strict: true,
+      });
+    },
+  },
+  TEST_DSB_01_LINE: {
+    format: 'DSB',
+    label: 'TEST_DSB_01_LINE',
+    generate: () => {
+      // 10mm = 100 units, 25 stitches of 4 units each, 1 color, no jumps, no trims
+      const points = generateLinePoints(100, 25);
+      return buildDSBFile({
+        label: 'TEST_DSB_01_LINE',
+        stitchPoints: points,
+        colorChanges: 0,
+        ce01Strict: true,
+      });
+    },
+  },
+  TEST_DSB_02_SQUARE: {
+    format: 'DSB',
+    label: 'TEST_DSB_02_SQUARE',
+    generate: () => {
+      // 30×30mm = 300×300 units, stitch len 5 units (0.5mm), 1 color, <300 stitches
+      const points = generateSquarePoints(300, 5);
+      return buildDSBFile({
+        label: 'TEST_DSB_02_SQUARE',
+        stitchPoints: points,
+        colorChanges: 0,
+        ce01Strict: true,
+      });
+    },
+  },
+  TEST_DSB_03_FILL: {
+    format: 'DSB',
+    label: 'TEST_DSB_03_FILL',
+    generate: () => {
+      // 50×50mm = 500×500 units, row spacing 30 units (3mm), stitch 10 units (1mm), <1000 stitches
+      const points = generateFillPoints(500, 30, 10);
+      return buildDSBFile({
+        label: 'TEST_DSB_03_FILL',
         stitchPoints: points,
         colorChanges: 0,
         ce01Strict: true,

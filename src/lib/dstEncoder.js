@@ -358,10 +358,8 @@ export function buildDSTFile({ label, stitchPoints, colorChanges = 0, ce01Strict
   };
 }
 
-// ─── DSB blocking ───────────────────────────────────────────────────────
+// ─── DSB — real encoder lives in dsbEncoder.js ──────────────────────────
+// Re-export for backward compatibility. DSB is now a real Barudan encoder,
+// not a DST clone.
 
-export const DSB_NOT_IMPLEMENTED = 'DSB real no implementado todavía. El archivo generado no es compatible Barudan/Wilcom.';
-
-export function buildDSBFile() {
-  throw new Error(DSB_NOT_IMPLEMENTED);
-}
+export { buildDSBFile, encodeDSBRecord, decodeDSBRecord, compareDSBToWilcom } from './dsbEncoder';

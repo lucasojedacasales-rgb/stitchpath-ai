@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { FlaskConical, Download, Upload, Loader2, CheckCircle, AlertTriangle, XCircle, FileText, GitCompare } from 'lucide-react';
-import { downloadTestFile, generateTestFile, compareToWilcomDSB, listTests } from '@/lib/ce01FormatTestSuite';
+import { downloadTestFile, generateTestFile, compareToWilcomDSB, compareDSBToWilcom, listTests } from '@/lib/ce01FormatTestSuite';
 
 /**
  * CE01FormatTestPanel — generates minimal test files in DST/DSB formats
@@ -38,7 +38,11 @@ export default function CE01FormatTestPanel() {
     setComparing(true);
     try {
       const { bytes } = generateTestFile(lastResult.testId);
-      const result = compareToWilcomDSB(referenceBuffer, bytes.buffer);
+      // Use DSB-specific comparison for DSB files, DST comparison otherwise
+      const isDSB = lastResult.meta.format === 'DSB';
+      const result = isDSB
+        ? compareDSBToWilcom(referenceBuffer, bytes.buffer)
+        : compareToWilcomDSB(referenceBuffer, bytes.buffer);
       setComparison(result);
     } catch (e) {
       console.error('[ce01-format-test] comparison error:', e);
