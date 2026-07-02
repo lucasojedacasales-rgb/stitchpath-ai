@@ -142,22 +142,43 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
       prevY = startY;
     }
 
-    // Stitch all points (tie-in + underlay + main + tie-off) with splitting
+    // Stitch all points (tie-in + underlay + main + tie-off)
+    // Points may carry a 3rd element: 'J' = jump, 'S' or undefined = stitch
+    const isFill = obj.stitch_type === 'fill';
     for (let i = 0; i < stitchPoints.length; i++) {
-      const x = stitchPoints[i][0] + offX;
-      const y = stitchPoints[i][1] + offY;
-      const dist = Math.hypot(x - prevX, y - prevY);
+      const pt = stitchPoints[i];
+      const x = pt[0] + offX;
+      const y = pt[1] + offY;
+      const isJump = pt[2] === 'J';
 
+      if (isJump) {
+        // Jump to next span start — never stitch across polygon gaps
+        const jDist = Math.hypot(x - prevX, y - prevY);
+        if (jDist > 0.5) {
+          const jSteps = Math.ceil(jDist / ms.maxJumpLength);
+          for (let s = 1; s <= jSteps; s++) {
+            const jx = prevX + (x - prevX) * s / jSteps;
+            const jy = prevY + (y - prevY) * s / jSteps;
+            cmds.push({ type: 'jump', x: jx, y: jy, color: obj.color, regionId: obj.id });
+          }
+          prevX = x; prevY = y;
+        }
+        continue;
+      }
+
+      // Stitch
+      const dist = Math.hypot(x - prevX, y - prevY);
       if (dist > ms.maxStitchLength) {
-        // Break long stitches into sub-stitches
         const steps = Math.ceil(dist / ms.maxStitchLength);
         for (let s = 1; s < steps; s++) {
           const sx = prevX + (x - prevX) * s / steps;
           const sy = prevY + (y - prevY) * s / steps;
-          cmds.push({ type: 'stitch', x: sx, y: sy, color: obj.color, regionId: obj.id });
+          cmds.push({ type: 'stitch', x: sx, y: sy, color: obj.color, regionId: obj.id,
+            stitchType: obj.stitch_type, source: isFill ? 'clipped_fill' : 'standard' });
         }
       }
-      cmds.push({ type: 'stitch', x, y, color: obj.color, regionId: obj.id });
+      cmds.push({ type: 'stitch', x, y, color: obj.color, regionId: obj.id,
+        stitchType: obj.stitch_type, source: isFill ? 'clipped_fill' : 'standard' });
       prevX = x; prevY = y;
       firstCmd = false;
     }

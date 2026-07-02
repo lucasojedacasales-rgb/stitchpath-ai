@@ -9,7 +9,10 @@
  *   3. Tie-in / tie-off — locking stitches at start/end of every object
  *   4. Constant density normalization — consistent stitch spacing
  *   5. Color-grouped path optimization — nearest-neighbor within each color
+ *   6. Clipped scanline fill — polygon-accurate fill stitches (no bbox overflow)
  */
+
+import { generateClippedFillStitches } from './clippedFillGenerator.js';
 
 // ─── Physical constants (mm) — tuned for home machines (Caydo CE01) ──────────
 const TIE_SIZE = 0.5;           // locking stitch length
@@ -336,16 +339,36 @@ export function processObjectStitches(obj, machine) {
   // 5. Tie-in (locking stitches at start)
   result.push(...generateTieIn(normalized[0]));
 
-  // 6-7. Mandatory underlay for fill/satin: edge-run first, then grid
+  // 6-7. Underlay: edge-run for fill/satin; grid underlay for satin only
+  //      (fill uses clipped scanline fill as main stitches — no bbox grid)
   if (obj.stitch_type === 'fill' || obj.stitch_type === 'satin') {
     const edgeRun = generateEdgeRunUnderlay(simplified);
     if (edgeRun.length > 0) result.push(...edgeRun);
-    const grid = generateGridUnderlay(obj);
-    if (grid.length > 0) result.push(...grid);
+    if (obj.stitch_type === 'satin') {
+      const grid = generateGridUnderlay(obj);
+      if (grid.length > 0) result.push(...grid);
+    }
   }
 
-  // 8. Main stitches (constant density, no accumulation)
-  result.push(...normalized);
+  // 8. Main stitches
+  if (obj.stitch_type === 'fill') {
+    // Clipped scanline fill — stitches inside polygon only, jumps between spans
+    const fillPoints = generateClippedFillStitches(obj.points, {
+      densityMm: obj.density || 0.4,
+      stitchLenMm: 3.0,
+      angleDeg: obj.angle ?? 45,
+      regionId: obj.id,
+    });
+    if (fillPoints.length > 0) {
+      result.push(...fillPoints);
+    } else {
+      // Fallback: polygon boundary if scanline fails (tiny region)
+      result.push(...normalized);
+    }
+  } else {
+    // Satin / running: constant density path along polygon
+    result.push(...normalized);
+  }
 
   // 9. Tie-off (locking stitches at end)
   result.push(...generateTieOff(normalized[normalized.length - 1]));
