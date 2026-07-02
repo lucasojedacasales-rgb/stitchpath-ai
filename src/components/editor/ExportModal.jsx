@@ -13,6 +13,7 @@ import { autoCleanupRegions } from '@/lib/autoCleanup';
 import { validateCE01 } from '@/lib/ce01Validator';
 import { sanitizeCommandsForCE01 } from '@/lib/ce01CommandSanitizer';
 import { prepareCE01ProductionExport, encodeCE01ProductionToFile } from '@/lib/ce01ProductionExport';
+import { buildDSTFromCommands } from '@/lib/dstDirectExport';
 import { calculateUnifiedCommandMetrics, metricsMatch } from '@/lib/unifiedCommandMetrics';
 import CE01ProductionPanel from './CE01ProductionPanel';
 import BinaryInspectorPanel from './BinaryInspectorPanel';
@@ -223,68 +224,104 @@ export default function ExportModal({ project, config: editorConfig, regions: in
         setExportError(`Exportación bloqueada: ${gateDecision.reason}`);
         return;
       }
+      // ── CE01 Production: force DST, block DSB entirely ───────────────────
+      if (format !== 'DST') {
+        setExportError('CE01 Production Mode requiere formato DST. DSB no está permitido.');
+        return;
+      }
       console.log('[ce01-production-export] export allowed: true');
       setExporting(true);
       setExportError(null);
       try {
-        const sourceObjects = editorFinalObjects || pipelineResult.objects;
-        const { blob } = await encodeCE01ProductionToFile(
-          sourceCommands, regions, config, machineSettings, sourceObjects, format, base44
-        );
+        // ── Direct DST: finalEmbroideryCommands → dstEncoder → Uint8Array → Blob ──
+        // No backend roundtrip, no base64, no atob/btoa, no DSB, no conversion.
+        const { bytes, blob, meta } = buildDSTFromCommands(sourceCommands, {
+          label: project?.name || 'design',
+          ce01Strict: true,
+        });
 
         // ── Binary validation before download ──────────────────────────────
-        const arrayBuffer = await blob.arrayBuffer();
-        const bytes = new Uint8Array(arrayBuffer);
+        const filename = `${(project?.name || 'design').replace(/[^a-zA-Z0-9_-]/g, '_')}.dst`;
+        const usingDSB = false;
+        const isUint8Array = bytes instanceof Uint8Array;
         const hasHeader512 = bytes.length >= 512;
         const headerStr = hasHeader512
           ? new TextDecoder('ascii').decode(bytes.slice(0, 512))
           : '';
 
+        // ST from header vs actual records
         const stMatch = headerStr.match(/ST:\s*(\d+)/);
-        const stValue = stMatch ? parseInt(stMatch[1], 10) : -1;
+        const headerST = stMatch ? parseInt(stMatch[1], 10) : -1;
         const hasEof = bytes[bytes.length - 1] === 0x1A;
         const dataEnd = hasEof ? bytes.length - 1 : bytes.length;
-        const recordCount = Math.floor((dataEnd - 512) / 3);
-        const stMatches = stValue === recordCount;
+        const actualRecords = Math.floor((dataEnd - 512) / 3);
+        const stMatches = headerST === actualRecords;
 
+        // CO coherent
+        const coMatch = headerStr.match(/CO:\s*(\d+)/);
+        const headerCO = coMatch ? parseInt(coMatch[1], 10) : -1;
+        const actualColorChanges = sourceCommands.filter(c => c.type === 'colorChange').length;
+        const coCoherent = headerCO === actualColorChanges;
+
+        // END present: 00 00 F3 (last record before EOF)
+        const endOffset = hasEof ? bytes.length - 4 : bytes.length - 3;
+        const hasEnd = bytes[endOffset] === 0x00 && bytes[endOffset + 1] === 0x00 && bytes[endOffset + 2] === 0xF3;
+
+        // AX/AY signed format
         const axOk = /AX:[+-]\d{5}/.test(headerStr);
         const ayOk = /AY:[+-]\d{5}/.test(headerStr);
-        const ayMalformed = /AY:0-/.test(headerStr);
 
-        // END present: DST → third byte 0xF3, DSB → first byte 0xF8
-        let hasEnd = false;
-        if (format === 'DST') {
-          hasEnd = bytes[bytes.length - 1] === 0xF3;
-        } else if (format === 'DSB') {
-          hasEnd = bytes[bytes.length - 4] === 0xF8;
-        } else {
-          hasEnd = true;
+        // Bounds from header — detect collapsed line
+        const pxMatch = headerStr.match(/\+X:\s*(\d+)/);
+        const nxMatch = headerStr.match(/-X:\s*(\d+)/);
+        const pyMatch = headerStr.match(/\+Y:\s*(\d+)/);
+        const nyMatch = headerStr.match(/-Y:\s*(\d+)/);
+        const headerWidth = (pxMatch && nxMatch) ? (parseInt(pxMatch[1]) + parseInt(nxMatch[1])) / 10 : 0;
+        const headerHeight = (pyMatch && nyMatch) ? (parseInt(pyMatch[1]) + parseInt(nyMatch[1])) / 10 : 0;
+        const boundsNotLine = headerWidth > 1 && headerHeight > 1;
+
+        // Panel metrics
+        const panelStitches = sourceCommands.filter(c => c.type === 'stitch').length;
+        const panelJumps = sourceCommands.filter(c => c.type === 'jump').length;
+        const panelTrims = sourceCommands.filter(c => c.type === 'trim').length;
+
+        const exportReady = stMatches && hasEnd && axOk && ayOk && boundsNotLine && coCoherent && isUint8Array && hasHeader512;
+
+        // ── Logs ────────────────────────────────────────────────────────────
+        console.log('[dst-direct-export] format:', 'DST');
+        console.log('[dst-direct-export] usingDSB:', usingDSB);
+        console.log('[dst-direct-export] finalEmbroideryCommands:', sourceCommands.length);
+        console.log('[dst-direct-export] stitches:', panelStitches);
+        console.log('[dst-direct-export] jumps:', panelJumps);
+        console.log('[dst-direct-export] trims:', panelTrims);
+        console.log('[dst-direct-export] header ST:', headerST);
+        console.log('[dst-direct-export] actual records:', actualRecords);
+        console.log('[dst-direct-export] width/height:', `${headerWidth}mm / ${headerHeight}mm`);
+        console.log('[dst-direct-export] end present:', hasEnd);
+        console.log('[dst-direct-export] export ready:', exportReady);
+
+        // ── Block conditions ────────────────────────────────────────────────
+        if (!filename.endsWith('.dst')) { setExportError('Filename no termina en .dst'); return; }
+        if (format !== 'DST') { setExportError('Formato no es DST'); return; }
+        if (usingDSB) { setExportError('usingDSB es true — no permitido en CE01'); return; }
+        if (!isUint8Array) { setExportError('bytes no es Uint8Array'); return; }
+        if (!hasHeader512) { setExportError('Header no tiene 512 bytes'); return; }
+        if (!stMatches) {
+          setExportError(`ST del header (${headerST}) no coincide con registros reales (${actualRecords}).`);
+          return;
+        }
+        if (!hasEnd) { setExportError('END 00 00 F3 no presente.'); return; }
+        if (!axOk || !ayOk) { setExportError('AX/AY no tienen formato correcto con signo.'); return; }
+        if (!boundsNotLine) {
+          setExportError('Archivo corrupto: recorrido colapsado en línea.');
+          return;
         }
 
-        console.log('[dst-export-stable] format:', format);
-        console.log('[dst-export-stable] bytes instanceof Uint8Array: true');
-        console.log('[dst-export-stable] header 512:', hasHeader512);
-        console.log('[dst-export-stable] ST matches records:', stMatches);
-        console.log('[dst-export-stable] AX/AY formatted correctly:', axOk && ayOk && !ayMalformed);
-        console.log('[dst-export-stable] END present:', hasEnd);
-        console.log('[dst-export-stable] using DSB:', format === 'DSB');
-
-        // DSB strict validation — block download if malformed
-        if (format === 'DSB') {
-          if (!stMatches || !axOk || !ayOk || ayMalformed || !hasEnd) {
-            console.error('[dsb-export-strict] validation FAILED — blocking download');
-            setExportError('DSB validation failed — file malformed. Use DST instead.');
-            return;
-          }
-          console.log('[dsb-export-strict] validation passed');
-        }
-
-        // Download validated file
-        const downloadBlob = new Blob([bytes], { type: 'application/octet-stream' });
-        const url = URL.createObjectURL(downloadBlob);
+        // ── Download validated .dst ─────────────────────────────────────────
+        const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${(project?.name || 'design').replace(/[^a-zA-Z0-9_-]/g, '_')}.${format.toLowerCase()}`;
+        a.download = filename;
         a.click();
         URL.revokeObjectURL(url);
         onClose();
