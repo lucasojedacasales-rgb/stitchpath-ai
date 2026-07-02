@@ -20,6 +20,7 @@ import { generate3ColorTestDST } from '@/lib/ce01ColorTestFile';
 import { generateContourTestDST, generateOutlineOnlyDST } from '@/lib/contourTestFile';
 import { getContourExportReport } from '@/lib/contourExportBuilder';
 import ExportRealityCheck from './ExportRealityCheck';
+import ContourRefinePanel from './ContourRefinePanel';
 import { calculateUnifiedCommandMetrics, metricsMatch } from '@/lib/unifiedCommandMetrics';
 import CE01ProductionPanel from './CE01ProductionPanel';
 import BinaryInspectorPanel from './BinaryInspectorPanel';
@@ -610,6 +611,13 @@ export default function ExportModal({ project, config: editorConfig, regions: in
               {/* Export Reality Check — visual vs exported comparison */}
               <ExportRealityCheck reality={realityCheck} />
 
+              {/* Contour Refine Panel — metrics + debug views */}
+              <ContourRefinePanel
+                commands={editorFinalCommands || pipelineResult.commands}
+                regions={regions}
+                config={config}
+              />
+
               {/* 3-color CE01 test — generates minimal DST with 2 real colorChange records */}
               <button
                 onClick={() => {
@@ -671,6 +679,31 @@ export default function ExportModal({ project, config: editorConfig, regions: in
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
                 Exportar solo contornos Kirby
+              </button>
+
+              {/* Kirby completo con contorno refinado — fills + details + contour final */}
+              <button
+                onClick={() => {
+                  try {
+                    const cmds = editorFinalCommands || pipelineResult.commands;
+                    const { blob } = buildDSTFromCommands(cmds, {
+                      label: 'KIRBY_COMPLETO',
+                      ce01Strict: true,
+                    });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'KIRBY_COMPLETO_CONTORNO_REFINADO.dst';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  } catch (e) {
+                    setExportError(`Test failed: ${e.message}`);
+                  }
+                }}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-emerald-900/20 border border-emerald-500/30 text-emerald-300 text-xs font-bold hover:bg-emerald-900/30 transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Exportar Kirby completo con contorno refinado
               </button>
 
               {/* Contour weak warning — not a block, just informational */}

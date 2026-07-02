@@ -29,6 +29,7 @@ import { repairCE01FinalCommands } from './ce01FinalCommandRepair.js';
 import { optimizeCE01TravelPath } from './ce01TravelPathOptimizer.js';
 import { optimizeCE01Trims } from './ce01TrimOptimizer.js';
 import { buildContourObjects, generateContourStitches, contoursPreservedInOptimization } from './contourExportBuilder.js';
+import { contourRefineGuard, validateContourRefinement } from './contourRefineValidator.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -1112,12 +1113,16 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
       return false;
     }
     // ── Contour protection — outer_outline, inner_outline, mouth must survive ──
-    if (!contoursPreservedInOptimization(before, after)) {
-      console.warn(`[contour-guard] ${label}: contour elimination detected — DISCARDED`);
+    //    Also checks travel contamination (no travel as visible contour stitches)
+    if (!contourRefineGuard(before, after)) {
+      console.warn(`[contour-guard] ${label}: contour/travel guard failed — DISCARDED`);
       return false;
     }
     return true;
   };
+
+  // ── Save pre-optimizer commands for final transactional validation ──
+  const preOptCommands = [...commands];
 
   // Stage 3c: Travel path optimization — collapse jumps, convert short jumps to stitches
   const travelResult = optimizeCE01TravelPath(commands, regions, config, ms);
@@ -1141,6 +1146,15 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   const trimResult = optimizeCE01Trims(commands, regions, config, ms);
   if (trimResult.applied && _preserveColorChange(commands, trimResult.commands, 'trim-opt')) {
     commands = trimResult.commands;
+  }
+
+  // ── Stage 5: Contour refine validation — transactional check ──────────
+  // After all optimizers, verify contours survived and no travel contamination.
+  // If validation fails, revert to pre-optimizer commands.
+  const refineResult = validateContourRefinement(preOptCommands, commands, regions, format);
+  if (!refineResult.accepted) {
+    console.log('[outline-refine] reverting to pre-optimizer commands');
+    commands = preOptCommands;
   }
 
   const stitchCount = commands.filter(c => c.type === 'stitch').length;

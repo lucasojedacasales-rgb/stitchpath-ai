@@ -23,11 +23,13 @@
 
 import { generateOutlines } from './outlineGenerator.js';
 import { generateTieIn, generateTieOff, removeRedundantNodes } from './industrialStitchProcessor.js';
+import { cleanCartoonOutlineCE01 } from './contourPreset.js';
+import { refineContourPath, removeParallelDuplicates } from './contourPathRefiner.js';
 
-// ─── Satin / run parameters ─────────────────────────────────────────────────
-const SATIN_WIDTH_MM   = 1.2;   // 1.0–1.6mm range
-const SATIN_DENSITY_MM = 0.4;   // 0.35–0.45mm range
-const MAX_STITCH_MM    = 3.5;   // max stitch length for contours
+// ─── Satin / run parameters (from preset) ──────────────────────────────────
+const SATIN_WIDTH_MM   = cleanCartoonOutlineCE01.outerSatinWidthMm;
+const SATIN_DENSITY_MM = cleanCartoonOutlineCE01.outerSatinDensityMm;
+const MAX_STITCH_MM    = cleanCartoonOutlineCE01.maxContourStitchMm;
 const TENSION_COMP_MM  = 0.3;   // 0.2–0.4mm pull compensation
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -136,21 +138,28 @@ export function generateContourStitches(obj, machineSettings = {}) {
   const densityMm = SATIN_DENSITY_MM;
   const stitchType = obj.stitch_type || 'running_stitch';
   const layerType = obj.layerType || '';
+  const name = (obj.name || '').toLowerCase();
 
   let stitches = [];
 
   if (stitchType === 'satin') {
     stitches = generateSatinColumnPath(points, widthMm, densityMm, closed);
   } else {
-    // Running stitch — triple run for details/mouth, single for thin outlines
-    const name = (obj.name || '').toLowerCase();
-    const isDetail = name.includes('mouth') || name.includes('detail') ||
-                     name.includes('eye') || name.includes('line') ||
-                     layerType === 'detail_run' || layerType === 'mouth_detail_run';
-    if (isDetail) {
+    // Classify internal contour by name
+    const isMouth = name.includes('mouth') || name.includes('boca') || layerType === 'mouth_detail_run';
+    const isEye = name.includes('eye') || name.includes('ojo');
+    const isDetail = name.includes('detail') || name.includes('line') ||
+                     layerType === 'detail_run';
+
+    if (isMouth || isEye || isDetail) {
+      // Triple run for mouth/eyes/details — bold thin lines
       stitches = generateTripleRunPath(points, closed);
     } else {
+      // Double run for inner outlines (2 passes for visibility without bulk)
       stitches = generateRunPath(points, closed);
+      if (closed && points.length >= 3) {
+        stitches = [...stitches, ...stitches]; // double pass
+      }
     }
   }
 
@@ -159,6 +168,27 @@ export function generateContourStitches(obj, machineSettings = {}) {
   // Clean up micro-duplicates
   stitches = removeRedundantNodes(stitches, 0.3);
   if (stitches.length < 2) return [];
+
+  // ── Enforce max contour stitch length: subdivide any stitch > 3.5mm ──
+  const subDivided = [];
+  for (let i = 0; i < stitches.length; i++) {
+    if (i === 0) { subDivided.push(stitches[i]); continue; }
+    const prev = subDivided[subDivided.length - 1];
+    const dist = Math.hypot(stitches[i][0] - prev[0], stitches[i][1] - prev[1]);
+    if (dist > MAX_STITCH_MM) {
+      const steps = Math.ceil(dist / MAX_STITCH_MM);
+      for (let s = 1; s <= steps; s++) {
+        const t = s / steps;
+        subDivided.push([
+          prev[0] + (stitches[i][0] - prev[0]) * t,
+          prev[1] + (stitches[i][1] - prev[1]) * t,
+        ]);
+      }
+    } else {
+      subDivided.push(stitches[i]);
+    }
+  }
+  stitches = subDivided;
 
   // Tie-in / tie-off (locking stitches)
   const tieIn = generateTieIn(stitches[0]);
@@ -182,47 +212,96 @@ function getContourPriority(outline) {
 export function buildContourObjects(regions, config = {}) {
   const w = config.width_mm || 100;
   const h = config.height_mm || 100;
+  const preset = cleanCartoonOutlineCE01;
 
   // Always generate outlines for export — force enabled
   const { outlines, report } = generateOutlines(regions, { ...config, generateOutlines: true });
 
-  const objects = [];
+  let objects = [];
 
   for (const outline of outlines) {
     const pts = outline.path_points || [];
     if (pts.length < 2) continue;
 
-    const mmPoints = pts.map(([nx, ny]) => [
+    // ── Classify by name to assign contour role ──
+    const name = (outline.name || '').toLowerCase();
+    const rc = outline.region_class || '';
+    const isOuter = rc === 'outer_outline';
+
+    // Skip cheeks/blush — no black contour unless original has it
+    if (preset.skipContourNames.some(n => name.includes(n))) {
+      console.log(`[contour-refine] skipped cheek/blush: ${outline.name}`);
+      continue;
+    }
+
+    // Classify mouth / eye / detail
+    const isMouth = preset.mouthNames.some(n => name.includes(n)) || rc === 'mouth_detail_run';
+    const isEye = preset.eyeNames.some(n => name.includes(n));
+
+    // Determine layer type
+    let layerType = rc;
+    if (isMouth) layerType = 'mouth_detail_run';
+    else if (isEye) layerType = 'detail_run';
+    else if (rc === 'inner_outline') layerType = 'inner_outline';
+
+    // Convert to mm
+    let mmPoints = pts.map(([nx, ny]) => [
       (nx - 0.5) * w,
       (ny - 0.5) * h,
     ]);
 
-    // Determine stitch type: satin for outer (always bold), run for inner/details
-    const rc = outline.region_class || '';
-    const isOuter = rc === 'outer_outline';
-    const stitchType = isOuter ? 'satin' : (outline.stitch_type || 'running_stitch');
-    const contourWidth = isOuter
-      ? Math.max(1.0, Math.min(1.6, outline.contour_width_mm || SATIN_WIDTH_MM))
-      : Math.max(0.5, Math.min(1.0, outline.contour_width_mm || 0.8));
+    // ── Apply path refinement: smoothing, segment removal, gap close, offset ──
+    mmPoints = refineContourPath(mmPoints, preset, isOuter);
+    if (mmPoints.length < 3) continue;
+
+    // Determine stitch type and width from preset
+    let stitchType, contourWidth;
+    if (isOuter) {
+      stitchType = 'satin';
+      contourWidth = preset.outerSatinWidthMm;
+    } else if (isMouth) {
+      stitchType = 'running_stitch'; // triple_run handled in generateContourStitches
+      contourWidth = preset.innerRunWidthMm;
+    } else if (isEye) {
+      stitchType = 'running_stitch';
+      contourWidth = preset.eyeRunWidthMm;
+    } else {
+      stitchType = 'running_stitch';
+      contourWidth = preset.innerRunWidthMm;
+    }
 
     objects.push({
       id: outline.id || `contour_${objects.length}`,
-      color: outline.color || '#1a1a1a',
+      color: preset.outlineColor,
       name: outline.name || 'outline',
       stitch_type: stitchType,
-      priority: getContourPriority(outline),
-      layerType: rc,
+      priority: getContourPriority({ region_class: layerType }),
+      layerType,
       isContour: true,
       contourWidthMm: contourWidth,
       points: mmPoints,
-      rawRegion: outline,
+      rawRegion: { ...outline, closed: true },
       ce01SafeFillMode: false,
     });
   }
 
-  console.log(`[contour-export] contour objects generated: ${objects.length}`);
-  console.log(`[contour-export] outer outlines: ${objects.filter(o => o.layerType === 'outer_outline').length}`);
-  console.log(`[contour-export] inner outlines: ${objects.filter(o => o.layerType === 'inner_outline').length}`);
+  // ── Remove parallel duplicates ──
+  objects = removeParallelDuplicates(objects, preset.parallelDedupIoU);
+
+  // ── Logs ──
+  const outerCount = objects.filter(o => o.layerType === 'outer_outline').length;
+  const innerCount = objects.filter(o => o.layerType === 'inner_outline').length;
+  const mouthCount = objects.filter(o => o.layerType === 'mouth_detail_run').length;
+  const detailCount = objects.filter(o => o.layerType === 'detail_run').length;
+
+  console.log(`[contour-refine] contour objects generated: ${objects.length}`);
+  console.log(`[contour-refine] outer outlines: ${outerCount}`);
+  console.log(`[contour-refine] inner outlines: ${innerCount}`);
+  console.log(`[contour-refine] mouth contours: ${mouthCount}`);
+  console.log(`[contour-refine] detail/eye contours: ${detailCount}`);
+  console.log(`[contour-refine] outer satin width: ${preset.outerSatinWidthMm}mm`);
+  console.log(`[contour-refine] outer satin density: ${preset.outerSatinDensityMm}mm`);
+  console.log(`[contour-refine] outline order: last (priority 90)`);
 
   return { objects, report };
 }
@@ -321,6 +400,25 @@ export function contoursPreservedInOptimization(before, after) {
 export function getContourExportReport(regions, commands) {
   const counts = countContourStitches(commands);
 
+  // ── Travel contamination: count contour-colored stitches > 3.5mm ──
+  let travelContamination = 0;
+  let prevX = 0, prevY = 0;
+  for (const c of commands) {
+    if (!c) continue;
+    if (c.type === 'stitch') {
+      const dist = Math.hypot((c.x || 0) - prevX, (c.y || 0) - prevY);
+      const isContourColor = (c.color || '').toLowerCase() === '#1a1a1a' || (c.color || '').toLowerCase() === '#000000';
+      const lt = (c.layerType || '').toLowerCase();
+      const isContourLayer = lt.includes('outline') || lt.includes('contour') || lt.includes('mouth') || lt.includes('detail');
+      if (dist > 3.5 && (isContourColor || isContourLayer)) {
+        travelContamination++;
+      }
+    }
+    if (c.type === 'stitch' || c.type === 'jump') {
+      prevX = c.x || 0; prevY = c.y || 0;
+    }
+  }
+
   // Visual contour check — does the design have visible outer outline regions?
   const visualOuterOutline = regions.some(r => {
     const rc = r.region_class || r.layerType || '';
@@ -328,7 +426,6 @@ export function getContourExportReport(regions, commands) {
     return rc === 'outer_outline' || name.includes('outer_outline') || name.includes('outline');
   });
 
-  // Also check if any fill regions exist (outlines are generated from fills)
   const hasFills = regions.some(r =>
     r.stitch_type === 'fill' && r.path_points && r.path_points.length >= 8
   );
@@ -337,35 +434,58 @@ export function getContourExportReport(regions, commands) {
   const mouthExported = counts.mouthStitches > 0;
   const innerContoursExported = counts.innerContoursExported > 0;
 
-  // Ready: either no visual outline expected, or it's exported
+  // Determine outer outline type
+  let outerType = 'none';
+  for (const c of commands) {
+    if (c.type === 'stitch' && c.layerType === 'outer_outline') {
+      outerType = (c.stitchType || '').toLowerCase().includes('satin') ? 'satin' : 'run';
+      break;
+    }
+  }
+
+  // Determine outline order (is outer outline last contour?)
+  let lastContourIdx = -1, outerIdx = -1;
+  for (let i = 0; i < commands.length; i++) {
+    const c = commands[i];
+    if (!c || c.type !== 'stitch') continue;
+    const lt = (c.layerType || '').toLowerCase();
+    const rid = (c.regionId || '').toLowerCase();
+    if (lt === 'outer_outline' || rid.includes('outer')) outerIdx = i;
+    if (lt.includes('outline') || lt.includes('contour') || rid.includes('outline') || rid.includes('contour')) {
+      if (i > lastContourIdx) lastContourIdx = i;
+    }
+  }
+  const outlineOrder = outerIdx >= 0 && outerIdx >= lastContourIdx - 2 ? 'last' : 'not_last';
+
   const contourMissing = (visualOuterOutline || hasFills) && !exportedOuterOutline;
   const contourWeak = exportedOuterOutline && counts.outerOutlineStitches < 80;
-  const ready = !contourMissing;
+  const ready = !contourMissing && travelContamination === 0;
 
-  // ── Mandatory logs ──
-  console.log('[outline-export] visual outer outline:', (visualOuterOutline || hasFills) ? 'YES' : 'NO');
-  console.log('[outline-export] exported outer outline:', exportedOuterOutline ? 'YES' : 'NO');
-  console.log('[outline-export] outer outline stitch type:', exportedOuterOutline ? 'satin/run' : 'none');
-  console.log('[outline-export] outer outline stitches:', counts.outerOutlineStitches);
-  console.log('[outline-export] outer outline color:', counts.outerOutlineColor);
-  console.log('[outline-export] outer outline order:', counts.outerOutlineOrder);
-  console.log('[outline-export] inner outlines:', counts.innerContoursExported);
-  console.log('[outline-export] mouth detail run:', counts.mouthStitches);
-  console.log('[outline-export] protected from optimizer: true');
-  console.log('[outline-export] final command contains outline:', exportedOuterOutline);
-  console.log('[outline-export] ready:', ready);
+  // ── Mandatory [outline-refine] logs ──
+  console.log('[outline-refine] outer outline detected:', exportedOuterOutline ? 'YES' : 'NO');
+  console.log('[outline-refine] outer outline type:', outerType);
+  console.log('[outline-refine] outer outline stitches:', counts.outerOutlineStitches);
+  console.log('[outline-refine] inner outlines:', counts.innerContoursExported);
+  console.log('[outline-refine] mouth stitches:', counts.mouthStitches);
+  console.log('[outline-refine] travel contamination:', travelContamination);
+  console.log('[outline-refine] outline order:', outlineOrder);
+  console.log('[outline-refine] protected after optimizer:', ready ? 'YES' : 'NO');
+  console.log('[outline-refine] accepted:', ready);
 
   return {
     visualOuterOutline: (visualOuterOutline || hasFills) ? 'YES' : 'NO',
     exportedOuterOutline: exportedOuterOutline ? 'YES' : 'NO',
+    outerOutlineType: outerType,
     outerOutlineStitches: counts.outerOutlineStitches,
     outerOutlineColor: counts.outerOutlineColor,
     outerOutlineOrder: counts.outerOutlineOrder,
+    outlineOrder,
     mouthExported: mouthExported ? 'YES' : 'NO',
     mouthStitches: counts.mouthStitches,
     innerContoursExported: innerContoursExported ? 'YES' : 'NO',
     innerOutlineStitches: counts.innerOutlineStitches,
     detailRunStitches: counts.detailRunStitches,
+    travelContamination,
     contourMissing,
     contourWeak,
     ready,
