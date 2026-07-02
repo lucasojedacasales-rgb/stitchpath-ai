@@ -19,6 +19,7 @@
  */
 
 import { getContourExportReport, countContourStitches, getLastOutlineClassifierReport } from './contourExportBuilder';
+import { getLastLowerContourReport } from './lowerContourRebuilder';
 import { detectTravelContamination } from './contourRefineValidator';
 import { calculateUnifiedCommandMetrics } from './unifiedCommandMetrics';
 import { validateColorChangeIntegrity } from './threadColorBlocks';
@@ -47,7 +48,8 @@ function isProtectedFacial(c) {
 function isOuterOrDarkStroke(c) {
   const lt = (c.layerType || '').toLowerCase();
   return lt === 'outer_outline' || lt === 'outer_silhouette' ||
-         lt === 'dark_stroke_outline' || lt === 'limb_contour';
+         lt === 'dark_stroke_outline' || lt === 'limb_contour' ||
+         lt === 'real_outline_lower';
 }
 
 // ─── Audit ───────────────────────────────────────────────────────────────────
@@ -80,7 +82,8 @@ function computeAudit(commands, regions) {
     if (c && c.type === 'stitch') {
       const lt = (c.layerType || '').toLowerCase();
       const isOuter = lt === 'outer_outline' || lt === 'outer_silhouette' ||
-                      lt === 'limb_contour' || lt === 'dark_stroke_outline';
+                      lt === 'limb_contour' || lt === 'dark_stroke_outline' ||
+                      lt === 'real_outline_lower';
       if (isOuter && (c.y || 0) < 0) lowerOuter++;
     }
   }
@@ -88,6 +91,7 @@ function computeAudit(commands, regions) {
 
   const outlineReport = getLastOutlineClassifierReport();
   const explicitDarkStrokeCoverage = outlineReport?.explicitDarkStrokeCoverage ?? 100;
+  const lowerReport = getLastLowerContourReport();
 
   return {
     mouthExported: counts.mouthStitches > 0,
@@ -97,6 +101,12 @@ function computeAudit(commands, regions) {
     footContourCoverage: report.visibleFootContourCoverage ?? 100,
     lowerOuterContourCoverage,
     explicitDarkStrokeCoverage,
+    lowerBodyContourPresent: !!lowerReport?.lowerBodyContourPresent,
+    leftFootContourPresent: !!lowerReport?.leftFootContourPresent,
+    rightFootContourPresent: !!lowerReport?.rightFootContourPresent,
+    lowerContourOpenEnds: lowerReport?.lowerContourOpenEnds ?? 0,
+    lowerContourRoundCapsVisible: lowerReport?.lowerContourRoundCapsVisible ?? 0,
+    artificialLowerGeometry: lowerReport?.artificialLowerGeometry ?? 0,
     artificialGeometryCount: artificial,
     travelStitchedAsContour: travel,
     jumps: metrics.jumpCount,
@@ -189,7 +199,9 @@ export function runContourRefinementGuard(commands, regions, config = {}) {
     after.outerContourCoverage >= before.outerContourCoverage &&
     after.footContourCoverage >= before.footContourCoverage &&
     after.lowerOuterContourCoverage >= before.lowerOuterContourCoverage &&
-    after.explicitDarkStrokeCoverage >= before.explicitDarkStrokeCoverage;
+    after.explicitDarkStrokeCoverage >= before.explicitDarkStrokeCoverage &&
+    after.artificialLowerGeometry === 0 &&
+    after.lowerContourRoundCapsVisible === 0;
 
   if (!ok) {
     const reasons = [];

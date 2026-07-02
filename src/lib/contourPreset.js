@@ -31,6 +31,8 @@ export const cleanCartoonOutlineCE01 = {
   mouthMaxLenMm: 1.5,
   eyeRunWidthMm: 0.5,
 
+  // ── Lower contour (body lower edge + feet) — independent width ──
+  lowerContourWidth: 1.1,   // 1.0–1.2mm — clean, no blobs; separate from mouth/upper
   // ── Path refinement ──
   smoothingPasses: 2,         // Chaikin smoothing passes
   gapCloseThresholdMm: 1.2,   // close gaps < 1.2mm

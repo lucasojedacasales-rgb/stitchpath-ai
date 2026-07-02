@@ -27,6 +27,7 @@ import { cleanCartoonOutlineCE01 } from './contourPreset.js';
 import { refineContourPath, removeParallelDuplicates } from './contourPathRefiner.js';
 import { auditContours, computeFootContourCoverage } from './contourAudit.js';
 import { classifyContourSegment, isExportable, ensureMouthDetailExported, removeArtificialContourSegments, validateContourExport } from './segmentClassifier.js';
+import { rebuildLowerOuterContoursFromDarkStroke, getLastLowerContourReport, LOWER_CONTOUR_WIDTH } from './lowerContourRebuilder.js';
 
 // ─── Satin / run parameters (from preset) ──────────────────────────────────
 const SATIN_WIDTH_MM   = cleanCartoonOutlineCE01.outerSatinWidthMm;
@@ -153,9 +154,10 @@ export function generateContourStitches(obj, machineSettings = {}) {
     const isEye = name.includes('eye') || name.includes('ojo') || layerType === 'eye_detail';
     const isDetail = name.includes('detail') || name.includes('line') ||
                      layerType === 'detail_run';
+    const isLower = layerType === 'real_outline_lower';
 
-    if (isMouth || isEye || isDetail) {
-      // Triple run for mouth/eyes/details — bold thin lines
+    if (isMouth || isEye || isDetail || isLower) {
+      // Triple run for mouth/eyes/details/lower contours — bold thin lines, no caps
       stitches = generateTripleRunPath(points, closed);
     } else {
       // Double run for inner outlines (2 passes for visibility without bulk)
@@ -335,6 +337,18 @@ export function buildContourObjects(regions, config = {}) {
   // classifier can reject color boundaries without a real dark line.
   const darkStroke = config.darkStroke || null;
   _lastDarkStroke = darkStroke;
+
+  // ── Surgical rebuild: lower body + feet contours from real dark stroke ──
+  // Only foot_left / foot_right old outlines are removed & replaced. Body,
+  // mouth, eyes, cheeks and upper-face contour are NOT touched.
+  const lowerResult = rebuildLowerOuterContoursFromDarkStroke(
+    classifiedRegions, { ...config, lowerContourWidth: preset.lowerContourWidth }, darkStroke);
+  objects = objects.filter(o => {
+    const pg = (o.rawRegion?.parentGroupName || '').toLowerCase();
+    return pg !== 'foot_left' && pg !== 'foot_right';
+  });
+  objects = [...objects, ...lowerResult.contours];
+
   const classifiedCtx = { regions: classifiedRegions, config, darkStroke };
   const classified = objects.map(obj => ({
     obj,
@@ -368,6 +382,7 @@ export function buildContourObjects(regions, config = {}) {
     // Priority: eye(70) < mouth(75) < limb(85) < outer(90) < dark_stroke(88)
     if (cls.className === 'outer_silhouette') obj.priority = 90;
     else if (cls.className === 'dark_stroke_outline') obj.priority = 88;
+    else if (cls.className === 'real_outline_lower') obj.priority = obj.parentGroupName === 'lower_body' ? 89 : 86;
     else if (cls.className === 'limb_contour') obj.priority = 85;
     else if (cls.className === 'facial_detail') obj.priority = 75;
     else if (cls.className === 'eye_detail') obj.priority = 70;
@@ -496,7 +511,7 @@ export function countContourStitches(commands) {
       outerOutlineStitches++;
       if (outerOutlineOrder < 0) outerOutlineOrder = i;
       if (!outerOutlineColor) outerOutlineColor = c.color;
-    } else if (rid.includes('outer') || lt === 'outer_outline' || lt === 'outer_silhouette' || lt === 'limb_contour') {
+    } else if (rid.includes('outer') || lt === 'outer_outline' || lt === 'outer_silhouette' || lt === 'limb_contour' || lt === 'real_outline_lower') {
       outerOutlineStitches++;
       if (outerOutlineOrder < 0) outerOutlineOrder = i;
       if (!outerOutlineColor) outerOutlineColor = c.color;

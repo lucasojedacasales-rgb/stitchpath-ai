@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { ShieldCheck, ShieldAlert, Eye, EyeOff, Route, Scissors, Palette, Bug, Layers, Brush } from 'lucide-react';
 import { countContourStitches, getLastContourAudit, getLastSegmentClassification, getLastDarkStroke } from '@/lib/contourExportBuilder';
+import { getLastLowerContourReport } from '@/lib/lowerContourRebuilder';
 import { classifyStitchSegments } from '@/lib/geometryAudit';
 import { detectTravelContamination } from '@/lib/contourRefineValidator';
 
@@ -216,6 +217,7 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
           case 'dark_stroke_outline': ctx.strokeStyle = '#22c55e'; break;   // verde — real_outline
           case 'outer_silhouette': ctx.strokeStyle = '#22c55e'; break;      // verde — real_outline
           case 'limb_contour': ctx.strokeStyle = '#22c55e'; break;          // verde — real_outline
+          case 'real_outline_lower': ctx.strokeStyle = '#22c55e'; break;    // verde — real_outline (lower)
           case 'inner_outline': ctx.strokeStyle = '#3b82f6'; break;         // azul — inner_outline
           case 'facial_detail': ctx.strokeStyle = '#eab308'; break;         // amarillo — detail_open_curve
           case 'eye_detail': ctx.strokeStyle = '#eab308'; break;            // amarillo — detail_open_curve
@@ -285,7 +287,7 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
         if (c.type !== 'stitch') { prev = null; continue; }
         const lt = (c.layerType || '').toLowerCase();
         const [px, py] = toPx(c.x || 0, c.y || 0);
-        if (lt === 'dark_stroke_outline' || lt === 'outer_silhouette' || lt === 'limb_contour') {
+        if (lt === 'dark_stroke_outline' || lt === 'outer_silhouette' || lt === 'limb_contour' || lt === 'real_outline_lower') {
           ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 1.5; ctx.setLineDash([]);
         } else if (lt === 'facial_detail') {
           ctx.strokeStyle = '#eab308'; ctx.lineWidth = 1.5; ctx.setLineDash([]);
@@ -481,6 +483,34 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
                   <Metric label="Ojos" value={ds.eyeCandidates?.length || 0} color="text-yellow-400" />
                   <Metric label="Overlap exterior" value={((ds.outerOverlap ?? 0) * 100).toFixed(0) + '%'} color="text-cyan-400" />
                   <Metric label="Puntadas dark" value={report.darkStrokeStitches || 0} color={report.darkStrokeStitches > 0 ? 'text-emerald-400' : 'text-amber-400'} />
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Lower contour — body + feet rebuild metrics (CAMBIO 9) */}
+          <div className="bg-[#161a23] rounded-lg p-2.5 border border-[#1e2130]">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <Route className="w-3 h-3 text-emerald-400" />
+              <span className="text-[10px] font-bold text-slate-400">Lower Contour (body + feet)</span>
+            </div>
+            {(() => {
+              const lc = getLastLowerContourReport();
+              if (!lc) return <div className="text-[10px] text-slate-600">Sin datos</div>;
+              return (
+                <div className="grid grid-cols-2 gap-1.5">
+                  <Metric label="Borde inferior" value={lc.lowerBodyContourPresent ? 'YES' : 'NO'} color={lc.lowerBodyContourPresent ? 'text-emerald-400' : 'text-red-400'} />
+                  <Metric label="Pie izquierdo" value={lc.leftFootContourPresent ? 'YES' : 'NO'} color={lc.leftFootContourPresent ? 'text-emerald-400' : 'text-red-400'} />
+                  <Metric label="Pie derecho" value={lc.rightFootContourPresent ? 'YES' : 'NO'} color={lc.rightFootContourPresent ? 'text-emerald-400' : 'text-red-400'} />
+                  <Metric label="Cobertura body" value={lc.lowerBodyContourCoverage + '%'} color={lc.lowerBodyContourCoverage >= 95 ? 'text-emerald-400' : 'text-amber-400'} />
+                  <Metric label="Cobertura pie izq." value={lc.leftFootContourCoverage + '%'} color={lc.leftFootContourCoverage >= 95 ? 'text-emerald-400' : 'text-amber-400'} />
+                  <Metric label="Cobertura pie der." value={lc.rightFootContourCoverage + '%'} color={lc.rightFootContourCoverage >= 95 ? 'text-emerald-400' : 'text-amber-400'} />
+                  <Metric label="Extremos abiertos" value={lc.lowerContourOpenEnds} color={lc.lowerContourOpenEnds === 0 ? 'text-emerald-400' : 'text-amber-400'} />
+                  <Metric label="Caps redondos" value={lc.lowerContourRoundCapsVisible} color={lc.lowerContourRoundCapsVisible === 0 ? 'text-emerald-400' : 'text-red-400'} />
+                  <Metric label="Fusionados" value={lc.lowerContourMergedSegments} color="text-cyan-400" />
+                  <Metric label="Rechazados" value={lc.lowerContourRejectedSegments} color="text-orange-400" />
+                  <Metric label="Geometría artificial" value={lc.artificialLowerGeometry} color={lc.artificialLowerGeometry === 0 ? 'text-emerald-400' : 'text-red-400'} />
+                  <Metric label="Rebuilt" value={lc.rebuiltCount} color="text-violet-400" />
                 </div>
               );
             })()}

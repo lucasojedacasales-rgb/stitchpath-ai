@@ -96,7 +96,7 @@ function sameObjectGroup(a, b) {
 
 // ─── EXPORTABLE categories ────────────────────────────────────────────────────
 
-export const EXPORTABLE_CATEGORIES = ['dark_stroke_outline', 'outer_silhouette', 'limb_contour', 'facial_detail', 'eye_detail'];
+export const EXPORTABLE_CATEGORIES = ['dark_stroke_outline', 'outer_silhouette', 'limb_contour', 'facial_detail', 'eye_detail', 'real_outline_lower'];
 
 export function isExportable(className) {
   return EXPORTABLE_CATEGORIES.includes(className);
@@ -169,6 +169,20 @@ export function classifyContourSegment(segment, context = {}) {
   const parentGroup = (rawRegion.parentGroupName || '').toLowerCase();
   const rc = (rawRegion.region_class || '').toLowerCase();
   const darkStroke = context.darkStroke || null;
+
+  // A0) Lower contour rebuilt from dark stroke (lower body + feet) — highest
+  //     priority: always exportable as a real contour, triple-run, no caps.
+  //     Checked BEFORE mouth/eye to avoid bbox-scale false positives.
+  if (layerType === 'real_outline_lower') {
+    return {
+      className: 'real_outline_lower',
+      exportable: true,
+      reason: 'lower contour rebuilt from dark stroke mask',
+      confidence: 95,
+      stitchType: 'triple_run',
+      openCurve: false,
+    };
+  }
 
   // Helper: overlap ratio of this segment with the dark stroke mask
   const darkOverlap = () => {
