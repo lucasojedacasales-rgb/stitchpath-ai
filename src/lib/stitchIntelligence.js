@@ -535,8 +535,23 @@ export function eieTravelScore(region, fromCentroid = [0.5, 0.5], prevColor = nu
  */
 export function eieAnalyzeRegion(geo, fabricType = 'Algodón', context = {}, overrides = {}) {
   // — Stitch type —
-  const stitchResult = eieStitchType(geo);
-  const stitch_type  = overrides.stitch_type || stitchResult.type;
+  // HARD RULE: thickness is the absolute authority for thin contours.
+  // A contour < THIN_CONTOUR_THRESHOLD mm wide is ALWAYS running_stitch,
+  // regardless of any AI/backend/vectorizer override. This prevents the
+  // machine from attempting fill/satin on hairlines it cannot physically sew.
+  const THIN_CONTOUR_THRESHOLD = 2.5; // mm — matches eieStitchType + clasificarPorGeometria
+  const _thickness = geo.max_width_mm || geo.mean_width_mm || 0;
+  let stitchResult, stitch_type, stitch_rationale, stitch_forced = false;
+  if (_thickness > 0 && _thickness < THIN_CONTOUR_THRESHOLD) {
+    stitchResult = eieStitchType(geo); // still compute for confidence/signals
+    stitch_type  = 'running_stitch';
+    stitch_rationale = `Contorno delgado ${_thickness.toFixed(1)}mm < ${THIN_CONTOUR_THRESHOLD}mm: puntada de corrido FORZADA (grosor = autoridad absoluta).`;
+    stitch_forced = true;
+  } else {
+    stitchResult   = eieStitchType(geo);
+    stitch_type    = overrides.stitch_type || stitchResult.type;
+    stitch_rationale = stitchResult.rationale;
+  }
 
   // — Fill angle —
   const angleResult  = eieFillAngle(geo, context);
@@ -578,9 +593,10 @@ export function eieAnalyzeRegion(geo, fabricType = 'Algodón', context = {}, ove
   return {
     // Stitch type
     stitch_type,
-    stitch_confidence:   stitchResult.confidence,
-    stitch_rationale:    stitchResult.rationale,
+    stitch_confidence:   stitch_forced ? 1.0 : stitchResult.confidence,
+    stitch_rationale,
     stitch_signals:      stitchResult.signals,
+    stitch_forced,
 
     // Angle
     fill_angle,

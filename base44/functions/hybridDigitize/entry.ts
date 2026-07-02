@@ -148,9 +148,14 @@ Responde SOLO JSON:
 
       const finalRegions = clientRegions.slice(0, regionLimit).map((r, i) => {
         const label = labelMap[i] || {};
-        
-        // === PRIORIDAD: vectorizador > Claude > reglas geométricas ===
-        const stitch_type = r.type || label.stitch_type || clasificarPorGeometria(r, w, h, aW, aH);
+
+        // === GROSOR = AUTORIDAD ABSOLUTA para contornos delgados ===
+        // Un contorno < 2.5mm de grosor SIEMPRE es running_stitch,
+        // sin importar lo que diga el vectorizador (r.type) o la IA (label.stitch_type).
+        const geoType = clasificarPorGeometria(r, w, h, aW, aH);
+        const stitch_type = geoType === 'running_stitch'
+          ? 'running_stitch'
+          : (r.type || label.stitch_type || geoType);
         
         // === ADAPTIVE DENSITY: smaller regions = higher density (better coverage) ===
         const baseRegionDensity = stitch_type === 'fill' ? density : stitch_type === 'satin' ? density * 1.25 : 0.4;
