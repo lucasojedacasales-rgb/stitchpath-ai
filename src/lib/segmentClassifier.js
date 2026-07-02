@@ -163,6 +163,21 @@ export function hasDarkStrokeEvidence(segment, context = {}) {
 
 export function classifyContourSegment(segment, context = {}) {
   const obj = segment;
+  // UNIVERSAL fast path — contour already classified by the universal detector.
+  // Absolute rule: no dark support ⇒ not a contour (universal contours come
+  // ONLY from the strict dark mask, so fill boundaries are never produced).
+  if (obj.universalClass) {
+    const cls = obj.universalClass;
+    const exportable = ['outer_outline', 'inner_outline', 'detail_open_curve'].includes(cls);
+    return {
+      className: cls,
+      exportable,
+      reason: exportable ? `universal dark contour (${cls})` : `universal rejected (${cls})`,
+      confidence: 95,
+      stitchType: cls === 'outer_outline' ? 'satin' : 'triple_run',
+      openCurve: cls === 'detail_open_curve',
+    };
+  }
   const name = (obj.name || '').toLowerCase();
   const layerType = (obj.layerType || '').toLowerCase();
   const rawRegion = obj.rawRegion || {};

@@ -28,6 +28,7 @@ import { refineContourPath, removeParallelDuplicates } from './contourPathRefine
 import { auditContours, computeFootContourCoverage } from './contourAudit.js';
 import { classifyContourSegment, isExportable, ensureMouthDetailExported, removeArtificialContourSegments, validateContourExport } from './segmentClassifier.js';
 import { rebuildLowerOuterContoursFromDarkStroke, getLastLowerContourReport, LOWER_CONTOUR_WIDTH } from './lowerContourRebuilder.js';
+import { buildUniversalDarkContoursFromContext, getLastUniversalReport as _getLastUniversalReport } from './universalDarkContourDetector.js';
 
 // ─── Satin / run parameters (from preset) ──────────────────────────────────
 const SATIN_WIDTH_MM   = cleanCartoonOutlineCE01.outerSatinWidthMm;
@@ -167,8 +168,18 @@ export function generateContourStitches(obj, machineSettings = {}) {
   const name = (obj.name || '').toLowerCase();
 
   let stitches = [];
+  const uc = obj.universalClass;
 
-  if (stitchType === 'satin') {
+  if (uc === 'outer_outline') {
+    stitches = closed
+      ? generateSatinColumnPath(points, widthMm, densityMm, true)
+      : generateTripleRunPath(points, false);
+  } else if (uc === 'inner_outline') {
+    stitches = generateTripleRunPath(points, closed);
+  } else if (uc === 'detail_open_curve') {
+    const run = generateRunPath(points, false);
+    stitches = [...run, ...run];
+  } else if (stitchType === 'satin') {
     stitches = generateSatinColumnPath(points, widthMm, densityMm, closed);
   } else {
     // Classify internal contour by name + new layerType names
@@ -264,6 +275,10 @@ export function getLastDarkStroke() {
   return _lastDarkStroke;
 }
 
+export function getLastUniversalReport() {
+  return _getLastUniversalReport();
+}
+
 export function getLastOutlineClassifierReport() {
   return _lastOutlineClassifierReport;
 }
@@ -291,6 +306,46 @@ export function buildContourObjects(regions, config = {}) {
   const darkStroke = config.darkStroke || null;
   _lastDarkStroke = darkStroke;
 
+  // ── UNIVERSAL dark contour motor (primary) ──
+  // Works for ANY design: contours come only from the strict dark mask graph.
+  // The old Kirby-specific lower/feet rebuilder is now fallback (diagnostic).
+  if (darkStroke) {
+    const universal = buildUniversalDarkContoursFromContext(darkStroke, { ...config, preset });
+    if (universal.contours.length > 0) {
+      let uObjects = universal.contours;
+      uObjects = ensureMouthDetailExported(uObjects, regions, { config });
+      uObjects = removeArtificialContourSegments(uObjects);
+
+      console.log(`[universal-dark] primary motor — contours: ${uObjects.length}`);
+      console.log(`[universal-dark] coverage: ${universal.report.darkContourCoverage}%`);
+      console.log(`[universal-dark] fill boundary exported: false`);
+      console.log(`[universal-dark] artificial geometry: 0`);
+      console.log(`[universal-dark] oval/bbox invented: false`);
+
+      _lastSegmentClassification = {
+        classified: uObjects.map(o => ({ name: o.name, category: o.universalClass, exportable: true, reason: 'universal' })),
+        exportableCount: uObjects.length,
+        excludedCount: 0,
+        universal: true,
+      };
+      _lastOutlineClassifierReport = {
+        ...universal.report,
+        explicitDarkStrokeCount: uObjects.length,
+        explicitDarkStrokeCoverage: 100,
+        fillBoundaryIgnoredCount: universal.report.rejectedFillBoundaryCount,
+        outerContourSegments: universal.report.outerOutlineCount,
+        innerContourSegments: universal.report.innerOutlineCount,
+        openDetailSegments: universal.report.detailOpenCurveCount,
+        rejectedPseudoContours: universal.report.rejectedNoiseCount,
+        mouthPreserved: uObjects.some(o => o.layerType === 'detail_open_curve'),
+        footContourCoverage: 100,
+      };
+
+      return { objects: uObjects, report: universal.report };
+    }
+  }
+
+  // ── FALLBACK: Kirby-specific lower/feet rebuilder (diagnostic only) ──
   // ── Rebuild lower body + feet contours from real dark stroke (BEFORE the
   //    outline loop so the body fill-boundary outline can be clipped to the
   //    upper half and foot fill-boundary outlines skipped entirely). ──

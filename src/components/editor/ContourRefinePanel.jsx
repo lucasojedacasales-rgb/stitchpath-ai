@@ -1,7 +1,8 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { ShieldCheck, ShieldAlert, Eye, EyeOff, Route, Scissors, Palette, Bug, Layers, Brush } from 'lucide-react';
-import { countContourStitches, getLastContourAudit, getLastSegmentClassification, getLastDarkStroke } from '@/lib/contourExportBuilder';
+import { countContourStitches, getLastContourAudit, getLastSegmentClassification, getLastDarkStroke, getLastUniversalReport } from '@/lib/contourExportBuilder';
 import { getLastLowerContourReport } from '@/lib/lowerContourRebuilder';
+import { validateUniversalContours, DESIGN_SCENARIOS } from '@/lib/universalDarkContourTestSuite';
 import { classifyStitchSegments } from '@/lib/geometryAudit';
 import { detectTravelContamination } from '@/lib/contourRefineValidator';
 
@@ -304,6 +305,23 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
         prev = [px, py];
       }
       ctx.setLineDash([]);
+    } else if (viewMode === 'universal') {
+      // Universal dark contours: outer=green, inner=blue, detail=yellow, noise=red, fill=purple
+      let prev = null;
+      for (const c of commands) {
+        if (c.type !== 'stitch') { prev = null; continue; }
+        const lt = (c.layerType || '').toLowerCase();
+        const [px, py] = toPx(c.x || 0, c.y || 0);
+        if (lt === 'outer_outline') { ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 2; ctx.setLineDash([]); }
+        else if (lt === 'inner_outline') { ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1.5; ctx.setLineDash([]); }
+        else if (lt === 'detail_open_curve') { ctx.strokeStyle = '#eab308'; ctx.lineWidth = 1.5; ctx.setLineDash([]); }
+        else if (lt === 'rejected_noise') { ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 1; ctx.setLineDash([2, 2]); }
+        else if (lt === 'fill_boundary_rejected') { ctx.strokeStyle = '#a855f7'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]); }
+        else { prev = null; continue; }
+        if (prev) { ctx.beginPath(); ctx.moveTo(prev[0], prev[1]); ctx.lineTo(px, py); ctx.stroke(); }
+        prev = [px, py];
+      }
+      ctx.setLineDash([]);
     }
   }, [viewMode, commands, config]);
 
@@ -355,6 +373,12 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
           viewMode === 'dark_stroke' ? 'bg-cyan-900/30 border-cyan-500 text-cyan-300' : 'bg-[#161a23] border-[#2a2d3a] text-slate-500'
         }`}
         >Dark Stroke</button>
+        <button
+        onClick={() => setViewMode('universal')}
+        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-colors ${
+          viewMode === 'universal' ? 'bg-emerald-900/30 border-emerald-500 text-emerald-300' : 'bg-[#161a23] border-[#2a2d3a] text-slate-500'
+        }`}
+        >Universal</button>
         </div>
 
       {viewMode === 'metrics' ? (
@@ -492,6 +516,54 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
             })()}
           </div>
 
+          {/* Universal dark contour metrics + test suite */}
+          <div className="bg-[#161a23] rounded-lg p-2.5 border border-[#1e2130]">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <Brush className="w-3 h-3 text-emerald-400" />
+              <span className="text-[10px] font-bold text-slate-400">Universal Dark Contours</span>
+            </div>
+            {(() => {
+              const u = getLastUniversalReport();
+              if (!u) return <div className="text-[10px] text-slate-600">Sin contornos universales</div>;
+              const v = validateUniversalContours(u);
+              return (
+                <>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <Metric label="Raw segments" value={u.rawSkeletonSegments} color="text-slate-400" />
+                    <Metric label="Components" value={u.connectedDarkComponents} color="text-cyan-400" />
+                    <Metric label="Consolidados" value={u.consolidatedContours} color={u.consolidatedContours >= 1 && u.consolidatedContours <= 20 ? 'text-emerald-400' : 'text-amber-400'} />
+                    <Metric label="Outer" value={u.outerOutlineCount} color={u.outerOutlineCount > 0 ? 'text-emerald-400' : 'text-amber-400'} />
+                    <Metric label="Inner" value={u.innerOutlineCount} color="text-blue-400" />
+                    <Metric label="Detail" value={u.detailOpenCurveCount} color="text-yellow-400" />
+                    <Metric label="Noise rejected" value={u.rejectedNoiseCount} color="text-red-400" />
+                    <Metric label="Fill boundary" value={u.rejectedFillBoundaryCount} color="text-purple-400" />
+                    <Metric label="Coverage" value={u.darkContourCoverage + '%'} color={u.darkContourCoverage >= 85 ? 'text-emerald-400' : 'text-red-400'} />
+                    <Metric label="Outer cov" value={u.outerCoverage + '%'} color={u.outerCoverage >= 90 ? 'text-emerald-400' : 'text-amber-400'} />
+                    <Metric label="Inner cov" value={u.innerCoverage + '%'} color="text-blue-400" />
+                    <Metric label="Detail cov" value={u.detailCoverage + '%'} color="text-yellow-400" />
+                    <Metric label="Fill exported" value={u.fillBoundaryExported ? 'YES' : 'NO'} color={!u.fillBoundaryExported ? 'text-emerald-400' : 'text-red-400'} />
+                    <Metric label="Artificial" value={u.artificialGeometryCount} color={u.artificialGeometryCount === 0 ? 'text-emerald-400' : 'text-red-400'} />
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-[#1e2130]">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[9px] text-slate-500 uppercase tracking-wider">Universal Test Suite</span>
+                      <span className={`text-[10px] font-bold ${v.pass ? 'text-emerald-400' : 'text-red-400'}`}>{v.pass ? 'PASS' : 'FAIL'}</span>
+                    </div>
+                    <div className="space-y-0.5">
+                      {v.checks.map(ch => (
+                        <div key={ch.id} className="flex items-center justify-between text-[10px]">
+                          <span className="text-slate-400">{ch.label}</span>
+                          <span className={ch.pass ? 'text-emerald-400' : 'text-red-400'}>{ch.pass ? 'PASS' : 'FAIL'} <span className="text-slate-600 ml-1">{ch.detail}</span></span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="text-[9px] text-slate-600 mt-1.5">Escenarios: {DESIGN_SCENARIOS.map(s => s.name).join(' · ')}</div>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+
           {/* Lower contour — body + feet rebuild metrics (CAMBIO 9) */}
           <div className="bg-[#161a23] rounded-lg p-2.5 border border-[#1e2130]">
             <div className="flex items-center gap-1.5 mb-1.5">
@@ -562,6 +634,15 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#06b6d4]"></span> Ojo</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 border-t border-dashed border-[#f97316]"></span> Frontera descartada</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#ef4444]"></span> Artefacto</span>
+            </div>
+          )}
+          {viewMode === 'universal' && (
+            <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#22c55e]"></span> outer_outline</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#3b82f6]"></span> inner_outline</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#eab308]"></span> detail_open_curve</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#ef4444]"></span> rejected_noise</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#a855f7]"></span> fill_boundary</span>
             </div>
           )}
         </div>
