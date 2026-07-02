@@ -13,18 +13,36 @@ import { runRepairEngine } from '@/lib/repairEngine';
  * integrated auto-fixer loop. Runs the repair engine on detected errors,
  * re-simulates, and repeats until SAFE or iteration limit.
  */
-export default function SimulationReportPanel({ regions, config, machineSettings, onRegionsRepaired }) {
+export default function SimulationReportPanel({ regions, config, machineSettings, onRegionsRepaired, finalCommands, finalObjects }) {
   const [repairing, setRepairing] = useState(false);
   const [repairLog, setRepairLog] = useState(null);
 
   const ms = { ...DEFAULT_MACHINE, ...machineSettings };
 
-  // Full analysis (recomputed when regions change — e.g. after repair)
+  // Full analysis — uses finalCommands from Editor (single source of truth)
+  // Falls back to buildFinalCommands only if finalCommands not provided
   const analysis = useMemo(() => {
-    const { commands: cmds, objects: objs, meta } = buildFinalCommands(regions, config, ms);
-    logCommandsSync('simulation', meta);
+    let cmds, objs, meta;
+    if (finalCommands) {
+      cmds = finalCommands;
+      objs = finalObjects || [];
+      meta = {
+        source: 'finalEmbroideryCommands',
+        stitchCount: cmds.filter(c => c.type === 'stitch').length,
+        jumpCount: cmds.filter(c => c.type === 'jump').length,
+        trimCount: cmds.filter(c => c.type === 'trim').length,
+      };
+      console.log('[commands-state] simulation uses: finalEmbroideryCommands');
+      console.log('[commands-state] panel metrics source: finalEmbroideryCommands', meta);
+    } else {
+      const built = buildFinalCommands(regions, config, ms);
+      cmds = built.commands;
+      objs = built.objects;
+      meta = built.meta;
+      logCommandsSync('simulation', meta);
+    }
     return analyzeSimulation(cmds, objs, ms, regions, config);
-  }, [regions, config, ms.maxStitchLength, ms.maxJumpLength, ms.trimThreshold, ms.designOffset]);
+  }, [regions, config, ms.maxStitchLength, ms.maxJumpLength, ms.trimThreshold, ms.designOffset, finalCommands, finalObjects]);
 
   const m = analysis.metrics;
   const rec = analysis.recommendations;

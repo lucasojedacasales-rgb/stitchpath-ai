@@ -37,7 +37,9 @@ export default function MachineValidatorPanel({ regions, config, machineSettings
     let cmds, meta;
     if (preCommands) {
       cmds = preCommands;
-      meta = { source: 'preCommands', stitchCount: cmds.filter(c => c.type === 'stitch').length, jumpCount: cmds.filter(c => c.type === 'jump').length, trimCount: cmds.filter(c => c.type === 'trim').length };
+      meta = { source: 'finalEmbroideryCommands', stitchCount: cmds.filter(c => c.type === 'stitch').length, jumpCount: cmds.filter(c => c.type === 'jump').length, trimCount: cmds.filter(c => c.type === 'trim').length };
+      console.log('[commands-state] validation uses: finalEmbroideryCommands');
+      console.log('[commands-state] panel metrics source: finalEmbroideryCommands', meta);
     } else {
       const built = buildFinalCommands(regions, config, ms);
       cmds = built.commands;

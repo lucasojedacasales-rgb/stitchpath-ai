@@ -59,6 +59,7 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
   // so display metrics match simulation + validation exactly.
   const pipelineResult = useMemo(() => {
     const { commands, objects, meta, sanitizeReport, validation } = buildFinalCommands(regions, config, machineSettings, format);
+    console.log('[commands-state] export uses: buildFinalCommands');
     logCommandsSync('export', meta);
     return {
       commands,

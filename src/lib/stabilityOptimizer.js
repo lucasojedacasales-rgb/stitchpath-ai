@@ -30,7 +30,6 @@
 
 import {
   buildStitchObjects, flattenToCommands, validatePipeline, DEFAULT_MACHINE,
-  buildFinalCommands,
 } from './exportPipeline';
 import { analyzeSimulation } from './simulationMetrics';
 import { runRepairEngine } from './repairEngine';
@@ -747,13 +746,27 @@ function evaluateCandidate(before, after) {
  *
  * @returns {{ applied, before, after, commands, reason, indices }}
  */
-export function optimizeStabilitySafe(regions, config = {}, machineSettings = {}) {
+export function optimizeStabilitySafe(finalCommands, finalObjects, regions, config = {}, machineSettings = {}) {
   const ms = { ...DEFAULT_MACHINE, ...machineSettings };
 
-  // ── Step 1: Get final commands (single source of truth) ─────────────────
-  const built = buildFinalCommands(regions, config, ms);
-  const originalCommands = built.commands;
-  const objects = built.objects;
+  // Guard: if no finalCommands, return empty result
+  if (!finalCommands || finalCommands.length === 0) {
+    return {
+      applied: false,
+      before: { metrics: { stitches: 0, jumps: 0, trims: 0, longStitches: 0, shortStitches: 0, duplicates: 0 }, ce01: { status: 'INVALID', score: 0 }, stability: 0 },
+      after: { metrics: { stitches: 0, jumps: 0, trims: 0, longStitches: 0, shortStitches: 0, duplicates: 0 }, ce01: { status: 'INVALID', score: 0 }, stability: 0 },
+      commands: [],
+      reason: 'No hay comandos finales disponibles',
+      indices: { stabilityScore: 0, complexityIndex: 0, densityIndex: 0, needleTravelIndex: 0, stitchLengthIndex: 0, underlayIndex: 0, trimIndex: 0, tensionIndex: 0, threadBreakRisk: 0, puckeringRisk: 0, hoopDisplacementRisk: 0, globalEfficiency: 0 },
+    };
+  }
+
+  // ── Step 1: Use the finalCommands passed from the Editor ────────────────
+  // NEVER call buildFinalCommands internally — the Editor computes it once
+  // and passes the SAME reference to all panels. This guarantees the optimizer
+  // sees the exact same commands as simulation/validation/export.
+  const originalCommands = finalCommands;
+  const objects = finalObjects || [];
 
   // ── Step 2: Before snapshot ─────────────────────────────────────────────
   const beforeMetrics = computeCommandMetrics(originalCommands, ms);

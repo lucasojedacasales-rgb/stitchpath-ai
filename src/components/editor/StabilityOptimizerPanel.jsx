@@ -23,7 +23,7 @@ const STATUS_STYLES = {
  *
  * NEVER modifies regions or visual state.
  */
-export default function StabilityOptimizerPanel({ regions, config, machineSettings, onOptimized }) {
+export default function StabilityOptimizerPanel({ regions, config, machineSettings, finalCommands, finalObjects, onOptimizationApplied, onOptimizationDiscarded }) {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState(null);
 
@@ -32,11 +32,15 @@ export default function StabilityOptimizerPanel({ regions, config, machineSettin
     setResult(null);
     await new Promise(r => setTimeout(r, 50));
     try {
-      const res = optimizeStabilitySafe(regions, config, machineSettings);
+      // Use finalCommands passed from Editor — NEVER regenerate internally
+      const res = optimizeStabilitySafe(finalCommands, finalObjects, regions, config, machineSettings);
       setResult(res);
-      // Only call onOptimized if applied AND callback exists
-      if (res.applied && onOptimized) {
-        onOptimized({ commands: res.commands });
+      if (res.applied && onOptimizationApplied) {
+        console.log('[commands-state] optimization applied — updating finalEmbroideryCommands');
+        onOptimizationApplied(res.commands);
+      } else if (!res.applied && onOptimizationDiscarded) {
+        console.log('[commands-state] optimization discarded — finalEmbroideryCommands unchanged');
+        onOptimizationDiscarded(res);
       }
     } finally {
       setRunning(false);

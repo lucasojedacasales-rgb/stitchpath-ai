@@ -27,6 +27,7 @@ import { runPipeline } from '@/lib/pipeline/runner';
 import { enrichAllRegions } from '@/lib/regionBuilder.js';
 import { getModeStrategy } from '@/lib/digitizeModes.js';
 import { filterValidVisualRegions } from '@/lib/visualRegionGuard';
+import { buildFinalCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
 import { useDecisionEngine } from '@/hooks/useDecisionEngine.js';
@@ -92,6 +93,69 @@ export default function Editor() {
     reset: resetAI
   } = useDecisionEngine();
   const [showDecisionPanel, setShowDecisionPanel] = useState(false);
+  // ═════════════════════════════
+
+  // ═══ Command state separation ═══
+  // finalEmbroideryCommands = accepted, real commands used by ALL main panels
+  // candidateOptimizedCommands = temporary candidate (optimizer only)
+  // discardedOptimizationReport = report of rejected candidate
+  // optimizedCommandsOverride = applied optimization override (cleared on region change)
+  const [candidateOptimizedCommands, setCandidateOptimizedCommands] = useState(null);
+  const [discardedOptimizationReport, setDiscardedOptimizationReport] = useState(null);
+  const [lastOptimizationAttempt, setLastOptimizationAttempt] = useState(null);
+  const [optimizedCommandsOverride, setOptimizedCommandsOverride] = useState(null);
+
+  // Clear override + candidate when regions change
+  useEffect(() => {
+    setOptimizedCommandsOverride(null);
+    setCandidateOptimizedCommands(null);
+    setDiscardedOptimizationReport(null);
+  }, [regions]);
+
+  const editorMachineSettings = useMemo(() => ({
+    ...DEFAULT_MACHINE,
+    maxStitchLength: 12.1,
+    maxJumpLength: 12.1,
+    hoopSize: [config.width_mm || 100, config.height_mm || 100],
+    designOffset: [0, 0],
+    trimThreshold: 3.5,
+  }), [config.width_mm, config.height_mm]);
+
+  // Single source of truth — computed ONCE, shared with all panels
+  const finalEmbroideryCommands = useMemo(() => {
+    if (optimizedCommandsOverride) {
+      const cmds = optimizedCommandsOverride;
+      const meta = {
+        source: 'optimized_override',
+        stitchCount: cmds.filter(c => c.type === 'stitch').length,
+        jumpCount: cmds.filter(c => c.type === 'jump').length,
+        trimCount: cmds.filter(c => c.type === 'trim').length,
+      };
+      console.log('[commands-state] final commands metrics (override):', meta);
+      return { commands: cmds, objects: [], meta };
+    }
+    const built = buildFinalCommands(regions, config, editorMachineSettings);
+    console.log('[commands-state] final commands metrics:', {
+      stitches: built.commands.filter(c => c.type === 'stitch').length,
+      jumps: built.commands.filter(c => c.type === 'jump').length,
+      trims: built.commands.filter(c => c.type === 'trim').length,
+    });
+    return built;
+  }, [regions, config, editorMachineSettings, optimizedCommandsOverride]);
+
+  const handleOptimizationApplied = useCallback((commands) => {
+    setOptimizedCommandsOverride(commands);
+    setCandidateOptimizedCommands(null);
+    setDiscardedOptimizationReport(null);
+    setLastOptimizationAttempt({ applied: true, timestamp: Date.now() });
+  }, []);
+
+  const handleOptimizationDiscarded = useCallback((report) => {
+    setCandidateOptimizedCommands(report.commands);
+    setDiscardedOptimizationReport(report);
+    setLastOptimizationAttempt({ applied: false, reason: report.reason, timestamp: Date.now() });
+    // Do NOT update optimizedCommandsOverride or finalEmbroideryCommands
+  }, []);
   // ═════════════════════════════
 
   useEffect(() => {if (id) loadProject();}, [id]); // loadProject reads `id` from closure — safe to omit from deps
@@ -369,13 +433,9 @@ export default function Editor() {
                 <SimulationReportPanel
                   regions={regions}
                   config={config}
-                  machineSettings={{
-                    maxStitchLength: 12.1,
-                    maxJumpLength: 12.1,
-                    hoopSize: [config.width_mm || 100, config.height_mm || 100],
-                    designOffset: [0, 0],
-                    trimThreshold: 3.5,
-                  }}
+                  machineSettings={editorMachineSettings}
+                  finalCommands={finalEmbroideryCommands.commands}
+                  finalObjects={finalEmbroideryCommands.objects}
                   onRegionsRepaired={handleRegionsUpdate}
                 />
               </div>
@@ -386,13 +446,11 @@ export default function Editor() {
                 <StabilityOptimizerPanel
                   regions={regions}
                   config={config}
-                  machineSettings={{
-                    maxStitchLength: 12.1,
-                    maxJumpLength: 12.1,
-                    hoopSize: [config.width_mm || 100, config.height_mm || 100],
-                    designOffset: [0, 0],
-                    trimThreshold: 3.5,
-                  }}
+                  machineSettings={editorMachineSettings}
+                  finalCommands={finalEmbroideryCommands.commands}
+                  finalObjects={finalEmbroideryCommands.objects}
+                  onOptimizationApplied={handleOptimizationApplied}
+                  onOptimizationDiscarded={handleOptimizationDiscarded}
                 />
                 <div className="flex items-center gap-2 mb-3">
                   <ShieldCheck className="w-4 h-4 text-violet-400" />
@@ -402,13 +460,8 @@ export default function Editor() {
                 <MachineValidatorPanel
                   regions={regions}
                   config={config}
-                  machineSettings={{
-                    maxStitchLength: 12.1,
-                    maxJumpLength: 12.1,
-                    hoopSize: [config.width_mm || 100, config.height_mm || 100],
-                    designOffset: [0, 0],
-                    trimThreshold: 3.5,
-                  }}
+                  machineSettings={editorMachineSettings}
+                  commands={finalEmbroideryCommands.commands}
                 />
               </div>
             </div>
