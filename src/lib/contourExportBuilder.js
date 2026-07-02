@@ -342,13 +342,24 @@ export function buildContourObjects(regions, config = {}) {
     mmPoints = refineContourPath(mmPoints, preset, isOuter);
     if (mmPoints.length < 3) continue;
 
-    // ── Body fill-boundary outline: keep ONLY the upper half. The lower edge
-    //    is replaced by the dark-stroke rebuilt lower_body contour so no
-    //    fill-boundary contour appears in the lower zone (rosa claro/oscuro).
-    if (isOuter && outlineGroup === 'body' && lowerBodyRebuilt) {
+    // ── Body fill-boundary outline: clip to upper half ONLY when the lower
+    //    rebuild is fully valid (all three lower contours present, no open
+    //    caps, no artificial geometry). Otherwise keep the original body
+    //    outline intact to avoid leaving the lower edge incomplete.
+    const lowerValid = lowerResult.report.lowerBodyContourPresent &&
+      lowerResult.report.leftFootContourPresent &&
+      lowerResult.report.rightFootContourPresent &&
+      lowerResult.report.lowerContourOpenCaps === 0 &&
+      lowerResult.report.artificialLowerGeometry === 0;
+    if (isOuter && outlineGroup === 'body' && lowerBodyRebuilt && lowerValid) {
       mmPoints = clipToUpperHalf(mmPoints, 0);
       if (mmPoints.length < 3) continue;
       outline._forceOpen = true;
+      lowerResult.report.bodyClipApplied = true;
+      console.log('[lower-outline-fix] body clip applied: true (lower rebuild valid)');
+    } else if (isOuter && outlineGroup === 'body' && lowerBodyRebuilt && !lowerValid) {
+      lowerResult.report.bodyClipApplied = false;
+      console.log('[lower-outline-fix] body clip NOT applied: lower rebuild invalid — keeping original body outline');
     }
 
     // Determine stitch type and width from preset

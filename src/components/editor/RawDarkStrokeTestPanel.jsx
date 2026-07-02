@@ -214,6 +214,13 @@ export default function RawDarkStrokeTestPanel({ project, config, finalCommands 
             <Diag label="mouth px" value={d?.mouthPixels} />
             <Diag label="eye px" value={d?.eyePixels} />
             <Diag label="lower px" value={d?.lowerPixels} />
+            <Diag label="junctions" value={d?.skeletonJunctionCount} />
+            <Diag label="split paths" value={d?.splitPathCount} />
+            <Diag label="lower subpaths" value={d?.lowerRawSubpaths} color={d?.lowerRawSubpaths > 0 ? 'text-emerald-400' : 'text-red-400'} />
+            <Diag label="L foot subpaths" value={d?.leftFootRawSubpaths} color={d?.leftFootRawSubpaths > 0 ? 'text-emerald-400' : 'text-red-400'} />
+            <Diag label="R foot subpaths" value={d?.rightFootRawSubpaths} color={d?.rightFootRawSubpaths > 0 ? 'text-emerald-400' : 'text-red-400'} />
+            <Diag label="oval used" value={d?.ovalBoundaryUsed ? 'YES' : 'NO'} color={d?.ovalBoundaryUsed ? 'text-red-400' : 'text-emerald-400'} />
+            <Diag label="largest only" value={d?.largestComponentOnly ? 'YES' : 'NO'} color={d?.largestComponentOnly ? 'text-red-400' : 'text-emerald-400'} />
             <Diag label="scale" value={d?.scale} />
           </div>
 
