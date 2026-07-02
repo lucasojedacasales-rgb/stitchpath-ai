@@ -230,7 +230,20 @@ export function runAdaptiveOptimization(regions, config = {}, machineSettings = 
     const safeIds = markSafeRegions(currentRegions, config, affectedIds);
 
     // ── Repair ONLY affected regions (surgical) ────────────────────────
-    const repair = runRepairEngine(currentRegions, config, ms, format);
+    // Split: affected regions go to the repair engine; SAFE regions are
+    // never passed to it, guaranteeing they can't be modified.
+    let repair;
+    if (affectedIds.size > 0) {
+      const affectedRegions = currentRegions.filter(r => affectedIds.has(r.id));
+      const partial = runRepairEngine(affectedRegions, config, ms, format);
+      // Merge repaired affected + untouched safe (preserve original order)
+      const repairedMap = new Map((partial.regions || []).map(r => [r.id, r]));
+      const mergedRegions = currentRegions.map(r => repairedMap.has(r.id) ? repairedMap.get(r.id) : r);
+      repair = { ...partial, regions: mergedRegions };
+    } else {
+      // Only __global__ errors (e.g. jumps between blocks) — repair full set
+      repair = runRepairEngine(currentRegions, config, ms, format);
+    }
 
     // Rebuild + re-simulate with repaired regions
     const newObjects = buildStitchObjects(repair.regions, config);
