@@ -265,7 +265,7 @@ export default function StitchCanvas({
     // ── PASS 1: Fill regions (clipped to polygon) ────────────────────────────
     if (showFill) {
       for (const region of fillRegions) {
-        if (!region.visible) continue;
+        if (region.visible === false) continue;
         const pts = region.path_points;
         if (!pts || pts.length < 3) continue;
         const color = region.color || '#ffffff';
@@ -293,7 +293,7 @@ export default function StitchCanvas({
     const satinFillRegions = validRegions.filter(r => getEffectiveRenderType(r) === 'satin_fill');
     if (showContour || showFill) {
       for (const region of satinFillRegions) {
-        if (!region.visible) continue;
+        if (region.visible === false) continue;
         const pts = region.path_points;
         if (!pts || pts.length < 3) continue;
         const color = region.color || '#ffffff';
@@ -321,7 +321,7 @@ export default function StitchCanvas({
     // and clipping would erase it, making contours invisible on the outer edge.
     if (showContour) {
       for (const region of contourRegions) {
-        if (!region.visible) continue;
+        if (region.visible === false) continue;
         const pts = region.path_points;
         if (!pts || pts.length < 3) continue;
         const color  = region.color || '#ffffff';
@@ -439,7 +439,7 @@ export default function StitchCanvas({
 
     let found = null;
     for (const region of regions) {
-      if (!region.visible || !region.path_points) continue;
+      if (region.visible === false || !region.path_points) continue;
       const pts = region.path_points;
       const minX = Math.min(...pts.map(p => p[0]));
       const maxX = Math.max(...pts.map(p => p[0]));
