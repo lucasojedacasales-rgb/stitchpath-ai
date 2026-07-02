@@ -54,17 +54,21 @@ export async function runContourEngine(ctx) {
   const contourRegions = ctx.contours?.regions || [];
   console.log(`[ContourEngine] Contornos detectados: ${contourRegions.length}`);
 
-  // ── Build edge map from the ORIGINAL image (not the color-quantized mask) ─
-  // This is used to snap inferred contours to the REAL visible border,
-  // preventing offsets from color quantization and anti-aliasing.
+  // ── Build edge map from the ORIGINAL image ──────────────────────────────
+  // IMPORTANT: edgeMap is NOT a primary contour source. It is used ONLY for:
+  //   - confirming that a visible border exists
+  //   - estimating border color / darkness
+  //   - estimating contour width
+  //   - detecting clear internal details (eyes, mouth)
+  // Primary contour generation happens in regionBuilderStage via
+  // separateFillsAndContours() which builds contours from fill boundaries.
   ctx.edgeMap = await buildEdgeMap(sourceUrl);
-  console.log(`[ContourEngine] Edge map construido: ${ctx.edgeMap ? ctx.edgeMap.width + '×' + ctx.edgeMap.height : 'falló'}`);
+  console.log(`[ContourEngine] Edge map construido (confirmación solo): ${ctx.edgeMap ? ctx.edgeMap.width + '×' + ctx.edgeMap.height : 'falló'}`);
 
-  // ── Build dedicated contour paths (separate from fill path_points) ──────
-  // Each region gets region.contour = { contour_points, closed, width, color, type }
-  // Contours are snapped to real edges via the edge map.
+  // ── Build contour paths for FALLBACK regions only ───────────────────────
+  // These contour regions are only used when vectorRegions is empty (fallback).
+  // edgeMap is passed for light confirmation snap, NOT as primary source.
   if (contourRegions.length > 0) {
-    // Ensure each region has an id (builder uses id as key)
     for (const r of contourRegions) {
       if (!r.id) r.id = `contour_${Math.random().toString(36).slice(2, 9)}`;
     }

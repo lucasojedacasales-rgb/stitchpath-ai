@@ -7,7 +7,7 @@
 import { enrichAllRegions } from '../../regionBuilder.js';
 import { getModeStrategy } from '../../digitizeModes.js';
 import { normalizeRegionForPipeline, filterBackgroundRegions } from '../regionNormalize.js';
-import { buildContoursForRegions } from '../../contourPathBuilder.js';
+import { buildImageSampler, separateFillsAndContours } from '../../contourFromFill.js';
 
 export async function runRegionBuilder(ctx) {
   if (!ctx.vectorRegions || ctx.vectorRegions.length === 0) {
@@ -70,22 +70,57 @@ export async function runRegionBuilder(ctx) {
     };
   });
 
-  // ── Build dedicated contour paths on the final regions ──────────────────
-  // Backend-produced regions (hybridDigitize path) arrive without contours.
-  // Fallback regions (from contours) may already have them — skip those.
-  const needsContours = named.some(r => !r.contour);
-  if (needsContours && named.length > 0) {
-    const { contours } = buildContoursForRegions(named, { edgeMap: ctx.edgeMap });
-    for (const r of named) {
-      if (!r.contour) {
-        const c = contours.get(r.id);
-        if (c) r.contour = c;
-      }
-    }
-  }
+  // NOTE: Contour generation is now handled AFTER enrichment by
+  // separateFillsAndContours() — contours are built from fill boundaries,
+  // not from edgeMap fragments. See below.
 
-  ctx.regions = enrichAllRegions(named, width_mm, height_mm, fabric_type, ctx._useAdaptiveEngine);
-  console.log(`[RegionBuilder] Regiones finales: ${ctx.regions.length}`);
+  const enriched = enrichAllRegions(named, width_mm, height_mm, fabric_type, ctx._useAdaptiveEngine);
+
+  // ── Contour Fix: separate fills from contour objects ──────────────────────
+  // Black border-like regions are removed from fills and converted to contours.
+  // Boundary contours are generated from remaining fill regions' path_points.
+  // edgeMap is used only to confirm borders, not as a primary contour source.
+  const sampler = await buildImageSampler(ctx.enhanced?.enhancedUrl || ctx.imageUrl);
+  const { fills, contours, report } = separateFillsAndContours(enriched, sampler, ctx.edgeMap);
+
+  // Store contour objects separately for the canvas and stitch planner
+  ctx.contourObjects = contours;
+  // ctx.regions contains only fill objects (contour objects are in ctx.contourObjects)
+  // but we also keep contour objects in regions for backward compatibility with the canvas,
+  // marked with type: "contour" so the renderer can distinguish them.
+  ctx.regions = [...fills, ...contours.map(c => ({
+    ...c,
+    // Canvas-compatible fields
+    visible: true,
+    stitch_count: c.stitch_type === 'satin'
+      ? Math.round(shoelaceArea(c.contour_points) * 100 * 2 / (c.contour_width_mm || 1.2))
+      : Math.round(perimeterNorm(c.contour_points) * 100 / 1.8),
+    area_mm2: shoelaceArea(c.contour_points) * width_mm * height_mm,
+    perimeter_mm: perimeterNorm(c.contour_points) * Math.max(width_mm, height_mm),
+  }))];
+
+  console.log(`[RegionBuilder] Regiones finales: ${ctx.regions.length} (${fills.length} fills + ${contours.length} contours)`);
+}
+
+// ─── Contour geometry helpers (for contour object production stats) ───────────
+function shoelaceArea(pts) {
+  if (!pts || pts.length < 3) return 0;
+  let a = 0;
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    a += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+  }
+  return Math.abs(a) / 2;
+}
+
+function perimeterNorm(pts) {
+  if (!pts || pts.length < 2) return 0;
+  let p = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    p += Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+  }
+  return p;
 }
 
 // ─── Semantic matching ────────────────────────────────────────────────────────
