@@ -174,11 +174,11 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
           const sx = prevX + (x - prevX) * s / steps;
           const sy = prevY + (y - prevY) * s / steps;
           cmds.push({ type: 'stitch', x: sx, y: sy, color: obj.color, regionId: obj.id,
-            stitchType: obj.stitch_type, source: isFill ? 'clipped_fill' : 'standard' });
+            stitchType: obj.stitch_type, source: isFill ? 'clipped_fill_optimized' : 'standard' });
         }
       }
       cmds.push({ type: 'stitch', x, y, color: obj.color, regionId: obj.id,
-        stitchType: obj.stitch_type, source: isFill ? 'clipped_fill' : 'standard' });
+        stitchType: obj.stitch_type, source: isFill ? 'clipped_fill_optimized' : 'standard' });
       prevX = x; prevY = y;
       firstCmd = false;
     }
