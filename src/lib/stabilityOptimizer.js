@@ -481,8 +481,13 @@ export function runStabilityOptimizer(regions, config = {}, machineSettings = {}
   const ms = { ...DEFAULT_MACHINE, ...machineSettings };
   const phaseLog = [];
 
-  // Initial state
-  let currentRegions = [...regions];
+  // Deep-clone regions so phases never mutate the caller's objects.
+  // path_points is an array of [x,y] pairs — clone those too, since Phase 6
+  // reassigns r.path_points and we must not corrupt the Editor's state.
+  let currentRegions = regions.map(r => ({
+    ...r,
+    path_points: r.path_points ? r.path_points.map(p => [...p]) : r.path_points,
+  }));
   let objects = buildStitchObjects(currentRegions, config);
   let commands = flattenToCommands(objects, ms);
 
