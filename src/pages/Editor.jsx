@@ -140,11 +140,20 @@ export default function Editor() {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploadingImage(true);
+    // Full state reset — no stale data from previous design must survive.
+    setRegions([]);
+    setSelectedRegionId(null);
+    setPathMetrics(null);
+    setPreprocessedUrl(null);
+    setShowExport(false);
+    setActiveTab('editor');
+    setShowDecisionPanel(false);
+    resetAI();
     try {
       const { file_url } = await base44.integrations.Core.UploadFile({ file });
       setImageUrl(file_url);
       setStep(2);
-      await base44.entities.Project.update(id, { image_url: file_url, step: 2, status: 'draft' });
+      await base44.entities.Project.update(id, { image_url: file_url, step: 2, status: 'draft', regions: [], total_stitches: 0, color_count: 0 });
 
       if (AI_ENABLED) {
         setShowDecisionPanel(true);

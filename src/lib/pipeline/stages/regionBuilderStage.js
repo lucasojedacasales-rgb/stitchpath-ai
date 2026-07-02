@@ -6,6 +6,7 @@
 
 import { enrichAllRegions } from '../../regionBuilder.js';
 import { getModeStrategy } from '../../digitizeModes.js';
+import { normalizeRegionForPipeline, filterBackgroundRegions } from '../regionNormalize.js';
 
 export async function runRegionBuilder(ctx) {
   if (!ctx.vectorRegions || ctx.vectorRegions.length === 0) {
@@ -13,16 +14,10 @@ export async function runRegionBuilder(ctx) {
     // pipeline always produces ctx.regions when contour data exists.
     const contourRegions = ctx.contours?.regions || [];
     if (contourRegions.length > 0) {
-      const cfg = ctx.config;
-      const w = cfg.width_mm || 100, h = cfg.height_mm || 100;
       ctx.vectorRegions = contourRegions
-        .filter(r => r.path_points && r.path_points.length >= 3 && (r.hex || r.color))
-        .map(r => ({
-          ...r,
-          color:       r.color || r.hex,
-          area_mm2:    r.area_mm2 || (r.area_norm || 0) * w * h,
-          stitch_type: r.stitch_type || 'fill',
-        }));
+        .map(r => normalizeRegionForPipeline(r, ctx, ctx.config))
+        .filter(Boolean);
+      ctx.vectorRegions = filterBackgroundRegions(ctx.vectorRegions, ctx);
       console.log(`[RegionBuilder] Fallback contornos → ${ctx.vectorRegions.length} vectorRegions`);
     }
     if (!ctx.vectorRegions || ctx.vectorRegions.length === 0) {
@@ -38,11 +33,20 @@ export async function runRegionBuilder(ctx) {
 
   const { width_mm = 100, height_mm = 100, fabric_type = 'Algodón' } = ctx.config;
 
-  // Filter out background regions — area > 35% of design = fabric/tela, not embroidery
+  // Background filter using area_norm (preferred), area_mm2 fallback, or
+  // recomputed polygon area — never 0 when area_mm2 is missing.
   const designArea = width_mm * height_mm;
   const nonBgRegions = ctx.vectorRegions.filter(r => {
-    const areaRatio = (r.area_mm2 || 0) / designArea;
-    return areaRatio <= 0.35;
+    const areaRatio =
+      r.area_norm != null
+        ? r.area_norm
+        : r.area_mm2 != null
+          ? r.area_mm2 / designArea
+          : polygonAreaNormalized(r.path_points);
+    // Keep the main object even if large, as long as it doesn't touch ≥2 edges.
+    if (areaRatio > 0.35 && touchesEdges(r) >= 2) return false;
+    if (touchesEdges(r) >= 4) return false;
+    return true;
   });
 
   // Apply semantic metadata to vector regions when available
@@ -142,4 +146,35 @@ function autoName(r, i) {
   const h = cx < 0.33 ? '_izq' : cx > 0.66 ? '_der' : '';
   const abbr = r.stitch_type === 'fill' ? 'fill' : r.stitch_type === 'satin' ? 'sat' : 'run';
   return `${v}${h}_${closestColorName(r.color)}_${abbr}`;
+}
+
+// ─── Background-filter helpers (normalized 0–1 coordinates) ───────────────────
+
+function polygonAreaNormalized(pts) {
+  if (!pts || pts.length < 3) return 0;
+  let a = 0;
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    a += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+  }
+  return Math.abs(a) / 2;
+}
+
+function touchesEdges(r, margin = 0.012) {
+  const pts = r.path_points || [];
+  if (pts.length === 0) return 0;
+  let minX = 1, maxX = 0, minY = 1, maxY = 0;
+  for (const [x, y] of pts) {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  let count = 0;
+  if (minX <= margin) count++;
+  if (maxX >= 1 - margin) count++;
+  if (minY <= margin) count++;
+  if (maxY >= 1 - margin) count++;
+  return count;
 }
