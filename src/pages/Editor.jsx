@@ -37,6 +37,7 @@ import { buildFinalCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
 import { calculateUnifiedCommandMetrics } from '@/lib/unifiedCommandMetrics';
 import { simplifyGeometry } from '@/lib/industrialStitchProcessor';
 import { buildDarkStrokeContextFromUrl } from '@/lib/darkStrokeDetector';
+import { runContourRefinementGuard } from '@/lib/contourRefinementGuard';
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
 import { useDecisionEngine } from '@/hooks/useDecisionEngine.js';
@@ -177,12 +178,16 @@ export default function Editor() {
       return { commands: cmds, objects: [], meta };
     }
     const built = buildFinalCommands(regions, configWithDarkStroke, editorMachineSettings);
+    // ── Transactional contour refinement: clean travel/artifacts, revert if
+    //    any protected metric (mouth, body-shadow, colors, DST) regresses.
+    const refinement = runContourRefinementGuard(built.commands, regions, configWithDarkStroke);
+    const finalCmds = refinement.accepted ? refinement.commands : built.commands;
     console.log('[commands-state] final commands metrics:', {
-      stitches: built.commands.filter(c => c.type === 'stitch').length,
-      jumps: built.commands.filter(c => c.type === 'jump').length,
-      trims: built.commands.filter(c => c.type === 'trim').length,
+      stitches: finalCmds.filter(c => c.type === 'stitch').length,
+      jumps: finalCmds.filter(c => c.type === 'jump').length,
+      trims: finalCmds.filter(c => c.type === 'trim').length,
     });
-    return built;
+    return { commands: finalCmds, objects: built.objects, meta: { ...built.meta, refinementAccepted: refinement.accepted } };
   }, [regions, configWithDarkStroke, editorMachineSettings, optimizedCommandsOverride]);
 
   // ═══ Unified metrics — single source of truth for all panels ═══
