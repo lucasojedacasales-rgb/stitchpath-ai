@@ -12,6 +12,7 @@
  */
 
 import { DEFAULT_MACHINE } from './exportPipeline';
+import { buildSimulationBlocks } from './stitchSimulation';
 
 const MACHINE_SPM = 800;       // stitches per minute (Caydo CE01 nominal)
 const COLOR_CHANGE_S = 30;     // seconds per color change
@@ -29,7 +30,7 @@ const CROSS_CHECK_WINDOW = 12; // look-back window for crossing detection
  * @param {Object} machine  — machine settings
  * @returns {Object} analysis result
  */
-export function analyzeSimulation(commands, objects, machine = {}) {
+export function analyzeSimulation(commands, objects, machine = {}, regions = null, config = null) {
   const ms = { ...DEFAULT_MACHINE, ...machine };
 
   const perCommand = [];
@@ -200,6 +201,20 @@ export function analyzeSimulation(commands, objects, machine = {}) {
 
   // ── Metrics ──────────────────────────────────────────────────────────────
   const metrics = computeMetrics(commands, perCommand, ms);
+
+  // ── Visual simulation stats (region-aware) ──────────────────────────────
+  if (regions && config) {
+    try {
+      const { stats: visStats } = buildSimulationBlocks(commands, regions, config);
+      metrics.stitchesOutsideRegion = visStats.stitchesOutsideRegion;
+      metrics.duplicateStitches    = visStats.duplicateStitches;
+      metrics.shortStitches        = visStats.shortStitches;
+      metrics.longStitches         = visStats.longStitches;
+      metrics.maxDensityPerZone    = visStats.maxDensityPerZone;
+    } catch (e) {
+      console.warn('[simulationMetrics] Visual stats failed:', e.message);
+    }
+  }
 
   // ── Quality score ────────────────────────────────────────────────────────
   const { score, status } = computeQualityScore(errors, metrics);

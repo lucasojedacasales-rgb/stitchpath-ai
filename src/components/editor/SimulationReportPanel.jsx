@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import {
   ShieldCheck, ShieldAlert, AlertTriangle, Wrench, TrendingUp, Activity,
   Zap, Scissors, Palette, Ruler, Clock, Route, RefreshCw, CheckCircle, XCircle,
+  Flame, Layers,
 } from 'lucide-react';
 import { analyzeSimulation } from '@/lib/simulationMetrics';
 import { buildStitchObjects, flattenToCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
@@ -22,7 +23,7 @@ export default function SimulationReportPanel({ regions, config, machineSettings
   const analysis = useMemo(() => {
     const objs = buildStitchObjects(regions, config);
     const cmds = flattenToCommands(objs, ms);
-    return analyzeSimulation(cmds, objs, ms);
+    return analyzeSimulation(cmds, objs, ms, regions, config);
   }, [regions, config, ms.maxStitchLength, ms.maxJumpLength, ms.trimThreshold, ms.designOffset]);
 
   const m = analysis.metrics;
@@ -83,6 +84,26 @@ export default function SimulationReportPanel({ regions, config, machineSettings
           <Metric icon={Clock} label="Tiempo est." value={`${m.estimatedTimeMin}min`} color="text-violet-400" />
         </div>
       </div>
+
+      {/* Visual diagnostics */}
+      {m.stitchesOutsideRegion !== undefined && (
+        <div>
+          <div className="text-[11px] text-slate-500 uppercase tracking-wider mb-2 font-medium">Diagnóstico visual</div>
+          <div className="grid grid-cols-2 gap-2">
+            <Metric icon={AlertTriangle} label="Fuera de región" value={m.stitchesOutsideRegion ?? 0} color={m.stitchesOutsideRegion > 0 ? 'text-orange-400' : 'text-emerald-400'} />
+            <Metric icon={Activity} label="Duplicadas" value={m.duplicateStitches ?? 0} color={m.duplicateStitches > 0 ? 'text-orange-400' : 'text-emerald-400'} />
+            <Metric icon={Zap} label="Cortas <0.8mm" value={m.shortStitches ?? 0} color={m.shortStitches > 20 ? 'text-amber-400' : 'text-slate-300'} />
+            <Metric icon={Ruler} label="Largas >8mm" value={m.longStitches ?? 0} color={m.longStitches > 0 ? 'text-red-400' : 'text-emerald-400'} />
+            <Metric icon={Flame} label="Densidad máx." value={`${m.maxDensityPerZone ?? 0}/zona`} color={m.maxDensityPerZone > 50 ? 'text-red-400' : 'text-slate-300'} />
+            <Metric icon={Layers} label="Bloques" value={analysis.blockCount} color="text-violet-400" />
+          </div>
+          {m.stitchesOutsideRegion > 0 && m.stitchesOutsideRegion > (m.totalStitches * 0.1) && (
+            <div className="mt-2 text-[10px] text-orange-300 bg-orange-900/15 border border-orange-500/20 rounded px-2 py-1.5">
+              ⚠ Planner está generando puntadas fuera del polígono — revisar generación de stitches.
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Recommendations */}
       <div className="space-y-2">

@@ -2,10 +2,16 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   Play, Pause, SkipForward, SkipBack, RotateCcw, Zap, Scissors,
   Palette, Flag, AlertTriangle, MapPin, Navigation, Gauge, Layers,
-  Flame, Grid2x2, Wrench, ShieldCheck, ShieldAlert, Activity,
+  Flame, Grid2x2, ShieldCheck, ShieldAlert, Bug, Eye, Activity,
+  EyeOff, Route,
 } from 'lucide-react';
 import { buildStitchObjects, flattenToCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
 import { analyzeSimulation } from '@/lib/simulationMetrics';
+import {
+  buildSimulationBlocks,
+  renderSimulationOverlay,
+  DEFAULT_SIMULATION_SETTINGS,
+} from '@/lib/stitchSimulation';
 
 const TYPE_META = {
   stitch:      { label: 'Puntada',  color: '#a78bfa', icon: Zap },
@@ -16,9 +22,11 @@ const TYPE_META = {
 };
 
 /**
- * MachineSimulator — professional sewing machine simulator.
- * Animates needle, thread path, hoop movement; detects errors in real-time;
- * supports heat map overlay; integrates with auto-fixer.
+ * MachineSimulator — professional embroidery simulation with clean visual layers.
+ *
+ * Uses buildSimulationBlocks + renderSimulationOverlay for region-clipped,
+ * realistic thread rendering. Supports normal mode (clean) and debug mode
+ * (jumps, path, warnings, block indices).
  */
 export default function MachineSimulator({ regions, config, machineSettings, onRegionsRepaired, exportGate }) {
   const canvasRef = useRef(null);
@@ -28,15 +36,16 @@ export default function MachineSimulator({ regions, config, machineSettings, onR
   const w = config.width_mm || 100;
   const h = config.height_mm || 100;
 
-  // Build command sequence + full analysis (memoized)
-  const { commands, objects, analysis } = useMemo(() => {
+  // ── Build command sequence + analysis + simulation blocks (memoized) ──────
+  const { commands, analysis, simData } = useMemo(() => {
     const objs = buildStitchObjects(regions, config);
     const cmds = flattenToCommands(objs, ms);
     const sim = analyzeSimulation(cmds, objs, ms);
-    return { commands: cmds, objects: objs, analysis: sim };
-  }, [regions, config, ms.maxStitchLength, ms.maxJumpLength, ms.trimThreshold, ms.designOffset]);
+    const blocks = buildSimulationBlocks(cmds, regions, { width_mm: w, height_mm: h });
+    return { commands: cmds, analysis: sim, simData: blocks };
+  }, [regions, config, ms.maxStitchLength, ms.maxJumpLength, ms.trimThreshold, ms.designOffset, w, h]);
 
-  // Projection bounds
+  // ── Projection bounds ─────────────────────────────────────────────────────
   const projection = useMemo(() => {
     if (commands.length === 0) return null;
     let minX = -w / 2, maxX = w / 2, minY = -h / 2, maxY = h / 2;
@@ -48,15 +57,17 @@ export default function MachineSimulator({ regions, config, machineSettings, onR
     return { minX, maxX, minY, maxY };
   }, [commands, w, h]);
 
+  // ── State ─────────────────────────────────────────────────────────────────
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(5);
-  const [showHeatmap, setShowHeatmap] = useState(false);
   const [showHoop, setShowHoop] = useState(true);
+  const [simSettings, setSimSettings] = useState(DEFAULT_SIMULATION_SETTINGS);
+  const [renderReport, setRenderReport] = useState(null);
 
   useEffect(() => { setCurrentIndex(0); setIsPlaying(false); }, [commands]);
 
-  // Playback loop
+  // ── Playback loop ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!isPlaying) return;
     let last = performance.now();
@@ -74,13 +85,14 @@ export default function MachineSimulator({ regions, config, machineSettings, onR
     return () => cancelAnimationFrame(animRef.current);
   }, [isPlaying, speed, commands.length]);
 
-  // Canvas drawing
+  // ── Canvas drawing ─────────────────────────────────────────────────────────
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !projection) return;
+    if (!canvas || !projection || !simData) return;
     const ctx = canvas.getContext('2d');
     const cw = canvas.width, ch = canvas.height;
 
+    // Background
     ctx.fillStyle = '#0a0c12';
     ctx.fillRect(0, 0, cw, ch);
 
@@ -90,6 +102,7 @@ export default function MachineSimulator({ regions, config, machineSettings, onR
     for (let gx = 0; gx < cw; gx += 20) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, ch); ctx.stroke(); }
     for (let gy = 0; gy < ch; gy += 20) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(cw, gy); ctx.stroke(); }
 
+    // Projection
     const { minX, maxX, minY, maxY } = projection;
     const dataW = maxX - minX, dataH = maxY - minY;
     const scale = Math.min((cw - 60) / dataW, (ch - 60) / dataH);
@@ -107,94 +120,30 @@ export default function MachineSimulator({ regions, config, machineSettings, onR
       ctx.setLineDash([]);
     }
 
-    // Draw thread path up to currentIndex
-    let prevX = 0, prevY = 0;
-    let prevColor = '#a78bfa';
+    // ── Main simulation render ──────────────────────────────────────────────
+    const heatMap = simSettings.showDensityHeatmap ? analysis.heatMap : null;
+    const report = renderSimulationOverlay(
+      ctx, simData, currentIndex, simSettings,
+      { toX, toY, scale }, heatMap
+    );
+    setRenderReport(report);
 
-    for (let i = 0; i <= currentIndex && i < commands.length; i++) {
-      const c = commands[i];
-      const pc = analysis.perCommand[i];
-      if (!c) continue;
-
-      if (c.x === undefined || !Number.isFinite(c.x)) {
-        if (c.type === 'colorChange' && c.color) prevColor = c.color;
-        continue;
-      }
-
-      const sx = toX(c.x), sy = toY(c.y);
-      const heat = pc?.heatStatus || 'green';
-      const hasError = pc?.errors?.length > 0;
-
-      if (c.type === 'stitch') {
-        const baseColor = c.color || prevColor;
-        if (showHeatmap) {
-          ctx.strokeStyle = heat === 'red' ? '#ef4444' : heat === 'yellow' ? '#fbbf24' : '#22c55e';
-        } else {
-          ctx.strokeStyle = hasError ? '#ef4444' : baseColor;
-        }
-        ctx.lineWidth = hasError ? 2.2 : 1.4;
-        ctx.globalAlpha = 0.88;
-        ctx.beginPath();
-        ctx.moveTo(toX(prevX), toY(prevY));
-        ctx.lineTo(sx, sy);
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      } else if (c.type === 'jump') {
-        const isLong = Math.hypot(c.x - prevX, c.y - prevY) > ms.trimThreshold;
-        ctx.strokeStyle = isLong ? '#ef4444' : 'rgba(100,116,139,0.3)';
-        ctx.lineWidth = isLong ? 1.2 : 0.7;
-        ctx.setLineDash(isLong ? [3, 3] : [2, 4]);
-        ctx.beginPath();
-        ctx.moveTo(toX(prevX), toY(prevY));
-        ctx.lineTo(sx, sy);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-
-      // Trim marker
-      if (c.type === 'trim' && i > 0) {
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.arc(toX(prevX), toY(prevY), 2.5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      // Color change marker
-      if (c.type === 'colorChange' && c.x !== undefined) {
-        ctx.strokeStyle = '#22d3ee';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(toX(c.x), toY(c.y), 5, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-
-      prevX = c.x; prevY = c.y;
-      if (c.color) prevColor = c.color;
-    }
-
-    // Needle at current position
+    // ── Needle at current position ──────────────────────────────────────────
     const curCmd = commands[currentIndex];
     if (curCmd && curCmd.x !== undefined && Number.isFinite(curCmd.x)) {
       const nx = toX(curCmd.x), ny = toY(curCmd.y);
-      // Direction arrow
-      const pc = analysis.perCommand[currentIndex];
-      if (pc && pc.direction !== null && pc.length > 0.5) {
-        const rad = pc.direction * Math.PI / 180;
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(nx, ny);
-        ctx.lineTo(nx + Math.cos(rad) * 12, ny + Math.sin(rad) * 12);
-        ctx.stroke();
-      }
+
       // Glow
       const grd = ctx.createRadialGradient(nx, ny, 0, nx, ny, 14);
       grd.addColorStop(0, 'rgba(124,58,237,0.7)');
       grd.addColorStop(1, 'rgba(124,58,237,0)');
       ctx.fillStyle = grd;
       ctx.fillRect(nx - 14, ny - 14, 28, 28);
+
       // Needle dot
       ctx.fillStyle = '#ffffff';
       ctx.beginPath(); ctx.arc(nx, ny, 3.5, 0, Math.PI * 2); ctx.fill();
+
       // Crosshair
       ctx.strokeStyle = 'rgba(255,255,255,0.5)';
       ctx.lineWidth = 1;
@@ -203,19 +152,36 @@ export default function MachineSimulator({ regions, config, machineSettings, onR
       ctx.moveTo(nx, ny - 9); ctx.lineTo(nx, ny + 9);
       ctx.stroke();
     }
-  }, [commands, currentIndex, projection, ms.trimThreshold, w, h, showHeatmap, showHoop, analysis]);
+  }, [commands, currentIndex, projection, simData, simSettings, analysis, w, h, showHoop]);
 
   useEffect(() => { draw(); }, [draw]);
 
-  // Current command info
+  // ── Current info ───────────────────────────────────────────────────────────
   const curPC = analysis.perCommand[currentIndex];
   const curCmd = commands[currentIndex];
+  const curBlock = renderReport?.currentBlock;
   const progress = commands.length > 1 ? Math.round((currentIndex / (commands.length - 1)) * 100) : 0;
+
+  // Live stats up to currentIndex
+  const liveStats = useMemo(() => {
+    let stitches = 0, jumps = 0, trims = 0, colorChanges = 0;
+    for (let i = 0; i <= currentIndex && i < commands.length; i++) {
+      const c = commands[i];
+      if (c.type === 'stitch') stitches++;
+      if (c.type === 'jump') jumps++;
+      if (c.type === 'trim') trims++;
+      if (c.type === 'colorChange') colorChanges++;
+    }
+    return { stitches, jumps, trims, colorChanges };
+  }, [commands, currentIndex]);
 
   const handlePlay = () => { if (currentIndex >= commands.length - 1) setCurrentIndex(0); setIsPlaying(true); };
   const handleStepFwd = () => { setIsPlaying(false); setCurrentIndex((i) => Math.min(i + 1, commands.length - 1)); };
   const handleStepBack = () => { setIsPlaying(false); setCurrentIndex((i) => Math.max(i - 1, 0)); };
   const handleReset = () => { setIsPlaying(false); setCurrentIndex(0); };
+
+  const toggleSetting = (key) => setSimSettings(s => ({ ...s, [key]: !s[key] }));
+  const isDebugMode = simSettings.showDebugPath;
 
   if (commands.length === 0) {
     return (
@@ -230,6 +196,7 @@ export default function MachineSimulator({ regions, config, machineSettings, onR
   const typeMeta = TYPE_META[curCmd?.type] || { label: '—', color: '#64748b', icon: AlertTriangle };
   const TypeIcon = typeMeta.icon;
   const statusColor = analysis.status === 'SAFE' ? 'emerald' : analysis.status === 'RISKY' ? 'amber' : 'red';
+  const visStats = simData.stats;
 
   return (
     <div className="flex flex-col h-full">
@@ -272,11 +239,21 @@ export default function MachineSimulator({ regions, config, machineSettings, onR
               <span className="text-slate-400">Vel:</span>
               <span className="text-white font-mono">{curPC.speedMmS}mm/s</span>
             </div>
-            <div className="flex items-center gap-1.5 text-[10px]">
-              <Layers className="w-3 h-3 text-violet-400" />
-              <span className="text-slate-400">Bloque:</span>
-              <span className="text-white font-mono">#{curPC.blockId + 1}</span>
-            </div>
+            {curBlock && (
+              <>
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <Layers className="w-3 h-3 text-violet-400" />
+                  <span className="text-slate-400">Bloque:</span>
+                  <span className="text-white font-mono">B{curBlock.blockId}</span>
+                  <span className={`px-1 rounded text-[8px] ${curBlock.isContour ? 'text-cyan-400 bg-cyan-900/20' : 'text-violet-400 bg-violet-900/20'}`}>
+                    {curBlock.isContour ? 'contour' : 'fill'}
+                  </span>
+                </div>
+                {curBlock.regionName && (
+                  <div className="text-[9px] text-slate-500 truncate max-w-[130px]">{curBlock.regionName}</div>
+                )}
+              </>
+            )}
           </div>
         )}
 
@@ -303,11 +280,27 @@ export default function MachineSimulator({ regions, config, machineSettings, onR
           <span className="text-xs font-bold text-white">{analysis.qualityScore}/100</span>
         </div>
 
-        {/* Overlay toggles */}
-        <div className="absolute top-1/2 -translate-y-1/2 right-3 flex flex-col gap-1.5">
-          <OverlayToggle active={showHeatmap} onClick={() => setShowHeatmap(!showHeatmap)} icon={Flame} label="Heat" />
-          <OverlayToggle active={showHoop} onClick={() => setShowHoop(!showHoop)} icon={Grid2x2} label="Hoop" />
+        {/* Simulation settings toggles — right side */}
+        <div className="absolute top-1/2 -translate-y-1/2 right-3 flex flex-col gap-1">
+          <SimToggle active={simSettings.realisticThreadPreview} onClick={() => toggleSetting('realisticThreadPreview')} icon={Eye} label="Hilo" />
+          <SimToggle active={simSettings.showJumps} onClick={() => toggleSetting('showJumps')} icon={Route} label="Saltos" />
+          <SimToggle active={simSettings.showTrims} onClick={() => toggleSetting('showTrims')} icon={Scissors} label="Trims" />
+          <SimToggle active={simSettings.showWarnings} onClick={() => toggleSetting('showWarnings')} icon={AlertTriangle} label="Avisos" />
+          <SimToggle active={simSettings.showDensityHeatmap} onClick={() => toggleSetting('showDensityHeatmap')} icon={Flame} label="Dens" />
+          <SimToggle active={simSettings.showCurrentBlockOnly} onClick={() => toggleSetting('showCurrentBlockOnly')} icon={Layers} label="Bloque" />
+          <SimToggle active={showHoop} onClick={() => setShowHoop(!showHoop)} icon={Grid2x2} label="Hoop" />
+          <SimToggle active={isDebugMode} onClick={() => toggleSetting('showDebugPath')} icon={Bug} label="Debug" />
         </div>
+      </div>
+
+      {/* Live stats bar */}
+      <div className="flex-shrink-0 grid grid-cols-6 gap-1 px-3 py-1.5 border-t border-[#1e2130] bg-[#0a0c12]">
+        <LiveStat label="Puntadas" value={liveStats.stitches} color="text-violet-400" />
+        <LiveStat label="Saltos" value={liveStats.jumps} color="text-slate-300" />
+        <LiveStat label="Trims" value={liveStats.trims} color="text-amber-400" />
+        <LiveStat label="C.color" value={liveStats.colorChanges} color="text-cyan-400" />
+        <LiveStat label="Fuera región" value={visStats.stitchesOutsideRegion} color={visStats.stitchesOutsideRegion > 0 ? 'text-orange-400' : 'text-emerald-400'} />
+        <LiveStat label="Duplicados" value={visStats.duplicateStitches} color={visStats.duplicateStitches > 0 ? 'text-orange-400' : 'text-emerald-400'} />
       </div>
 
       {/* Progress */}
@@ -316,9 +309,11 @@ export default function MachineSimulator({ regions, config, machineSettings, onR
           <span className="text-[10px] text-slate-500">Progreso de costura</span>
           <span className="text-[10px] text-violet-400 font-bold">{progress}%</span>
         </div>
-        <div className="h-1.5 bg-[#1e2130] rounded-full overflow-hidden">
-          <div className="h-full bg-violet-600 rounded-full transition-all" style={{ width: `${progress}%` }} />
-        </div>
+        <input
+          type="range" min={0} max={commands.length - 1} value={currentIndex}
+          onChange={(e) => { setIsPlaying(false); setCurrentIndex(Number(e.target.value)); }}
+          className="w-full accent-violet-600"
+        />
       </div>
 
       {/* Controls */}
@@ -349,7 +344,7 @@ export default function MachineSimulator({ regions, config, machineSettings, onR
   );
 }
 
-function OverlayToggle({ active, onClick, icon: Icon, label }) {
+function SimToggle({ active, onClick, icon: Icon, label }) {
   return (
     <button onClick={onClick}
       className={`flex items-center gap-1 px-2 py-1.5 rounded-lg border text-[10px] font-bold transition-colors ${
@@ -358,5 +353,14 @@ function OverlayToggle({ active, onClick, icon: Icon, label }) {
       <Icon className="w-3 h-3" />
       {label}
     </button>
+  );
+}
+
+function LiveStat({ label, value, color }) {
+  return (
+    <div className="text-center">
+      <div className={`text-sm font-bold ${color}`}>{value}</div>
+      <div className="text-[8px] text-slate-600 uppercase tracking-wider truncate">{label}</div>
+    </div>
   );
 }
