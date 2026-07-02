@@ -5,6 +5,7 @@ import PreflightPanel from './PreflightPanel';
 import ExportDebugPanel from './ExportDebugPanel';
 import ExportFixWizard from './ExportFixWizard';
 import ValidationPreview from './ValidationPreview';
+import RepairProgressPanel from './RepairProgressPanel';
 import { runExportPipeline, encodeToFile } from '@/lib/exportPipeline';
 import { autoCleanupRegions } from '@/lib/autoCleanup';
 
@@ -125,13 +126,24 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
         {/* Body */}
         <div className="flex-1 overflow-y-auto">
           {step === 'preflight' ? (
-            <div className="p-5">
+            <div className="p-5 space-y-5">
               <PreflightPanel
                 regions={regions}
                 config={config}
                 onAutoFix={setRegions}
                 onOptimizeRoute={setRegions}
               />
+              <div className="border-t border-[#1e2130] pt-4">
+                <RepairProgressPanel
+                  regions={regions}
+                  config={config}
+                  machineSettings={machineSettings}
+                  format={format}
+                  onRepairComplete={(res) => {
+                    if (res.regions) setRegions(res.regions);
+                  }}
+                />
+              </div>
             </div>
           ) : step === 'wizard' ? (
             <ExportFixWizard
