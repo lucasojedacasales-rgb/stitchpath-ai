@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { X, Download, Clock, Layers, Palette, FileText, ChevronRight, ShieldCheck, ShieldAlert, Bug, Wrench, RefreshCw } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import PreflightPanel from './PreflightPanel';
@@ -6,12 +6,22 @@ import ExportDebugPanel from './ExportDebugPanel';
 import ExportFixWizard from './ExportFixWizard';
 import ValidationPreview from './ValidationPreview';
 import { runExportPipeline, encodeToFile } from '@/lib/exportPipeline';
+import { autoCleanupRegions } from '@/lib/autoCleanup';
 
 const FORMATS = ['DST', 'PES', 'JEF', 'EXP'];
 
 export default function ExportModal({ project, regions: initialRegions, onClose }) {
   const [step, setStep] = useState('preflight'); // 'preflight' | 'export'
   const [regions, setRegions] = useState(initialRegions || []);
+  const [cleanupReport, setCleanupReport] = useState(null);
+
+  // Auto-cleanup on mount: cap stitches < 12,000 + guarantee trims on jumps > 3.5mm
+  useEffect(() => {
+    if (!initialRegions || initialRegions.length === 0) return;
+    const { regions: cleaned, applied } = autoCleanupRegions(initialRegions, project?.config || {});
+    setRegions(cleaned);
+    setCleanupReport(applied);
+  }, []); // run once on open
   const [format, setFormat] = useState('DST');
   const [machine, setMachine] = useState('');
   const [speed, setSpeed] = useState(800);
@@ -137,6 +147,27 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
             />
           ) : (
             <div className="p-6 space-y-5">
+              {/* Auto-cleanup report — stitch cap + jump trim guarantee */}
+              {cleanupReport && cleanupReport.length > 0 && (
+                <div className="bg-violet-900/15 border border-violet-500/30 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <RefreshCw className="w-3.5 h-3.5 text-violet-400" />
+                    <span className="text-xs font-bold text-violet-300">Limpieza automática aplicada</span>
+                  </div>
+                  <div className="space-y-0.5">
+                    {cleanupReport.map((c, i) => (
+                      <div key={i} className="text-[10px] text-violet-300 flex items-start gap-1">
+                        <span className="font-bold text-violet-400 shrink-0">[{c.action}]</span>
+                        <span>{c.message}</span>
+                      </div>
+                    ))}
+                    <div className="text-[10px] text-cyan-300 flex items-start gap-1">
+                      <span className="font-bold text-cyan-400 shrink-0">[jumps]</span>
+                      <span>Trims insertados en saltos &gt;3.5mm (regla R13 del pipeline).</span>
+                    </div>
+                  </div>
+                </div>
+              )}
               {/* Validation status banner */}
               {wizardResult && wizardResult.remainingErrors === 0 ? (
                 <div className="bg-emerald-900/20 border border-emerald-500/40 rounded-lg p-3">

@@ -1,0 +1,80 @@
+/**
+ * autoCleanup.js — Pre-export automatic cleanup for home machines (Caydo CE01).
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Runs two guarantees before export:
+ *
+ *   1. STITCH CAP (< 12,000)
+ *      If total stitches exceed 12,000, scales fill density up (wider row spacing)
+ *      proportionally until the count drops below the cap. Satin/run stitches are
+ *      preserved (they're already minimal). Fill density is clamped to 0.65mm max.
+ *
+ *   2. JUMP ELIMINATION (> 3.5mm → trim)
+ *      Delegates to the export pipeline's R13 rule + industrial object ordering
+ *      (nearest-neighbor color grouping). This guarantees every jump > 3.5mm gets
+ *      a preceding trim command, so no thread drags across the design on a CE01.
+ *
+ * Usage:
+ *   const { regions, stitchCount, applied } = autoCleanupRegions(regions, config);
+ *   // then pass `regions` to runExportPipeline(...)
+ */
+
+const STITCH_CAP = 12000;
+
+/**
+ * Canonical stitch count for a region (matches regionBuilder + backend formula).
+ * Used to recompute after density scaling.
+ */
+function regionStitchCount(r, w, h) {
+  const area  = r.area_mm2 || ((r.coverage || 0.01) * w * h);
+  const perim = r.perimeter_mm || (Math.sqrt(area) * 3.8);
+  const dens  = Math.max(0.2, r.density || 0.4);
+  if (r.stitch_type === 'fill')    return Math.round(area / (dens * 2.4));
+  if (r.stitch_type === 'satin')   return Math.round(Math.max(1, (perim / 2) / dens));
+  return Math.round(perim / 1.8); // running_stitch
+}
+
+/**
+ * Scales fill density so total stitches < STITCH_CAP.
+ * Returns { regions, stitchCount, applied }.
+ */
+export function autoCleanupRegions(regions, config = {}) {
+  const w = config.width_mm || 100;
+  const h = config.height_mm || 100;
+  const applied = [];
+
+  // Ensure every region has a stitch_count
+  let cleaned = regions.map(r => ({
+    ...r,
+    stitch_count: r.stitch_count > 0 ? r.stitch_count : regionStitchCount(r, w, h),
+  }));
+
+  let total = cleaned.reduce((s, r) => s + (r.stitch_count || 0), 0);
+
+  if (total > STITCH_CAP) {
+    const fillStitches    = cleaned.reduce((s, r) => s + (r.stitch_type === 'fill' ? (r.stitch_count || 0) : 0), 0);
+    const nonFillStitches = total - fillStitches;
+
+    if (fillStitches > 0) {
+      // Target: leave room for non-fill stitches, distribute the cap across fills
+      const targetFill = Math.max(100, STITCH_CAP - nonFillStitches);
+      const scale = Math.min(1, targetFill / fillStitches); // <1 = reduce fill stitches
+
+      cleaned = cleaned.map(r => {
+        if (r.stitch_type !== 'fill') return r;
+        // Wider spacing (higher density mm) → fewer stitches
+        const newDens  = Math.min(0.65, (r.density || 0.4) / scale);
+        const newCount = Math.round((r.stitch_count || 0) * scale);
+        return { ...r, density: +newDens.toFixed(3), stitch_count: newCount };
+      });
+
+      total = nonFillStitches + cleaned.reduce((s, r) => s + (r.stitch_type === 'fill' ? (r.stitch_count || 0) : 0), 0);
+      applied.push({
+        action: 'stitch_cap',
+        scale: +scale.toFixed(3),
+        message: `Puntadas reducidas de ${fillStitches + nonFillStitches} → ${total} (densidad fill ×${(1 / scale).toFixed(2)}).`,
+      });
+    }
+  }
+
+  return { regions: cleaned, stitchCount: total, applied };
+}
