@@ -79,94 +79,54 @@ const RUNNING_WIDTH_MAX    = 1.5;   // mm — hairlines → running stitch
  * Returns { type, confidence, rationale, signals }
  */
 export function eieStitchType(geo) {
-  const { area_mm2, mean_width_mm, max_width_mm, skeleton_length_mm,
-          convexity, complexity, mean_curvature, holes } = geo;
+  const { area_mm2, mean_width_mm, max_width_mm, skeleton_length_mm } = geo;
 
+  // THICKNESS-BASED CLASSIFICATION — primary signal.
+  // thickness = max_width_mm (max perpendicular width from skeleton slices).
+  //   grosor < 2.5mm  → running_stitch (contorno fino)
+  //   2.5mm ≤ grosor ≤ 12mm → satin (borde medio, relleno paralelo denso)
+  //   grosor > 12mm   → fill (zona grande, tatami)
+  const thickness = max_width_mm || mean_width_mm || 0;
   const elongation = skeleton_length_mm / Math.max(0.1, mean_width_mm);
-  const signals = [];
 
-  // S1 — Hairline
-  if (mean_width_mm <= RUNNING_WIDTH_MAX && elongation > 3) {
-    return {
-      type: 'running_stitch', confidence: 0.97,
-      rationale: `Filamento (${mean_width_mm.toFixed(1)}mm × ${elongation.toFixed(0)}× elongación): running stitch obligatorio.`,
-      signals: [{ id: 'S1_hairline', weight: 1.0, fired: true }],
-    };
-  }
-
-  // S2 — Micro area
-  if (area_mm2 < RUNNING_AREA_MAX) {
+  // Micro-area + thin → running stitch
+  if (area_mm2 < 4 && thickness < 3) {
     return {
       type: 'running_stitch', confidence: 0.95,
-      rationale: `Micro-área ${area_mm2.toFixed(1)}mm² < ${RUNNING_AREA_MAX}mm²: running stitch único viable.`,
-      signals: [{ id: 'S2_micro', weight: 1.0, fired: true }],
+      rationale: `Micro-área ${area_mm2.toFixed(1)}mm² + grosor ${thickness.toFixed(1)}mm: running stitch.`,
+      signals: [{ id: 'micro_run', weight: 1.0, fired: true }],
     };
   }
 
-  // ── Hard rule: large areas always fill (satin >8mm wide puckers fabric) ──────
-  // This gate runs BEFORE scoring so no satin signal can override it.
-  if (area_mm2 > 120) {
-    const conf = Math.min(0.95, 0.70 + Math.min(0.25, (area_mm2 - 120) / 2000));
+  // Filamento extremo (muy alargado y fino) → running stitch
+  if (thickness < 2.5 && elongation > 3) {
     return {
-      type: 'fill', confidence: +conf.toFixed(2),
-      rationale: `Fill forzado: área=${area_mm2.toFixed(0)}mm² > 120mm² (satin width would exceed 8mm limit).`,
-      signals: [{ id: 'fill_area_gate', weight: 1.0, fired: true }],
+      type: 'running_stitch', confidence: 0.97,
+      rationale: `Filamento ${thickness.toFixed(1)}mm × ${elongation.toFixed(0)}× elongación: running stitch.`,
+      signals: [{ id: 'filament_run', weight: 1.0, fired: true }],
     };
   }
 
-  // Score each candidate type with weighted signals
-  let satinScore = 0, fillScore = 0;
-
-  // — Satin signals —
-  // max_width must be within satin limits — hard negative if exceeded
-  const satinWidthOk   = max_width_mm <= SATIN_WIDTH_MAX;
-  const satinMeanOk    = mean_width_mm <= 6.0;
-  const satinConvex    = convexity > 0.55;
-  const satinSimple    = complexity.score < 0.55;
-  // Elongation or narrow width are strong satin indicators
-  const satinElongated = elongation > 2.0;
-  const satinNarrow    = mean_width_mm < 5.0;
-  const noHoles        = holes === 0;
-
-  // Positive evidence (max realistic total without width bonus: 0.85)
-  if (satinWidthOk)   { satinScore += 0.25; signals.push({ id: 'satin_width_ok',  weight: 0.25, fired: true }); }
-  if (satinMeanOk)    { satinScore += 0.10; signals.push({ id: 'satin_mean_ok',   weight: 0.10, fired: true }); }
-  if (satinConvex)    { satinScore += 0.20; signals.push({ id: 'satin_convex',    weight: 0.20, fired: true }); }
-  if (satinSimple)    { satinScore += 0.15; signals.push({ id: 'satin_simple',    weight: 0.15, fired: true }); }
-  if (satinElongated) { satinScore += 0.20; signals.push({ id: 'satin_elongated', weight: 0.20, fired: true }); }
-  if (satinNarrow)    { satinScore += 0.10; signals.push({ id: 'satin_narrow',    weight: 0.10, fired: true }); }
-  if (noHoles)        { satinScore += 0.05; signals.push({ id: 'satin_no_holes',  weight: 0.05, fired: true }); }
-
-  // Hard negatives — non-negotiable satin disqualifiers
-  if (!satinWidthOk)  { satinScore -= 0.70; signals.push({ id: 'satin_too_wide',  weight: -0.70, fired: true }); }
-  if (!satinConvex)   { satinScore -= 0.30; signals.push({ id: 'satin_concave',   weight: -0.30, fired: true }); }
-  if (holes > 0)      { satinScore -= 0.35; signals.push({ id: 'satin_holes',     weight: -0.35, fired: true }); }
-  // Area penalty: large areas shouldn't be satin even if other signals pass
-  if (area_mm2 > 60)  { satinScore -= 0.20; signals.push({ id: 'satin_area_large', weight: -0.20, fired: true }); }
-  if (area_mm2 > 90)  { satinScore -= 0.20; signals.push({ id: 'satin_area_xlarge', weight: -0.20, fired: true }); }
-
-  // — Fill signals —
-  if (area_mm2 > FILL_AREA_MIN)     { fillScore += 0.40; }
-  if (convexity > 0.40)             { fillScore += 0.20; }
-  if (area_mm2 > 50)                { fillScore += 0.20; }
-  if (complexity.level !== 'simple'){ fillScore += 0.10; }
-  if (holes > 0)                    { fillScore += 0.30; }
-
-  // Threshold raised to 0.70 — requires strong satin evidence, not just width+convexity
-  if (satinScore >= 0.70 && area_mm2 >= RUNNING_AREA_MAX) {
-    const conf = Math.min(0.95, 0.55 + satinScore * 0.35);
+  if (thickness < 2.5) {
     return {
-      type: 'satin', confidence: +conf.toFixed(2),
-      rationale: `Satin: max_w=${max_width_mm.toFixed(1)}mm, elon=${elongation.toFixed(1)}×, convex=${convexity.toFixed(2)}, score=${satinScore.toFixed(2)}.`,
-      signals,
+      type: 'running_stitch', confidence: 0.93,
+      rationale: `Grosor ${thickness.toFixed(1)}mm < 2.5mm: contorno fino → running stitch.`,
+      signals: [{ id: 'thin_run', weight: 1.0, fired: true }],
     };
   }
 
-  const conf = Math.min(0.95, 0.50 + (fillScore / 1.20) * 0.45);
+  if (thickness <= 12) {
+    return {
+      type: 'satin', confidence: 0.90,
+      rationale: `Grosor ${thickness.toFixed(1)}mm (2.5–12mm): borde medio → satin stitch.`,
+      signals: [{ id: 'medium_satin', weight: 1.0, fired: true }],
+    };
+  }
+
   return {
-    type: 'fill', confidence: +conf.toFixed(2),
-    rationale: `Fill tatami: área=${area_mm2.toFixed(0)}mm², convex=${convexity.toFixed(2)}, complejidad=${complexity.level}.`,
-    signals,
+    type: 'fill', confidence: 0.92,
+    rationale: `Grosor ${thickness.toFixed(1)}mm > 12mm: zona grande → fill tatami.`,
+    signals: [{ id: 'wide_fill', weight: 1.0, fired: true }],
   };
 }
 
@@ -266,43 +226,26 @@ export function eieDensity(geo, stitchType, fabricType = 'Algodón') {
     d += fabric.density_adj * 0.6;
     reasons.push(`tejido ${fabricType}: Δ${(fabric.density_adj * 0.6).toFixed(3)}`);
   } else {
-    // Fill (tatami) — 3-band base
-    if (area_mm2 < 20) {
-      d = 0.32; reasons.push(`micro-fill (${area_mm2.toFixed(0)}mm²) → denso 0.32`);
-    } else if (area_mm2 < 80) {
-      d = 0.36; reasons.push(`fill pequeño (${area_mm2.toFixed(0)}mm²) → 0.36`);
+    // Fill (tatami) — 0.40mm minimum spacing (home machine stability, Caydo CE01).
+    // Never denser than 0.40mm: tighter spacing bunches fabric + overflows stitch count.
+    if (area_mm2 < 80) {
+      d = 0.40; reasons.push(`fill pequeño (${area_mm2.toFixed(0)}mm²) → 0.40`);
     } else if (area_mm2 < 300) {
       d = 0.40; reasons.push(`fill estándar (${area_mm2.toFixed(0)}mm²) → 0.40`);
     } else {
-      // Large fills: stay at 0.42mm — opening higher causes bald spots on cotton
-      d = 0.42; reasons.push(`fill grande (${area_mm2.toFixed(0)}mm²) → base 0.42`);
+      d = 0.42; reasons.push(`fill grande (${area_mm2.toFixed(0)}mm²) → 0.42`);
     }
 
-    // Complexity correction (complex shapes need more coverage)
-    const compAdj = -(complexity.score * 0.07);
-    d += compAdj;
-    if (Math.abs(compAdj) > 0.005) reasons.push(`complejidad=${complexity.level} → ${compAdj > 0 ? '+' : ''}${compAdj.toFixed(3)}`);
-
-    // Convexity correction (concave shapes lose coverage at edges)
-    const convAdj = -((1 - convexity) * 0.04);
-    d += convAdj;
-    if (Math.abs(convAdj) > 0.005) reasons.push(`convexidad=${convexity.toFixed(2)} → ${convAdj.toFixed(3)}`);
-
-    // Curvature correction
-    const curvAdj = -(Math.min(0.05, mean_curvature * 0.03));
-    d += curvAdj;
-
-    // Fabric correction
+    // Fabric correction only — complexity/convexity/curvature corrections removed
+    // (they pushed spacing below 0.40mm, causing bunching + stitch overflow)
     d += fabric.density_adj;
     reasons.push(`tejido ${fabricType}: Δ${fabric.density_adj.toFixed(3)}`);
 
-    // Large simple areas: slight efficiency open-up, capped at 0.45mm (professional ceiling)
-    if (area_mm2 > 400 && complexity.level === 'simple') {
-      d = Math.min(d + 0.03, 0.45); reasons.push('área grande simple → ligera apertura (eficiencia)');
-    }
+    // Hard floor: fill spacing never denser than 0.40mm
+    d = Math.max(0.40, d);
   }
 
-  const clamped = +Math.max(0.28, Math.min(0.65, d)).toFixed(3);
+  const clamped = +Math.max(stitchType === 'fill' ? 0.40 : 0.28, Math.min(0.65, d)).toFixed(3);
   return { density_mm: clamped, rationale: reasons.join(', ') };
 }
 

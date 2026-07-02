@@ -87,7 +87,7 @@ Deno.serve(async (req) => {
         const pts = r.path_points?.length || '?';
         const perimEst = r.perimeter_norm ? (r.perimeter_norm * Math.hypot(w, h)).toFixed(1) : '?';
         // Pre-classify for context (AI can override if visual evidence contradicts)
-        const geoHint = clasificarPorGeometria(r, w, h);
+        const geoHint = clasificarPorGeometria(r, w, h, aW, aH);
         return `R${i}: hex=${r.hex} cx=${cx} cy=${cy} bbox=${bw}x${bh}mm area=${areaMm2}mm² perim≈${perimEst}mm compact=${compacidad} inertia=${inertia} aspect=${aspect} corners=${corners} pts=${pts} geo_hint=${geoHint}`;
       }).join('\n');
 
@@ -150,7 +150,7 @@ Responde SOLO JSON:
         const label = labelMap[i] || {};
         
         // === PRIORIDAD: vectorizador > Claude > reglas geométricas ===
-        const stitch_type = r.type || label.stitch_type || clasificarPorGeometria(r, w, h);
+        const stitch_type = r.type || label.stitch_type || clasificarPorGeometria(r, w, h, aW, aH);
         
         // === ADAPTIVE DENSITY: smaller regions = higher density (better coverage) ===
         const baseRegionDensity = stitch_type === 'fill' ? density : stitch_type === 'satin' ? density * 1.25 : 0.4;
@@ -371,40 +371,39 @@ function colorToName(hex) {
 }
 
 /**
- * Classify stitch type from real geometric metrics.
- * Uses area_mm2 (scaled to design) for correct thresholds.
- * Priority: compactness → aspect/inertia → area
+ * Classify stitch type from THICKNESS (primary signal).
+ * Thickness = minimum bbox dimension in mm — the physical width the needle
+ * must cover. Reliable classifier for home machines (Caydo CE01):
+ *
+ *   grosor < 2.5mm  → running_stitch (contorno fino)
+ *   2.5mm ≤ grosor ≤ 12mm → satin (relleno denso paralelo)
+ *   grosor > 12mm   → fill (tatami)
+ *
+ * Fallback when bbox unavailable: area + inertia heuristics.
  */
-function clasificarPorGeometria(r, w = 100, h = 100) {
-  const areaMm2    = (r.coverage || 0) * w * h;
-  const compacidad = r.compacidad    !== undefined ? r.compacidad    : 0.5;
-  const inertia    = r.inertia_ratio !== undefined ? r.inertia_ratio : 1;
-  const aspect     = r.bbox_aspect   !== undefined ? r.bbox_aspect   : 1;
-  const corners    = r.corner_count  !== undefined ? r.corner_count  : 4;
+function clasificarPorGeometria(r, w = 100, h = 100, aW = 512, aH = 512) {
+  const areaMm2 = (r.coverage || 0) * w * h;
+  const bbox = r.bbox;
 
-  // Hairlines / very thin lines → running stitch
-  if (areaMm2 < 2.5) return 'running_stitch';
+  let thicknessMm = Infinity;
+  if (bbox && bbox.minX !== undefined) {
+    const bwMm = ((bbox.maxX - bbox.minX) / aW) * w;
+    const bhMm = ((bbox.maxY - bbox.minY) / aH) * h;
+    thicknessMm = Math.min(bwMm, bhMm);
+  }
 
-  // Very thin elongated shapes → satin (outlines, stems, stripes)
-  if (compacidad < 0.25 && (inertia > 4 || aspect > 3.5)) return 'satin';
+  if (!isFinite(thicknessMm)) {
+    const inertia = r.inertia_ratio !== undefined ? r.inertia_ratio : 1;
+    const aspect  = r.bbox_aspect   !== undefined ? r.bbox_aspect   : 1;
+    if (areaMm2 < 2.5) return 'running_stitch';
+    if (inertia > 4 || aspect > 3.5) return areaMm2 < 50 ? 'running_stitch' : 'satin';
+    if (areaMm2 < 50) return 'satin';
+    return 'fill';
+  }
 
-  // Small micro-details with high corner count → satin (better than fill for tiny shapes)
-  if (areaMm2 < 6 && corners > 8) return 'satin';
-
-  // Large areas → fill regardless of shape (satin >8mm wide is bad practice)
-  if (areaMm2 >= 120) return 'fill';
-
-  // Medium-large compact areas → fill
-  if (areaMm2 >= 40 && compacidad >= 0.4) return 'fill';
-
-  // Medium elongated → satin
-  if (areaMm2 < 80 && (inertia > 2.2 || compacidad < 0.4)) return 'satin';
-
-  // Medium compact → fill
-  if (compacidad >= 0.45) return 'fill';
-
-  // Default medium uncertain shapes → satin (looks better than fill for small shapes)
-  return areaMm2 > 50 ? 'fill' : 'satin';
+  if (thicknessMm < 2.5) return 'running_stitch';
+  if (thicknessMm <= 12) return 'satin';
+  return 'fill';
 }
 
 /**
@@ -417,7 +416,7 @@ function adaptDensity(baseDensity, areaMm2) {
   if (areaMm2 < 10) return Math.min(0.6, baseDensity * 1.8);  // Tiny: very dense
   if (areaMm2 < 20) return Math.min(0.55, baseDensity * 1.5);  // Small: dense
   if (areaMm2 < 50) return Math.min(0.5, baseDensity * 1.2);   // Medium-small: slightly dense
-  if (areaMm2 > 300) return Math.max(0.25, baseDensity * 0.7); // Large: loose
+  if (areaMm2 > 300) return Math.max(0.40, baseDensity * 0.7); // Large: never denser than 0.40mm
   return baseDensity; // Normal
 }
 
