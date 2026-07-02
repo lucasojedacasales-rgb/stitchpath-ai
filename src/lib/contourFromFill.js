@@ -268,19 +268,30 @@ export function buildContourFromFillBoundary(region, sampler, edgeMap, options =
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Determines if a dark/black region is actually a border (contour) rather
- * than a fill.
+ * Determines if a dark/black region is actually a BORDER (contour) rather
+ * than a fill body.
  *
- * Returns true if:
- *   - color is very dark (lum < 60)
- *   - area is small or moderate (not a large body)
- *   - perimeter/area ratio is high (thin/elongated)
- *   - bbox overlaps or surrounds a fill region
- *   - centroid is near the border of a fill region
- *   - shape is narrow (mean_width_mm small or area/perim² low)
+ * Core principle: "Si el negro funciona como borde visual, no es fill."
+ *
+ * The PRIMARY test is functional — does the dark region SURROUND or lie
+ * along the edge of a lighter fill region? If yes, it's a border regardless
+ * of thickness. Geometry (thin vs thick) only determines run vs satin,
+ * not whether it's a contour.
+ *
+ * A dark region is a BORDER if ALL hold:
+ *   1. Dark color (lum < DARK_LUM_THRESHOLD)
+ *   2. There exists a lighter (non-dark) fill region that it either:
+ *      a) SURROUNDS (fill bbox is inside dark bbox), or
+ *      b) RIMS (dark bbox tightly overlaps the fill bbox on the outer edge)
+ *   3. The dark region is NOT the dominant body — its area is smaller than
+ *      the total lighter fill area it borders (prevents converting a big
+ *      black body with a small colored eye into a contour).
+ *
+ * Geometry (perimAreaRatio, meanWidth) is logged for stitch-type selection
+ * but does NOT gate the border decision.
  *
  * @param {Object} region          — candidate black region (enriched)
- * @param {Array}  nearbyFills     — other fill regions to check proximity
+ * @param {Array}  nearbyFills     — all regions (used to find bordered fills)
  * @returns {boolean}
  */
 export function isBorderLikeBlackRegion(region, nearbyFills = []) {
@@ -292,28 +303,17 @@ export function isBorderLikeBlackRegion(region, nearbyFills = []) {
   const lum = (r + g + b) / 3;
   if (lum >= DARK_LUM_THRESHOLD) return false;
 
-  // 2. Area + perimeter metrics
   const area = region.area_mm2 || 0;
-  const perim = region.perimeter_mm || 0;
-  if (area <= 0 || perim <= 0) return false;
+  if (area <= 0) return false;
 
-  // 3. Perimeter/area ratio — high = thin/elongated (border-like)
-  //    For a 100mm design, a fill body has ratio < 2; a border has ratio > 4
-  const perimAreaRatio = perim / Math.sqrt(area);
-  if (perimAreaRatio < 3.0) return false; // compact body, not a border
-
-  // 4. Narrow shape — mean_width or compactness
-  const meanWidth = region.mean_width_mm || 0;
-  const compactness = (4 * Math.PI * area) / (perim * perim);
-  // compactness < 0.2 = very elongated; mean_width < 4mm = narrow
-  const isNarrow = meanWidth > 0 && meanWidth < 4.0 || compactness < 0.2;
-  if (!isNarrow) return false;
-
-  // 5. Must be near or surround a fill region
   const bbox = computeBbox(region.path_points || []);
   if (bbox.w <= 0) return false;
 
-  let nearFill = false;
+  // 2. Functional test: find lighter fills this dark region borders
+  let borderedFillArea = 0;
+  let surroundsCount = 0;
+  let rimsCount = 0;
+
   for (const fill of nearbyFills) {
     if (fill.id === region.id) continue;
     const fillColor = fill.color || fill.hex || '#888888';
@@ -324,29 +324,37 @@ export function isBorderLikeBlackRegion(region, nearbyFills = []) {
     const fb = computeBbox(fill.path_points || []);
     if (fb.w <= 0) continue;
 
-    // Check overlap or surrounding
-    const overlaps = bbox.minX < fb.maxX && bbox.maxX > fb.minX &&
-                     bbox.minY < fb.maxY && bbox.maxY > fb.minY;
-    const surrounds = fb.minX >= bbox.minX - 0.02 && fb.maxX <= bbox.maxX + 0.02 &&
-                      fb.minY >= bbox.minY - 0.02 && fb.maxY <= bbox.maxY + 0.02;
+    // (a) SURROUNDS: the lighter fill is entirely (or mostly) inside the dark bbox
+    const fillInsideDark =
+      fb.minX >= bbox.minX - 0.03 && fb.maxX <= bbox.maxX + 0.03 &&
+      fb.minY >= bbox.minY - 0.03 && fb.maxY <= bbox.maxY + 0.03;
 
-    // Centroid near fill border
-    const [cx, cy] = region.centroid || [(bbox.minX + bbox.maxX) / 2, (bbox.minY + bbox.maxY) / 2];
-    const distToFillBorder = Math.min(
-      Math.abs(cx - fb.minX), Math.abs(cx - fb.maxX),
-      Math.abs(cy - fb.minY), Math.abs(cy - fb.maxY)
-    );
+    // (b) RIMS: dark bbox tightly overlaps the fill on the outer edge —
+    //     the dark region's bbox is NOT inside the fill, but overlaps it
+    //     significantly (the dark band sits along the fill boundary).
+    const darkInsideFill =
+      bbox.minX >= fb.minX - 0.03 && bbox.maxX <= fb.maxX + 0.03 &&
+      bbox.minY >= fb.minY - 0.03 && bbox.maxY <= fb.maxY + 0.03;
 
-    if (overlaps || surrounds || distToFillBorder < 0.05) {
-      nearFill = true;
-      break;
+    const bboxOverlap = bboxIoU(bbox, fb);
+
+    if (fillInsideDark) {
+      surroundsCount++;
+      borderedFillArea += (fill.area_mm2 || 0);
+    } else if (!darkInsideFill && bboxOverlap > 0.15) {
+      // Dark band rims the fill edge from outside
+      rimsCount++;
+      borderedFillArea += (fill.area_mm2 || 0) * 0.5;
     }
   }
 
-  if (!nearFill) return false;
+  // Must border at least one lighter fill (surround or rim)
+  if (surroundsCount === 0 && rimsCount === 0) return false;
 
-  // 6. Exclude very large regions (those are real fill bodies, not borders)
-  if (area > 800) return false; // > 800mm² is a body, not a border (on 100mm design)
+  // 3. Dominance guard: if the dark region's area is much larger than all
+  //    the lighter fills it borders, it's a body with small details, not a border.
+  //    Allow border if dark area < 2.5× the bordered fill area.
+  if (area > 2.5 * borderedFillArea) return false;
 
   return true;
 }
@@ -380,6 +388,16 @@ export function separateFillsAndContours(regions, sampler, edgeMap) {
   const borderRegions = blackCandidates.filter(r => isBorderLikeBlackRegion(r, regions));
   const borderIds = new Set(borderRegions.map(r => r.id));
   console.log(`[contour-fix] black fills converted to contours: ${borderRegions.length}`);
+  for (const br of borderRegions) {
+    const w = (br.mean_width_mm || 0).toFixed(1);
+    const a = (br.area_mm2 || 0).toFixed(0);
+    console.log(`  ↳ "${br.name}" → contour (area=${a}mm², width=${w}mm)`);
+  }
+  const notConverted = blackCandidates.filter(r => !borderIds.has(r.id));
+  for (const nc of notConverted) {
+    const a = (nc.area_mm2 || 0).toFixed(0);
+    console.log(`  ↳ "${nc.name}" stays fill (area=${a}mm² — no lighter fill bordered)`);
+  }
 
   // ── 2. Remaining fills (exclude border-like black regions) ──────────────
   let fills = regions.filter(r => !borderIds.has(r.id));
