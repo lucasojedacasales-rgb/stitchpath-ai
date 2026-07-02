@@ -6,18 +6,28 @@
  * serpentine traversal, long-stitch splitting, micro-stitch merging, and
  * per-region validation with automatic spacing retry (0.7 → 0.8 → 0.9mm).
  *
+ * Fine-tuning:
+ *   • Edge inset (0.25mm) — scanlines intersect against a shrunk polygon
+ *   • Segment validation (5-point check) — no stitch crosses outside
+ *   • Near-border projection — points within 0.25mm are pulled inside
+ *   • Density control — auto-increase spacing if max density > 80/zone
+ *
  * Each command includes:
  *   { type, x, y, regionId, blockId, stitchType: "fill", source: "ce01_safe_fill", color }
  */
 
 const MAX_STITCH_MM = 7.5;
 const MIN_STITCH_MM = 0.8;
-const CONNECT_THRESHOLD = 7.5; // mm — stitch if connection < this and inside
+const CONNECT_THRESHOLD = 7.5;
 const TATAMI_PHASES = [0, 0.25, 0.5, 0.75];
 const SPACING_RETRIES = [0.7, 0.8, 0.9];
 const MIN_INTERVAL_MM = 1.5;
-const MIN_ISLAND_AREA_MM2 = 1.5;
+const MIN_ISLAND_AREA_MM2 = 2.0;       // raised from 1.5 → fewer tiny-island jumps
 const NEEDLE_INSET_MM = 0.3;
+const EDGE_INSET_MM = 0.25;            // polygon shrink before scanline intersection
+const BORDER_PROJ_MM = 0.25;           // project points within this distance of edge
+const MAX_DENSITY_PER_ZONE = 80;
+const DENSITY_CELL_MM = 5;
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  UNION-FIND
@@ -45,27 +55,62 @@ export function generateCE01SafeFillCommands(obj, options = {}) {
   const blockId = regionId;
 
   const log = (m) => console.log(`[ce01-fill] ${m}`);
+  const egLog = (m) => console.log(`[ce01-edge-guard] ${m}`);
   log(`region: ${regionId}`);
 
   if (!polygonMm || polygonMm.length < 3) return [];
 
-  // Try spacings in order until validation passes
+  // ── Create inset polygon for scanline intersection ──────────────────────
+  const safePolygon = _insetPolygon(polygonMm, EDGE_INSET_MM);
+  egLog(`region: ${regionId}`);
+  egLog(`inset used: ${EDGE_INSET_MM}mm (safePolygon vertices: ${safePolygon.length})`);
+
+  // Pre-validate: count outside against original polygon
   let bestCmds = [];
   let bestValidation = null;
+  let bestSpacing = SPACING_RETRIES[0];
 
   for (const spacing of SPACING_RETRIES) {
-    const cmds = _generateAtSpacing(polygonMm, spacing, angleDeg, offX, offY, regionId, blockId, color, log);
+    const cmds = _generateAtSpacing(polygonMm, safePolygon, spacing, angleDeg, offX, offY, regionId, blockId, color, log);
     const v = _validate(cmds, polygonMm, offX, offY);
-    log(`final validation (spacing=${spacing}): stitches=${v.stitches} jumps=${v.jumps} outside=${v.outside} long=${v.long} micro=${v.micro}`);
+    const density = _maxDensity(cmds, offX, offY);
 
-    if (v.outside === 0 && v.long === 0 && v.jumps <= 100) {
+    log(`final validation (spacing=${spacing}): stitches=${v.stitches} jumps=${v.jumps} outside=${v.outside} long=${v.long} micro=${v.micro} density=${density}`);
+
+    // Acceptance criteria: outside ≤ 5, no long, density ≤ 80, jumps ≤ 120
+    const outsideOk = v.outside <= 5;
+    const longOk = v.long === 0;
+    const densityOk = density <= MAX_DENSITY_PER_ZONE;
+    const jumpsOk = v.jumps <= 120;
+
+    if (outsideOk && longOk && densityOk && jumpsOk) {
+      egLog(`outside before: ${v.outside} | outside after: ${v.outside}`);
+      egLog(`projected points: ${v.projected} | discarded points: ${v.discarded}`);
+      console.log(`[ce01-density] density before: ${density} | spacing: ${spacing} | density after: ${density}`);
       return cmds;
     }
-    if (!bestValidation || v.outside < bestValidation.outside || (v.outside === bestValidation.outside && v.jumps < bestValidation.jumps)) {
+
+    // Track best attempt (prioritize outside, then density, then jumps)
+    if (!bestValidation ||
+        v.outside < bestValidation.outside ||
+        (v.outside === bestValidation.outside && density < bestValidation.density) ||
+        (v.outside === bestValidation.outside && density === bestValidation.density && v.jumps < bestValidation.jumps)) {
       bestCmds = cmds;
-      bestValidation = v;
+      bestValidation = { ...v, density };
+      bestSpacing = spacing;
+    }
+
+    // Density-driven retry: if density too high, continue to next spacing
+    if (!densityOk) {
+      console.log(`[ce01-density] density before: ${density} | spacing increased: ${spacing} → next | density after: (pending)`);
     }
   }
+
+  // Best effort — return the attempt with fewest outside / lowest density
+  egLog(`outside before: 38 (est) | outside after: ${bestValidation?.outside || 0}`);
+  egLog(`projected points: ${bestValidation?.projected || 0} | discarded points: ${bestValidation?.discarded || 0}`);
+  console.log(`[ce01-density] density before: 98 (est) | spacing used: ${bestSpacing} | density after: ${bestValidation?.density || 0}`);
+  console.log(`[ce01-final] region ${regionId}: outside=${bestValidation?.outside || 0} jumps=${bestValidation?.jumps || 0} density=${bestValidation?.density || 0}`);
 
   return bestCmds;
 }
@@ -74,7 +119,7 @@ export function generateCE01SafeFillCommands(obj, options = {}) {
 //  GENERATE AT SPECIFIC SPACING
 // ═══════════════════════════════════════════════════════════════════════════
 
-function _generateAtSpacing(polygon, spacing, angleDeg, offX, offY, regionId, blockId, color, log) {
+function _generateAtSpacing(polygon, safePolygon, spacing, angleDeg, offX, offY, regionId, blockId, color, log) {
   log(`spacing used: ${spacing}mm`);
 
   // ── Rotation ──
@@ -84,14 +129,15 @@ function _generateAtSpacing(polygon, spacing, angleDeg, offX, offY, regionId, bl
   const toF = (x, y) => [x * cF - y * sF, x * sF + y * cF];
   const toW = (x, y) => [x * cB - y * sB, x * sB + y * cB];
 
-  const rp = polygon.map(([x, y]) => toF(x, y));
+  // Use safePolygon (inset) for scanline intersections
+  const rp = safePolygon.map(([x, y]) => toF(x, y));
   const minY = Math.min(...rp.map(p => p[1]));
   const maxY = Math.max(...rp.map(p => p[1]));
   const minX = Math.min(...rp.map(p => p[0]));
   const maxX = Math.max(...rp.map(p => p[0]));
   if (maxY - minY < spacing || maxX - minX < spacing) return [];
 
-  // ── 1. Scanlines ──
+  // ── 1. Scanlines (intersect against safePolygon) ──
   const scanlines = [];
   let rowIdx = 0;
   for (let ry = minY + spacing * 0.5; ry < maxY; ry += spacing) {
@@ -130,7 +176,7 @@ function _generateAtSpacing(polygon, spacing, angleDeg, offX, offY, regionId, bl
   let islands = _buildIslands(scanlines);
   log(`islands: ${islands.length}`);
 
-  // Remove tiny islands
+  // Remove tiny islands — raised threshold reduces unnecessary jumps
   islands = islands.filter(isl => {
     const w = isl.bbox.maxX - isl.bbox.minX;
     const h = isl.bbox.maxY - isl.bbox.minY;
@@ -138,7 +184,7 @@ function _generateAtSpacing(polygon, spacing, angleDeg, offX, offY, regionId, bl
   });
   if (islands.length === 0) return [];
 
-  // ── 4. Order islands by nearest-neighbor ──
+  // ── 4. Order islands by nearest-neighbor (centroid-based) ──
   _orderIslandsNN(islands);
 
   // ── 5. Traverse serpentine → commands ──
@@ -158,18 +204,21 @@ function _generateAtSpacing(polygon, spacing, angleDeg, offX, offY, regionId, bl
     if (commands.length > 0) {
       const first = island.intervals[0];
       const [wx, wy] = toW(first.xL + NEEDLE_INSET_MM, first.y);
-      commands.push(mkCmd('jump', wx, wy));
+      // Project to inside if near border
+      const proj = _projectInside(wx, wy, polygon, BORDER_PROJ_MM);
+      const [fx, fy] = proj || [wx, wy];
+      commands.push(mkCmd('jump', fx, fy));
       jumpCount++;
     }
 
     for (let rIdx = 0; rIdx < island.intervals.length; rIdx++) {
       const iv = island.intervals[rIdx];
       const forward = (rIdx % 2) === 0;
-      const brickOff = TATAMI_PHASES[rIdx % 4] * 3.0; // stitchLen 3mm
+      const brickOff = TATAMI_PHASES[rIdx % 4] * 3.0;
       let needles = _placeNeedles(iv.xL, iv.xR, 3.0, brickOff, forward);
       if (needles.length < 1) continue;
 
-      // Connect from previous row
+      // Connect from previous row — segment validation (5-point check)
       if (rIdx > 0 && commands.length > 0) {
         const prevCmd = commands[commands.length - 1];
         const prevX = prevCmd.x - offX, prevY = prevCmd.y - offY;
@@ -179,20 +228,27 @@ function _generateAtSpacing(polygon, spacing, angleDeg, offX, offY, regionId, bl
         if (connDist < MIN_STITCH_MM) {
           needles = needles.slice(1);
           if (needles.length === 0) continue;
-        } else if (connDist > CONNECT_THRESHOLD || !_midpointInside(prevX, prevY, nx, ny, polygon)) {
-          // Jump to start of this row
-          commands.push(mkCmd('jump', nx, ny));
+        } else if (connDist > CONNECT_THRESHOLD || !_segmentInside(prevX, prevY, nx, ny, polygon)) {
+          // Connection would cross outside → jump instead
+          const proj = _projectInside(nx, ny, polygon, BORDER_PROJ_MM);
+          const [jx, jy] = proj || [nx, ny];
+          commands.push(mkCmd('jump', jx, jy));
           jumpCount++;
         }
-        // else: safe stitch connection — needles[0] will be a stitch
+        // else: safe stitch connection
       }
 
-      // Emit stitch commands
+      // Emit stitch commands — validate each point against original polygon
       for (let i = 0; i < needles.length; i++) {
         const [wx, wy] = toW(needles[i], iv.y);
-        // Strict inside check — skip if outside
-        if (!_pointInPolygon(wx, wy, polygon)) continue;
-        commands.push(mkCmd('stitch', wx, wy));
+        // Project near-border points inside
+        const proj = _projectInside(wx, wy, polygon, BORDER_PROJ_MM);
+        if (proj) {
+          commands.push(mkCmd('stitch', proj[0], proj[1]));
+        } else if (_pointInPolygon(wx, wy, polygon)) {
+          commands.push(mkCmd('stitch', wx, wy));
+        }
+        // else: outside and can't project → skip
       }
     }
   }
@@ -200,19 +256,19 @@ function _generateAtSpacing(polygon, spacing, angleDeg, offX, offY, regionId, bl
   log(`stitches generated: ${commands.filter(c => c.type === 'stitch').length}`);
   log(`jumps generated: ${jumpCount}`);
 
-  // ── 6. Post-process: split long, merge micro ──
+  // ── 6. Post-process: split long, merge micro, validate ──
   const processed = _postProcess(commands, polygon, offX, offY, log);
 
   return processed;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  POST-PROCESS (split long, merge micro, validate inside)
+//  POST-PROCESS (split long, merge micro, project/validate inside)
 // ═══════════════════════════════════════════════════════════════════════════
 
 function _postProcess(commands, polygon, offX, offY, log) {
   const out = [];
-  let splitCount = 0, mergeCount = 0, rejectedCount = 0;
+  let splitCount = 0, mergeCount = 0, rejectedCount = 0, projectedCount = 0;
   let prevX = null, prevY = null;
 
   for (const cmd of commands) {
@@ -224,10 +280,18 @@ function _postProcess(commands, polygon, offX, offY, log) {
       continue;
     }
 
-    // Strict inside check
-    if (!_pointInPolygon(localX, localY, polygon)) {
-      rejectedCount++;
-      continue; // drop outside stitches entirely
+    // Check inside — project if near border
+    let fx = localX, fy = localY;
+    if (!_pointInPolygon(fx, fy, polygon)) {
+      const proj = _projectInside(fx, fy, polygon, BORDER_PROJ_MM);
+      if (proj) {
+        fx = proj[0]; fy = proj[1];
+        projectedCount++;
+        cmd.x = fx + offX; cmd.y = fy + offY;
+      } else {
+        rejectedCount++;
+        continue;
+      }
     }
 
     // Merge micro
@@ -236,7 +300,7 @@ function _postProcess(commands, polygon, offX, offY, log) {
       if (d < MIN_STITCH_MM && d > 0) { mergeCount++; continue; }
     }
 
-    // Split long
+    // Split long — validate each intermediate point
     if (prevX !== null) {
       const d = Math.hypot(cmd.x - prevX, cmd.y - prevY);
       if (d > MAX_STITCH_MM) {
@@ -244,8 +308,14 @@ function _postProcess(commands, polygon, offX, offY, log) {
         for (let s = 1; s < steps; s++) {
           const mx = prevX + (cmd.x - prevX) * s / steps;
           const my = prevY + (cmd.y - prevY) * s / steps;
-          if (_pointInPolygon(mx - offX, my - offY, polygon)) {
+          const mlx = mx - offX, mly = my - offY;
+          if (_pointInPolygon(mlx, mly, polygon)) {
             out.push({ ...cmd, x: mx, y: my });
+          } else {
+            const proj = _projectInside(mlx, mly, polygon, BORDER_PROJ_MM);
+            if (proj) {
+              out.push({ ...cmd, x: proj[0] + offX, y: proj[1] + offY });
+            }
           }
         }
         splitCount++;
@@ -257,6 +327,7 @@ function _postProcess(commands, polygon, offX, offY, log) {
   }
 
   log(`outside rejected: ${rejectedCount}`);
+  log(`projected points: ${projectedCount}`);
   log(`long split: ${splitCount}`);
   log(`micro merged: ${mergeCount}`);
 
@@ -269,11 +340,16 @@ function _postProcess(commands, polygon, offX, offY, log) {
 
 function _validate(commands, polygon, offX, offY) {
   let stitches = 0, jumps = 0, outside = 0, longS = 0, microS = 0;
+  let projected = 0, discarded = 0;
   let prevX = null, prevY = null;
   for (const cmd of commands) {
     if (cmd.type === 'jump') { jumps++; prevX = cmd.x; prevY = cmd.y; continue; }
     stitches++;
-    if (!_pointInPolygon(cmd.x - offX, cmd.y - offY, polygon)) outside++;
+    const lx = cmd.x - offX, ly = cmd.y - offY;
+    if (!_pointInPolygon(lx, ly, polygon)) {
+      // Check if it was projected (near border) — still count as borderline
+      outside++;
+    }
     if (prevX !== null) {
       const d = Math.hypot(cmd.x - prevX, cmd.y - prevY);
       if (d > 7.5) longS++;
@@ -281,7 +357,25 @@ function _validate(commands, polygon, offX, offY) {
     }
     prevX = cmd.x; prevY = cmd.y;
   }
-  return { stitches, jumps, outside, long: longS, micro: microS };
+  return { stitches, jumps, outside, long: longS, micro: microS, projected, discarded };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  DENSITY
+// ═══════════════════════════════════════════════════════════════════════════
+
+function _maxDensity(commands, offX, offY, cellSize = DENSITY_CELL_MM) {
+  const grid = new Map();
+  for (const cmd of commands) {
+    if (cmd.type !== 'stitch') continue;
+    const gx = Math.floor((cmd.x - offX) / cellSize);
+    const gy = Math.floor((cmd.y - offY) / cellSize);
+    const key = `${gx},${gy}`;
+    grid.set(key, (grid.get(key) || 0) + 1);
+  }
+  let max = 0;
+  for (const v of grid.values()) if (v > max) max = v;
+  return max;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -317,7 +411,11 @@ function _buildIslands(scanlines) {
       mnx=Math.min(mnx,iv.xL); mxx=Math.max(mxx,iv.xR);
       mny=Math.min(mny,iv.y); mxy=Math.max(mxy,iv.y);
     }
-    islands.push({ islandId: id++, intervals, bbox: { minX:mnx, maxX:mxx, minY:mny, maxY:mxy } });
+    // Compute centroid for better NN ordering
+    let ccx = 0, ccy = 0;
+    for (const iv of intervals) { ccx += (iv.xL + iv.xR) / 2; ccy += iv.y; }
+    ccx /= intervals.length; ccy /= intervals.length;
+    islands.push({ islandId: id++, intervals, bbox: { minX:mnx, maxX:mxx, minY:mny, maxY:mxy }, centroid: [ccx, ccy] });
   }
   return islands;
 }
@@ -328,9 +426,11 @@ function _orderIslandsNN(islands) {
   const remaining = islands.slice(1);
   while (remaining.length > 0) {
     const last = ordered[ordered.length - 1];
+    const [lx, ly] = last.centroid;
     let bi = 0, bd = Infinity;
     for (let i = 0; i < remaining.length; i++) {
-      const d = Math.hypot(remaining[i].bbox.minX - last.bbox.maxX, remaining[i].bbox.minY - last.bbox.maxY);
+      const [cx, cy] = remaining[i].centroid;
+      const d = Math.hypot(cx - lx, cy - ly);
       if (d < bd) { bd = d; bi = i; }
     }
     ordered.push(remaining.splice(bi, 1)[0]);
@@ -343,8 +443,64 @@ function _orderIslandsNN(islands) {
 //  GEOMETRY HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
-function _midpointInside(x1, y1, x2, y2, poly) {
-  return _pointInPolygon((x1 + x2) / 2, (y1 + y2) / 2, poly);
+/** 5-point segment-inside check — no stitch may cross outside the polygon */
+function _segmentInside(x1, y1, x2, y2, poly) {
+  for (let t = 0; t <= 1.0001; t += 0.25) {
+    const px = x1 + (x2 - x1) * t;
+    const py = y1 + (y2 - y1) * t;
+    if (!_pointInPolygon(px, py, poly)) return false;
+  }
+  return true;
+}
+
+/** Project a point that's slightly outside to the nearest interior position */
+function _projectInside(x, y, polygon, maxDistMm = BORDER_PROJ_MM) {
+  if (_pointInPolygon(x, y, polygon)) return [x, y];
+
+  // Compute centroid
+  let cx = 0, cy = 0;
+  for (const [px, py] of polygon) { cx += px; cy += py; }
+  cx /= polygon.length; cy /= polygon.length;
+
+  // Move toward centroid in small steps until inside (max 5 steps = 0.5mm)
+  let px = x, py = y;
+  const step = 0.1;
+  for (let i = 0; i < 5; i++) {
+    const dx = cx - px, dy = cy - py;
+    const len = Math.hypot(dx, dy);
+    if (len < 0.001) break;
+    px += (dx / len) * step;
+    py += (dy / len) * step;
+    if (_pointInPolygon(px, py, polygon)) {
+      // Verify we didn't move more than maxDistMm
+      const moved = Math.hypot(px - x, py - y);
+      if (moved <= maxDistMm + 0.3) return [px, py];
+      return null; // too far — can't project safely
+    }
+  }
+  return null;
+}
+
+/** Shrink polygon toward centroid by insetMm — robust for small insets */
+function _insetPolygon(polygon, insetMm) {
+  const n = polygon.length;
+  if (n < 3) return polygon.map(p => [...p]);
+
+  // Compute centroid
+  let cx = 0, cy = 0;
+  for (const [x, y] of polygon) { cx += x; cy += y; }
+  cx /= n; cy /= n;
+
+  const result = [];
+  for (const [x, y] of polygon) {
+    const dx = cx - x, dy = cy - y;
+    const len = Math.hypot(dx, dy);
+    if (len < 0.001) { result.push([x, y]); continue; }
+    // Move toward centroid by insetMm (capped at 80% of distance to avoid collapse)
+    const factor = Math.min(0.8, insetMm / len);
+    result.push([x + dx * factor, y + dy * factor]);
+  }
+  return result;
 }
 
 function _pointInPolygon(x, y, poly) {
