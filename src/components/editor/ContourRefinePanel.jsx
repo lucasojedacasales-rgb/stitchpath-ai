@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { ShieldCheck, ShieldAlert, Eye, EyeOff, Route, Scissors, Palette, Bug } from 'lucide-react';
-import { countContourStitches, getLastContourAudit } from '@/lib/contourExportBuilder';
+import { ShieldCheck, ShieldAlert, Eye, EyeOff, Route, Scissors, Palette, Bug, Layers } from 'lucide-react';
+import { countContourStitches, getLastContourAudit, getLastSegmentClassification } from '@/lib/contourExportBuilder';
 import { classifyStitchSegments } from '@/lib/geometryAudit';
 import { detectTravelContamination } from '@/lib/contourRefineValidator';
 
@@ -213,11 +213,14 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
         ctx.moveTo(sx, sy);
         ctx.lineTo(ex, ey);
         switch (seg.category) {
-          case 'contour': ctx.strokeStyle = '#22c55e'; break;
-          case 'detail': ctx.strokeStyle = '#3b82f6'; break;
+          case 'outer_silhouette': ctx.strokeStyle = '#22c55e'; break;
+          case 'limb_contour': ctx.strokeStyle = '#06b6d4'; break;
+          case 'facial_detail': ctx.strokeStyle = '#3b82f6'; break;
+          case 'eye_detail': ctx.strokeStyle = '#eab308'; break;
           case 'fill': ctx.strokeStyle = '#a78bfa'; break;
+          case 'fill_boundary': ctx.strokeStyle = '#f97316'; break;
           case 'travel': ctx.strokeStyle = '#64748b'; ctx.setLineDash([2, 2]); break;
-          case 'suspicious': ctx.strokeStyle = '#ef4444'; break;
+          case 'artifact': ctx.strokeStyle = '#ef4444'; break;
           default: ctx.strokeStyle = '#94a3b8'; break;
         }
         ctx.stroke();
@@ -344,6 +347,39 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
               <Metric label="Sombra body" value={report.bodyShadowBoundaryOutlined || '—'} color={report.bodyShadowBoundaryOutlined === 'NO' ? 'text-emerald-400' : 'text-red-400'} />
             </div>
           </div>
+
+          {/* Segment classification summary */}
+          <div className="bg-[#161a23] rounded-lg p-2.5 border border-[#1e2130]">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <Layers className="w-3 h-3 text-violet-400" />
+              <span className="text-[10px] font-bold text-slate-400">Clasificación semántica</span>
+            </div>
+            {(() => {
+              const sc = getLastSegmentClassification();
+              if (!sc) return <div className="text-[10px] text-slate-600">Sin datos</div>;
+              const counts = {};
+              for (const c of sc.classified) {
+                counts[c.category] = (counts[c.category] || 0) + 1;
+              }
+              const colors = {
+                outer_silhouette: 'text-emerald-400',
+                limb_contour: 'text-cyan-400',
+                facial_detail: 'text-blue-400',
+                eye_detail: 'text-yellow-400',
+                fill_boundary: 'text-orange-400',
+                artifact: 'text-red-400',
+              };
+              return (
+                <div className="grid grid-cols-2 gap-1.5">
+                  {Object.entries(counts).map(([cat, count]) => (
+                    <Metric key={cat} label={cat} value={count} color={colors[cat] || 'text-slate-400'} />
+                  ))}
+                  <Metric label="Exportados" value={sc.exportableCount} color="text-emerald-400" />
+                  <Metric label="Excluidos" value={sc.excludedCount} color="text-orange-400" />
+                </div>
+              );
+            })()}
+          </div>
         </>
       ) : (
         <div className="space-y-2">
@@ -371,11 +407,14 @@ export default function ContourRefinePanel({ commands = [], regions = [], config
           )}
           {viewMode === 'classification' && (
             <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
-              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#22c55e]"></span> Contorno</span>
-              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#3b82f6]"></span> Detalle</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#22c55e]"></span> Silueta</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#06b6d4]"></span> Extremidad</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#3b82f6]"></span> Detalle facial</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#eab308]"></span> Ojo</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#a78bfa]"></span> Relleno</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#f97316]"></span> Frontera relleno</span>
               <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#64748b]"></span> Travel</span>
-              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#ef4444]"></span> Sospechoso</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-[#ef4444]"></span> Artefacto</span>
             </div>
           )}
         </div>

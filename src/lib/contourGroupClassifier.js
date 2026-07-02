@@ -119,10 +119,12 @@ export function classifyRegionGroups(regions) {
       r.contour_policy = 'no_contour_boundary';
     } else {
       // Color-based fallback
-      if (isPinkHue(color) && isLarge && !isAtBottom) {
+      // Large pink → body regardless of position (prevents body shadow
+      // being misclassified as foot, which caused the black arc between pinks)
+      if (isPinkHue(color) && isLarge) {
         r.object_group = 'body';
         r.contour_policy = 'no_contour_boundary';
-      } else if (isPinkHue(color) && isLarge && isAtBottom) {
+      } else if (isPinkHue(color) && !isLarge && isAtBottom) {
         r.object_group = isAtLeft ? 'foot_left' : 'foot_right';
         r.contour_policy = 'outer_only';
       } else if (isPinkHue(color) && !isLarge) {

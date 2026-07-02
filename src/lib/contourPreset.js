@@ -19,12 +19,12 @@ export const cleanCartoonOutlineCE01 = {
   ce01Safe: true,
 
   // ── Outer satin parameters ──
-  outerSatinWidthMm: 1.15,    // 1.0–1.3mm range
+  outerSatinWidthMm: 1.0,     // 1.0–1.2mm — thinner, more natural
   outerSatinDensityMm: 0.42,  // 0.40–0.45mm range
   outerOffsetOutwardMm: 0.15, // shift path outward so satin covers fill edge
 
   // ── Inner contour parameters ──
-  innerRunWidthMm: 0.6,
+  innerRunWidthMm: 0.5,       // thinner internal details
   innerOffsetInwardMm: 0.10,
   mouthPasses: 3,             // triple run = 3 passes
   mouthMinLenMm: 1.0,

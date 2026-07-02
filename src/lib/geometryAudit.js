@@ -36,7 +36,9 @@ function isValidVisibleStitch(cmd) {
 
   // Detail layers are valid (mouth, eyes, details)
   if (layerType.includes('detail') || layerType.includes('mouth')) return true;
+  if (layerType.includes('facial') || layerType.includes('eye')) return true;
   if (regionId.includes('mouth') || regionId.includes('detail')) return true;
+  if (regionId.includes('eye')) return true;
 
   // Fill stitches are valid
   if (stitchType === 'fill' || cmd.source === 'clipped_fill_optimized') return true;
@@ -172,16 +174,22 @@ export function classifyStitchSegments(commands) {
       let category;
 
       if (dist > SUSPICIOUS_SEGMENT_THRESHOLD_MM && !isValidVisibleStitch(c)) {
-        category = 'suspicious';
+        category = 'artifact';
       } else {
         const layerType = (c.layerType || '').toLowerCase();
         const stitchType = (c.stitchType || '').toLowerCase();
         const regionId = (c.regionId || '').toLowerCase();
 
-        if (layerType.includes('outline') || layerType.includes('contour') || stitchType === 'satin') {
-          category = 'contour';
-        } else if (layerType.includes('detail') || layerType.includes('mouth') || regionId.includes('mouth') || regionId.includes('detail')) {
-          category = 'detail';
+        if (layerType.includes('mouth') || regionId.includes('mouth')) {
+          category = 'facial_detail';
+        } else if (layerType.includes('eye') || regionId.includes('eye')) {
+          category = 'eye_detail';
+        } else if (layerType.includes('detail')) {
+          category = 'facial_detail';
+        } else if (layerType.includes('outer_outline') || stitchType === 'satin') {
+          category = 'outer_silhouette';
+        } else if (layerType.includes('inner_outline')) {
+          category = 'fill_boundary';
         } else if (stitchType === 'fill' || c.source === 'clipped_fill_optimized') {
           category = 'fill';
         } else {

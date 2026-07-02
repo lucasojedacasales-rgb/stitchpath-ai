@@ -290,6 +290,7 @@ function generateInnerOutlines(regions, config) {
     outlines.push({
       id: `outline_inner_${fill.id}`,
       parentRegionId: fill.id,
+      parentGroupName: fill.object_group || '',
       type: 'contour',
       region_class: 'inner_outline',
       stitch_type: stitchType,
@@ -299,7 +300,7 @@ function generateInnerOutlines(regions, config) {
       hex: outlineColor,
       color: outlineColor,
       contour_color: outlineColor,
-      contour_width_mm: 0.6,
+      contour_width_mm: 0.5,
       confidence: 70,
       source: 'outline_generator_inner',
       closed: innerClosed,

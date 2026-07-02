@@ -26,6 +26,7 @@ import { generateTieIn, generateTieOff, removeRedundantNodes } from './industria
 import { cleanCartoonOutlineCE01 } from './contourPreset.js';
 import { refineContourPath, removeParallelDuplicates } from './contourPathRefiner.js';
 import { auditContours, computeFootContourCoverage } from './contourAudit.js';
+import { classifySegment, isExportable, validateFinalClassification } from './segmentClassifier.js';
 
 // ─── Satin / run parameters (from preset) ──────────────────────────────────
 const SATIN_WIDTH_MM   = cleanCartoonOutlineCE01.outerSatinWidthMm;
@@ -212,9 +213,14 @@ function getContourPriority(outline) {
 
 // ── Module-level audit storage (for getContourExportReport + ContourRefinePanel) ──
 let _lastContourAudit = null;
+let _lastSegmentClassification = null;
 
 export function getLastContourAudit() {
   return _lastContourAudit;
+}
+
+export function getLastSegmentClassification() {
+  return _lastSegmentClassification;
 }
 
 export function buildContourObjects(regions, config = {}) {
@@ -307,6 +313,31 @@ export function buildContourObjects(regions, config = {}) {
 
   // ── Remove parallel duplicates ──
   objects = removeParallelDuplicates(objects, preset.parallelDedupIoU);
+
+  // ── Semantic classification — only export valid categories ──
+  const classified = objects.map(obj => ({ obj, category: classifySegment(obj) }));
+  const exportable = classified.filter(c => isExportable(c.category));
+  const excluded = classified.filter(c => !isExportable(c.category));
+
+  for (const c of excluded) {
+    console.log(`[segment-classifier] excluded ${c.category}: ${c.obj.name}`);
+  }
+  for (const c of exportable) {
+    console.log(`[segment-classifier] exported ${c.category}: ${c.obj.name}`);
+  }
+
+  objects = exportable.map(c => c.obj);
+
+  // Store classification for panel + final validation
+  _lastSegmentClassification = {
+    classified: classified.map(c => ({
+      name: c.obj.name,
+      category: c.category,
+      exportable: isExportable(c.category),
+    })),
+    exportableCount: exportable.length,
+    excludedCount: excluded.length,
+  };
 
   // ── Logs ──
   const outerCount = objects.filter(o => o.layerType === 'outer_outline').length;
