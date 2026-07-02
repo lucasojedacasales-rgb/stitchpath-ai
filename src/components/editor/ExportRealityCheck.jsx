@@ -23,8 +23,17 @@ export default function ExportRealityCheck({ reality }) {
     { label: 'Contour objects exportados', value: reality.contourExported, mismatch: reality.contourMismatch },
     { label: 'Mouth visual', value: reality.mouthVisual, mismatch: reality.mouthMismatch },
     { label: 'Mouth exported', value: reality.mouthExported, mismatch: reality.mouthMismatch },
-    { label: 'Outer outline exported', value: reality.outerOutlineExported },
     { label: 'Color changes preserved', value: reality.colorChangesPreserved },
+    // ── Contour-specific fields ──
+    { label: 'Visual outer outline', value: reality.visualOuterOutline, mismatch: reality.contourMissing },
+    { label: 'Exported outer outline', value: reality.exportedOuterOutline, mismatch: reality.contourMissing },
+    { label: 'Outer outline stitches', value: reality.outerOutlineStitches, mismatch: reality.contourWeak },
+    { label: 'Outer outline color', value: reality.outerOutlineColor || '—' },
+    { label: 'Outer outline order', value: reality.outerOutlineOrder >= 0 ? reality.outerOutlineOrder : '—' },
+    { label: 'Mouth stitches', value: reality.mouthStitches },
+    { label: 'Inner contours exported', value: reality.innerContoursExported },
+    { label: 'Inner outline stitches', value: reality.innerOutlineStitches },
+    { label: 'Detail run stitches', value: reality.detailRunStitches },
   ];
 
   return (
@@ -46,6 +55,8 @@ export default function ExportRealityCheck({ reality }) {
           {reality.colorMismatch && <div>• Color mismatch: el DST saldría como 1 color.</div>}
           {reality.colorChangeMismatch && <div>• ColorChange insuficientes para los bloques de color.</div>}
           {reality.contourMismatch && <div>• Contornos visuales no exportados como stitches.</div>}
+          {reality.contourMissing && <div>• El contorno se ve en pantalla pero no se exporta como puntadas.</div>}
+          {reality.contourWeak && <div>• Contorno exterior demasiado débil o inexistente (&lt;80 puntadas).</div>}
           {reality.mouthMismatch && <div>• Boca visible pero no exportada.</div>}
         </div>
       )}

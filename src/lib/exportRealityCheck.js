@@ -7,6 +7,7 @@
  */
 
 import { buildThreadColorBlocks } from './threadColorBlocks';
+import { getContourExportReport } from './contourExportBuilder';
 
 /**
  * @param {Array} regions  — visual regions from the editor
@@ -101,8 +102,11 @@ export function computeExportReality(regions = [], commands = []) {
   const mouthMismatch = mouthVisual && !mouthExported;
   const colorChangeMismatch = threadBlocks.length > 1 && colorChanges !== threadBlocks.length - 1;
 
+  // ── Contour-specific reality check (report only — blocking is in ExportModal) ──
+  const contourReport = getContourExportReport(regions, commands);
+
   const ready = !colorMismatch && !contourMismatch && !mouthMismatch && !colorChangeMismatch;
-  const status = ready ? 'OK' : 'RISKY';
+  const status = ready && contourReport.ready ? 'OK' : 'RISKY';
 
   // ── Logs ────────────────────────────────────────────────────────────────
   console.log('[export-reality] visual colors:', visualColors);
@@ -136,6 +140,19 @@ export function computeExportReality(regions = [], commands = []) {
     contourMismatch,
     mouthMismatch,
     colorChangeMismatch,
+    // ── Contour fields ──
+    visualOuterOutline: contourReport.visualOuterOutline,
+    exportedOuterOutline: contourReport.exportedOuterOutline,
+    outerOutlineStitches: contourReport.outerOutlineStitches,
+    outerOutlineColor: contourReport.outerOutlineColor,
+    outerOutlineOrder: contourReport.outerOutlineOrder,
+    mouthExported: contourReport.mouthExported,
+    mouthStitches: contourReport.mouthStitches,
+    innerContoursExported: contourReport.innerContoursExported,
+    innerOutlineStitches: contourReport.innerOutlineStitches,
+    detailRunStitches: contourReport.detailRunStitches,
+    contourMissing: contourReport.contourMissing,
+    contourWeak: contourReport.contourWeak,
     status,
     ready,
   };

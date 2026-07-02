@@ -17,6 +17,8 @@ import { buildDSTFromCommands } from '@/lib/dstDirectExport';
 import { computeExportReality } from '@/lib/exportRealityCheck';
 import { validateColorChangeIntegrity } from '@/lib/threadColorBlocks';
 import { generate3ColorTestDST } from '@/lib/ce01ColorTestFile';
+import { generateContourTestDST, generateOutlineOnlyDST } from '@/lib/contourTestFile';
+import { getContourExportReport } from '@/lib/contourExportBuilder';
 import ExportRealityCheck from './ExportRealityCheck';
 import { calculateUnifiedCommandMetrics, metricsMatch } from '@/lib/unifiedCommandMetrics';
 import CE01ProductionPanel from './CE01ProductionPanel';
@@ -192,6 +194,12 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     return computeExportReality(regions, cmds);
   }, [editorFinalCommands, pipelineResult.commands, regions]);
 
+  // ── Contour reality check — outer outline must be real stitches ──────────
+  const contourReport = useMemo(() => {
+    const cmds = editorFinalCommands || pipelineResult.commands;
+    return getContourExportReport(regions, cmds);
+  }, [editorFinalCommands, pipelineResult.commands, regions]);
+
   // In production mode, stale adaptive/stability states are ignored entirely
   const effectiveAdaptiveReport = ce01ProductionMode ? null : adaptiveReport;
 
@@ -254,6 +262,11 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       }
       if (realityCheck && !realityCheck.ready) {
         setExportError(`Export Reality Check: ${realityCheck.colorMismatch ? 'color mismatch' : realityCheck.contourMismatch ? 'contornos no exportados' : 'boca no exportada'}. Revisa el panel Export Reality Check.`);
+        return;
+      }
+      // ── Contour block: visual outline must exist as real stitches ──
+      if (contourReport.contourMissing) {
+        setExportError('El contorno se ve en pantalla pero no se exporta como puntadas.');
         return;
       }
       console.log('[ce01-production-export] export allowed: true');
@@ -617,6 +630,55 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 <Palette className="w-3.5 h-3.5" />
                 Exportar test 3 colores CE01
               </button>
+
+              {/* Contour test — 60x60mm satin outline only */}
+              <button
+                onClick={() => {
+                  try {
+                    const { blob } = generateContourTestDST();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'CE01_CONTOUR_TEST.dst';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  } catch (e) {
+                    setExportError(`Test failed: ${e.message}`);
+                  }
+                }}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-violet-900/20 border border-violet-500/30 text-violet-300 text-xs font-bold hover:bg-violet-900/30 transition-colors"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                Exportar test contorno CE01
+              </button>
+
+              {/* Kirby outline-only — contours + details, no fills */}
+              <button
+                onClick={() => {
+                  try {
+                    const { blob } = generateOutlineOnlyDST(regions, config);
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'KIRBY_OUTLINES_ONLY.dst';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  } catch (e) {
+                    setExportError(`Test failed: ${e.message}`);
+                  }
+                }}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-amber-900/20 border border-amber-500/30 text-amber-300 text-xs font-bold hover:bg-amber-900/30 transition-colors"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                Exportar solo contornos Kirby
+              </button>
+
+              {/* Contour weak warning — not a block, just informational */}
+              {contourReport.contourWeak && (
+                <div className="text-[10px] text-amber-400 bg-amber-900/15 border border-amber-500/30 rounded-lg px-3 py-2">
+                  Contorno exterior demasiado débil o inexistente ({contourReport.outerOutlineStitches} puntadas, mínimo 80).
+                </div>
+              )}
 
               {/* CE01 pre-export validation report — before/after sanitizer */}
               {!ce01ProductionMode && (

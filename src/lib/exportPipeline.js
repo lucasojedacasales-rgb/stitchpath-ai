@@ -28,6 +28,7 @@ import { sanitizeCommandsForCE01 } from './ce01CommandSanitizer.js';
 import { repairCE01FinalCommands } from './ce01FinalCommandRepair.js';
 import { optimizeCE01TravelPath } from './ce01TravelPathOptimizer.js';
 import { optimizeCE01Trims } from './ce01TrimOptimizer.js';
+import { buildContourObjects, generateContourStitches, contoursPreservedInOptimization } from './contourExportBuilder.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -119,7 +120,11 @@ export function buildStitchObjects(regions, config = {}) {
     });
   }
 
-  // Sort by priority (fills first, satins last) — matches embroidery sequence
+  // ── Generate contour objects (always for export — real stitches, not visual) ──
+  const { objects: contourObjs } = buildContourObjects(regions, config);
+  objects.push(...contourObjs);
+
+  // Sort by priority (fills=10 → micro_fill=20 → details=70 → inner=80 → outer=90)
   objects.sort((a, b) => (a.priority || 5) - (b.priority || 5));
   return objects;
 }
@@ -183,8 +188,11 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
       continue;
     }
 
-    // Industrial: process object (redundant removal + density + underlay + tie-in/off)
-    const stitchPoints = processObjectStitches(obj, ms);
+    // Contour objects: dedicated stitch generation (satin / triple run / run)
+    // Non-contour: industrial processing (redundant removal + density + underlay + tie-in/off)
+    const stitchPoints = obj.isContour
+      ? generateContourStitches(obj, ms)
+      : processObjectStitches(obj, ms);
     if (stitchPoints.length < 2) continue;
 
     // Color change (skip if same as previous)
@@ -244,11 +252,11 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
           const sx = prevX + (x - prevX) * s / steps;
           const sy = prevY + (y - prevY) * s / steps;
           cmds.push({ type: 'stitch', x: sx, y: sy, color: obj.color, regionId: obj.id,
-            stitchType: obj.stitch_type, source: isFill ? 'clipped_fill_optimized' : 'standard' });
+            stitchType: obj.stitch_type, source: isFill ? 'clipped_fill_optimized' : 'standard', layerType: obj.layerType });
         }
       }
       cmds.push({ type: 'stitch', x, y, color: obj.color, regionId: obj.id,
-        stitchType: obj.stitch_type, source: isFill ? 'clipped_fill_optimized' : 'standard' });
+        stitchType: obj.stitch_type, source: isFill ? 'clipped_fill_optimized' : 'standard', layerType: obj.layerType });
       prevX = x; prevY = y;
       firstCmd = false;
     }
@@ -1101,6 +1109,11 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     if (ccAfter !== ccBefore || colorsAfter < colorsBefore ||
         contourAfter < contourBefore * 0.9 || detailAfter < detailBefore * 0.9) {
       console.warn(`[colorChange-guard] ${label}: cc ${ccBefore}→${ccAfter}, colors ${colorsBefore}→${colorsAfter}, contour ${contourBefore}→${contourAfter}, detail ${detailBefore}→${detailAfter} — DISCARDED`);
+      return false;
+    }
+    // ── Contour protection — outer_outline, inner_outline, mouth must survive ──
+    if (!contoursPreservedInOptimization(before, after)) {
+      console.warn(`[contour-guard] ${label}: contour elimination detected — DISCARDED`);
       return false;
     }
     return true;
