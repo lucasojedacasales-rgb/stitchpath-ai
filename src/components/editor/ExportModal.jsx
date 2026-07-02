@@ -26,6 +26,7 @@ import { calculateUnifiedCommandMetrics, metricsMatch } from '@/lib/unifiedComma
 import CE01ProductionPanel from './CE01ProductionPanel';
 import BinaryInspectorPanel from './BinaryInspectorPanel';
 import CE01FormatTestPanel from './CE01FormatTestPanel';
+import RawDarkStrokeTestPanel from './RawDarkStrokeTestPanel';
 
 const FORMATS = ['DSB', 'DST', 'PES', 'JEF', 'EXP'];
 
@@ -739,6 +740,9 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 <Route className="w-3.5 h-3.5" />
                 Test solo contorno inferior y pies
               </button>
+
+              {/* DEBUG RAW dark stroke lower/feet — test totalmente aislado (CAMBIO 1-8) */}
+              <RawDarkStrokeTestPanel project={project} config={config} />
 
               {/* Contour weak warning — not a block, just informational */}
               {contourReport.contourWeak && (
