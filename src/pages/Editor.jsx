@@ -247,7 +247,6 @@ export default function Editor() {
           <div className="flex items-center gap-1">
             {[
               { id: 'editor',  label: 'Editor' },
-              { id: 'preview', label: '✓ Vista Previa' },
               { id: 'mask',    label: '✂ Máscara' },
               { id: 'planner', label: '✦ Planner' },
               { id: 'travel',  label: '⚡ Travel' },
@@ -277,7 +276,7 @@ export default function Editor() {
         </div>
 
         <div className="flex-1 flex flex-col overflow-hidden">
-          {activeTab !== 'mask' && activeTab !== 'planner' && activeTab !== 'preview' && activeTab !== 'travel' && activeTab !== 'simulate' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
+          {activeTab !== 'mask' && activeTab !== 'planner' && activeTab !== 'travel' && activeTab !== 'simulate' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
             <SliderControl label="Imagen" value={imageOpacity} onChange={setImageOpacity} color="text-amber-400" />
             <SliderControl label="Puntadas" value={stitchOpacity} onChange={setStitchOpacity} color="text-violet-400" />
             <div className="flex items-center gap-2 ml-auto">
@@ -286,14 +285,7 @@ export default function Editor() {
             </div>
           </div>}
 
-          {activeTab === 'preview' ? (
-            <div className="flex-1 overflow-hidden">
-              <EmbroideryPreview
-                regions={regions}
-                config={config}
-              />
-            </div>
-          ) : activeTab === 'planner' ? (
+          {activeTab === 'planner' ? (
             <div className="flex-1 overflow-hidden">
               <StitchPlannerPanel
                 regions={regions}
