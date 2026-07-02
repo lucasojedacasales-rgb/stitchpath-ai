@@ -39,6 +39,7 @@ const DEFAULT_CONFIG = {
   mode: 'hybrid', remove_bg: false, tension_comp: 0.5,
   fill_angle: null, tatami_density: 0.4, vector_engine: 'hybrid',
   useVectorFusion: false,
+  contourSafeMode: true,
 };
 
 export default function Editor() {

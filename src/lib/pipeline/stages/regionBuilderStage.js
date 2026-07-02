@@ -8,6 +8,7 @@ import { enrichAllRegions } from '../../regionBuilder.js';
 import { getModeStrategy } from '../../digitizeModes.js';
 import { normalizeRegionForPipeline, filterBackgroundRegions } from '../regionNormalize.js';
 import { buildImageSampler, separateFillsAndContours } from '../../contourFromFill.js';
+import { separateFillsAndContoursSafe } from '../../contourSafeMode.js';
 
 export async function runRegionBuilder(ctx) {
   if (!ctx.vectorRegions || ctx.vectorRegions.length === 0) {
@@ -76,12 +77,24 @@ export async function runRegionBuilder(ctx) {
 
   const enriched = enrichAllRegions(named, width_mm, height_mm, fabric_type, ctx._useAdaptiveEngine);
 
-  // ── Contour Fix: separate fills from contour objects ──────────────────────
-  // Black border-like regions are removed from fills and converted to contours.
-  // Boundary contours are generated from remaining fill regions' path_points.
-  // edgeMap is used only to confirm borders, not as a primary contour source.
-  const sampler = await buildImageSampler(ctx.enhanced?.enhancedUrl || ctx.imageUrl);
-  const { fills, contours, report } = separateFillsAndContours(enriched, sampler, ctx.edgeMap);
+  // ── Contour separation ───────────────────────────────────────────────────
+  // Safe mode: clean outlines from fill boundaries only, no edgeMap, no micro-fragments.
+  // Normal mode: full separation with edgeMap confirmation + boundary contours.
+  const safeMode = ctx.config?.contourSafeMode === true;
+  let fills, contours, report;
+
+  if (safeMode) {
+    const result = separateFillsAndContoursSafe(enriched, ctx.config);
+    fills = result.fills;
+    contours = result.contours;
+    report = result.report;
+  } else {
+    const sampler = await buildImageSampler(ctx.enhanced?.enhancedUrl || ctx.imageUrl);
+    const result = separateFillsAndContours(enriched, sampler, ctx.edgeMap);
+    fills = result.fills;
+    contours = result.contours;
+    report = result.report;
+  }
 
   // Store contour objects separately for the canvas and stitch planner
   ctx.contourObjects = contours;

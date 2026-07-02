@@ -54,21 +54,22 @@ export async function runContourEngine(ctx) {
   const contourRegions = ctx.contours?.regions || [];
   console.log(`[ContourEngine] Contornos detectados: ${contourRegions.length}`);
 
-  // ── Build edge map from the ORIGINAL image ──────────────────────────────
-  // IMPORTANT: edgeMap is NOT a primary contour source. It is used ONLY for:
-  //   - confirming that a visible border exists
-  //   - estimating border color / darkness
-  //   - estimating contour width
-  //   - detecting clear internal details (eyes, mouth)
-  // Primary contour generation happens in regionBuilderStage via
-  // separateFillsAndContours() which builds contours from fill boundaries.
-  ctx.edgeMap = await buildEdgeMap(sourceUrl);
-  console.log(`[ContourEngine] Edge map construido (confirmación solo): ${ctx.edgeMap ? ctx.edgeMap.width + '×' + ctx.edgeMap.height : 'falló'}`);
+  // ── Edge map (skipped in safe mode — not needed) ────────────────────────
+  // Safe mode generates contours purely from fill boundaries; edgeMap is
+  // never used as a source or for confirmation.
+  const safeMode = ctx.config?.contourSafeMode === true;
+  if (safeMode) {
+    ctx.edgeMap = null;
+    console.log('[ContourEngine] Safe mode → edgeMap skipped');
+  } else {
+    ctx.edgeMap = await buildEdgeMap(sourceUrl);
+    console.log(`[ContourEngine] Edge map construido (confirmación solo): ${ctx.edgeMap ? ctx.edgeMap.width + '×' + ctx.edgeMap.height : 'falló'}`);
+  }
 
   // ── Build contour paths for FALLBACK regions only ───────────────────────
   // These contour regions are only used when vectorRegions is empty (fallback).
-  // edgeMap is passed for light confirmation snap, NOT as primary source.
-  if (contourRegions.length > 0) {
+  // In safe mode, skip edge snapping entirely.
+  if (contourRegions.length > 0 && !safeMode) {
     for (const r of contourRegions) {
       if (!r.id) r.id = `contour_${Math.random().toString(36).slice(2, 9)}`;
     }
