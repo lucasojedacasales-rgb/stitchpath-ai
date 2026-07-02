@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { X, Download, Clock, Layers, Palette, FileText, ChevronRight, ShieldCheck, ShieldAlert, Bug, Wrench, RefreshCw, Zap, Scissors } from 'lucide-react';
+import { X, Download, Clock, Layers, Palette, FileText, ChevronRight, ShieldCheck, ShieldAlert, Bug, Wrench, RefreshCw, Zap, Scissors, Route } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import PreflightPanel from './PreflightPanel';
 import ExportDebugPanel from './ExportDebugPanel';
@@ -18,7 +18,8 @@ import { computeExportReality } from '@/lib/exportRealityCheck';
 import { validateColorChangeIntegrity } from '@/lib/threadColorBlocks';
 import { generate3ColorTestDST } from '@/lib/ce01ColorTestFile';
 import { generateContourTestDST, generateOutlineOnlyDST } from '@/lib/contourTestFile';
-import { getContourExportReport } from '@/lib/contourExportBuilder';
+import { getContourExportReport, generateContourStitches } from '@/lib/contourExportBuilder';
+import { rebuildLowerOuterContoursFromDarkStroke } from '@/lib/lowerContourRebuilder';
 import ExportRealityCheck from './ExportRealityCheck';
 import ContourRefinePanel from './ContourRefinePanel';
 import { calculateUnifiedCommandMetrics, metricsMatch } from '@/lib/unifiedCommandMetrics';
@@ -47,7 +48,7 @@ function canExportInCE01ProductionMode({ commands, ce01Validation, encodeReady }
   return { allowed: true, reason: 'CE01 Production export allowed' };
 }
 
-export default function ExportModal({ project, config: editorConfig, regions: initialRegions, finalCommands: editorFinalCommands, finalObjects: editorFinalObjects, commandVersion, onClose }) {
+export default function ExportModal({ project, config: editorConfig, regions: initialRegions, darkStroke, finalCommands: editorFinalCommands, finalObjects: editorFinalObjects, commandVersion, onClose }) {
   const [step, setStep] = useState('preflight'); // 'preflight' | 'export'
   const [regions, setRegions] = useState(initialRegions || []);
   const [cleanupReport, setCleanupReport] = useState(null);
@@ -704,6 +705,39 @@ export default function ExportModal({ project, config: editorConfig, regions: in
               >
                 <Download className="w-3.5 h-3.5" />
                 Exportar Kirby completo con contorno refinado
+              </button>
+
+              {/* Test solo contorno inferior y pies — CAMBIO 9 (test aislado) */}
+              <button
+                onClick={() => {
+                  try {
+                    const { contours } = rebuildLowerOuterContoursFromDarkStroke(
+                      regions, { ...config, lowerContourWidth: 1.1 }, darkStroke
+                    );
+                    const cmds = [];
+                    for (const obj of contours) {
+                      const pts = generateContourStitches(obj, machineSettings);
+                      if (pts.length < 2) continue;
+                      if (cmds.length > 0) cmds.push({ type: 'trim' });
+                      cmds.push({ type: 'jump', x: pts[0][0], y: pts[0][1], color: obj.color, layerType: obj.layerType, regionId: obj.id });
+                      for (let i = 1; i < pts.length; i++) {
+                        cmds.push({ type: 'stitch', x: pts[i][0], y: pts[i][1], color: obj.color, layerType: obj.layerType, stitchType: obj.stitch_type, regionId: obj.id });
+                      }
+                    }
+                    if (cmds.length === 0) { setExportError('No se reconstruyeron contornos inferiores desde línea negra real.'); return; }
+                    const { blob } = buildDSTFromCommands(cmds, { label: 'LOWER_FEET_ONLY', ce01Strict: true });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url; a.download = 'LOWER_FEET_ONLY_TEST.dst'; a.click();
+                    URL.revokeObjectURL(url);
+                  } catch (e) {
+                    setExportError(`Test failed: ${e.message}`);
+                  }
+                }}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-cyan-900/20 border border-cyan-500/30 text-cyan-300 text-xs font-bold hover:bg-cyan-900/30 transition-colors"
+              >
+                <Route className="w-3.5 h-3.5" />
+                Test solo contorno inferior y pies
               </button>
 
               {/* Contour weak warning — not a block, just informational */}

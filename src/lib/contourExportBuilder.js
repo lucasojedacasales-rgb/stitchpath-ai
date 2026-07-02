@@ -62,6 +62,29 @@ function walkPath(points, stepMm, closed) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+//  UPPER-HALF CLIP — keep only y <= yMax portion of a closed body outline
+//  so the lower edge is NOT exported from the fill boundary. The lower edge is
+//  replaced by the dark-stroke rebuilt lower_body contour.
+// ═══════════════════════════════════════════════════════════════════════════
+function clipToUpperHalf(points, yMax = 0) {
+  if (!points || points.length < 3) return points;
+  const result = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i], b = points[i + 1];
+    const aAbove = a[1] <= yMax;
+    const bAbove = b[1] <= yMax;
+    if (aAbove) result.push([a[0], a[1]]);
+    if (aAbove !== bAbove) {
+      const t = (yMax - a[1]) / (b[1] - a[1]);
+      result.push([a[0] + (b[0] - a[0]) * t, yMax]);
+    }
+  }
+  const last = points[points.length - 1];
+  if (last[1] <= yMax) result.push([last[0], last[1]]);
+  return result;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 //  SATIN COLUMN — zigzag along a path with perpendicular offset
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -195,7 +218,11 @@ export function generateContourStitches(obj, machineSettings = {}) {
   }
   stitches = subDivided;
 
-  // Tie-in / tie-off (locking stitches)
+  // Tie-in / tie-off (locking stitches) — skipped for lower contours to avoid
+  // blob/cap clusters at the feet (triple-run is self-locking via 3 passes).
+  if (layerType === 'real_outline_lower') {
+    return [...stitches];
+  }
   const tieIn = generateTieIn(stitches[0]);
   const tieOff = generateTieOff(stitches[stitches.length - 1]);
 
@@ -261,6 +288,16 @@ export function buildContourObjects(regions, config = {}) {
     classifiedRegions,
   };
 
+  const darkStroke = config.darkStroke || null;
+  _lastDarkStroke = darkStroke;
+
+  // ── Rebuild lower body + feet contours from real dark stroke (BEFORE the
+  //    outline loop so the body fill-boundary outline can be clipped to the
+  //    upper half and foot fill-boundary outlines skipped entirely). ──
+  const lowerResult = rebuildLowerOuterContoursFromDarkStroke(
+    classifiedRegions, { ...config, lowerContourWidth: preset.lowerContourWidth }, darkStroke);
+  const lowerBodyRebuilt = lowerResult.report.lowerBodyContourPresent;
+
   let objects = [];
 
   for (const outline of outlines) {
@@ -271,6 +308,13 @@ export function buildContourObjects(regions, config = {}) {
     const name = (outline.name || '').toLowerCase();
     const rc = outline.region_class || '';
     const isOuter = rc === 'outer_outline';
+    const outlineGroup = (outline.parentGroupName || '').toLowerCase();
+
+    // ── Skip foot fill-boundary outlines — replaced by dark-stroke rebuild ──
+    if (isOuter && (outlineGroup === 'foot_left' || outlineGroup === 'foot_right')) {
+      console.log(`[lower-outline-fix] rejected fill-boundary foot outline: ${outline.name}`);
+      continue;
+    }
 
     // Skip cheeks/blush — no black contour unless original has it
     if (preset.skipContourNames.some(n => name.includes(n))) {
@@ -298,6 +342,15 @@ export function buildContourObjects(regions, config = {}) {
     mmPoints = refineContourPath(mmPoints, preset, isOuter);
     if (mmPoints.length < 3) continue;
 
+    // ── Body fill-boundary outline: keep ONLY the upper half. The lower edge
+    //    is replaced by the dark-stroke rebuilt lower_body contour so no
+    //    fill-boundary contour appears in the lower zone (rosa claro/oscuro).
+    if (isOuter && outlineGroup === 'body' && lowerBodyRebuilt) {
+      mmPoints = clipToUpperHalf(mmPoints, 0);
+      if (mmPoints.length < 3) continue;
+      outline._forceOpen = true;
+    }
+
     // Determine stitch type and width from preset
     let stitchType, contourWidth;
     if (isOuter) {
@@ -324,7 +377,7 @@ export function buildContourObjects(regions, config = {}) {
       isContour: true,
       contourWidthMm: contourWidth,
       points: mmPoints,
-      rawRegion: { ...outline, closed: true },
+      rawRegion: { ...outline, closed: !outline._forceOpen },
       ce01SafeFillMode: false,
     });
   }
@@ -335,19 +388,12 @@ export function buildContourObjects(regions, config = {}) {
   // ── Central semantic classification — classifyContourSegment ──
   // "Dark stroke first": pass the dark stroke mask from config so the
   // classifier can reject color boundaries without a real dark line.
-  const darkStroke = config.darkStroke || null;
-  _lastDarkStroke = darkStroke;
-
-  // ── Surgical rebuild: lower body + feet contours from real dark stroke ──
-  // Only foot_left / foot_right old outlines are removed & replaced. Body,
-  // mouth, eyes, cheeks and upper-face contour are NOT touched.
-  const lowerResult = rebuildLowerOuterContoursFromDarkStroke(
-    classifiedRegions, { ...config, lowerContourWidth: preset.lowerContourWidth }, darkStroke);
-  objects = objects.filter(o => {
-    const pg = (o.rawRegion?.parentGroupName || '').toLowerCase();
-    return pg !== 'foot_left' && pg !== 'foot_right';
-  });
+  // ── Append dark-stroke rebuilt lower contours (body lower + feet) ──
   objects = [...objects, ...lowerResult.contours];
+  console.log(`[lower-outline-fix] rejected fill boundaries: ${lowerResult.report.lowerContourRejectedSegments}`);
+  console.log(`[lower-outline-fix] rejected artificial closures: ${lowerResult.report.lowerContourOpenCaps}`);
+  console.log(`[lower-outline-fix] pink boundary outlined: false`);
+  console.log(`[lower-outline-fix] mouth preserved: ${objects.some(o => { const n = (o.name||'').toLowerCase(); return n.includes('mouth') || n.includes('boca') || o.layerType === 'facial_detail'; }) ? 'YES' : 'NO'}`);
 
   const classifiedCtx = { regions: classifiedRegions, config, darkStroke };
   const classified = objects.map(obj => ({

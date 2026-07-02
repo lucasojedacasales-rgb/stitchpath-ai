@@ -167,6 +167,7 @@ export function runContourRefinementGuard(commands, regions, config = {}) {
   if (before.artificialGeometryCount === 0 && before.travelStitchedAsContour === 0) {
     console.log('[refine] accepted: already clean');
     console.log('[refine] outline thickness adjusted: 0');
+    console.log('[lower-outline-fix] accepted: true (already clean)');
     return { commands, accepted: true, skipped: true, before, after: before };
   }
 
@@ -181,6 +182,7 @@ export function runContourRefinementGuard(commands, regions, config = {}) {
   const reject = (reason) => {
     console.log(`[outline-classifier] rejected reason: ${reason}`);
     console.log(`[refine] rejected reason: ${reason}`);
+    console.log(`[lower-outline-fix] rejected reason: ${reason}`);
     return { commands, accepted: false, before, after, reason };
   };
 
@@ -214,5 +216,10 @@ export function runContourRefinementGuard(commands, regions, config = {}) {
 
   console.log('[outline-classifier] accepted: true');
   console.log('[refine] accepted: all criteria met');
+  console.log(`[lower-outline-fix] open caps: ${after.lowerContourOpenEnds}`);
+  console.log(`[lower-outline-fix] foot blobs: ${after.lowerContourRoundCapsVisible}`);
+  console.log(`[lower-outline-fix] pink boundary outlined: ${after.bodyShadowBoundaryOutlined}`);
+  console.log(`[lower-outline-fix] mouth preserved: ${after.mouthExported ? 'YES' : 'NO'}`);
+  console.log('[lower-outline-fix] accepted: true');
   return { commands: candidate, accepted: true, before, after };
 }

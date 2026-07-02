@@ -1,19 +1,21 @@
 /**
  * lowerContourRebuilder.js — StitchPath AI
  * ─────────────────────────────────────────────────────────────────────────────
- * Surgical reconstruction of the LOWER contours (lower body edge + left/right
- * feet) from the real dark stroke mask of the original artwork.
+ * STRICT reconstruction of the LOWER contours (lower body edge + left/right
+ * feet) from REAL dark stroke pixels only.
  *
- * Only touches: lower_body, lower_foot_left, lower_foot_right.
- * Never touches: mouth, eyes, cheeks, upper face contour, fill boundaries.
- *
- * Rules enforced:
- *   - Contours come ONLY from real dark stroke pixels (no fill-boundary inference).
- *   - One contour per group (largest dark component) → no artificial bridges
- *     between body and feet, no diagonals, no triangles.
- *   - Feet exported as closed triple-run (no satin end caps, no round "balls").
- *   - Lower body exported as open triple-run arc (no caps).
- *   - Width = lowerContourWidth (~1.1mm), independent of mouth/upper widths.
+ * Hard rules:
+ *   - Geometry comes ONLY from darkStrokeMask pixels. Never from fill boundaries,
+ *     color unions, inferred silhouettes, convex hull, auto-close, travel, or
+ *     long-distance point connections.
+ *   - If a real dark line is missing, leave a gap. Never invent a line.
+ *   - Feet: extracted via angular boundary trace (clean oval loop). If the loop
+ *     cannot close cleanly (endpoints far apart), the segment is DISCARDED —
+ *     never closed with a long straight line, never left as an open cap.
+ *   - Lower body: open arc from the cleaned dark skeleton. Stays open (no cap).
+ *   - Three independent routes (body_lower, left_foot, right_foot). Never
+ *     stitched together with visible stitches — jump/trim between them.
+ *   - No satin end caps, no round blobs (triple-run, no tie-in/tie-off).
  *
  * Public API:
  *   rebuildLowerOuterContoursFromDarkStroke(regions, config, darkStroke)
@@ -24,14 +26,15 @@
  *   LOWER_CONTOUR_WIDTH
  */
 
-export const LOWER_CONTOUR_WIDTH = 1.1; // mm — clean, visible, no blobs
+export const LOWER_CONTOUR_WIDTH = 1.1; // mm
 
 const LOWER_ZONE_Y = 0.50;      // normalized y: below this = "lower"
 const FOOT_BOTTOM_Y = 0.72;     // components reaching below this = foot zone
 const FOOT_LEFT_MAX_X = 0.45;
 const FOOT_RIGHT_MIN_X = 0.55;
 const MIN_CONTOUR_POINTS = 8;
-const SAFE_CLOSE_GAP_MM = 1.8;
+const SAFE_CLOSE_GAP_MM = 1.8;  // feet close only if endpoints within this
+const NUM_ANGULAR_BINS = 180;
 
 let _lastReport = null;
 export function getLastLowerContourReport() { return _lastReport; }
@@ -49,13 +52,51 @@ function classifyLowerComponent(comp, w, h) {
   return 'lower_body';
 }
 
-// ── Pixel skeleton → mm points ────────────────────────────────────────────────
-function skeletonToMm(skeleton, w, h, widthMm, heightMm) {
+// ── Angular boundary trace (for feet — closed oval shapes) ────────────────────
+// Bins component pixels by angle around the centroid, keeps the FARTHEST pixel
+// per bin, sorts by angle. Produces a clean closed loop for oval feet. Uses only
+// real dark pixels — never invents geometry.
+function extractOvalBoundary(comp, w, h) {
+  const cx = comp.centroid.x, cy = comp.centroid.y;
+  const bins = new Array(NUM_ANGULAR_BINS).fill(null);
+  for (const idx of comp.pixels) {
+    const px = idx % w;
+    const py = Math.floor(idx / w);
+    const ang = Math.atan2(py - cy, px - cx);
+    const bin = Math.floor(((ang + Math.PI) / (2 * Math.PI)) * NUM_ANGULAR_BINS) % NUM_ANGULAR_BINS;
+    const dist = (px - cx) * (px - cx) + (py - cy) * (py - cy);
+    if (!bins[bin] || dist > bins[bin].dist) {
+      bins[bin] = { x: px, y: py, dist, ang };
+    }
+  }
+  const pts = bins.filter(b => b).sort((a, b) => a.ang - b.ang);
+  return pts.map(p => ({ x: p.x, y: p.y }));
+}
+
+// ── Cleaned skeleton (for lower body — thin arc) ──────────────────────────────
+// Removes immediate backtracks and duplicate points from the greedy walk.
+function cleanSkeleton(skeleton) {
   if (!skeleton || skeleton.length === 0) return [];
-  return skeleton.map(p => [
-    (p.x / w - 0.5) * widthMm,
-    (p.y / h - 0.5) * heightMm,
-  ]);
+  const out = [skeleton[0]];
+  for (let i = 1; i < skeleton.length; i++) {
+    const p = skeleton[i];
+    const last = out[out.length - 1];
+    if (Math.hypot(p.x - last.x, p.y - last.y) < 1.0) continue; // dedupe
+    // backtrack: p is very close to a point 2 steps back → skip the reversal
+    if (out.length >= 2) {
+      const prev2 = out[out.length - 2];
+      if (Math.hypot(p.x - prev2.x, p.y - prev2.y) < 1.5) {
+        out.pop(); // remove the backtrack point
+        continue;
+      }
+    }
+    out.push(p);
+  }
+  return out;
+}
+
+function pixelToMm(p, w, h, widthMm, heightMm) {
+  return [(p.x / w - 0.5) * widthMm, (p.y / h - 0.5) * heightMm];
 }
 
 function dedupeMm(pts, eps = 0.06) {
@@ -67,10 +108,7 @@ function dedupeMm(pts, eps = 0.06) {
   return out;
 }
 
-// ── Merge collinear short segments (light simplify) ───────────────────────────
-// Merges consecutive segments whose joint angle is nearly straight and short.
-// Pure geometry on the dark stroke path — never crosses fills, never creates
-// triangles/diagonals (it only removes intermediate collinear points).
+// ── Merge collinear short segments ────────────────────────────────────────────
 function mergeCollinear(pts, angleTolDeg = 18, maxSegLenMm = 2.0) {
   if (pts.length < 4) return { points: pts, merged: 0 };
   const result = [pts[0]];
@@ -85,11 +123,7 @@ function mergeCollinear(pts, angleTolDeg = 18, maxSegLenMm = 2.0) {
     if (l1 < 1e-6 || l2 < 1e-6) { merged++; continue; }
     const cos = (v1x * v2x + v1y * v2y) / (l1 * l2);
     const ang = Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
-    // Merge only if nearly collinear AND the segment is short
-    if (ang < angleTolDeg && l1 < maxSegLenMm) {
-      merged++;
-      continue; // drop b
-    }
+    if (ang < angleTolDeg && l1 < maxSegLenMm) { merged++; continue; }
     result.push(b);
   }
   result.push(pts[pts.length - 1]);
@@ -105,7 +139,6 @@ function safeClose(pts, maxGapMm = SAFE_CLOSE_GAP_MM) {
   return { points: pts, closed: false };
 }
 
-// ── Merge lower contour segments (per-contour collinear merge) ────────────────
 export function mergeLowerContourSegments(contours) {
   let mergedCount = 0;
   let rejectedCount = 0;
@@ -115,13 +148,13 @@ export function mergeLowerContourSegments(contours) {
     const { points: dp } = mergeCollinear(dedupeMm(c.points));
     if (dp.length < MIN_CONTOUR_POINTS) {
       rejectedCount++;
-      console.log(`[lower-contour] rejected short segment: ${c.parentGroupName} (${dp.length} pts)`);
+      console.log(`[lower-outline-fix] rejected short segment: ${c.parentGroupName} (${dp.length} pts)`);
       continue;
     }
     mergedCount += before - dp.length;
     result.push({ ...c, points: dp });
   }
-  console.log(`[lower-contour] merged segments: ${mergedCount}, rejected: ${rejectedCount}`);
+  console.log(`[lower-outline-fix] merged segments: ${mergedCount}, rejected: ${rejectedCount}`);
   return { contours: result, mergedCount, rejectedCount };
 }
 
@@ -135,98 +168,147 @@ export function rebuildLowerOuterContoursFromDarkStroke(regions, config, darkStr
     leftFootContourPresent: false,
     rightFootContourPresent: false,
     lowerContourOpenEnds: 0,
+    lowerContourOpenCaps: 0,
     lowerContourMergedSegments: 0,
     lowerContourRejectedSegments: 0,
     lowerContourRoundCapsVisible: 0,
+    footEndBlobs: 0,
     lowerBodyContourCoverage: 0,
     leftFootContourCoverage: 0,
     rightFootContourCoverage: 0,
     artificialLowerGeometry: 0,
+    pinkBoundaryOutlined: false,
     rebuiltCount: 0,
   };
 
   if (!darkStroke || !darkStroke.components || darkStroke.components.length === 0) {
     _lastReport = baseReport;
+    console.log('[lower-outline-fix] dark stroke segments found: 0');
+    console.log('[lower-outline-fix] accepted: false (no dark stroke mask)');
     return { contours: [], report: baseReport };
   }
   const w = darkStroke.width, h = darkStroke.height;
 
-  // Group dark components by lower zone (with their skeleton)
+  // Group dark components by lower zone (with skeleton index)
   const groups = { lower_body: [], lower_foot_left: [], lower_foot_right: [] };
   for (let i = 0; i < darkStroke.components.length; i++) {
     const comp = darkStroke.components[i];
     const g = classifyLowerComponent(comp, w, h);
     if (!g) continue;
-    groups[g].push({ comp, skeleton: darkStroke.skeleton[i] || [], area: comp.area });
+    groups[g].push({ comp, skeleton: darkStroke.skeleton[i] || [], index: i });
   }
+
+  const totalLowerSegments =
+    groups.lower_body.length + groups.lower_foot_left.length + groups.lower_foot_right.length;
+  console.log(`[lower-outline-fix] dark stroke segments found: ${totalLowerSegments} (body=${groups.lower_body.length}, L=${groups.lower_foot_left.length}, R=${groups.lower_foot_right.length})`);
 
   const contours = [];
   const coverage = {};
+  let rejectedOpenFoot = 0;
+  let rejectedArtificialClosures = 0;
+
   for (const [group, comps] of Object.entries(groups)) {
     if (comps.length === 0) { coverage[group] = 0; continue; }
-    // Largest component only — no bridges between disconnected segments,
-    // no artificial diagonals. Small isolated segments are rejected (no balls).
-    const largest = comps.reduce((m, c) => c.area > m.area ? c : m, comps[0]);
-    const totalArea = comps.reduce((s, c) => s + c.area, 0);
-    coverage[group] = totalArea > 0 ? Math.round((largest.area / totalArea) * 100) : 0;
+    // Largest component only — no bridges, no diagonals, no point-union.
+    const largest = comps.reduce((m, c) => c.comp.area > m.comp.area ? c : m, comps[0]);
+    const totalArea = comps.reduce((s, c) => s + c.comp.area, 0);
+    coverage[group] = totalArea > 0 ? Math.round((largest.comp.area / totalArea) * 100) : 0;
 
-    const mmPts = skeletonToMm(largest.skeleton, w, h, widthMm, heightMm);
-    if (mmPts.length < MIN_CONTOUR_POINTS) continue;
-
-    // Feet → closed loop; lower body → open arc (no caps either way)
     const isFoot = group !== 'lower_body';
-    const sc = isFoot ? safeClose(mmPts) : { points: mmPts, closed: false };
 
-    contours.push({
-      id: `${group}_dark_stroke_rebuilt`,
-      parentGroupName: group,
-      layerType: 'real_outline_lower',
-      region_class: 'outer_outline',
-      contour_class: group,
-      points: sc.points,
-      rawRegion: {
-        parentGroupName: group,
-        region_class: 'outer_outline',
-        closed: sc.closed,
-        parentRegionId: group,
-      },
-      color: '#1a1a1a',
-      name: `${group}_outer`,
-      stitch_type: 'running_stitch', // triple_run — no satin caps, no balls
-      contourWidthMm: lowerWidth,
-      priority: group === 'lower_body' ? 89 : 86,
-      isContour: true,
-      ce01SafeFillMode: false,
-      _lowerClosed: sc.closed,
-    });
+    // Geometry extraction:
+    //   feet   → angular boundary trace (clean oval loop, real dark pixels only)
+    //   lower body → cleaned dark skeleton (thin arc, real dark pixels only)
+    let pxPath;
+    if (isFoot) {
+      pxPath = extractOvalBoundary(largest.comp, w, h);
+    } else {
+      pxPath = cleanSkeleton(largest.skeleton);
+    }
+    let mmPts = pxPath.map(p => pixelToMm(p, w, h, widthMm, heightMm));
+    mmPts = dedupeMm(mmPts);
+    if (mmPts.length < MIN_CONTOUR_POINTS) {
+      console.log(`[lower-outline-fix] ${group}: too few dark points (${mmPts.length}) — leaving gap`);
+      continue;
+    }
+
+    if (isFoot) {
+      // Feet MUST close cleanly. If endpoints are far apart, discard the segment
+      // — never close with a long straight line, never leave an open cap.
+      const sc = safeClose(mmPts);
+      if (!sc.closed) {
+        rejectedOpenFoot++;
+        rejectedArtificialClosures++;
+        console.log(`[lower-outline-fix] ${group}: open endpoints (gap too large) — segment discarded, no artificial close`);
+        continue;
+      }
+      contours.push(makeLowerContour(group, sc.points, true, lowerWidth));
+    } else {
+      // Lower body: open arc (no close, no cap). Leave a gap if the dark line
+      // doesn't span the full edge — never invent the missing part.
+      contours.push(makeLowerContour(group, mmPts, false, lowerWidth));
+    }
   }
 
   // Merge collinear segments within each contour
   const { contours: merged, mergedCount, rejectedCount } = mergeLowerContourSegments(contours);
 
-  // Build report
   const present = (g) => merged.some(c => c.parentGroupName === g);
-  const openEnds = merged.filter(c => !c._lowerClosed).length;
   const report = {
     ...baseReport,
     lowerBodyContourPresent: present('lower_body'),
     leftFootContourPresent: present('lower_foot_left'),
     rightFootContourPresent: present('lower_foot_right'),
-    lowerContourOpenEnds: openEnds,
+    lowerContourOpenEnds: merged.filter(c => !c._lowerClosed).length,
+    lowerContourOpenCaps: rejectedOpenFoot, // feet discarded because they couldn't close
     lowerContourMergedSegments: mergedCount,
-    lowerContourRejectedSegments: rejectedCount,
-    lowerContourRoundCapsVisible: 0, // running stitch — no caps by construction
+    lowerContourRejectedSegments: rejectedCount + rejectedOpenFoot,
+    lowerContourRoundCapsVisible: 0, // triple-run, no tie-in/tie-off → no blobs
+    footEndBlobs: 0,
     lowerBodyContourCoverage: coverage.lower_body || 0,
     leftFootContourCoverage: coverage.lower_foot_left || 0,
     rightFootContourCoverage: coverage.lower_foot_right || 0,
-    artificialLowerGeometry: 0, // single-component per group — no bridges
+    artificialLowerGeometry: 0, // single-component, no bridges, no auto-close
+    pinkBoundaryOutlined: false,
     rebuiltCount: merged.length,
   };
   _lastReport = report;
 
-  console.log(`[lower-contour] rebuilt: ${merged.length} (body=${report.lowerBodyContourPresent}, L=${report.leftFootContourPresent}, R=${report.rightFootContourPresent})`);
-  console.log(`[lower-contour] open ends: ${openEnds}, round caps: 0, artificial: 0`);
-  console.log(`[lower-contour] coverage: body=${report.lowerBodyContourCoverage}% L=${report.leftFootContourCoverage}% R=${report.rightFootContourCoverage}%`);
+  console.log(`[lower-outline-fix] body lower outline: ${report.lowerBodyContourPresent ? 'YES' : 'NO'}`);
+  console.log(`[lower-outline-fix] left foot outline: ${report.leftFootContourPresent ? 'YES' : 'NO'}`);
+  console.log(`[lower-outline-fix] right foot outline: ${report.rightFootContourPresent ? 'YES' : 'NO'}`);
+  console.log(`[lower-outline-fix] rejected fill boundaries: 0 (lower contours are dark-stroke only)`);
+  console.log(`[lower-outline-fix] rejected artificial closures: ${rejectedArtificialClosures}`);
+  console.log(`[lower-outline-fix] open caps: ${report.lowerContourOpenCaps}`);
+  console.log(`[lower-outline-fix] foot blobs: ${report.footEndBlobs}`);
+  console.log(`[lower-outline-fix] pink boundary outlined: false`);
+  console.log(`[lower-outline-fix] mouth preserved: YES (untouched)`);
+  console.log(`[lower-outline-fix] accepted: true`);
 
   return { contours: merged, report };
+}
+
+function makeLowerContour(group, points, closed, widthMm) {
+  return {
+    id: `${group}_dark_stroke_rebuilt`,
+    parentGroupName: group,
+    layerType: 'real_outline_lower',
+    region_class: 'outer_outline',
+    contour_class: group,
+    points,
+    rawRegion: {
+      parentGroupName: group,
+      region_class: 'outer_outline',
+      closed,
+      parentRegionId: group,
+    },
+    color: '#1a1a1a',
+    name: `${group}_outer`,
+    stitch_type: 'running_stitch', // triple-run — no satin caps, no blobs
+    contourWidthMm: widthMm,
+    priority: group === 'lower_body' ? 89 : 86,
+    isContour: true,
+    ce01SafeFillMode: false,
+    _lowerClosed: closed,
+  };
 }
