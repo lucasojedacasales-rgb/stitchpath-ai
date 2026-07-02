@@ -572,7 +572,7 @@ export default function Editor() {
         </div>
       </div>
 
-      {showExport && <ExportModal project={project} regions={regions} finalCommands={finalEmbroideryCommands.commands} finalObjects={finalEmbroideryCommands.objects} onClose={() => setShowExport(false)} />}
+      {showExport && <ExportModal project={project} config={config} regions={regions} finalCommands={finalEmbroideryCommands.commands} finalObjects={finalEmbroideryCommands.objects} onClose={() => setShowExport(false)} />}
     </div>);
 
 }

@@ -17,7 +17,26 @@ import CE01ProductionPanel from './CE01ProductionPanel';
 
 const FORMATS = ['DST', 'PES', 'JEF', 'EXP'];
 
-export default function ExportModal({ project, regions: initialRegions, finalCommands: editorFinalCommands, finalObjects: editorFinalObjects, onClose }) {
+/**
+ * CE01 Production export gate — the ONLY authority for blocking export in
+ * production mode. Never consults stabilityScore, adaptiveResult, or
+ * geometryWarnings. Blocks only on: empty commands, CE01 INVALID, or
+ * encode failure.
+ */
+function canExportInCE01ProductionMode({ commands, ce01Validation, encodeReady }) {
+  if (!commands || commands.length === 0) {
+    return { allowed: false, reason: 'No hay comandos de bordado válidos' };
+  }
+  if (!encodeReady) {
+    return { allowed: false, reason: 'El archivo no se puede codificar' };
+  }
+  if (ce01Validation?.status === 'INVALID') {
+    return { allowed: false, reason: 'CE01 validator INVALID' };
+  }
+  return { allowed: true, reason: 'CE01 Production export allowed' };
+}
+
+export default function ExportModal({ project, config: editorConfig, regions: initialRegions, finalCommands: editorFinalCommands, finalObjects: editorFinalObjects, onClose }) {
   const [step, setStep] = useState('preflight'); // 'preflight' | 'export'
   const [regions, setRegions] = useState(initialRegions || []);
   const [cleanupReport, setCleanupReport] = useState(null);
@@ -42,7 +61,7 @@ export default function ExportModal({ project, regions: initialRegions, finalCom
   const [adaptiveReport, setAdaptiveReport] = useState(null);
   const [showAdaptiveReport, setShowAdaptiveReport] = useState(false);
 
-  const config = project?.config || {};
+  const config = editorConfig || project?.config || {};
   const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
   const colorsUsed = new Set(regions.map(r => r.color)).size;
   const estimatedMin = Math.ceil(totalStitches / (speed || 800));
@@ -121,23 +140,40 @@ export default function ExportModal({ project, regions: initialRegions, finalCom
     return prepareCE01ProductionExport(sourceCommands, regions, config, machineSettings, sourceObjects, format);
   }, [ce01ProductionMode, editorFinalCommands, editorFinalObjects, regions, config, machineSettings, format]);
 
+  // ── CE01 Production gate decision (used by button + handleExport) ──────
+  // Ignores stabilityScore, adaptiveReport, geometryWarnings entirely.
+  const productionGateDecision = useMemo(() => {
+    if (!ce01ProductionMode) return null;
+    const sourceCommands = editorFinalCommands || pipelineResult.commands;
+    return canExportInCE01ProductionMode({
+      commands: sourceCommands,
+      ce01Validation: productionReport?.ce01Report,
+      encodeReady: true,
+    });
+  }, [ce01ProductionMode, editorFinalCommands, pipelineResult.commands, productionReport]);
+
+  // In production mode, stale adaptive/stability states are ignored entirely
+  const effectiveAdaptiveReport = ce01ProductionMode ? null : adaptiveReport;
+
   const handleExport = async () => {
     // ── CE01 Production path: no recalculation, no aggressive optimizers ──
     if (ce01ProductionMode) {
-      console.log('[ce01-production-export] command source: finalEmbroideryCommands');
-      console.log('[ce01-production-export] ce01 status:', productionReport?.ce01Report?.status);
-
-      // In production mode, block ONLY on: empty commands, CE01 INVALID, or corrupt data.
-      // Never block on stabilityScore, adaptiveReport, or geometryWarnings.
       const sourceCommands = editorFinalCommands || pipelineResult.commands;
-      if (!sourceCommands || sourceCommands.length === 0) {
-        console.log('[ce01-production-export] export blocked reason: empty commands');
-        setExportError('Exportación bloqueada: no hay comandos de bordado.');
-        return;
-      }
-      if (!productionReport || !productionReport.exportAllowed) {
-        console.log('[ce01-production-export] export blocked reason: CE01 INVALID');
-        setExportError(`Exportación bloqueada por validación CE01: ${productionReport?.ce01Report?.blockingIssues?.length || 0} problema(s) crítico(s).`);
+      const ce01Validation = productionReport?.ce01Report;
+      const gateDecision = canExportInCE01ProductionMode({
+        commands: sourceCommands,
+        ce01Validation,
+        encodeReady: true,
+      });
+
+      console.log('[export-gate] ce01ProductionMode:', ce01ProductionMode);
+      console.log('[export-gate] adaptive gate active:', !ce01ProductionMode);
+      console.log('[export-gate] stabilityScore: ignored (production mode)');
+      console.log('[export-gate] ce01Validation:', ce01Validation?.status);
+      console.log('[export-gate] final decision:', gateDecision);
+
+      if (!gateDecision.allowed) {
+        setExportError(`Exportación bloqueada: ${gateDecision.reason}`);
         return;
       }
       console.log('[ce01-production-export] export allowed: true');
@@ -284,7 +320,7 @@ export default function ExportModal({ project, regions: initialRegions, finalCom
               }}
               onCancel={() => setStep('export')}
             />
-          ) : showAdaptiveReport && adaptiveReport ? (
+          ) : showAdaptiveReport && effectiveAdaptiveReport ? (
             <div className="p-5">
               <AdaptiveOptimizationReport
                 result={adaptiveReport}
@@ -516,12 +552,12 @@ export default function ExportModal({ project, regions: initialRegions, finalCom
                 )}
                 <button
                   onClick={handleExport}
-                  disabled={exporting || (ce01ProductionMode ? !productionReport?.exportAllowed : ((blockingErrors.length > 0 && !wizardResult) || ce01Report.status === 'INVALID'))}
+                  disabled={exporting || (ce01ProductionMode ? !productionGateDecision?.allowed : ((blockingErrors.length > 0 && !wizardResult) || ce01Report.status === 'INVALID'))}
                   className={`w-full py-2.5 rounded-lg text-white text-sm font-bold transition-colors flex items-center justify-center gap-2 disabled:cursor-not-allowed ${
                     ce01ProductionMode
-                      ? (!productionReport?.exportAllowed
+                      ? (!productionGateDecision?.allowed
                         ? 'bg-red-900/40 border border-red-500/30 text-red-300 cursor-not-allowed'
-                        : productionReport.ce01Report.status === 'RISKY'
+                        : productionReport?.ce01Report?.status === 'RISKY'
                           ? 'bg-amber-600 hover:bg-amber-500'
                           : 'bg-violet-600 hover:bg-violet-500 disabled:opacity-50')
                       : ((blockingErrors.length > 0 && !wizardResult) || ce01Report.status === 'INVALID'
@@ -532,7 +568,7 @@ export default function ExportModal({ project, regions: initialRegions, finalCom
                   }`}
                 >
                   {ce01ProductionMode ? (
-                    !productionReport?.exportAllowed ? (
+                    !productionGateDecision?.allowed ? (
                       <><ShieldAlert className="w-4 h-4" /> Exportación bloqueada</>
                     ) : exporting ? (
                       <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>

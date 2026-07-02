@@ -37,6 +37,14 @@ export default function CE01ProductionPanel({ report }) {
         <span className="text-[10px] text-slate-500 ml-auto">finalEmbroideryCommands</span>
       </div>
 
+      {/* Mode status — explicit ON/OFF flags */}
+      <div className="bg-[#0d0f14] border border-[#1e2130] rounded px-2.5 py-2 grid grid-cols-2 gap-x-3 gap-y-0.5">
+        <div className="text-[10px] text-slate-400 flex items-center gap-1"><span className="text-emerald-400 font-bold">ON</span><span>CE01 Production Mode</span></div>
+        <div className="text-[10px] text-slate-400 flex items-center gap-1"><span className="text-red-400 font-bold">OFF</span><span>Adaptive Engine</span></div>
+        <div className="text-[10px] text-slate-400 flex items-center gap-1"><span className="text-red-400 font-bold">OFF</span><span>Stability Gate 98</span></div>
+        <div className="text-[10px] text-slate-400 flex items-center gap-1"><span className="text-cyan-400 font-bold">ON</span><span>Export Gate: CE01 only</span></div>
+      </div>
+
       {/* Command source + pipeline */}
       <div className="bg-[#0d0f14] border border-[#1e2130] rounded px-2.5 py-2 space-y-0.5">
         <div className="text-[10px] text-slate-400 flex items-center gap-1.5">
