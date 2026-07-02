@@ -25,6 +25,7 @@
 import { optimizeObjectOrder, processObjectStitches } from './industrialStitchProcessor';
 import { generateCE01SafeFillCommands } from './ce01SafeFillGenerator.js';
 import { sanitizeCommandsForCE01 } from './ce01CommandSanitizer.js';
+import { repairCE01FinalCommands } from './ce01FinalCommandRepair.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -1036,6 +1037,13 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     validation = validatePipeline(commands, fixed.fixedObjects, ms, format);
   }
 
+  // Stage 3b: Final command repair — local fix for outside-region stitches
+  // Runs BEFORE sanitize. Only modifies commands, never regions/vectors.
+  const repairResult = repairCE01FinalCommands(commands, regions, { config, machineSettings: ms, objects });
+  if (repairResult.applied) {
+    commands = repairResult.commands;
+  }
+
   // Stage 4: CE01 sanitize (dedupe, merge micro, split long, optimize jumps + trims)
   const { commands: sanitizedCommands, report: sanitizeReport } = sanitizeCommandsForCE01(commands, ms);
   commands = sanitizedCommands;
@@ -1059,7 +1067,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
 
   _lastFinalCommandsMeta = meta;
 
-  return { commands, objects, meta, sanitizeReport, validation };
+  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, validation };
 }
 
 /**
