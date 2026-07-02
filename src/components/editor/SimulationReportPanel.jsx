@@ -5,7 +5,7 @@ import {
   Flame, Layers,
 } from 'lucide-react';
 import { analyzeSimulation } from '@/lib/simulationMetrics';
-import { buildStitchObjects, flattenToCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
+import { buildStitchObjects, flattenToCommands, DEFAULT_MACHINE, buildFinalCommands, logCommandsSync } from '@/lib/exportPipeline';
 import { runRepairEngine } from '@/lib/repairEngine';
 
 /**
@@ -21,8 +21,8 @@ export default function SimulationReportPanel({ regions, config, machineSettings
 
   // Full analysis (recomputed when regions change — e.g. after repair)
   const analysis = useMemo(() => {
-    const objs = buildStitchObjects(regions, config);
-    const cmds = flattenToCommands(objs, ms);
+    const { commands: cmds, objects: objs, meta } = buildFinalCommands(regions, config, ms);
+    logCommandsSync('simulation', meta);
     return analyzeSimulation(cmds, objs, ms, regions, config);
   }, [regions, config, ms.maxStitchLength, ms.maxJumpLength, ms.trimThreshold, ms.designOffset]);
 

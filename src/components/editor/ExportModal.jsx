@@ -8,7 +8,7 @@ import ValidationPreview from './ValidationPreview';
 import RepairProgressPanel from './RepairProgressPanel';
 import AdaptiveOptimizationReport from './AdaptiveOptimizationReport';
 import CE01ReportPanel from './CE01ReportPanel';
-import { runExportPipeline, encodeOptimizedToFile } from '@/lib/exportPipeline';
+import { runExportPipeline, encodeOptimizedToFile, buildFinalCommands, logCommandsSync } from '@/lib/exportPipeline';
 import { autoCleanupRegions } from '@/lib/autoCleanup';
 import { validateCE01 } from '@/lib/ce01Validator';
 import { sanitizeCommandsForCE01 } from '@/lib/ce01CommandSanitizer';
@@ -55,9 +55,21 @@ export default function ExportModal({ project, regions: initialRegions, onClose 
     trimThreshold: 3.5,
   };
 
-  // Run pipeline whenever regions/format change (memoized)
+  // Run pipeline whenever regions/format change (memoized) — uses buildFinalCommands
+  // so display metrics match simulation + validation exactly.
   const pipelineResult = useMemo(() => {
-    return runExportPipeline(regions, config, machineSettings, format);
+    const { commands, objects, meta, sanitizeReport, validation } = buildFinalCommands(regions, config, machineSettings, format);
+    logCommandsSync('export', meta);
+    return {
+      commands,
+      objects,
+      ready: validation.passed,
+      blockingErrors: validation.errors,
+      warnings: validation.warnings,
+      stages: { fixReport: { applied: [] } },
+      _meta: meta,
+      _sanitizeReport: sanitizeReport,
+    };
   }, [regions, format, widthMm, heightMm]);
 
   // CE01 validation + sanitization — before/after comparison

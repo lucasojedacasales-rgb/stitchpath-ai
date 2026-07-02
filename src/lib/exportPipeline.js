@@ -24,6 +24,7 @@
 
 import { optimizeObjectOrder, processObjectStitches } from './industrialStitchProcessor';
 import { generateCE01SafeFillCommands } from './ce01SafeFillGenerator.js';
+import { sanitizeCommandsForCE01 } from './ce01CommandSanitizer.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -871,8 +872,16 @@ export function runExportPipeline(regions, config, machineSettings, format) {
 export async function encodeOptimizedToFile(regions, config, format, machineSettings, base44Client) {
   // Lazy import to avoid circular dependency at module load time.
   const { runAdaptiveOptimization } = await import('./adaptiveOptimizationEngine');
-  const { sanitizeCommandsForCE01 } = await import('./ce01CommandSanitizer');
 
+  // ── Single source of truth: buildFinalCommands (flatten + autoFix + sanitize) ──
+  // All consumers (simulation, validation, export display, export encoding) use
+  // the same command sequence so metrics are consistent across panels.
+  const { commands: finalCommands, objects, meta, sanitizeReport } =
+    buildFinalCommands(regions, config, machineSettings, format);
+  logCommandsSync('export-encode', meta);
+
+  // Run adaptive optimization ONLY for scoring / gate decision — does NOT
+  // regenerate commands. The encoded commands come from buildFinalCommands.
   const result = runAdaptiveOptimization(regions, config, machineSettings, format);
 
   if (!result.readyToExport) {
@@ -885,15 +894,9 @@ export async function encodeOptimizedToFile(regions, config, format, machineSett
     throw err;
   }
 
-  // Sanitize commands for Caydo CE01 before encoding — removes duplicates,
-  // merges micro-stitches, splits long stitches, optimizes jumps + trims.
-  const { commands: sanitizedCommands, report: sanitizeReport } = sanitizeCommandsForCE01(
-    result.commands, machineSettings
-  );
-
-  // Encode the sanitized commands + objects
+  // Encode the final commands (already sanitized by buildFinalCommands)
   return {
-    blob: await encodeToFile(sanitizedCommands, result.objects, format, machineSettings, base44Client),
+    blob: await encodeToFile(finalCommands, objects, format, machineSettings, base44Client),
     optimizationResult: result,
     sanitizeReport,
   };
@@ -1003,6 +1006,88 @@ export async function encodeToFile(commands, objects, format, machineSettings, b
  * @param {Uint8Array} reference (optional — Wilcom-exported)
  * @returns { differences: Array, similarity: number }
  */
+// ═══════════════════════════════════════════════════════════════════════════
+//  SINGLE SOURCE OF TRUTH — finalEmbroideryCommands
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _lastFinalCommandsMeta = null;
+
+/**
+ * Builds the canonical final command sequence used by ALL consumers:
+ *   visualRegions → stitchPlanner → ce01SafeFill → contour → autoFix → sanitize
+ *
+ * Simulation, Validation, and Export MUST call this to get their commands.
+ * Returns { commands, objects, meta, sanitizeReport, validation }.
+ */
+export function buildFinalCommands(regions, config = {}, machineSettings = {}, format = 'DST') {
+  const ms = { ...DEFAULT_MACHINE, ...machineSettings };
+
+  // Stage 1: regions → objects
+  const objects = buildStitchObjects(regions, config);
+
+  // Stage 2: objects → raw commands
+  let commands = flattenToCommands(objects, ms);
+
+  // Stage 3: autoFix (R5 close, R4/R10 remove empty, R7 dedupe color, R6 dedupe trim, R9 END, R13 trim insertion)
+  let validation = validatePipeline(commands, objects, ms, format);
+  if (validation.fixable.length > 0 || !validation.passed) {
+    const fixed = autoFix(commands, objects, ms, format);
+    commands = fixed.fixedCommands;
+    validation = validatePipeline(commands, fixed.fixedObjects, ms, format);
+  }
+
+  // Stage 4: CE01 sanitize (dedupe, merge micro, split long, optimize jumps + trims)
+  const { commands: sanitizedCommands, report: sanitizeReport } = sanitizeCommandsForCE01(commands, ms);
+  commands = sanitizedCommands;
+
+  const stitchCount = commands.filter(c => c.type === 'stitch').length;
+  const jumpCount = commands.filter(c => c.type === 'jump').length;
+  const trimCount = commands.filter(c => c.type === 'trim').length;
+  const colorCount = commands.filter(c => c.type === 'colorChange').length + 1;
+
+  const meta = {
+    source: 'ce01_safe_pipeline',
+    generatedAt: new Date().toISOString(),
+    stitchCount,
+    jumpCount,
+    trimCount,
+    colorCount,
+    sanitized: true,
+    validatorVersion: 'ce01-v2',
+    generatorVersion: 'ce01-safe-fill-v1',
+  };
+
+  _lastFinalCommandsMeta = meta;
+
+  return { commands, objects, meta, sanitizeReport, validation };
+}
+
+/**
+ * Logs command sync info from a consumer (simulation / validation / export).
+ * Call from each panel's useMemo to verify all use the same source.
+ */
+export function logCommandsSync(consumer, meta) {
+  const sc = meta?.stitchCount ?? '?';
+  const jc = meta?.jumpCount ?? '?';
+  const tc = meta?.trimCount ?? '?';
+  console.log(`[commands-sync] ${consumer} source: ${meta?.source || 'unknown'}`);
+  console.log(`[commands-sync] stitch count: ${sc}`);
+  console.log(`[commands-sync] jump count: ${jc}`);
+  console.log(`[commands-sync] trim count: ${tc}`);
+
+  if (_lastFinalCommandsMeta) {
+    const same = _lastFinalCommandsMeta.source === meta?.source;
+    console.log(`[commands-sync] same command reference: ${same}`);
+    if (
+      _lastFinalCommandsMeta.stitchCount !== sc ||
+      _lastFinalCommandsMeta.jumpCount !== jc ||
+      _lastFinalCommandsMeta.trimCount !== tc
+    ) {
+      console.warn('[commands-sync] Simulación, validación y exportación no están usando el mismo set de comandos');
+    }
+  }
+}
+
 export function compareWithReference(generated, reference) {
   if (!reference) {
     return { differences: [{ type: 'no_reference', message: 'No se proporcionó archivo de referencia Wilcom — comparación omitida' }], similarity: null };

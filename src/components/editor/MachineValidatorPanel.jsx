@@ -5,7 +5,7 @@ import {
   Lightbulb, Wrench,
 } from 'lucide-react';
 import { validateForMachine } from '@/lib/machineValidator';
-import { runExportPipeline, DEFAULT_MACHINE } from '@/lib/exportPipeline';
+import { runExportPipeline, DEFAULT_MACHINE, buildFinalCommands, logCommandsSync } from '@/lib/exportPipeline';
 
 const STATUS_CONFIG = {
   SAFE:   { icon: ShieldCheck, color: 'emerald', label: 'SAFE',   desc: 'Ejecutable sin problemas' },
@@ -34,11 +34,16 @@ export default function MachineValidatorPanel({ regions, config, machineSettings
 
   const result = useMemo(() => {
     const ms = { ...DEFAULT_MACHINE, ...machineSettings };
-    let cmds = preCommands;
-    if (!cmds) {
-      const pipeline = runExportPipeline(regions, config, ms, 'DST');
-      cmds = pipeline.commands;
+    let cmds, meta;
+    if (preCommands) {
+      cmds = preCommands;
+      meta = { source: 'preCommands', stitchCount: cmds.filter(c => c.type === 'stitch').length, jumpCount: cmds.filter(c => c.type === 'jump').length, trimCount: cmds.filter(c => c.type === 'trim').length };
+    } else {
+      const built = buildFinalCommands(regions, config, ms);
+      cmds = built.commands;
+      meta = built.meta;
     }
+    logCommandsSync('validation', meta);
     return validateForMachine(regions, cmds, config, ms);
   }, [regions, config, machineSettings, preCommands]);
 
