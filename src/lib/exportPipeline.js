@@ -27,6 +27,7 @@ import { generateCE01SafeFillCommands } from './ce01SafeFillGenerator.js';
 import { sanitizeCommandsForCE01 } from './ce01CommandSanitizer.js';
 import { repairCE01FinalCommands } from './ce01FinalCommandRepair.js';
 import { optimizeCE01TravelPath } from './ce01TravelPathOptimizer.js';
+import { optimizeCE01Trims } from './ce01TrimOptimizer.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -1061,6 +1062,12 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     commands = finalTravelResult.commands;
   }
 
+  // Stage 4c: Trim optimization — remove unnecessary trims between close blocks
+  const trimResult = optimizeCE01Trims(commands, regions, config, ms);
+  if (trimResult.applied) {
+    commands = trimResult.commands;
+  }
+
   const stitchCount = commands.filter(c => c.type === 'stitch').length;
   const jumpCount = commands.filter(c => c.type === 'jump').length;
   const trimCount = commands.filter(c => c.type === 'trim').length;
@@ -1080,7 +1087,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
 
   _lastFinalCommandsMeta = meta;
 
-  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, validation };
+  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, validation };
 }
 
 /**

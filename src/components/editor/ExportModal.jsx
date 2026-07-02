@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { X, Download, Clock, Layers, Palette, FileText, ChevronRight, ShieldCheck, ShieldAlert, Bug, Wrench, RefreshCw } from 'lucide-react';
+import { X, Download, Clock, Layers, Palette, FileText, ChevronRight, ShieldCheck, ShieldAlert, Bug, Wrench, RefreshCw, Zap, Scissors } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import PreflightPanel from './PreflightPanel';
 import ExportDebugPanel from './ExportDebugPanel';
@@ -159,6 +159,22 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       encodeReady: true,
     });
   }, [ce01ProductionMode, editorFinalCommands, pipelineResult.commands, productionReport]);
+
+  // ── Unified metrics — single source of truth for all display ──────────────
+  // Uses the SAME commands that will be exported, so modal numbers always match
+  // the Editor's bottom bar.
+  const unifiedMetrics = useMemo(() => {
+    const cmds = editorFinalCommands || pipelineResult.commands;
+    return calculateUnifiedCommandMetrics(cmds, regions, { hoopSize: [widthMm, heightMm] });
+  }, [editorFinalCommands, pipelineResult.commands, regions, widthMm, heightMm]);
+
+  // ── Mismatch check — editor vs pipeline ────────────────────────────────────
+  const metricsMismatch = useMemo(() => {
+    if (!editorFinalCommands) return false;
+    const editorMetrics = calculateUnifiedCommandMetrics(editorFinalCommands, regions, { hoopSize: [widthMm, heightMm] });
+    const pipelineMetrics = calculateUnifiedCommandMetrics(pipelineResult.commands, regions, { hoopSize: [widthMm, heightMm] });
+    return !metricsMatch(editorMetrics, pipelineMetrics);
+  }, [editorFinalCommands, pipelineResult.commands, regions, widthMm, heightMm]);
 
   // In production mode, stale adaptive/stability states are ignored entirely
   const effectiveAdaptiveReport = ce01ProductionMode ? null : adaptiveReport;
@@ -515,13 +531,22 @@ export default function ExportModal({ project, config: editorConfig, regions: in
               {/* CE01 format test suite — minimal DST/DSB test files */}
               <CE01FormatTestPanel />
 
-              {/* Stats */}
-              <div className="grid grid-cols-4 gap-2">
+              {/* Metric mismatch warning */}
+              {metricsMismatch && (
+                <div className="text-[10px] text-red-400 bg-red-900/20 border border-red-500/30 rounded-lg px-3 py-2">
+                  Metric mismatch: trims are not synced — Regenera comandos finales.
+                </div>
+              )}
+
+              {/* Stats — from unified metrics (same source as Editor bottom bar) */}
+              <div className="grid grid-cols-3 gap-2">
                 {[
-                  { icon: Layers,   label: 'Puntadas', value: totalStitches.toLocaleString(), color: 'text-violet-400' },
-                  { icon: Palette,  label: 'Colores',  value: colorsUsed,                     color: 'text-cyan-400'   },
-                  { icon: Clock,    label: 'Est. (min)',value: estimatedMin,                    color: 'text-emerald-400'},
-                  { icon: FileText, label: 'Tamaño',   value: `${widthMm}×${heightMm}`,       color: 'text-amber-400'  },
+                  { icon: Layers,   label: 'Puntadas', value: unifiedMetrics.stitchCount.toLocaleString(), color: 'text-violet-400' },
+                  { icon: Zap,      label: 'Saltos',   value: unifiedMetrics.jumpCount,                     color: 'text-red-400'    },
+                  { icon: Scissors, label: 'Trims',    value: unifiedMetrics.trimCount,                     color: 'text-amber-400'  },
+                  { icon: Palette,  label: 'Colores',  value: unifiedMetrics.colorCount,                     color: 'text-cyan-400'   },
+                  { icon: Clock,    label: 'Est. (min)',value: Math.ceil(unifiedMetrics.stitchCount / (speed || 800)), color: 'text-emerald-400'},
+                  { icon: FileText, label: 'Tamaño',   value: `${widthMm}×${heightMm}`,                      color: 'text-amber-400'  },
                 ].map(({ icon: Icon, label, value, color }) => (
                   <div key={label} className="bg-[#0d0f14] rounded-lg p-2.5 text-center border border-[#1e2130]">
                     <Icon className={`w-4 h-4 ${color} mx-auto mb-1`} />

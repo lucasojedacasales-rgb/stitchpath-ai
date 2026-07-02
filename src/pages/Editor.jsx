@@ -17,6 +17,7 @@ import ExportModal from '@/components/editor/ExportModal';
 import MachineValidatorPanel from '@/components/editor/MachineValidatorPanel';
 import StabilityOptimizerPanel from '@/components/editor/StabilityOptimizerPanel';
 import TravelPathOptimizerPanel from '@/components/editor/TravelPathOptimizerPanel';
+import TrimOptimizerPanel from '@/components/editor/TrimOptimizerPanel';
 import SewingSimulator from '@/components/editor/SewingSimulator';
 import MachineSimulator from '@/components/editor/MachineSimulator';
 import SimulationReportPanel from '@/components/editor/SimulationReportPanel';
@@ -533,6 +534,14 @@ export default function Editor() {
             <div className="flex-1 overflow-y-auto p-4">
               <div className="max-w-md mx-auto space-y-4">
                 <TravelPathOptimizerPanel
+                  regions={regions}
+                  config={config}
+                  machineSettings={editorMachineSettings}
+                  finalCommands={finalEmbroideryCommands.commands}
+                  onOptimizationApplied={handleOptimizationApplied}
+                  onOptimizationDiscarded={handleOptimizationDiscarded}
+                />
+                <TrimOptimizerPanel
                   regions={regions}
                   config={config}
                   machineSettings={editorMachineSettings}

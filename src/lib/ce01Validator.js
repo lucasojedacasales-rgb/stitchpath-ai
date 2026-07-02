@@ -162,50 +162,42 @@ export function validateCE01(commands, objects = [], regions = [], config = {}, 
     score -= 30;
   }
 
-  // ── 2. Jump count (strong penalty for excessive jumps) ────────────────────
-  // CE01 home machines struggle with >500 jumps (thread tangling, long travel).
-  // >800 jumps = no SAFE status (force RISKY).
-  if (jumps > 800) {
+  // ── 2. Jump count ──────────────────────────────────────────────────────────
+  // >500 → RISKY strong, 250-500 → RISKY soft, 100-250 → minor, <100 → OK
+  if (jumps > 500) {
     warnings.push({
       check: 2,
-      message: `${jumps} saltos — excesivo. La máquina puede bordear mal o perder detalles. Usar Travel Path Optimizer.`,
+      message: `${jumps} saltos — excesivo. Usar Travel Path Optimizer.`,
     });
     score -= 15;
-  } else if (jumps > 500) {
+  } else if (jumps > 250) {
     warnings.push({
       check: 2,
-      message: `${jumps} saltos — revisar eficiencia de pathing. Considera optimizar travel path.`,
+      message: `${jumps} saltos — algo elevado para CE01.`,
     });
-    score -= 10;
-  } else if (jumps > 200) {
-    warnings.push({
-      check: 2,
-      message: `${jumps} saltos — eficiencia de pathing mejorable.`,
-    });
-    score -= Math.min(8, (jumps - 200) * 0.04);
-  } else if (jumps > 50) {
-    warnings.push({ check: 2, message: `${jumps} saltos — revisar pathing.` });
-    score -= Math.min(5, (jumps - 50) * 0.1);
+    score -= 8;
+  } else if (jumps > 100) {
+    warnings.push({ check: 2, message: `${jumps} saltos — eficiencia mejorable.` });
+    score -= 4;
   }
 
-  // ── 2b. Trim count (strong penalty for excessive trims) ──────────────────
-  // >150 trims = no SAFE status (force RISKY). Excessive trims slow production
-  // and increase thread break risk on home machines.
+  // ── 2b. Trim count ─────────────────────────────────────────────────────────
+  // >150 → RISKY strong, 80-150 → RISKY soft, 40-80 → WARNING, <40 → OK
   if (trims > 150) {
     warnings.push({
       check: 2,
-      message: `${trims} cortes (trim) — excesivo. Ralentiza la producción y aumenta riesgo de rotura de hilo.`,
+      message: `${trims} cortes (trim) — excesivo. Usar Trim Optimizer para reducir.`,
     });
-    score -= 12;
-  } else if (trims > 100) {
+    score -= 15;
+  } else if (trims > 80) {
     warnings.push({
       check: 2,
       message: `${trims} cortes — considerar reducir trims innecesarios.`,
     });
     score -= 8;
-  } else if (trims > 50) {
+  } else if (trims > 40) {
     warnings.push({ check: 2, message: `${trims} cortes — algo elevado.` });
-    score -= Math.min(6, (trims - 50) * 0.1);
+    score -= 4;
   }
 
   // ── 3. Jumps > 3.5mm without trim ─────────────────────────────────────────
@@ -214,7 +206,7 @@ export function validateCE01(commands, objects = [], regions = [], config = {}, 
       check: 3,
       message: `${longJumpsNoTrim} salto(s) >${CE01_TRIM_THRESHOLD}mm sin trim previo — riesgo de enredo de hilo.`,
     });
-    score -= Math.min(15, longJumpsNoTrim * 3);
+    score -= Math.min(5, longJumpsNoTrim * 1);
   }
 
   // ── 4. Short stitches ─────────────────────────────────────────────────────
@@ -223,7 +215,7 @@ export function validateCE01(commands, objects = [], regions = [], config = {}, 
       check: 4,
       message: `${shortStitches} puntadas <${CE01_MIN_STITCH}mm — posible densidad excesiva o ruido.`,
     });
-    score -= Math.min(15, shortStitches * 0.2);
+    score -= Math.min(5, shortStitches * 0.1);
   }
 
   // ── 5. Long stitches ──────────────────────────────────────────────────────
@@ -241,7 +233,7 @@ export function validateCE01(commands, objects = [], regions = [], config = {}, 
       check: 6,
       message: `${duplicates} puntadas duplicadas — posible redundancia de pathing.`,
     });
-    score -= Math.min(10, duplicates * 0.1);
+    score -= Math.min(5, duplicates * 0.1);
   }
 
   // ── 7. Coordinates outside hoop ───────────────────────────────────────────
@@ -282,11 +274,11 @@ export function validateCE01(commands, objects = [], regions = [], config = {}, 
   }
   if (noTieIn > 0) {
     warnings.push({ check: 9, message: `${noTieIn} región(es) sin tie-in detectado.` });
-    score -= Math.min(10, noTieIn * 2);
+    score -= Math.min(3, noTieIn * 0.5);
   }
   if (noTieOff > 0) {
     warnings.push({ check: 10, message: `${noTieOff} región(es) sin tie-off detectado.` });
-    score -= Math.min(10, noTieOff * 2);
+    score -= Math.min(3, noTieOff * 0.5);
   }
 
   // ── 11. Color changes ─────────────────────────────────────────────────────
@@ -338,8 +330,8 @@ export function validateCE01(commands, objects = [], regions = [], config = {}, 
 
   // ── Determine status ──────────────────────────────────────────────────────
   score = Math.max(0, Math.min(100, Math.round(score)));
-  // Force RISKY when jumps > 800 or trims > 150 — never SAFE with excessive travel
-  const excessiveTravel = jumps > 800 || trims > 150;
+  // RISKY when jumps > 250 or trims > 80 — prevents SAFE with excessive travel
+  const excessiveTravel = jumps > 250 || trims > 80;
   const status = blockingIssues.length > 0
     ? 'INVALID'
     : (excessiveTravel || score < 80) ? 'RISKY' : 'SAFE';
