@@ -96,6 +96,13 @@ export async function runRegionBuilder(ctx) {
     report = result.report;
   }
 
+  // Ensure fills don't carry a duplicated contour object — safe mode already
+  // nulls fill.contour, but non-safe mode may still set it. Clear to prevent
+  // double rendering on the canvas (standalone contour objects exist in contours[]).
+  for (const f of fills) {
+    if (f.contour) delete f.contour;
+  }
+
   // Store contour objects separately for the canvas and stitch planner
   ctx.contourObjects = contours;
   // ctx.regions contains only fill objects (contour objects are in ctx.contourObjects)

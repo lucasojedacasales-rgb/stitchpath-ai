@@ -47,21 +47,18 @@ export function buildSafeOutlineFromFill(region, options = {}) {
 
   const epsilon = options.epsilon ?? SAFE_RDP_EPSILON;
 
-  // 1. Dedupe
+  // 1. Dedupe (also strips closing duplicate → leaves an OPEN path)
   let contour = dedupePoints(pts);
   if (contour.length < SAFE_MIN_PTS) return null;
 
-  // 2. Close
-  contour = ensureClosed(contour);
-
-  // 3. Simplify (slightly aggressive — clean lines over detail)
+  // 2. Simplify on the OPEN path (RDP on a pre-closed polygon deforms contours)
   contour = rdpSimplify(contour, epsilon);
   if (contour.length < SAFE_MIN_PTS) return null;
 
-  // 4. Light smooth (1 Chaikin pass)
+  // 3. Light smooth (1 Chaikin pass)
   contour = chaikinOnce(contour);
 
-  // 5. Re-close
+  // 4. Close AFTER simplify + smooth
   contour = ensureClosed(contour);
   if (contour.length < SAFE_MIN_PTS) return null;
 
@@ -73,7 +70,7 @@ export function buildSafeOutlineFromFill(region, options = {}) {
   const perim = perimeterNorm(contour);
   if (perim < SAFE_MIN_PERIMETER) return null;
 
-  const color = region.color || region.hex || '#1a1a1a';
+  const color = options.contourColor || region.contourColor || '#1a1a1a';
   const baseName = (region.name || region.object || 'body')
     .replace(/_(fill|sat|run|contour|outline|detail)$/i, '');
 
@@ -145,17 +142,27 @@ export function separateFillsAndContoursSafe(regions, config = {}) {
   // ── 3. Remaining fills (exclude borders + whitelisted details) ───────────
   const allContourIds = new Set([...borderIds, ...detailIds]);
   const fills = regions.filter(r => !allContourIds.has(r.id));
-  for (const f of fills) f.type = 'fill';
+  for (const f of fills) {
+    f.type = 'fill';
+    f.stitch_type = 'fill';
+    f.contour = null;
+  }
 
-  // ── 4. Generate safe outlines from each fill ─────────────────────────────
+  // ── 4. Generate safe outlines from each fill (optional) ──────────────────
+  // Synthetic outlines from fill boundaries are OFF by default — they produce
+  // false coloured rays. Only enabled when config.generateSyntheticSafeOutlines === true.
+  // When enabled, always uses safe black #1a1a1a — never the fill's own colour.
+  const syntheticOutlines = config.generateSyntheticSafeOutlines === true;
   const contours = [];
   let outlinesGenerated = 0;
-  for (const fill of fills) {
-    const outline = buildSafeOutlineFromFill(fill);
-    if (outline) {
-      fill.contour = outline;
-      contours.push(outline);
-      outlinesGenerated++;
+  if (syntheticOutlines) {
+    for (const fill of fills) {
+      const outline = buildSafeOutlineFromFill(fill, { contourColor: '#1a1a1a' });
+      if (outline) {
+        // Standalone contour object — do NOT assign to fill.contour (prevents double render)
+        contours.push(outline);
+        outlinesGenerated++;
+      }
     }
   }
 
@@ -187,15 +194,17 @@ export function separateFillsAndContoursSafe(regions, config = {}) {
   const deduped = deduplicateContourObjects(safeContours);
   const dedupRejected = safeContours.length - deduped.length;
 
-  // ── 9. Logs ──────────────────────────────────────────────────────────────
-  console.log(`[contour-safe] outlines generated from fills: ${outlinesGenerated}`);
-  console.log(`[contour-safe] edge fragments ignored: all (safe mode bypasses edgeMap)`);
-  console.log(`[contour-safe] internal details accepted: ${detailsAccepted}`);
-  console.log(`[contour-safe] internal details rejected: ${detailsRejected}`);
-  console.log(`[contour-safe] black fill regions converted: ${blackConverted}`);
-  console.log(`[contour-safe] final contours: ${deduped.length}`);
-  console.log(`[contour-safe] rejected noise: ${rejectedNoise + dedupRejected}`);
-  console.log(`[contour-safe] contour names: ${deduped.map(c => c.name).join(', ') || 'none'}`);
+  // ── 9. Logs (mandatory) ─────────────────────────────────────────────────
+  console.log(`[contour-safe-fix] fills forced as fill: ${fills.length}`);
+  console.log(`[contour-safe-fix] standalone contours: ${deduped.length}`);
+  console.log(`[contour-safe-fix] synthetic outlines enabled: ${syntheticOutlines}`);
+  console.log(`[contour-safe-fix] fill.contour cleared: ${fills.length}`);
+  console.log(`[contour-safe-fix] outlines generated from fills: ${outlinesGenerated}`);
+  console.log(`[contour-safe-fix] internal details accepted: ${detailsAccepted}`);
+  console.log(`[contour-safe-fix] internal details rejected: ${detailsRejected}`);
+  console.log(`[contour-safe-fix] black fill regions converted: ${blackConverted}`);
+  console.log(`[contour-safe-fix] final contours: ${deduped.length}`);
+  console.log(`[contour-safe-fix] contour names: ${deduped.map(c => c.name).join(', ') || 'none'}`);
 
   return {
     fills,
@@ -252,8 +261,8 @@ function convertDarkRegionToSafeContour(region, fills, role = 'outline') {
   const pts = region.path_points;
   if (!pts || pts.length < SAFE_MIN_PTS) return null;
 
+  // RDP on OPEN path first (dedupe strips closing point), then close after.
   let contour = dedupePoints(pts);
-  contour = ensureClosed(contour);
   contour = rdpSimplify(contour, SAFE_RDP_EPSILON);
   contour = chaikinOnce(contour);
   contour = ensureClosed(contour);

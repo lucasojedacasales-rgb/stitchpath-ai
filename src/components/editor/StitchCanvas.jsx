@@ -18,40 +18,23 @@ import { drawContourLayer } from '@/lib/contourLayerRenderer';
 function getEffectiveRenderType(region) {
   if (!region) return 'fill';
 
-  // Explicit contour flag from pipeline
-  if (region.is_auto_contour === true) return 'satin_contour';
-  if (/^contour_/i.test(region.name || '')) return 'satin_contour';
-
-  const type = region.stitch_type;
-
-  // Explicit running stitch from pipeline (e.g. small details)
-  if (type === 'running_stitch') return 'running';
-
-  // Satin: classify by geometric compactness into three rendering modes.
-    // compacidad = 4π·area / perimeter² (circle=1, thin strip≈0).
-    // mean_width = area / skeleton_length — true physical width of the shape.
-    if (type === 'satin') {
-      const meanW     = region.mean_width_mm || 0;
-      const compact   = region.compacidad    || 0;  // 0=very elongated, 1=circle
-      const areaMm2   = region.area_mm2      || 0;
-      const perimMm   = region.perimeter_mm  || 1;
-      // Compute true compactness from raw values (most reliable)
-      const trueCompact = (4 * Math.PI * areaMm2) / (perimMm * perimMm);
-
-      // Very compact + wide (compact > 0.3, mean > 6mm): wide body satin fill
-      if (trueCompact > 0.3 && meanW > 4) return 'satin_fill';
-      // Compact medium (compact > 0.15, mean > 3mm): medium satin fill
-      if (trueCompact > 0.15 && meanW > 3) return 'satin_fill';
-      // Everything else (elongated, ring-shaped, thin): satin contour columns
-      return 'satin_contour';
-    }
-
-  // Geometric fallback: compactness ratio — very elongated rings are contours
-  if (region.area_mm2 && region.perimeter_mm) {
-    const ratio = region.area_mm2 / (region.perimeter_mm * region.perimeter_mm);
-    if (ratio < 0.015) return 'satin_contour'; // very thin ring
+  // Type-first classification — safe mode sets explicit type on every object.
+  if (region.type === 'contour') {
+    if (region.stitch_type === 'satin') return 'satin_contour';
+    return 'running';
   }
 
+  if (region.type === 'fill') {
+    return 'fill';
+  }
+
+  // Fallback by stitch_type for legacy regions without explicit type
+  const type = region.stitch_type;
+  if (type === 'fill') return 'fill';
+  if (type === 'running_stitch') return 'running';
+  if (type === 'satin') return 'satin_fill';
+
+  // Default: fill. No geometric satin_contour conversion for narrow fills.
   return 'fill';
 }
 
@@ -262,6 +245,7 @@ export default function StitchCanvas({
     // This matches real machine order: fill first, border stitches last.
     const fillRegions    = validRegions.filter(r => getEffectiveRenderType(r) === 'fill');
     const contourRegions = validRegions.filter(r => getEffectiveRenderType(r) !== 'fill');
+    const hasStandaloneContours = contourRegions.length > 0;
 
     // ── PASS 1: Fill regions (clipped to polygon) ────────────────────────────
     if (showFill) {
@@ -316,11 +300,11 @@ export default function StitchCanvas({
       }
     }
 
-    // ── PASS 2b: Dedicated contour layer — drawn from region.contour ────────
-    // Fill regions that have a separate contour object get their contour
-    // drawn on top of the fill, using the contour's own points/color/width.
-    // This is the clean separation: fill from path_points, contour from contour_points.
-    if (showContour) {
+    // ── PASS 2b: Contour fallback — only when no standalone contour objects exist
+    // If separateFillsAndContoursSafe produced standalone contour objects (in
+    // contourRegions), they are drawn in Pass 3. This fallback is only used
+    // when contour regions are absent (non-safe mode or legacy data).
+    if (showContour && !hasStandaloneContours) {
       for (const region of fillRegions) {
         if (region.visible === false) continue;
         if (!region.contour) continue;
@@ -351,6 +335,10 @@ export default function StitchCanvas({
       }
     }
 
+    console.log(`[canvas-fix] standalone contour objects: ${contourRegions.length}`);
+    console.log(`[canvas-fix] skipped fill.contour fallback: ${hasStandaloneContours}`);
+    console.log(`[canvas-fix] fill regions rendered: ${fillRegions.length}`);
+    console.log(`[canvas-fix] contour regions rendered: ${contourRegions.length}`);
     ctx.restore();
     drawZoomBadge(ctx, W, H, zoom);
   }, [regions, zoom, offset, stitchOpacity, showFill, showContour, viewMode]);
