@@ -28,6 +28,7 @@ import { enrichAllRegions } from '@/lib/regionBuilder.js';
 import { getModeStrategy } from '@/lib/digitizeModes.js';
 import { filterValidVisualRegions } from '@/lib/visualRegionGuard';
 import { buildFinalCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
+import { simplifyGeometry } from '@/lib/industrialStitchProcessor';
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
 import { useDecisionEngine } from '@/hooks/useDecisionEngine.js';
@@ -337,6 +338,15 @@ export default function Editor() {
   const totalStitches = useMemo(() => regions.reduce((s, r) => s + (r.stitch_count || 0), 0), [regions]);
   const colorsUsed = useMemo(() => new Set(regions.map((r) => r.color)).size, [regions]);
 
+  const handleSimplifyGeometry = useCallback(() => {
+    setRegions(prev => prev.map(r => {
+      if (!r.path_points || r.path_points.length < 4) return r;
+      const simplified = simplifyGeometry(r.path_points, 0.008);
+      if (!simplified || simplified.length < 3) return r;
+      return { ...r, path_points: simplified };
+    }));
+  }, []);
+
   if (loading) return <div className="min-h-screen bg-[#0d0f14] flex items-center justify-center"><div className="w-8 h-8 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" /></div>;
 
   return (
@@ -462,6 +472,7 @@ export default function Editor() {
                   config={config}
                   machineSettings={editorMachineSettings}
                   commands={finalEmbroideryCommands.commands}
+                  onSimplifyGeometry={handleSimplifyGeometry}
                 />
               </div>
             </div>

@@ -28,7 +28,7 @@ const SEVERITY_STYLES = {
   INFO:     { bg: 'bg-blue-950/20', border: 'border-blue-500/20', text: 'text-blue-400', label: 'INFO' },
 };
 
-export default function MachineValidatorPanel({ regions, config, machineSettings, commands: preCommands }) {
+export default function MachineValidatorPanel({ regions, config, machineSettings, commands: preCommands, onSimplifyGeometry }) {
   const [expandedIssues, setExpandedIssues] = useState(true);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
@@ -224,8 +224,9 @@ export default function MachineValidatorPanel({ regions, config, machineSettings
               ))}
               {suggestions.length > 0 && (
                 <button
-                  className="w-full mt-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-cyan-500/30 bg-cyan-950/20 text-cyan-300 text-[10px] font-bold hover:bg-cyan-950/40 transition-colors"
-                  onClick={() => console.log('[ce01-validator] Simplify geometry requested — manual action required')}
+                  className="w-full mt-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-cyan-500/30 bg-cyan-950/20 text-cyan-300 text-[10px] font-bold hover:bg-cyan-950/40 transition-colors disabled:opacity-40"
+                  onClick={onSimplifyGeometry}
+                  disabled={!onSimplifyGeometry}
                 >
                   <Wrench className="w-3 h-3" />
                   Simplificar geometría visual
