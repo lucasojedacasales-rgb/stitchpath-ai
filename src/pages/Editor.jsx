@@ -247,6 +247,22 @@ export default function Editor() {
     }
     setRegions(valid);
   }, []);
+
+  // ═══ Visual guard: validation/optimization must be read-only ═══
+  // Backs up valid visual regions and restores them if any validation
+  // or optimization process corrupts the visual state (e.g. replaces
+  // fills/contours with command arrays or a single black outline).
+  const lastValidRegionsRef = useRef([]);
+  useEffect(() => {
+    const valid = filterValidVisualRegions(regions);
+    if (valid.length > 0) {
+      lastValidRegionsRef.current = regions;
+    } else if (lastValidRegionsRef.current.length > 0) {
+      console.warn('[validate-fix] mutation detected: visual regions corrupted — restoring from backup');
+      console.log('[validate-fix] validation is read-only: visual state restored');
+      setRegions(lastValidRegionsRef.current);
+    }
+  }, [regions]);
   const handleRename = useCallback(async (name) => {
     if (!id || !name.trim()) return;
     const updated = await base44.entities.Project.update(id, { name: name.trim() });
@@ -376,7 +392,6 @@ export default function Editor() {
                     designOffset: [0, 0],
                     trimThreshold: 3.5,
                   }}
-                  onOptimized={handleRegionsUpdate}
                 />
                 <div className="flex items-center gap-2 mb-3">
                   <ShieldCheck className="w-4 h-4 text-violet-400" />
