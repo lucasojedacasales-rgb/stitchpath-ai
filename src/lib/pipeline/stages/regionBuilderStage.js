@@ -9,8 +9,26 @@ import { getModeStrategy } from '../../digitizeModes.js';
 
 export async function runRegionBuilder(ctx) {
   if (!ctx.vectorRegions || ctx.vectorRegions.length === 0) {
-    ctx.regions = [];
-    return;
+    // Last-resort fallback: build regions directly from contours so the
+    // pipeline always produces ctx.regions when contour data exists.
+    const contourRegions = ctx.contours?.regions || [];
+    if (contourRegions.length > 0) {
+      const cfg = ctx.config;
+      const w = cfg.width_mm || 100, h = cfg.height_mm || 100;
+      ctx.vectorRegions = contourRegions
+        .filter(r => r.path_points && r.path_points.length >= 3 && (r.hex || r.color))
+        .map(r => ({
+          ...r,
+          color:       r.color || r.hex,
+          area_mm2:    r.area_mm2 || (r.area_norm || 0) * w * h,
+          stitch_type: r.stitch_type || 'fill',
+        }));
+      console.log(`[RegionBuilder] Fallback contornos → ${ctx.vectorRegions.length} vectorRegions`);
+    }
+    if (!ctx.vectorRegions || ctx.vectorRegions.length === 0) {
+      ctx.regions = [];
+      return;
+    }
   }
 
   const strategy = getModeStrategy(ctx.config.mode || 'hybrid');
@@ -60,6 +78,7 @@ export async function runRegionBuilder(ctx) {
   });
 
   ctx.regions = enrichAllRegions(named, width_mm, height_mm, fabric_type, ctx._useAdaptiveEngine);
+  console.log(`[RegionBuilder] Regiones finales: ${ctx.regions.length}`);
 }
 
 // ─── Semantic matching ────────────────────────────────────────────────────────

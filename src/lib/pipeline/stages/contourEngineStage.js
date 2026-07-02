@@ -49,4 +49,5 @@ export async function runContourEngine(ctx) {
   }
 
   ctx.contours = await traceContoursProf(sourceUrl, colorCount, modeOpts);
+  console.log(`[ContourEngine] Contornos detectados: ${ctx.contours?.regions?.length ?? 0}`);
 }
