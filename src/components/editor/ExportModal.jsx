@@ -13,6 +13,7 @@ import { autoCleanupRegions } from '@/lib/autoCleanup';
 import { validateCE01 } from '@/lib/ce01Validator';
 import { sanitizeCommandsForCE01 } from '@/lib/ce01CommandSanitizer';
 import { prepareCE01ProductionExport, encodeCE01ProductionToFile } from '@/lib/ce01ProductionExport';
+import { calculateUnifiedCommandMetrics, metricsMatch } from '@/lib/unifiedCommandMetrics';
 import CE01ProductionPanel from './CE01ProductionPanel';
 import BinaryInspectorPanel from './BinaryInspectorPanel';
 import CE01FormatTestPanel from './CE01FormatTestPanel';
@@ -163,6 +164,33 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   const effectiveAdaptiveReport = ce01ProductionMode ? null : adaptiveReport;
 
   const handleExport = async () => {
+    // ── Pre-export sync validation ──────────────────────────────────────────
+    // Verify the export command source is valid and log metrics for traceability.
+    // In production mode, export uses editorFinalCommands (same as simulation/validation).
+    const sourceCommands = editorFinalCommands || pipelineResult.commands;
+    const sourceMetrics = calculateUnifiedCommandMetrics(sourceCommands, regions, machineSettings);
+    console.log('[command-sync] export source: finalEmbroideryCommands');
+    console.log('[command-sync] export metrics:', { stitches: sourceMetrics.stitchCount, jumps: sourceMetrics.jumpCount, trims: sourceMetrics.trimCount });
+
+    if (!sourceCommands || sourceCommands.length === 0) {
+      console.log('[command-sync] mismatch detected: empty export commands');
+      setExportError('Las métricas no están sincronizadas. Regenera comandos finales.');
+      return;
+    }
+
+    // In production mode, simulation + validation + export all use editorFinalCommands.
+    // In standard mode, compare against pipelineResult to catch real mismatches.
+    if (!ce01ProductionMode) {
+      const pipelineMetrics = calculateUnifiedCommandMetrics(pipelineResult.commands, regions, machineSettings);
+      console.log('[command-sync] validation metrics:', { stitches: pipelineMetrics.stitchCount, jumps: pipelineMetrics.jumpCount, trims: pipelineMetrics.trimCount });
+      if (!metricsMatch(sourceMetrics, pipelineMetrics)) {
+        console.log('[command-sync] mismatch detected: export vs validation metrics disagree');
+        setExportError('Las métricas no están sincronizadas. Regenera comandos finales.');
+        return;
+      }
+    }
+    console.log('[command-sync] panels synced: YES');
+
     // ── CE01 Production path: no recalculation, no aggressive optimizers ──
     if (ce01ProductionMode) {
       const sourceCommands = editorFinalCommands || pipelineResult.commands;

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Eye, EyeOff, Layers, Scissors, Sparkles, RefreshCw } from 'lucide-react';
-import { buildStitchObjects, flattenToCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
+import { DEFAULT_MACHINE } from '@/lib/exportPipeline';
 
 /**
  * FinalLookSimulator — Realistic final embroidery look with thread thickness,
@@ -9,7 +9,7 @@ import { buildStitchObjects, flattenToCommands, DEFAULT_MACHINE } from '@/lib/ex
  * Renders the ACTUAL stitch sequence (from buildFinalCommands pipeline) with
  * visual thread thickness to show how the final embroidery will look.
  */
-export default function FinalLookSimulator({ regions, config, machineSettings, detailReport }) {
+export default function FinalLookSimulator({ regions, config, machineSettings, detailReport, finalCommands, finalObjects }) {
   const canvasRef = useRef(null);
   const [showOutlinesOnly, setShowOutlinesOnly] = useState(false);
   const [showPreservedDetails, setShowPreservedDetails] = useState(true);
@@ -20,21 +20,19 @@ export default function FinalLookSimulator({ regions, config, machineSettings, d
   const w = config.width_mm || 100;
   const h = config.height_mm || 100;
 
-  // ── Rollback safety: FinalLookSimulator is READ-ONLY ────────────────────
-  // It never modifies regions, commands, or sewing order. It only reads
-  // from buildFinalCommands (the same pipeline export uses) and renders.
+  // ── READ-ONLY: FinalLookSimulator NEVER generates its own commands ───────
+  // It reads finalEmbroideryCommands from the Editor (single source of truth).
+  // It cannot modify regions, commands, contours, sewing order, or metrics.
   const experimentalEnabled = config?.experimentalFinalLookSimulator === true;
   useEffect(() => {
+    console.log('[command-sync] finalLook source: finalEmbroideryCommands (read-only)');
     console.log('[rollback-safe] experimentalFinalLookSimulator', experimentalEnabled ? 'ON' : 'OFF');
     console.log('[rollback-safe] FinalLookSimulator is read-only: no region/command mutation');
   }, [experimentalEnabled]);
 
-  // Build stitch commands from regions (same pipeline as export)
-  const { commands, objects } = useMemo(() => {
-    const objs = buildStitchObjects(regions, config);
-    const cmds = flattenToCommands(objs, ms);
-    return { commands: cmds, objects: objs };
-  }, [regions, config, ms.maxStitchLength, ms.maxJumpLength, ms.trimThreshold, ms.designOffset]);
+  // Use finalCommands passed from Editor — NEVER build own commands
+  const commands = finalCommands || [];
+  const objects = finalObjects || [];
 
   // Compute projection bounds
   const projection = useMemo(() => {

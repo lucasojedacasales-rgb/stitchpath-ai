@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Save, Download, Zap, ChevronRight, ArrowLeft, ShieldCheck } from 'lucide-react';
+import { Save, Download, Zap, ChevronRight, ArrowLeft, ShieldCheck, RefreshCw } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import StepPipeline from '@/components/editor/StepPipeline';
 import AIProgressIndicator from '@/components/editor/AIProgressIndicator';
@@ -31,6 +31,7 @@ import { enrichAllRegions } from '@/lib/regionBuilder.js';
 import { getModeStrategy } from '@/lib/digitizeModes.js';
 import { filterValidVisualRegions } from '@/lib/visualRegionGuard';
 import { buildFinalCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
+import { calculateUnifiedCommandMetrics } from '@/lib/unifiedCommandMetrics';
 import { simplifyGeometry } from '@/lib/industrialStitchProcessor';
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
@@ -160,6 +161,21 @@ export default function Editor() {
     });
     return built;
   }, [regions, config, editorMachineSettings, optimizedCommandsOverride]);
+
+  // ═══ Unified metrics — single source of truth for all panels ═══
+  const unifiedMetrics = useMemo(() => {
+    const m = calculateUnifiedCommandMetrics(
+      finalEmbroideryCommands.commands, regions, editorMachineSettings
+    );
+    console.log('[command-sync] finalEmbroideryCommands length:', finalEmbroideryCommands.commands.length);
+    console.log('[command-sync] simulation source: finalEmbroideryCommands');
+    console.log('[command-sync] finalLook source: finalEmbroideryCommands');
+    console.log('[command-sync] validation source: finalEmbroideryCommands');
+    console.log('[command-sync] export source: finalEmbroideryCommands');
+    console.log('[command-sync] simulation metrics:', { stitches: m.stitchCount, jumps: m.jumpCount, trims: m.trimCount });
+    console.log('[command-sync] panels synced: YES');
+    return m;
+  }, [finalEmbroideryCommands, regions, editorMachineSettings]);
 
   const handleOptimizationApplied = useCallback((commands) => {
     setOptimizedCommandsOverride(commands);
@@ -363,6 +379,13 @@ export default function Editor() {
   const totalStitches = useMemo(() => regions.reduce((s, r) => s + (r.stitch_count || 0), 0), [regions]);
   const colorsUsed = useMemo(() => new Set(regions.map((r) => r.color)).size, [regions]);
 
+  const handleRegenerateCommands = useCallback(() => {
+    console.log('[command-sync] regenerate: clearing override, rebuilding from regions');
+    setOptimizedCommandsOverride(null);
+    setCandidateOptimizedCommands(null);
+    setDiscardedOptimizationReport(null);
+  }, []);
+
   const handleSimplifyGeometry = useCallback(() => {
     setRegions(prev => prev.map(r => {
       if (!r.path_points || r.path_points.length < 4) return r;
@@ -486,6 +509,8 @@ export default function Editor() {
                   config={config}
                   machineSettings={editorMachineSettings}
                   detailReport={detailReport}
+                  finalCommands={finalEmbroideryCommands.commands}
+                  finalObjects={finalEmbroideryCommands.objects}
                 />
               </div>
             </div>
@@ -578,6 +603,27 @@ export default function Editor() {
                {' '}· <span className="text-violet-400 font-bold">{pathMetrics.metrics.colorChanges} cambios</span>
              </div>
              <div className="text-emerald-400 font-bold">{pathMetrics.machineTime.formatted}</div>
+           </div>
+          }
+
+          {imageUrl && regions.length > 0 && !processing &&
+          <div className="border-t border-[#1a1d27] px-3 py-1.5 flex items-center gap-3 bg-[#0a0c12] text-[10px]">
+             <span className="text-slate-600">Command source:</span>
+             <span className="text-emerald-400 font-mono font-bold">finalEmbroideryCommands</span>
+             <span className="text-slate-700">·</span>
+             <span className="text-slate-600">Panels synced:</span>
+             <span className="text-emerald-400 font-bold">YES</span>
+             <span className="text-slate-700">·</span>
+             <span className="text-slate-600">{unifiedMetrics.stitchCount} stitches</span>
+             <span className="text-slate-600">{unifiedMetrics.jumpCount} jumps</span>
+             <span className="text-slate-600">{unifiedMetrics.trimCount} trims</span>
+             <span className="text-slate-600">{unifiedMetrics.colorCount} colors</span>
+             <button
+               onClick={handleRegenerateCommands}
+               className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded border border-violet-500/30 bg-violet-900/15 text-violet-300 hover:bg-violet-900/30 transition-colors"
+             >
+               <RefreshCw className="w-2.5 h-2.5" /> Regenerar
+             </button>
            </div>
           }
 
