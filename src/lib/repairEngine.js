@@ -67,9 +67,14 @@ const REPAIR_RULES = [
 export function runRepairEngine(regions, config = {}, machineSettings = {}, format = 'DST') {
   const ms = { ...DEFAULT_MACHINE, ...machineSettings };
 
+  // Deep-clone regions so repair never mutates the caller's objects
+  // (the Editor's live regions may be shared references).
+  let currentRegions = regions.map(r => ({
+    ...r,
+    path_points: r.path_points ? r.path_points.map(p => [...p]) : r.path_points,
+  }));
   // Initial raw pipeline (no auto-fix) — we repair surgically
-  let state = runExportPipelineRaw(regions, config, ms, format);
-  let currentRegions = regions;
+  let state = runExportPipelineRaw(currentRegions, config, ms, format);
   let currentObjects = state.objects;
   let currentCommands = state.commands;
 

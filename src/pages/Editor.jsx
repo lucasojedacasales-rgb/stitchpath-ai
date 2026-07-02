@@ -26,6 +26,7 @@ import NeedlePathPanel from '@/components/editor/NeedlePathPanel';
 import { runPipeline } from '@/lib/pipeline/runner';
 import { enrichAllRegions } from '@/lib/regionBuilder.js';
 import { getModeStrategy } from '@/lib/digitizeModes.js';
+import { filterValidVisualRegions } from '@/lib/visualRegionGuard';
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
 import { useDecisionEngine } from '@/hooks/useDecisionEngine.js';
@@ -230,7 +231,19 @@ export default function Editor() {
 
   const handleRegionClick = useCallback((regionId) => setSelectedRegionId(regionId), []);
   // Stable callback — regions update from child panels (RegionsPanel, TravelOptimizer, etc.)
-  const handleRegionsUpdate = useCallback((updated) => setRegions(updated), []);
+  // GUARD: Optimize/AutoFix/Repair may return regions with corrupted/empty path_points
+  // or even command arrays. Only valid visual regions reach setRegions; if none are
+  // valid, the previous state is kept so the canvas never goes blank.
+  const handleRegionsUpdate = useCallback((updated) => {
+    const incoming = Array.isArray(updated) ? updated : [];
+    const valid = filterValidVisualRegions(incoming);
+    console.log(`[canvas] visualRegions update: ${valid.length}/${incoming.length} valid`);
+    if (valid.length === 0) {
+      console.warn('[canvas] Rejected visual update: no valid visual regions — keeping previous state');
+      return;
+    }
+    setRegions(valid);
+  }, []);
   const handleRename = useCallback(async (name) => {
     if (!id || !name.trim()) return;
     const updated = await base44.entities.Project.update(id, { name: name.trim() });
