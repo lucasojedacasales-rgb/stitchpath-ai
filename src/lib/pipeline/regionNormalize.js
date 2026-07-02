@@ -211,11 +211,10 @@ function isLightOrBackgroundColor(hex) {
 }
 
 /**
- * Removes background regions. A region is background if ANY of:
- *   - area_norm > 0.35 AND touches ≥2 image edges
- *   - coverage > 0.35 AND color is light/white/gray
- *   - bbox touches all 4 edges
- * A large region that does NOT touch edges is kept (it's the main object).
+ * Removes background (fabric) regions. A region is background ONLY if it is
+ * light/white/gray AND edge-touching AND large — i.e. clearly fabric, not the
+ * embroidered object. Saturated-color regions are NEVER removed, even when
+ * they fill the frame (common for full-bleed logos / mascots).
  */
 export function filterBackgroundRegions(regions, ctx = {}) {
   if (!regions || regions.length === 0) return [];
@@ -227,9 +226,10 @@ export function filterBackgroundRegions(regions, ctx = {}) {
     const cov   = r.coverage || area;
     const light = isLightOrBackgroundColor(r.color);
 
-    if (area > 0.35 && edges >= 2) continue;
-    if (cov > 0.35 && light) continue;
-    if (edges >= 4) continue;
+    // Light/white fabric that covers most of the frame and touches edges
+    if (light && cov > 0.35 && edges >= 2) continue;
+    // Light/white region touching all 4 edges = full-bleed fabric
+    if (light && edges >= 4) continue;
 
     result.push(r);
   }

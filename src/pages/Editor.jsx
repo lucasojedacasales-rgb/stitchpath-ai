@@ -64,6 +64,7 @@ export default function Editor() {
   const [preprocessSettings, setPreprocessSettings] = useState(DEFAULT_PREPROCESS);
   const [preprocessedUrl, setPreprocessedUrl] = useState(null);
   const [pathMetrics, setPathMetrics] = useState(null);
+  const [processingError, setProcessingError] = useState(null);
   const timerRef = useRef(null);
 
   const maskCanvasRef = useRef(null);
@@ -144,6 +145,7 @@ export default function Editor() {
     setRegions([]);
     setSelectedRegionId(null);
     setPathMetrics(null);
+    setProcessingError(null);
     setPreprocessedUrl(null);
     setShowExport(false);
     setActiveTab('editor');
@@ -168,6 +170,7 @@ export default function Editor() {
     if (!imageUrl) return;
     setProcessing(true);
     setProcessingElapsed(0);
+    setProcessingError(null);
     timerRef.current = setInterval(() => setProcessingElapsed((s) => s + 1), 1000);
     setStep(2);
 
@@ -204,6 +207,7 @@ export default function Editor() {
       ]);
     } catch (e) {
       console.error('[startProcessing]', e);
+      setProcessingError(e.message || 'Error desconocido al digitalizar');
     } finally {
       setProcessing(false);
       clearInterval(timerRef.current);
@@ -428,12 +432,24 @@ export default function Editor() {
            </div>
           }
 
-          {imageUrl && regions.length === 0 && !processing && !showDecisionPanel &&
+          {processingError && !processing && regions.length === 0 &&
+          <div className="border-t border-red-500/30 p-3 flex items-center gap-3 bg-red-900/20">
+             <div className="flex-1 text-xs text-red-300">
+               <span className="font-bold">No se pudo digitalizar:</span> {processingError}
+               <div className="text-[10px] text-red-400 mt-0.5">Revisa la consola para más detalle. Si la imagen es simple, prueba el modo «standard».</div>
+             </div>
+             <button onClick={() => AI_ENABLED ? setShowDecisionPanel(true) : startProcessing()} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors">
+                <Zap className="w-3.5 h-3.5" /> Reintentar
+              </button>
+           </div>
+          }
+
+          {imageUrl && regions.length === 0 && !processing && !showDecisionPanel && !processingError &&
           <div className="border-t border-[#1a1d27] p-3 flex items-center gap-3 bg-[#0a0c12]">
              <div className="flex-1 text-xs text-slate-500">Imagen cargada. La IA analizará el mejor enfoque.</div>
              <button onClick={() => AI_ENABLED ? setShowDecisionPanel(true) : startProcessing()} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors">
-               <Zap className="w-3.5 h-3.5" /> Analizar con IA
-             </button>
+                <Zap className="w-3.5 h-3.5" /> Analizar con IA
+              </button>
            </div>
           }
         </div>

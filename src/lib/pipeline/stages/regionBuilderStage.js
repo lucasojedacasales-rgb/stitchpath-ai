@@ -33,21 +33,9 @@ export async function runRegionBuilder(ctx) {
 
   const { width_mm = 100, height_mm = 100, fabric_type = 'Algodón' } = ctx.config;
 
-  // Background filter using area_norm (preferred), area_mm2 fallback, or
-  // recomputed polygon area — never 0 when area_mm2 is missing.
-  const designArea = width_mm * height_mm;
-  const nonBgRegions = ctx.vectorRegions.filter(r => {
-    const areaRatio =
-      r.area_norm != null
-        ? r.area_norm
-        : r.area_mm2 != null
-          ? r.area_mm2 / designArea
-          : polygonAreaNormalized(r.path_points);
-    // Keep the main object even if large, as long as it doesn't touch ≥2 edges.
-    if (areaRatio > 0.35 && touchesEdges(r) >= 2) return false;
-    if (touchesEdges(r) >= 4) return false;
-    return true;
-  });
+  // Background filter — color-aware (vectorEngineStage already filtered, this
+  // is a safety net for the fallback path). Saturated objects are never removed.
+  const nonBgRegions = filterBackgroundRegions(ctx.vectorRegions, ctx);
 
   // Apply semantic metadata to vector regions when available
   const semanticObjects = ctx.semanticMap?.objects || [];
