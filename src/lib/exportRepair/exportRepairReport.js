@@ -13,11 +13,13 @@ export function generateExportRepairReport(ctx) {
     phaseLog, sourceMetrics, finalMetrics, returnedMetrics, exportDecisionSource,
     comparison, repairAccepted, repairRejected, rejectionReason, exportAllowed, remainingBlockingIssues,
     visibleDiagForensics, visibleDiagDetection,
+    emptyBlockForensics, exportBlockedBecauseRemainingEmptyBlocks,
   } = ctx;
   const md = [];
 
-  md.push('# EXPORT_REPAIR_REPORT_V5 — StitchPath AI\n');
+  md.push('# EXPORT_REPAIR_REPORT_V5_1 — StitchPath AI\n');
   md.push(`> Generado: ${new Date().toISOString()}`);
+  md.push('> v5.1: removeEmptyBlocks robusto (8 casos) + decisión de mejora parcial + addTieInTieOff al final.');
   md.push('> Prioridad: eliminar bloqueos > ce01Score > longSt. RISKY permite export; INVALID bloquea.');
   md.push('> longSt es métrica secundaria: no revierte diagonales visibles reparadas.\n');
 
@@ -34,6 +36,26 @@ export function generateExportRepairReport(ctx) {
   if (repairRejected) {
     md.push(`- exportBlockedBecauseRepairRejected: ${rejectionReason || 'REPAIR_REJECTED — export usa sourceCommands.'}`);
   }
+  if (exportBlockedBecauseRemainingEmptyBlocks != null) {
+    md.push(`- exportBlockedBecauseRemainingEmptyBlocks: ${exportBlockedBecauseRemainingEmptyBlocks} (repaired mantenido como candidato para depuración)`);
+  }
+  md.push('');
+
+  // 1b. Tracking de emptyBlocks por fase (v5.1)
+  md.push('## 1b. Tracking de emptyBlocks por fase (v5.1)\n');
+  md.push('| Etapa | emptyBlocks |');
+  md.push('|---|---|');
+  const ebPhase = (name) => phaseLog.find(p => p.name === name);
+  md.push(`| source | ${fmt(sourceMetrics.emptyBlocks)} |`);
+  const afterRemoveEmpty = ebPhase('removeEmptyBlocks');
+  md.push(`| after removeEmptyBlocks | ${fmt(afterRemoveEmpty?.after?.emptyBlocks)} |`);
+  const afterReduceColors = ebPhase('reduceColorChangesIfSafe');
+  md.push(`| after reduceColorChangesIfSafe | ${fmt(afterReduceColors?.after?.emptyBlocks)} |`);
+  const afterRemoveEmptyFinal = ebPhase('removeEmptyBlocksFinal');
+  md.push(`| after removeEmptyBlocksFinal | ${fmt(afterRemoveEmptyFinal?.after?.emptyBlocks)} |`);
+  const afterTies = ebPhase('addTieInTieOff');
+  md.push(`| after addTieInTieOff | ${fmt(afterTies?.after?.emptyBlocks)} |`);
+  md.push(`| returned | ${fmt(returnedMetrics.emptyBlocks)} |`);
   md.push('');
 
   // 2. Bloqueos antes/después
@@ -173,8 +195,20 @@ export function generateExportRepairReport(ctx) {
     md.push('');
   }
 
+  // 10. EMPTY_BLOCK_FORENSICS (inline)
+  md.push('## 10. Empty block forensics\n');
+  if (returnedMetrics.emptyBlocks === 0) {
+    md.push('- Sin bloques vacíos restantes.\n');
+  } else {
+    md.push(`- Bloques vacíos restantes: **${returnedMetrics.emptyBlocks}**`);
+    md.push('- Ver EMPTY_BLOCK_FORENSICS.md (descargable) para detalle completo por bloque.\n');
+    md.push('```markdown');
+    md.push(emptyBlockForensics || '(no generado)');
+    md.push('```\n');
+  }
+
   md.push('---');
-  md.push('_Pre-export repair v5 — prioridad bloqueos; longSt soft para diagonales. RISKY permite export, INVALID bloquea. DST/DSB usan repairedCommands._');
+  md.push('_Pre-export repair v5.1 — removeEmptyBlocks robusto + mejora parcial + addTieInTieOff final. RISKY permite export, INVALID bloquea. DST/DSB usan repairedCommands._');
 
   return md.join('\n');
 }

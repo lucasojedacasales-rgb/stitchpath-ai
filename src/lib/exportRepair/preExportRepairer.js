@@ -118,82 +118,80 @@ function segmentDarkSupport(ax, ay, bx, by, darkStroke) {
 // un colorChange puede dejar al descubierto un nuevo bloque vacío.
 // Si un bloque no se puede eliminar, registra forense (whyNotRemoved).
 export function removeEmptyBlocks(commands, _objects, _regions, report = {}) {
-  let cmds = commands;
+  let cmds = (commands || []).slice();
   let totalRemoved = 0;
   let colorChangesRemoved = 0;
   let trailingJumpsTrimsRemoved = 0;
   let leadingEmptiesRemoved = 0;
+  let midBlockJumpsTrimsRemoved = 0;
+  let endMarkersDropped = 0;
   const allRemovedIdx = [];
+  const removalLog = [];
 
-  for (let pass = 0; pass < 3; pass++) {
+  // Multi-pasada: cada pasada recalcula bloques desde cero (hasta 8 pasadas).
+  // Un bloque = run entre colorChange/end/EOF. Si tiene 0 stitches, se eliminan
+  // todos sus colorChange/jump/trim (y el end final, que el encoder DST reañade).
+  for (let pass = 0; pass < 8; pass++) {
     const dropIdx = new Set();
 
-    // 1. colorChange sin stitches antes del siguiente colorChange/EOF
+    // Construir segmentos: cada segmento empieza en colorChange/end (o inicio)
+    // y termina antes del siguiente colorChange/end/EOF.
+    const segments = [];
+    let segStart = 0;
     for (let i = 0; i < cmds.length; i++) {
-      if (cmds[i].type !== 'colorChange') continue;
-      let hasStitch = false;
-      for (let j = i + 1; j < cmds.length; j++) {
-        if (cmds[j].type === 'colorChange') break;
-        if (cmds[j].type === 'stitch') { hasStitch = true; break; }
+      const t = cmds[i].type;
+      if ((t === 'colorChange' || t === 'end') && i > segStart) {
+        segments.push([segStart, i]);
+        segStart = i;
       }
-      if (!hasStitch) dropIdx.add(i);
     }
+    segments.push([segStart, cmds.length]);
 
-    // 2. bloque inicial (antes del primer colorChange) sin stitches
-    let firstCC = -1;
-    for (let i = 0; i < cmds.length; i++) if (cmds[i].type === 'colorChange') { firstCC = i; break; }
-    const leadingEnd = firstCC === -1 ? cmds.length : firstCC;
-    let leadingHasStitch = false;
-    for (let j = 0; j < leadingEnd; j++) if (cmds[j].type === 'stitch') { leadingHasStitch = true; break; }
-    if (!leadingHasStitch && leadingEnd > 0) {
-      for (let j = 0; j < leadingEnd; j++) dropIdx.add(j);
-    }
+    for (const [s, e] of segments) {
+      let hasStitch = false;
+      for (let i = s; i < e; i++) if (cmds[i].type === 'stitch') { hasStitch = true; break; }
+      if (hasStitch) continue;
 
-    // 3. jumps/trims finales tras el último stitch
-    let lastStitch = -1;
-    for (let i = cmds.length - 1; i >= 0; i--) if (cmds[i].type === 'stitch') { lastStitch = i; break; }
-    if (lastStitch >= 0 && lastStitch < cmds.length - 1) {
-      let allNonStitch = true;
-      for (let i = lastStitch + 1; i < cmds.length; i++) if (cmds[i].type === 'stitch') { allNonStitch = false; break; }
-      if (allNonStitch) for (let i = lastStitch + 1; i < cmds.length; i++) dropIdx.add(i);
+      // bloque vacío [s, e)
+      const isLeading = s === 0;
+      const isTrailing = e === cmds.length;
+      for (let i = s; i < e; i++) {
+        const c = cmds[i];
+        if (c.type === 'end') {
+          // dropear end solo en bloque final vacío — el encoder DST reañade END
+          if (isTrailing) { dropIdx.add(i); endMarkersDropped++; }
+          continue;
+        }
+        dropIdx.add(i);
+        if (c.type === 'colorChange') colorChangesRemoved++;
+        else if (c.type === 'jump' || c.type === 'trim') {
+          if (isLeading) leadingEmptiesRemoved++;
+          else if (isTrailing) trailingJumpsTrimsRemoved++;
+          else midBlockJumpsTrimsRemoved++;
+        }
+      }
+      removalLog.push({ pass, blockStart: s, blockEnd: e, isLeading, isTrailing, dropped: e - s });
     }
 
     if (dropIdx.size === 0) break;
-
-    // clasificar lo eliminado
-    for (const i of dropIdx) {
-      if (cmds[i].type === 'colorChange') colorChangesRemoved++;
-      else if (lastStitch >= 0 && i > lastStitch) trailingJumpsTrimsRemoved++;
-      else if (i < leadingEnd) leadingEmptiesRemoved++;
-      allRemovedIdx.push(i);
-    }
+    for (const i of dropIdx) allRemovedIdx.push(i);
     cmds = cmds.filter((_, i) => !dropIdx.has(i));
     totalRemoved += dropIdx.size;
   }
 
-  // ── Forense de bloques no eliminables ──
-  // Recuento final de emptyBlocks; si queda alguno, registrar por qué.
+  // ── Forense de bloques vacíos restantes (serializado, no [object Object]) ──
   const unremovableBlocks = [];
   let emptyBlocksAfter = 0;
+  let blockIndex = 0;
   let blockStart = 0, blockSt = 0;
   for (let i = 0; i <= cmds.length; i++) {
     const c = cmds[i];
     if (!c || c.type === 'colorChange' || c.type === 'end' || i === cmds.length) {
       if (blockSt === 0 && i > blockStart) {
         emptyBlocksAfter++;
-        // forense
-        const color = cmds[blockStart]?.color || cmds[Math.min(blockStart, cmds.length - 1)]?.color || '—';
-        const prevCmd = blockStart > 0 ? cmds[blockStart - 1] : null;
-        const nextCmd = i < cmds.length ? cmds[i] : null;
-        unremovableBlocks.push({
-          commandIndex: blockStart,
-          color,
-          previousCommand: prevCmd ? `${prevCmd.type}@${blockStart - 1}` : 'none',
-          nextCommand: nextCmd ? `${nextCmd.type}@${i}` : 'EOF',
-          reason: 'bloque sin stitches tras todas las pasadas',
-          whyNotRemoved: blockStart === 0 ? 'bloque inicial sin colorChange que lo delimite' : 'colorChange ya eliminado pero quedan jumps/trims no stitches',
-        });
+        unremovableBlocks.push(buildBlockForensic(blockIndex, blockStart, i, cmds.slice(blockStart, i), cmds));
       }
+      blockIndex++;
       blockStart = i; blockSt = 0;
     } else if (c.type === 'stitch') blockSt++;
   }
@@ -202,10 +200,81 @@ export function removeEmptyBlocks(commands, _objects, _regions, report = {}) {
   report.colorChangesRemoved = colorChangesRemoved;
   report.trailingJumpsTrimsRemoved = trailingJumpsTrimsRemoved;
   report.leadingEmptiesRemoved = leadingEmptiesRemoved;
+  report.midBlockJumpsTrimsRemoved = midBlockJumpsTrimsRemoved;
+  report.endMarkersDropped = endMarkersDropped;
   report.commandIndexesRemoved = allRemovedIdx;
+  report.removalLog = removalLog;
   report.remainingEmptyBlocks = emptyBlocksAfter;
   report.unremovableBlocks = unremovableBlocks;
   return cmds;
+}
+
+function describeCmdForForensic(c) {
+  if (!c) return 'none';
+  return JSON.stringify({
+    type: c.type, x: c.x, y: c.y, color: c.color || null,
+    regionId: c.regionId || null, layerType: c.layerType || null, stitchType: c.stitchType || null,
+  });
+}
+function buildBlockForensic(blockIndex, startIdx, endIdx, seg, cmds) {
+  const hasStitches = seg.some(c => c.type === 'stitch');
+  const hasColorChange = seg.some(c => c.type === 'colorChange');
+  const hasJumpTrim = seg.some(c => c.type === 'jump' || c.type === 'trim');
+  const hasEnd = seg.some(c => c.type === 'end');
+  const hasOnlyColorChange = hasColorChange && !hasJumpTrim && !hasEnd && !hasStitches;
+  const hasOnlyJumpTrim = !hasStitches && !hasColorChange && hasJumpTrim;
+  const isLeadingBlock = startIdx === 0;
+  const isTrailingBlock = endIdx === cmds.length;
+  const prevCmd = startIdx > 0 ? cmds[startIdx - 1] : null;
+  const nextCmd = endIdx < cmds.length ? cmds[endIdx] : null;
+  const isBetweenColorChanges =
+    (prevCmd?.type === 'colorChange' || isLeadingBlock) &&
+    (nextCmd?.type === 'colorChange' || isTrailingBlock);
+
+  let whyEmpty, proposedFix, removable = true, whyNotRemovable = null;
+  if (hasOnlyColorChange) {
+    whyEmpty = 'colorChange sin stitches antes del siguiente colorChange/EOF';
+    proposedFix = 'eliminar colorChange redundante (no produce stitches)';
+  } else if (hasEnd && !hasJumpTrim && !hasColorChange) {
+    whyEmpty = 'bloque final con solo marcador end';
+    proposedFix = 'dropear end — el encoder DST reañade END automáticamente';
+  } else if (hasOnlyJumpTrim && isBetweenColorChanges) {
+    whyEmpty = 'jump/trim sueltos entre colorChanges sin stitches';
+    proposedFix = 'eliminar jumps/trims del bloque vacío + colorChange del bloque adyacente';
+  } else if (isLeadingBlock) {
+    whyEmpty = 'bloque inicial sin stitches reales';
+    proposedFix = 'eliminar todos los jumps/trims iniciales';
+  } else if (isTrailingBlock) {
+    whyEmpty = 'bloque final sin stitches reales';
+    proposedFix = 'eliminar jumps/trims finales + colorChange del bloque final';
+  } else {
+    whyEmpty = 'bloque vacío residual no clasificado';
+    proposedFix = 'revisar removeEmptyBlocks — caso no cubierto';
+    removable = false;
+    whyNotRemovable = 'caso no cubierto por removeEmptyBlocks';
+  }
+
+  return {
+    blockIndex,
+    startCommandIndex: startIdx,
+    endCommandIndex: endIdx,
+    color: seg[0]?.color || '—',
+    previousCommand: describeCmdForForensic(prevCmd),
+    nextCommand: nextCmd ? describeCmdForForensic(nextCmd) : 'EOF',
+    commandsInsideBlock: seg.map(describeCmdForForensic),
+    hasStitches,
+    hasOnlyColorChange,
+    hasOnlyJumpTrim,
+    hasEnd,
+    isTrailingBlock,
+    isLeadingBlock,
+    isBetweenColorChanges,
+    createdByColorReduction: false,
+    whyEmpty,
+    proposedFix,
+    removable,
+    whyNotRemovable,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

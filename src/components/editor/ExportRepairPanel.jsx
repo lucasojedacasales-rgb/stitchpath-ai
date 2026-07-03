@@ -45,7 +45,16 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
     const blob = new Blob([repair.repairReport.report], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = 'EXPORT_REPAIR_REPORT_V5.md'; a.click();
+    a.href = url; a.download = 'EXPORT_REPAIR_REPORT_V5_1.md'; a.click();
+    URL.revokeObjectURL(url);
+  }, [repair]);
+
+  const handleDownloadEmptyBlockForensics = useCallback(() => {
+    if (!repair?.repairReport?.emptyBlockForensics) return;
+    const blob = new Blob([repair.repairReport.emptyBlockForensics], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'EMPTY_BLOCK_FORENSICS.md'; a.click();
     URL.revokeObjectURL(url);
   }, [repair]);
 
@@ -326,6 +335,13 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
             className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-[#0d0f14] border border-violet-500/30 text-violet-300 text-xs font-bold hover:bg-violet-900/20 transition-colors"
           >
             <FileText className="w-3.5 h-3.5" /> Descargar VISIBLE_DIAGONAL_FORENSICS.md
+          </button>
+          <button
+            onClick={handleDownloadEmptyBlockForensics}
+            disabled={!repair?.repairReport?.emptyBlockForensics}
+            className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-[#0d0f14] border border-amber-500/30 text-amber-300 text-xs font-bold hover:bg-amber-900/20 transition-colors disabled:opacity-40"
+          >
+            <FileText className="w-3.5 h-3.5" /> Descargar EMPTY_BLOCK_FORENSICS.md
           </button>
         </div>
       )}

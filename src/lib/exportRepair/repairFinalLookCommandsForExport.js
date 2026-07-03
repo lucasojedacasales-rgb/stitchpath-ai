@@ -25,6 +25,7 @@ import { generateExportRepairReport } from './exportRepairReport';
 import { detectVisibleDiagonalStitches, generateVisibleDiagonalForensicsReport } from './visibleDiagonalDetector';
 import { polishRepairedCommands } from './exportPolish';
 import { polishTravelAfterV5 } from './travelPolish';
+import { generateEmptyBlockForensics } from './emptyBlockForensics';
 
 const MAX_STITCHES = 12000;
 
@@ -87,6 +88,11 @@ function phaseGateAccepts(before, after, opts = {}) {
   // revierte la eliminación de diagonales visibles solo porque longSt suba +2.
   if (!blockingFix && after.unsupportedLongStitches > before.unsupportedLongStitches) {
     reasons.push(`longSt ${before.unsupportedLongStitches}→${after.unsupportedLongStitches}`);
+  }
+  // visibleDiag: para fases no-bloqueantes (ej. addTieInTieOff), un aumento de
+  // diagonales visibles revierte la fase. Evita que los ties recreen diagonales.
+  if (!blockingFix && after.visibleDiagonalStitches > before.visibleDiagonalStitches) {
+    reasons.push(`visibleDiag ${before.visibleDiagonalStitches}→${after.visibleDiagonalStitches}`);
   }
   if (after.stitchCountOverLimit > before.stitchCountOverLimit) {
     reasons.push(`stitchCountOverLimit ${before.stitchCountOverLimit}→${after.stitchCountOverLimit}`);
@@ -172,22 +178,26 @@ function runRepairPhase({ name, commands, repairFn, seed, objects, regions, conf
   return { commands: accept ? afterCommands : commands, accepted: accept };
 }
 
-// ── Criterio global de aceptación (v4: prioridad bloqueos) ────────────────────
+// ── Criterio global de aceptación (v5.1: mejora parcial permitida) ──────────
 function globalRepairAccepted(sourceMetrics, finalMetrics) {
-  // FASE 4 — decisión global: aceptar repairedCommands si no hay bloqueos
-  // restantes y CE01 no es INVALID. RISKY = exportar con advertencia.
+  // Aceptar repairedCommands si CE01 no es INVALID, sin regresión grave, y los
+  // bloqueos totales no empeoraron respecto al source. Mejora parcial permitida:
+  // si emptyBlocks baja 2→1 pero no llega a 0, repaired se mantiene como candidato
+  // (commandSource='repaired') para depurar el último bloque; exportAllowed
+  // sigue false mientras queden bloqueos.
   const ce01NotInvalid = finalMetrics.ce01Status !== 'INVALID';
-  const noBlockingRemaining =
-    finalMetrics.emptyBlocks === 0 &&
-    finalMetrics.visibleDiagonalStitches === 0 &&
-    finalMetrics.invalidCommandSequence === 0 &&
-    finalMetrics.regionOutsideBounds === 0;
-  // solo regresiones graves bloquean; warnings (shortSt/longSt/trims/jumps) no
   const noSevereRegression =
     finalMetrics.duplicateStitches <= sourceMetrics.duplicateStitches + 50 &&
     finalMetrics.shortStitches <= sourceMetrics.shortStitches + 100 &&
     finalMetrics.stitchCountOverLimit <= sourceMetrics.stitchCountOverLimit;
-  return ce01NotInvalid && noBlockingRemaining && noSevereRegression;
+  const sourceBlocking =
+    sourceMetrics.emptyBlocks + sourceMetrics.visibleDiagonalStitches +
+    sourceMetrics.invalidCommandSequence + sourceMetrics.regionOutsideBounds;
+  const finalBlocking =
+    finalMetrics.emptyBlocks + finalMetrics.visibleDiagonalStitches +
+    finalMetrics.invalidCommandSequence + finalMetrics.regionOutsideBounds;
+  const blockingNotWorse = finalBlocking <= sourceBlocking;
+  return ce01NotInvalid && noSevereRegression && blockingNotWorse;
 }
 
 /**
@@ -207,16 +217,17 @@ export function repairFinalLookCommandsForExport({ finalLookCommands, objects = 
   const phaseLog = [];
   let cmds = source;
 
-  // ── Pipeline v4 (orden: removeEmpty → diagonales → dups → short → ties → trims → colors → emptyFinal) ──
+  // ── Pipeline v5.1 (orden: empty → diagonales → dups → colors → emptyFinal → ties) ──
+  // addTieInTieOff va al FINAL, después de removeEmptyBlocksFinal, y solo se aplica
+  // si no crea visibleDiag ni longSt nuevos (gate transaccional lo revierte si los crea).
   const darkSeed = { ...(darkStroke ? { darkStroke } : {}), config };
-  // ── Pipeline v5 (orden: empty → diagonales → dups → ties → colors → emptyFinal) ──
   const phases = [
     { name: 'removeEmptyBlocks', fn: removeEmptyBlocks, seed: {} },
     { name: 'repairVisibleDiagonalStitches', fn: repairVisibleDiagonalStitches, seed: darkSeed },
     { name: 'removeDuplicateStitches', fn: removeDuplicateStitches, seed: {} },
-    { name: 'addTieInTieOff', fn: addTieInTieOff, seed: {} },
     { name: 'reduceColorChangesIfSafe', fn: reduceColorChangesIfSafe, seed: {} },
     { name: 'removeEmptyBlocksFinal', fn: removeEmptyBlocks, seed: {} },
+    { name: 'addTieInTieOff', fn: addTieInTieOff, seed: {} },
   ];
 
   for (const p of phases) {
@@ -276,6 +287,12 @@ export function repairFinalLookCommandsForExport({ finalLookCommands, objects = 
   const vdDetection = detectVisibleDiagonalStitches(repairedCommands, objects, regions, darkStroke, config);
   const vdForensics = generateVisibleDiagonalForensicsReport(vdDetection);
 
+  // ── Forensics de bloques vacíos (sobre los comandos devueltos) ──
+  // Si quedan emptyBlocks, detalla cada uno para depuración (sin [object Object]).
+  const emptyBlockForensics = generateEmptyBlockForensics(repairedCommands, []);
+  const exportBlockedBecauseRemainingEmptyBlocks =
+    (repairAccepted && returnedMetrics.emptyBlocks > 0) ? returnedMetrics.emptyBlocks : null;
+
   // ── comparativa antes/después/retornadas (misma fuente: returnedMetrics) ──
   const comparison = {
     stitchCount: { before: sourceMetrics.stitchCount, after: returnedMetrics.stitchCount },
@@ -309,6 +326,8 @@ export function repairFinalLookCommandsForExport({ finalLookCommands, objects = 
     exportAllowed,
     remainingBlockingIssues,
     exportBlockedBecauseRepairRejected: repairRejected ? `REPAIR_REJECTED — ${rejectionReason}` : null,
+    exportBlockedBecauseRemainingEmptyBlocks,
+    emptyBlockForensics,
     visibleDiagForensics: vdForensics,
     visibleDiagDetection: vdDetection,
     polish: polishResult ? {
@@ -328,6 +347,7 @@ export function repairFinalLookCommandsForExport({ finalLookCommands, objects = 
       phaseLog, sourceMetrics, finalMetrics, returnedMetrics, exportDecisionSource,
       comparison, repairAccepted, repairRejected, rejectionReason, exportAllowed, remainingBlockingIssues,
       visibleDiagForensics: vdForensics, visibleDiagDetection: vdDetection,
+      emptyBlockForensics, exportBlockedBecauseRemainingEmptyBlocks,
     }),
   };
 
