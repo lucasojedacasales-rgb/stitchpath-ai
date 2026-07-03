@@ -47,7 +47,6 @@ export function detectExportErrors(commands, objects = [], regions = [], config 
   let shortSt = 0, longSt = 0, dups = 0, outOfBounds = 0;
   let longJumpNoTrim = 0;
   let prevX = 0, prevY = 0, prevStitch = null;
-  const seen = new Set();
   const grid = new Map();
   const regionGroups = new Map();
   let invalidCmds = 0;
@@ -58,10 +57,11 @@ export function detectExportErrors(commands, objects = [], regions = [], config 
     if (c.type === 'stitch') {
       stitches++;
       const d = prevStitch ? Math.hypot(c.x - prevStitch.x, c.y - prevStitch.y) : 0;
-      if (d > 0 && d < MIN_STITCH_MM) shortSt++;
+      // tie stitches son intencionadamente cortas — no se cuentan como short/dup
+      if (d > 0 && d < MIN_STITCH_MM && !c.isTie && !prevStitch?.isTie) shortSt++;
       if (d > MAX_STITCH_MM) longSt++;
-      const key = `${(c.x ?? 0).toFixed(2)},${(c.y ?? 0).toFixed(2)}`;
-      if (seen.has(key)) dups++; else seen.add(key);
+      // duplicada consecutiva (ruido real, no repeticiones globales de coordenadas)
+      if (prevStitch && !c.isTie && !prevStitch.isTie && d < DUP_TOL_MM) dups++;
       if (Math.abs(c.x ?? 0) > HOOP_W / 2 || Math.abs(c.y ?? 0) > HOOP_H / 2) outOfBounds++;
       const gx = Math.floor(((c.x ?? 0) + HOOP_W / 2) / DENSE_CELL_MM);
       const gy = Math.floor(((c.y ?? 0) + HOOP_H / 2) / DENSE_CELL_MM);
@@ -117,11 +117,14 @@ export function detectExportErrors(commands, objects = [], regions = [], config 
   let tinyObjects = 0;
   for (const [, g] of regionGroups) { if (g.count > 0 && g.count < 3) tinyObjects++; }
 
-  // missing tie-in/off
+  // missing tie-in/off: reconoce marcas hasTieIn/hasTieOff puestas por addTieInTieOff
   let noTieIn = 0, noTieOff = 0;
   for (const [, g] of regionGroups) {
     if (g.count < 4) continue;
-    noTieIn++; noTieOff++; // simplified: most generated commands lack explicit tie stitches
+    const firstCmd = cmds[g.first];
+    const lastCmd = cmds[g.last];
+    if (!firstCmd || !firstCmd.hasTieIn) noTieIn++;
+    if (!lastCmd || !lastCmd.hasTieOff) noTieOff++;
   }
 
   const totalColors = colorChanges + 1;

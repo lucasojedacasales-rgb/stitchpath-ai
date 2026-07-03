@@ -76,6 +76,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   const [showAdaptiveReport, setShowAdaptiveReport] = useState(false);
   // ── Pre-export repair state ──
   const [repairedCommands, setRepairedCommands] = useState(null);
+  const [repairAccepted, setRepairAccepted] = useState(false);
   const [exportView, setExportView] = useState('final'); // 'final' | 'exportable' | 'compare'
 
   const config = editorConfig || project?.config || {};
@@ -246,8 +247,8 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       console.log('[export-gate] final decision:', gateDecision);
 
       if (!gateDecision.allowed) {
-        // ── Pre-export repair: don't block if repairedCommands pass ──
-        if (repairedCommands && repairedCommands.length > 0) {
+        // ── Pre-export repair: don't block if repairAccepted (repairedCommands) ──
+        if (repairAccepted && repairedCommands && repairedCommands.length > 0) {
           console.log('[export-gate] using pre-export repairedCommands — bypassing block');
         } else {
           setExportError(`Exportación bloqueada: ${gateDecision.reason}. Usa "Reparar y validar" en el panel de reparación técnica.`);
@@ -261,8 +262,8 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       }
 
       // ── Color mismatch validation — block if multi-color design exports as 1 color ──
-      // Use repaired commands when available (they may have merged similar colors).
-      const ccSource = (repairedCommands && repairedCommands.length > 0) ? repairedCommands : sourceCommands;
+      // Use repaired commands only when repairAccepted (they may have merged similar colors).
+      const ccSource = (repairAccepted && repairedCommands && repairedCommands.length > 0) ? repairedCommands : sourceCommands;
       const colorChanges = ccSource.filter(c => c.type === 'colorChange').length;
       const visualColorCount = new Set(regions.map(r => r.color).filter(Boolean)).size;
       const ccIntegrity = validateColorChangeIntegrity(ccSource);
@@ -287,9 +288,9 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       setExporting(true);
       setExportError(null);
       try {
-        // ── Direct DST: prefer pre-export repairedCommands (technical repair),
+        // ── Direct DST: prefer pre-export repairedCommands (only if repairAccepted),
         //    then productionReport.commands (CE01 repair+sanitize), fallback raw.
-        const exportCommands = (repairedCommands && repairedCommands.length > 0)
+        const exportCommands = (repairAccepted && repairedCommands && repairedCommands.length > 0)
           ? repairedCommands
           : (productionReport && productionReport.exportAllowed && productionReport.commands && productionReport.commands.length
             ? productionReport.commands
@@ -529,10 +530,19 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 regions={regions}
                 config={config}
                 machineSettings={machineSettings}
+                darkStroke={darkStroke}
+                onRepairComplete={(res) => {
+                  setRepairAccepted(!!res.repairAccepted);
+                  if (res.repairAccepted && res.repairedCommands?.length) {
+                    setRepairedCommands(res.repairedCommands);
+                  } else {
+                    setRepairedCommands(null);
+                  }
+                }}
                 onViewChange={(v, cmds) => {
                   setExportView(v);
-                  if (cmds && cmds.length) setRepairedCommands(cmds);
-                  else if (v === 'final') setRepairedCommands(null);
+                  if (v === 'final') setRepairedCommands(null);
+                  else if (cmds && cmds.length && repairAccepted) setRepairedCommands(cmds);
                 }}
               />
 
@@ -931,12 +941,12 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 )}
                 <button
                   onClick={handleExport}
-                  disabled={exporting || (ce01ProductionMode ? (!productionGateDecision?.allowed && !(repairedCommands && repairedCommands.length > 0)) : ((blockingErrors.length > 0 && !wizardResult) || ce01Report.status === 'INVALID'))}
+                  disabled={exporting || (ce01ProductionMode ? (!productionGateDecision?.allowed && !(repairAccepted && repairedCommands?.length > 0)) : ((blockingErrors.length > 0 && !wizardResult) || ce01Report.status === 'INVALID'))}
                   className={`w-full py-2.5 rounded-lg text-white text-sm font-bold transition-colors flex items-center justify-center gap-2 disabled:cursor-not-allowed ${
                     ce01ProductionMode
-                      ? (!productionGateDecision?.allowed && !(repairedCommands && repairedCommands.length > 0)
+                      ? (!productionGateDecision?.allowed && !(repairAccepted && repairedCommands?.length > 0)
                         ? 'bg-red-900/40 border border-red-500/30 text-red-300 cursor-not-allowed'
-                        : (repairedCommands && repairedCommands.length > 0 && !productionGateDecision?.allowed)
+                        : (repairAccepted && repairedCommands?.length > 0 && !productionGateDecision?.allowed)
                           ? 'bg-cyan-600 hover:bg-cyan-500'
                           : productionReport?.ce01Report?.status === 'RISKY'
                             ? 'bg-amber-600 hover:bg-amber-500'
@@ -949,9 +959,9 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                   }`}
                 >
                   {ce01ProductionMode ? (
-                    (!productionGateDecision?.allowed && !(repairedCommands && repairedCommands.length > 0)) ? (
+                    (!productionGateDecision?.allowed && !(repairAccepted && repairedCommands?.length > 0)) ? (
                       <><ShieldAlert className="w-4 h-4" /> Exportación bloqueada</>
-                    ) : (repairedCommands && repairedCommands.length > 0 && !productionGateDecision?.allowed) ? (
+                    ) : (repairAccepted && repairedCommands?.length > 0 && !productionGateDecision?.allowed) ? (
                       exporting ? (
                         <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>
                       ) : (
