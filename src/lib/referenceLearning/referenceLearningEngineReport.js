@@ -101,10 +101,21 @@ export function generateReferenceLearningEngineReport(ctx) {
   if (!comparison) {
     md.push('_Sin comparación disponible._\n');
   } else {
+    md.push(`- Perfil seleccionado: **${comparison.selectedProfile?.label || '—'}** (\`${comparison.selectedProfile?.name || '—'}\`)`);
+    md.push(`- Confianza: ${comparison.selectedProfile ? Math.round((comparison.confidence || 0) * 100) : 0}%`);
     md.push(`- Similarity score: ${comparison.similarityScore}/100`);
     md.push(`- Professional gap score: ${comparison.professionalGapScore}/100 (menor = mejor)`);
+    if (comparison.violatedRules?.length) {
+      md.push('\n### Reglas incumplidas por el diseño actual\n');
+      md.push('| Regla | Confianza | Valor corpus | Valor actual | Acción | Severidad |');
+      md.push('|---|---|---|---|---|---|');
+      for (const v of comparison.violatedRules) {
+        md.push(`| ${v.ruleId} | ${(v.confidence * 100).toFixed(0)}% | ${v.corpusValue} | ${v.currentValue} | ${v.action} | ${v.severity} |`);
+      }
+      md.push('');
+    }
     if (comparison.differences?.length) {
-      md.push('\n### Diferencias frente al corpus\n');
+      md.push('### Diferencias frente al corpus\n');
       md.push('| Métrica | Referencia | Nuestro | Δ | Severidad |');
       md.push('|---|---|---|---|---|');
       for (const d of comparison.differences.slice(0, 12)) {
@@ -112,9 +123,19 @@ export function generateReferenceLearningEngineReport(ctx) {
       }
       md.push('');
     }
-    if (comparison.problems?.length) {
-      md.push('### Problemas detectados');
-      for (const p of comparison.problems) md.push(`- ${p.message}${p.justifyingRule ? ` _(regla: ${p.justifyingRule})_` : ''}`);
+    if (comparison.missingFeatures?.length) {
+      md.push('### Características profesionales faltantes');
+      for (const m of comparison.missingFeatures) md.push(`- **${m.feature}**: ${m.recommendation}`);
+      md.push('');
+    }
+    if (comparison.overusedFeatures?.length) {
+      md.push('### Características sobreutilizadas');
+      for (const o of comparison.overusedFeatures) md.push(`- **${o.feature}**: ${o.recommendation}`);
+      md.push('');
+    }
+    if (comparison.recommendedFixes?.length) {
+      md.push('### Correcciones recomendadas');
+      for (const f of comparison.recommendedFixes) md.push(`- ${f}`);
       md.push('');
     }
   }
@@ -123,6 +144,8 @@ export function generateReferenceLearningEngineReport(ctx) {
   md.push('## 6. Preset aprendido aplicado\n');
   if (!appliedProfile) {
     md.push('_No se aplicó ningún preset (Professional Mode desactivado o sin perfil)._');
+    md.push('');
+    md.push('Para aplicar: usa el botón "Aplicar perfil aprendido al modo profesional" en el panel de Aprendizaje.');
   } else {
     md.push(`Perfil: **${appliedProfile.label}** (\`${appliedProfile.name}\`)\n`);
     if (appliedPatch) {

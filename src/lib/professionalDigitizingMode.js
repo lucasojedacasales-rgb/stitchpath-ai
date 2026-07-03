@@ -523,6 +523,18 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
   if (config.learnedFillAngleDeg != null) learnedParams.fillAngleDeg = config.learnedFillAngleDeg;
   if (config.learnedSatinColumnSpacingMm != null) learnedParams.satinDensityMm = config.learnedSatinColumnSpacingMm;
   if (config.learnedPullCompensationMm != null) learnedParams.pullCompMm = config.learnedPullCompensationMm;
+  // ── Travel rules from learned preset (FASE 6) ──
+  // convertTravelAboveMmToJump → cualquier stitch > este umbral sin soporte de
+  //   región se convierte en jump+trim (travel oculto). Mapea a longConnectorMm
+  //   que usa el clasificador de diagonales.
+  if (config.learnedConvertTravelAboveMmToJump != null) {
+    learnedParams.longConnectorMm = config.learnedConvertTravelAboveMmToJump;
+  }
+  // trimBeforeTravelMm → inserta trim antes de cualquier salto > este umbral.
+  //   Se aplica como un pase adicional en el pipeline.
+  if (config.learnedTrimBeforeTravelMm != null) {
+    learnedParams.trimBeforeTravelMm = config.learnedTrimBeforeTravelMm;
+  }
   const effectiveConfig = Object.keys(learnedParams).length
     ? { ...config, professionalParams: { ...(config.professionalParams || {}), ...learnedParams } }
     : config;
@@ -544,6 +556,14 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
   // Mantener el sanitize legacy para travel/long-black restante (no toca diagonales ya reparadas)
   const vis = validateVisibleStitchesBeforeExport(procCommands, procRegions, darkStroke, effectiveConfig);
   procCommands = vis.commands;
+
+  // ── FASE 6 — trim antes de saltos largos (regla aprendida J002) ──
+  // Si el preset aprendido define trimBeforeTravelMm, inserta un trim antes de
+  // cualquier jump cuya distancia supere el umbral (travel largo profesional).
+  const trimBeforeMm = effectiveConfig.professionalParams?.trimBeforeTravelMm;
+  if (trimBeforeMm && trimBeforeMm > 0) {
+    procCommands = insertTrimBeforeLongJumps(procCommands, trimBeforeMm);
+  }
 
   // FASE 6 — quality gate (sobre comandos reparados)
   const gate = professionalEmbroideryQualityGate(procCommands, objects, procRegions, darkStroke, effectiveConfig);
@@ -568,6 +588,30 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
       gate,
     },
   };
+}
+
+// ── Trim antes de saltos largos (regla aprendida J002) ─────────────────────────
+// Inserta un trim antes de cualquier jump > trimBeforeMm si no hay ya un trim
+// inmediatamente antes. No duplica trims existentes.
+function insertTrimBeforeLongJumps(commands, trimBeforeMm) {
+  const out = [];
+  let prev = null;
+  for (let i = 0; i < commands.length; i++) {
+    const c = commands[i];
+    if (c.type === 'jump' && prev) {
+      const d = Math.hypot((c.x ?? 0) - prev.x, (c.y ?? 0) - prev.y);
+      if (d > trimBeforeMm) {
+        // solo insertar si el comando anterior no es ya un trim
+        const prevCmd = out[out.length - 1];
+        if (!prevCmd || prevCmd.type !== 'trim') {
+          out.push({ type: 'trim' });
+        }
+      }
+    }
+    out.push(c);
+    if (c.type === 'stitch' || c.type === 'jump') prev = { x: c.x, y: c.y };
+  }
+  return out;
 }
 
 export function getProfessionalPanelMetrics(commands, objects, regions, exportCommands, darkStroke, config) {

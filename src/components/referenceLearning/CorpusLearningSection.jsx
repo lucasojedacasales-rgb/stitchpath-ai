@@ -1,8 +1,9 @@
 import { useState, useCallback, useMemo } from 'react';
-import { Brain, Sparkles, Layers, Download, Wand2, AlertTriangle, CheckCircle2, FileText, Cpu, RotateCw, ChevronDown, ChevronRight } from 'lucide-react';
+import { Brain, Sparkles, Layers, Download, Wand2, AlertTriangle, CheckCircle2, FileText, Cpu, RotateCw, ChevronDown, ChevronRight, Zap } from 'lucide-react';
 import { learnFromReferenceCorpus } from '@/lib/referenceLearning/referenceCorpusLearner';
 import { applyLearnedProfileToMotor, mergeLearnedConfig } from '@/lib/referenceLearning/applyLearnedProfileToMotor';
 import { saveLearningState, loadLearningState, clearLearningState } from '@/lib/referenceLearning/referenceLearningState';
+import { applyLearnedProfileToProfessionalMode } from '@/lib/referenceLearning/referenceLearningApplier';
 
 /**
  * CorpusLearningSection — Panel principal "Aprendizaje de referencias".
@@ -20,6 +21,8 @@ export default function CorpusLearningSection({ parsedFiles, embeddedProjectComm
   const [showStats, setShowStats] = useState(true);
   const [selectedProfileId, setSelectedProfileId] = useState(null);
   const [appliedProfileId, setAppliedProfileId] = useState(null);
+  const [appliedResult, setAppliedResult] = useState(null);
+  const [applying, setApplying] = useState(false);
 
   // Sincronizar nombres de archivos subidos para persistencia
   const uploadedFileNames = useMemo(() => (parsedFiles || []).map((p) => p.filename), [parsedFiles]);
@@ -33,7 +36,11 @@ export default function CorpusLearningSection({ parsedFiles, embeddedProjectComm
     setError(null);
     setProgress({ phase: 'parsing', label: 'Analizando archivo', index: 0, total: parsedFiles.length, percent: 0 });
     try {
-      const res = await learnFromReferenceCorpus(parsedFiles, (p) => setProgress(p));
+      const res = await learnFromReferenceCorpus(parsedFiles, (p) => setProgress(p), {
+        commands: embeddedProjectCommands,
+        regions: embeddedProjectRegions,
+        name: embeddedProjectName,
+      });
       if (res.error) {
         setError(res.error);
         setResult(null);
@@ -62,6 +69,59 @@ export default function CorpusLearningSection({ parsedFiles, embeddedProjectComm
     setAppliedProfileId(profileId);
     setSelectedProfileId(profileId);
   }, [result, onApplyLearnedConfig]);
+
+  // ── FASE 5 — Aplicar perfil aprendido al modo profesional ──
+  // Selecciona el mejor perfil para el diseño actual, construye el preset,
+  // activa Professional Mode y compara antes/después.
+  const handleApplyLearnedToProfessionalMode = useCallback(() => {
+    if (!result || !result.learnedProfiles || result.learnedProfiles.length === 0) {
+      setError('Primero aprende del corpus antes de aplicar un perfil.');
+      return;
+    }
+    if (!embeddedProjectCommands || embeddedProjectCommands.length === 0) {
+      setError('No hay un diseño activo para aplicar el perfil. Abre un proyecto en el Editor.');
+      return;
+    }
+    setApplying(true);
+    setError(null);
+    try {
+      const applyRes = applyLearnedProfileToProfessionalMode({
+        currentCommands: embeddedProjectCommands,
+        currentRegions: embeddedProjectRegions || [],
+        learnedProfiles: result.learnedProfiles,
+        learnedRules: result.learnedRules || [],
+        corpusSummary: result.corpusSummary,
+        designName: embeddedProjectName || 'Diseño actual',
+      });
+      if (applyRes.error) {
+        setError(applyRes.error);
+        setAppliedResult(null);
+      } else {
+        // Aplicar el config patch al Editor (activa Professional Mode + learned* keys)
+        if (typeof onApplyLearnedConfig === 'function') {
+          onApplyLearnedConfig(applyRes.configPatch);
+        }
+        setAppliedResult(applyRes);
+        setAppliedProfileId(applyRes.selection?.selectedProfileId);
+        setSelectedProfileId(applyRes.selection?.selectedProfileId);
+      }
+    } catch (e) {
+      setError(e.message || 'Error al aplicar el perfil aprendido');
+    } finally {
+      setApplying(false);
+    }
+  }, [result, embeddedProjectCommands, embeddedProjectRegions, embeddedProjectName, onApplyLearnedConfig]);
+
+  const handleExportAppliedReport = useCallback(() => {
+    if (!appliedResult?.report) return;
+    const blob = new Blob([appliedResult.report], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'REFERENCE_LEARNING_APPLIED_REPORT.md';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [appliedResult]);
 
   const handleExportReport = useCallback(() => {
     if (!result?.learningReportMarkdown) return;
@@ -113,12 +173,28 @@ export default function CorpusLearningSection({ parsedFiles, embeddedProjectComm
               {learning ? 'Aprendiendo...' : '🧠 APRENDER DEL CORPUS'}
             </button>
             <button
+              onClick={handleApplyLearnedToProfessionalMode}
+              disabled={learning || applying || !result?.learnedProfiles?.length || !embeddedProjectCommands?.length}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-cyan-900/40"
+            >
+              <Zap className="w-4 h-4" />
+              {applying ? 'Aplicando...' : 'Aplicar perfil al modo profesional'}
+            </button>
+            <button
               onClick={handleExportReport}
               disabled={!result?.learningReportMarkdown}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#0d0f14] border border-[#2a2d3a] text-slate-300 text-xs font-bold hover:bg-[#1e2130] transition-colors disabled:opacity-40"
             >
               <Download className="w-3.5 h-3.5" /> Informe
             </button>
+            {appliedResult && (
+              <button
+                onClick={handleExportAppliedReport}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-900/20 border border-emerald-500/30 text-emerald-300 text-xs font-bold hover:bg-emerald-900/30 transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" /> Informe aplicado
+              </button>
+            )}
             {result && (
               <button
                 onClick={handleClearLearning}
@@ -202,6 +278,79 @@ export default function CorpusLearningSection({ parsedFiles, embeddedProjectComm
                 {failedFiles.length} archivo(s) fallido(s): {failedFiles.map((f) => f.filename).join(', ')}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── Sección 2.5: Aplicación del perfil aprendido (FASE 5) ────────────── */}
+        {appliedResult && (
+          <div className="mt-4 bg-cyan-900/10 border border-cyan-500/30 rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Zap className="w-4 h-4 text-cyan-400" />
+              <span className="text-xs font-bold text-cyan-300">Perfil aprendido aplicado al Professional Mode</span>
+            </div>
+            {/* Perfil seleccionado */}
+            <div className="mb-3">
+              <div className="text-[11px] text-slate-400">
+                Perfil: <span className="text-cyan-300 font-bold">{appliedResult.selection?.selectedProfile?.label || appliedResult.selection?.selectedProfileId}</span>
+                {' '}· Confianza: <span className="text-emerald-400 font-bold">{Math.round((appliedResult.selection?.confidence || 0) * 100)}%</span>
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">{appliedResult.selection?.reason}</div>
+            </div>
+            {/* Parámetros cambiados */}
+            {appliedResult.preset && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-center mb-3">
+                <AppliedParam label="Densidad relleno" value={`${appliedResult.preset.fillRowSpacingMm}mm`} />
+                <AppliedParam label="Ángulo relleno" value={`${appliedResult.preset.fillAngleDeg}°`} />
+                <AppliedParam label="Satin spacing" value={`${appliedResult.preset.satinColumnSpacingMm}mm`} />
+                <AppliedParam label="Pull comp" value={`${appliedResult.preset.pullCompensationMm}mm`} />
+                <AppliedParam label="Max stitch" value={`${appliedResult.preset.maxVisibleStitchMm}mm`} />
+                <AppliedParam label="Trim travel" value={`${appliedResult.preset.trimBeforeTravelMm}mm`} />
+                <AppliedParam label="Jump travel" value={`${appliedResult.preset.convertTravelAboveMmToJump}mm`} />
+                <AppliedParam label="Max colores" value={appliedResult.preset.maxColorCount} />
+              </div>
+            )}
+            {/* Antes / Después */}
+            {appliedResult.beforeComparison && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-[#0d0f14] border border-red-500/20 rounded-lg p-3">
+                  <div className="text-[10px] font-bold text-red-400 mb-2">ANTES (diseño actual vs corpus)</div>
+                  <div className="space-y-1">
+                    <MetricRow label="Gap score" value={`${appliedResult.beforeComparison.professionalGapScore}/100`} color="text-red-400" />
+                    <MetricRow label="Reglas incumplidas" value={appliedResult.beforeComparison.violatedRules?.length || 0} color="text-amber-400" />
+                    <MetricRow label="Características faltantes" value={appliedResult.beforeComparison.missingFeatures?.length || 0} color="text-amber-400" />
+                    <MetricRow label="Correcciones" value={appliedResult.beforeComparison.recommendedFixes?.length || 0} color="text-slate-400" />
+                  </div>
+                </div>
+                <div className="bg-[#0d0f14] border border-emerald-500/20 rounded-lg p-3">
+                  <div className="text-[10px] font-bold text-emerald-400 mb-2">DESPUÉS (preset aplicado)</div>
+                  <div className="space-y-1">
+                    <MetricRow label="Max stitch visible" value={`${appliedResult.preset.maxVisibleStitchMm}mm`} color="text-emerald-400" />
+                    <MetricRow label="Contour after fill" value={appliedResult.preset.contourAfterFill ? 'sí' : 'no'} color="text-cyan-400" />
+                    <MetricRow label="Underlay" value={appliedResult.preset.underlayEnabled ? 'sí' : 'no'} color="text-cyan-400" />
+                    <MetricRow label="Satin contours" value={appliedResult.preset.useSatinForOuterContours ? 'sí' : 'no'} color="text-cyan-400" />
+                  </div>
+                </div>
+              </div>
+            )}
+            {/* Reglas incumplidas por el diseño actual */}
+            {appliedResult.beforeComparison?.violatedRules?.length > 0 && (
+              <div className="mt-3">
+                <div className="text-[10px] font-bold text-amber-400 mb-1.5">Tu diseño incumple estas reglas aprendidas:</div>
+                <div className="space-y-1 max-h-32 overflow-y-auto">
+                  {appliedResult.beforeComparison.violatedRules.map((v, i) => (
+                    <div key={i} className="text-[10px] text-slate-400 flex items-start gap-1.5 bg-[#0d0f14] rounded px-2 py-1 border border-[#1e2130]">
+                      <span className={`font-bold shrink-0 ${v.severity === 'high' ? 'text-red-400' : v.severity === 'medium' ? 'text-amber-400' : 'text-slate-400'}`}>[{v.ruleId}]</span>
+                      <span className="flex-1">{v.action}</span>
+                      <span className="text-slate-600 shrink-0">{(v.confidence * 100).toFixed(0)}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="mt-3 text-[10px] text-emerald-300 flex items-center gap-1.5">
+              <CheckCircle2 className="w-3 h-3" />
+              Professional Mode activado con preset aprendido. Ve al Editor → pestaña Profesional para ver el quality gate.
+            </div>
           </div>
         )}
       </div>
@@ -366,6 +515,24 @@ function Stat({ label, value, color }) {
     <div className="bg-[#0d0f14] rounded-lg p-2 border border-[#1e2130]">
       <div className={`text-sm font-bold ${color}`}>{value}</div>
       <div className="text-[9px] text-slate-600">{label}</div>
+    </div>
+  );
+}
+
+function AppliedParam({ label, value }) {
+  return (
+    <div className="bg-[#0d0f14] rounded-lg p-2 border border-cyan-500/20">
+      <div className="text-sm font-bold text-cyan-300">{value}</div>
+      <div className="text-[9px] text-slate-600">{label}</div>
+    </div>
+  );
+}
+
+function MetricRow({ label, value, color }) {
+  return (
+    <div className="flex items-center justify-between text-[11px]">
+      <span className="text-slate-500">{label}</span>
+      <span className={`font-bold ${color}`}>{value}</span>
     </div>
   );
 }

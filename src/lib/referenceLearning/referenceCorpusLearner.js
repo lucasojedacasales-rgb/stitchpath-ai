@@ -20,6 +20,9 @@ import { generateLearnedProfiles } from './learnedProfessionalProfiles';
 import { mineDensityAngleCompensationRules } from './densityAngleCompensationMiner';
 import { applyLearnedProfileToMotor } from './applyLearnedProfileToMotor';
 import { generateReferenceLearningEngineReport } from './referenceLearningEngineReport';
+import { selectBestLearnedProfileForCurrentDesign } from './referenceDesignSelector';
+import { compareCurrentDesignToLearnedCorpus } from './referenceDesignComparator';
+import { buildProfessionalPresetFromLearnedProfile } from './learnedPresetBuilder';
 
 const PHASE_LABELS = {
   parsing: 'Analizando archivo',
@@ -44,7 +47,7 @@ const BLOCK_TYPES = [
  * @param {(progress: object) => void} [onProgress]
  * @returns {Promise<object>} resultado del aprendizaje
  */
-export async function learnFromReferenceCorpus(parsedFiles, onProgress) {
+export async function learnFromReferenceCorpus(parsedFiles, onProgress, embeddedProject = null) {
   const files = Array.isArray(parsedFiles) ? parsedFiles : [];
   const total = files.length;
   if (total === 0) {
@@ -110,16 +113,38 @@ export async function learnFromReferenceCorpus(parsedFiles, onProgress) {
   const recommendedMotorPresets = buildRecommendedPresets(learnedProfiles, learnedRules);
 
   // FASE 7 — informe markdown
+  // Si hay un diseño activo (embeddedProject), comparar contra el corpus y
+  // seleccionar perfil automáticamente para que el informe tenga secciones 5 y 6.
   onProgress?.({ phase: 'report', label: PHASE_LABELS.report, percent: 96 });
   await tick();
+  let comparison = null;
+  let appliedProfile = null;
+  let appliedPatch = null;
+  let designName = null;
+  if (embeddedProject && embeddedProject.commands && embeddedProject.commands.length > 0) {
+    designName = embeddedProject.name || 'Diseño actual';
+    const selection = selectBestLearnedProfileForCurrentDesign(
+      embeddedProject.regions || [], embeddedProject.commands, learnedProfiles
+    );
+    if (selection.selectedProfile) {
+      comparison = compareCurrentDesignToLearnedCorpus(
+        embeddedProject.commands, embeddedProject.regions || [],
+        selection.selectedProfile, learnedRules, corpusSummary
+      );
+      comparison.selectedProfile = selection.selectedProfile;
+      comparison.confidence = selection.confidence;
+      appliedProfile = selection.selectedProfile;
+      appliedPatch = buildProfessionalPresetFromLearnedProfile(selection.selectedProfile, learnedRules);
+    }
+  }
   const learningReportMarkdown = generateReferenceLearningEngineReport({
     corpus,
     rules: learnedRules,
     profiles: learnedProfiles,
-    comparison: null,
-    appliedProfile: null,
-    appliedPatch: null,
-    designName: null,
+    comparison,
+    appliedProfile,
+    appliedPatch,
+    designName,
   });
 
   onProgress?.({ phase: 'done', label: PHASE_LABELS.done, percent: 100 });

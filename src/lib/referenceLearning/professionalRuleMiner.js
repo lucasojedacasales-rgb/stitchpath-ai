@@ -311,21 +311,59 @@ function mineTrimTiming(corpus) {
 }
 
 function mineMaxVisibleStitch(corpus) {
-  const maxes = corpus.map(e => e.metrics.maxStitchLength).filter(v => Number.isFinite(v) && v > 0);
-  // P95 of max stitch length across files = professional ceiling
-  const sorted = [...maxes].sort((a, b) => a - b);
-  const ceiling = sorted.length ? sorted[Math.floor(sorted.length * 0.95)] : 7;
+  // FASE 1 — limpia outliers: usa SOLO stitches visibles reales (excluye jumps,
+  // trims, movimientos entre bloques y outliers > 12mm que son travel encubierto).
+  // Para cada archivo calcula el percentil 95 de sus longitudes de stitch real,
+  // luego toma la mediana de esos P95 y la clampea a [2.5, 6.0]. Fallback 3.5mm.
+  const perFileP95 = [];
+  for (const e of corpus) {
+    const cmds = e.commandSequence || [];
+    if (!cmds.length) continue;
+    const lens = [];
+    let prev = null;
+    for (const c of cmds) {
+      if (c.type !== 'stitch') { if (c.type === 'jump') prev = { x: c.x, y: c.y }; continue; }
+      if (!prev) { prev = { x: c.x, y: c.y }; continue; }
+      const d = Math.hypot((c.x ?? 0) - prev.x, (c.y ?? 0) - prev.y);
+      // excluir outliers: 0 (duplicado puro) y > 12mm (travel encubierto / jump mal codificado)
+      if (d > 0.1 && d <= 12) lens.push(d);
+      prev = { x: c.x, y: c.y };
+    }
+    if (lens.length >= 5) perFileP95.push(percentile(lens, 0.95));
+  }
+  let ceiling;
+  if (perFileP95.length >= 2) {
+    ceiling = median(perFileP95);
+  } else {
+    ceiling = 3.5; // fallback profesional
+  }
+  // clamp al rango profesional válido
+  ceiling = Math.max(2.5, Math.min(6.0, ceiling));
   return {
     ruleId: 'J003_max_visible_stitch',
     name: 'Longitud máxima aceptable de stitch visible',
     category: 'jumps_trims',
     learnedFromFiles: corpus.length,
     confidence: 0.85,
-    condition: 'percentil 95 del maxStitchLength del corpus',
-    recommendedAction: 'Dividir cualquier stitch visible por encima del techo profesional.',
-    parameterRange: { ceiling: ceiling.toFixed(2) },
+    condition: 'mediana del P95 por archivo de stitches reales (excluye jumps/trims/outliers>12mm), clamp [2.5,6.0]',
+    recommendedAction: 'No permitir stitch visible > techo profesional salvo relleno tatami soportado dentro de región; travel largo debe ser jump/trim.',
+    parameterRange: { ceiling: ceiling.toFixed(2), method: 'p95_visible_real_median', clamp: '2.5-6.0' },
     examples: corpus.slice(0, 5).map(e => e.filename),
   };
+}
+
+function percentile(arr, p) {
+  if (!arr.length) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const idx = Math.floor(sorted.length * p);
+  return sorted[Math.min(idx, sorted.length - 1)];
+}
+
+function median(arr) {
+  if (!arr.length) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 // ─── Colors ─────────────────────────────────────────────────────────────────

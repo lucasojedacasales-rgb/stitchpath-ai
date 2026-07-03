@@ -196,12 +196,24 @@ export default function Editor() {
     if (configWithDarkStroke.professionalMode) {
       const ld = configWithDarkStroke.learnedFillDensityMm;
       const la = configWithDarkStroke.learnedFillAngleDeg;
+      const variation = configWithDarkStroke.learnedNeighborAngleVariationDeg;
       if (ld != null || la != null) {
-        genRegions = regions.map(r => ({
-          ...r,
-          density: ld != null ? ld : (r.density ?? 0.4),
-          angle: la != null ? la : (r.angle ?? 45),
-        }));
+        // Alternar el ángulo de relleno entre regiones fill vecinas usando la
+        // variación aprendida del corpus (evita costuras paralelas acumuladas).
+        let fillIdx = 0;
+        genRegions = regions.map(r => {
+          const isFill = r.stitch_type === 'fill' || !r.stitch_type;
+          let angle = la != null ? la : (r.angle ?? 45);
+          if (isFill && variation != null && la != null) {
+            angle = la + (fillIdx % 2 === 1 ? variation : 0);
+            fillIdx++;
+          }
+          return {
+            ...r,
+            density: ld != null ? ld : (r.density ?? 0.4),
+            angle,
+          };
+        });
       }
     }
     const built = buildFinalCommands(genRegions, configWithDarkStroke, editorMachineSettings);
