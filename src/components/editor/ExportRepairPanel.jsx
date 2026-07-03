@@ -8,7 +8,7 @@
  * NO cambia el Final Look visual. El toggle solo afecta la previsualización.
  */
 import { useState, useMemo, useCallback } from 'react';
-import { Wrench, Download, AlertTriangle, CheckCircle2, XCircle, ShieldCheck, Eye, GitCompare, FileText, RotateCcw } from 'lucide-react';
+import { Wrench, Download, AlertTriangle, CheckCircle2, XCircle, ShieldCheck, Eye, GitCompare, FileText, RotateCcw, Sparkles } from 'lucide-react';
 import { repairFinalLookCommandsForExport } from '@/lib/exportRepair/repairFinalLookCommandsForExport';
 import { detectExportErrors } from '@/lib/exportRepair/exportErrorDetector';
 
@@ -55,6 +55,15 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = 'VISIBLE_DIAGONAL_FORENSICS.md'; a.click();
+    URL.revokeObjectURL(url);
+  }, [repair]);
+
+  const handleDownloadPolish = useCallback(() => {
+    if (!repair?.repairReport?.polish?.report) return;
+    const blob = new Blob([repair.repairReport.polish.report], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'EXPORT_POLISH_REPORT_V1.md'; a.click();
     URL.revokeObjectURL(url);
   }, [repair]);
 
@@ -202,6 +211,44 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
         </div>
       )}
 
+      {/* Polish V1 (post-V5, solo warnings) */}
+      {repair?.repairReport?.polish && (() => {
+        const pl = repair.repairReport.polish;
+        const pc = pl.polishComparison;
+        const safeReached = pc?.ce01Status?.after === 'SAFE';
+        return (
+          <div className={`rounded-lg p-2.5 border ${pl.polishAccepted ? 'bg-cyan-900/10 border-cyan-500/30' : 'bg-amber-900/10 border-amber-500/30'}`}>
+            <div className="flex items-center gap-2">
+              <Sparkles className={`w-4 h-4 ${pl.polishAccepted ? 'text-cyan-400' : 'text-amber-400'}`} />
+              <span className={`text-sm font-bold ${pl.polishAccepted ? 'text-cyan-400' : 'text-amber-400'}`}>
+                Polish V1 {pl.polishAccepted ? 'aplicado' : 'revertido (base V5)'}
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1">
+              Post-V5 · solo warnings · invariantes V5 protegidos. Invariantes se mantienen: visibleDiag={pc?.visibleDiagonalStitches?.after ?? 0}, emptyBlocks={pc?.emptyBlocks?.after ?? 0}.
+            </p>
+            <div className="grid grid-cols-2 gap-1 mt-1.5 text-[10px]">
+              <PolishMini label="shortSt" b={pc?.shortStitches} />
+              <PolishMini label="dups" b={pc?.duplicateStitches} />
+              <PolishMini label="missingTieIn" b={pc?.missingTieIn} />
+              <PolishMini label="missingTieOff" b={pc?.missingTieOff} />
+              <PolishMini label="ce01Score" b={pc?.ce01Score} dir="higher" />
+              <div className="flex items-center gap-1 bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
+                <span className="text-slate-500">ce01</span>
+                <span className={`font-bold ${safeReached ? 'text-emerald-400' : 'text-amber-300'}`}>{pc?.ce01Status?.after ?? '—'}</span>
+                {safeReached && <span className="text-emerald-400 ml-auto">SAFE ✅</span>}
+              </div>
+            </div>
+            <button
+              onClick={handleDownloadPolish}
+              className="w-full flex items-center justify-center gap-2 py-1.5 mt-2 rounded-lg bg-[#0d0f14] border border-cyan-500/30 text-cyan-300 text-xs font-bold hover:bg-cyan-900/20 transition-colors"
+            >
+              <FileText className="w-3.5 h-3.5" /> Descargar EXPORT_POLISH_REPORT_V1.md
+            </button>
+          </div>
+        );
+      })()}
+
       {/* Informe */}
       {repair && (
         <div className="space-y-2">
@@ -257,6 +304,23 @@ function CmpRow({ label, b, dir = 'lower', fmt }) {
         {fmt ? '—' : (delta > 0 ? '+' : '') + (Number.isInteger(delta) ? delta : delta.toFixed(2))}
       </td>
     </tr>
+  );
+}
+
+function PolishMini({ label, b, dir = 'lower' }) {
+  const before = b?.before, after = b?.after;
+  const f = (v) => (typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(2)) : String(v ?? '—'));
+  const delta = (typeof before === 'number' && typeof after === 'number') ? after - before : 0;
+  const better = dir === 'lower' ? delta < 0 : delta > 0;
+  const worse = dir === 'lower' ? delta > 0 : delta < 0;
+  const color = better ? 'text-emerald-400' : worse ? 'text-red-400' : 'text-slate-400';
+  return (
+    <div className="flex items-center gap-1 bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
+      <span className="text-slate-500">{label}</span>
+      <span className="text-slate-300">{f(before)}</span>
+      <span className="text-slate-600">→</span>
+      <span className={`font-bold ${color}`}>{f(after)}</span>
+    </div>
   );
 }
 

@@ -23,6 +23,7 @@ import {
 import { validateCE01 } from '@/lib/ce01Validator';
 import { generateExportRepairReport } from './exportRepairReport';
 import { detectVisibleDiagonalStitches, generateVisibleDiagonalForensicsReport } from './visibleDiagonalDetector';
+import { polishRepairedCommands } from './exportPolish';
 
 const MAX_STITCHES = 12000;
 
@@ -238,6 +239,18 @@ export function repairFinalLookCommandsForExport({ finalLookCommands, objects = 
     rejectionReason = buildRejectionReason(sourceMetrics, finalMetrics);
   }
 
+  // ── Polish V1 (post-V5, solo warnings, transaccional) ──
+  // Solo se ejecuta si V5 aceptó. Reversible: si rompe un invariante V5,
+  // polishedCommands = repairedCommands (salida idéntica al checkpoint V5).
+  // El pipeline V5 (phases) NO se modifica; el polish es una capa post-aceptación.
+  let polishResult = null;
+  if (repairAccepted) {
+    polishResult = polishRepairedCommands({
+      repairedCommands, objects, regions, config, machineSettings: ms, darkStroke,
+    });
+    if (polishResult.polishAccepted) repairedCommands = polishResult.polishedCommands;
+  }
+
   // ── returnedMetrics = métricas de los comandos QUE SE DEVUELVEN ──
   const exportDecisionSource = repairAccepted ? 'repaired' : 'source';
   const returnedMetrics = measureMetrics(repairedCommands, objects, regions, config, ms);
@@ -287,6 +300,12 @@ export function repairFinalLookCommandsForExport({ finalLookCommands, objects = 
     exportBlockedBecauseRepairRejected: repairRejected ? `REPAIR_REJECTED — ${rejectionReason}` : null,
     visibleDiagForensics: vdForensics,
     visibleDiagDetection: vdDetection,
+    polish: polishResult ? {
+      polishAccepted: polishResult.polishAccepted,
+      polishComparison: polishResult.polishComparison,
+      polishPhaseLog: polishResult.polishPhaseLog,
+      report: polishResult.polishReport.report,
+    } : null,
     report: generateExportRepairReport({
       phaseLog, sourceMetrics, finalMetrics, returnedMetrics, exportDecisionSource,
       comparison, repairAccepted, repairRejected, rejectionReason, exportAllowed, remainingBlockingIssues,
