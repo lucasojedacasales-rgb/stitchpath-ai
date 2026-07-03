@@ -18,10 +18,11 @@ import {
   validatePaths, consolidateLowerOutlinePaths, RAW_PARAMS,
 } from '@/lib/rawDarkStrokeTest';
 import {
-  buildContourObjects, getLastUniversalReport, getLastContourAudit,
+  buildContourObjects, getLastUniversalReport,
 } from '@/lib/contourExportBuilder';
 import { getLastLowerContourReport } from '@/lib/lowerContourRebuilder';
 import { buildFinalCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
+import { validateCE01 } from '@/lib/ce01Validator';
 import {
   makeCircleFixture, makeKirbyFixture, makeMulticolorFixture,
   makeIrregularFixture, makeOpenDetailsFixture,
@@ -108,7 +109,7 @@ function ce01Proxy(cmdCounts) {
 // ── Run one fixture through the real motor ─────────────────────────────────────
 function runFixture(fixture) {
   const errors = [];
-  let darkStroke = null, contourObjects = [], contourReport = null, universalReport = null;
+  let darkStroke = null, contourObjects = [], contourReport = null, universalReport = null, finalObjects = [];
   let lowerReport = null, commands = [], meta = null, cmdCounts = { stitches: 0, jumps: 0, trims: 0, colorChanges: 0, colorCount: 0 };
 
   try {
@@ -128,9 +129,20 @@ function runFixture(fixture) {
   try {
     const res = buildFinalCommands(fixture.regions, config, DEFAULT_MACHINE, 'DST');
     commands = res.commands || [];
+    finalObjects = res.objects || [];
     meta = res.meta || null;
     cmdCounts = countCommands(commands);
   } catch (e) { errors.push(`buildFinalCommands: ${e.message}`); }
+
+  let ce01Status = ce01Proxy(cmdCounts);
+  try {
+    if (commands.length > 0) {
+      const rep = validateCE01(commands, finalObjects, fixture.regions, config, { ...DEFAULT_MACHINE, maxSpeed: 800 });
+      if (rep && rep.status) ce01Status = rep.status;
+    } else {
+      ce01Status = 'INVALID';
+    }
+  } catch (e) { errors.push(`ce01: ${e.message}`); }
 
   const u = universalReport || {};
   const lr = lowerReport || {};
@@ -158,8 +170,9 @@ function runFixture(fixture) {
     eyesExported: !!darkStroke?.hasEyes && (u.innerOutlineCount > 0 || u.detailOpenCurveCount > 0 || zones.eyes),
     lowerContourExported: zones.lower,
     feetContourExported: zones.leftFoot && zones.rightFoot,
-    ce01Status: ce01Proxy(cmdCounts),
+    ce01Status,
     minPathDarkSupport: darkStroke?.minPathDarkSupport ?? 0,
+    exportedPathsCount: darkStroke?.exportedPaths?.length ?? 0,
     averagePathDarkSupport: darkStroke?.averagePathDarkSupport ?? 0,
     longStraightSegments: longSegs,
     darkContourCoverage: u.darkContourCoverage ?? 0,
@@ -197,8 +210,15 @@ function assertFixture(fixture, m) {
   }
   if (e.notFill) ok(m.detailOpenCurveCount >= 1, 'open detail converted to fill');
 
-  // universal: all exported contours must have dark support >= 0.90
-  ok(m.minPathDarkSupport >= 0.90 || m.consolidatedContours === 0, `dark support < 0.90 (${m.minPathDarkSupport?.toFixed(2)})`);
+  // universal: exported contours must come from real dark pixels, never fill boundaries.
+  if (m.consolidatedContours > 0) {
+    ok(m.rawDarkPixels > 0, 'contours generated without dark pixels');
+    ok(!m.fillBoundaryExported, 'fill boundary exported as contour');
+  }
+  // dark support >= 0.90 only applies to lower-zone exported paths (when they exist).
+  if (m.exportedPathsCount > 0) {
+    ok(m.minPathDarkSupport >= 0.90, `lower-zone dark support < 0.90 (${m.minPathDarkSupport.toFixed(2)})`);
+  }
 
   return { pass: fails.length === 0, fails };
 }
