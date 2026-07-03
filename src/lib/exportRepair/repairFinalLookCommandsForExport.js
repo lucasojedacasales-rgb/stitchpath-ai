@@ -1,12 +1,12 @@
 /**
- * repairFinalLookCommandsForExport.js — ORQUESTRADOR v2 (transaccional)
+ * repairFinalLookCommandsForExport.js — ORQUESTRADOR v4 (transaccional, prioridad bloqueos)
  * ─────────────────────────────────────────────────────────────────────────────
  * Flujo: finalLookCommands → technicalRepair (transaccional) → validate → exportCommands
  *
- * REGLA PRINCIPAL: cada fase mide métricas antes/después. Si una fase empeora
- * métricas críticas, se revierte automáticamente. Si el resultado global no
- * supera los criterios de aceptación, se revierte todo (REPAIR_REJECTED) y se
- * devuelven los comandos originales.
+ * REGLA PRINCIPAL (v4): eliminar un error BLOQUEANTE tiene prioridad sobre una
+ * bajada moderada de ce01Score, siempre que CE01 no pase a INVALID. Una fase que
+ * elimina bloqueos (visibleDiagonalStitches, emptyBlocks, invalidCommandSequence,
+ * regionOutsideBounds) se acepta aunque ce01Score baje, si CE01 sigue RISKY.
  *
  * NO toca: detector universal, aprendizaje del corpus, Final Look visual,
  * encoders DST/DSB, CE01 loader, colores/regiones principales.
@@ -17,7 +17,7 @@
  */
 import { detectExportErrors } from './exportErrorDetector';
 import {
-  removeEmptyBlocks, repairVisibleDiagonalStitches, splitUnsafeLongStitches,
+  removeEmptyBlocks, repairVisibleDiagonalStitches,
   removeDuplicateStitches, mergeShortStitches, optimizeTrimsAndJumps,
   addTieInTieOff, reduceColorChangesIfSafe,
 } from './preExportRepairer';
@@ -27,6 +27,13 @@ import { detectVisibleDiagonalStitches, generateVisibleDiagonalForensicsReport }
 
 const MAX_STITCHES = 12000;
 
+// Fases que eliminan errores BLOQUEANTES — prioridad sobre ce01Score.
+const BLOCKING_FIX_PHASES = new Set([
+  'removeEmptyBlocks',
+  'removeEmptyBlocksFinal',
+  'repairVisibleDiagonalStitches',
+]);
+
 // ── Métricas críticas medidas sobre comandos reales ───────────────────────────
 function measureMetrics(commands, objects, regions, config, ms) {
   const det = detectExportErrors(commands, objects, regions, config, ms);
@@ -34,6 +41,8 @@ function measureMetrics(commands, objects, regions, config, ms) {
   return {
     emptyBlocks: c.emptyBlocks,
     visibleDiagonalStitches: c.visibleDiag,
+    invalidCommandSequence: det.errors.find(e => e.type === 'invalidCommandSequence')?.count || 0,
+    regionOutsideBounds: det.errors.find(e => e.type === 'regionOutsideBounds')?.count || 0,
     shortStitches: c.shortSt,
     duplicateStitches: c.dups,
     unsupportedLongStitches: c.longSt,
@@ -50,25 +59,65 @@ function measureMetrics(commands, objects, regions, config, ms) {
   };
 }
 
-// ── Gate genérico: ninguna métrica crítica puede empeorar ─────────────────────
-function phaseGateAccepts(before, after) {
+// ── Gate transaccional: endurece fallos graves, flexibiliza score si bloquea ──
+// blockingFix=true → permite bajada moderada de ce01Score si se elimina un bloqueo
+// y CE01 no pasa a INVALID.
+function phaseGateAccepts(before, after, opts = {}) {
   const reasons = [];
-  if (after.emptyBlocks > before.emptyBlocks) reasons.push(`emptyBlocks ${before.emptyBlocks}→${after.emptyBlocks}`);
-  if (after.visibleDiagonalStitches > before.visibleDiagonalStitches) reasons.push(`visibleDiag ${before.visibleDiagonalStitches}→${after.visibleDiagonalStitches}`);
-  if (after.shortStitches > before.shortStitches) reasons.push(`shortSt ${before.shortStitches}→${after.shortStitches}`);
-  if (after.duplicateStitches > before.duplicateStitches) reasons.push(`dups ${before.duplicateStitches}→${after.duplicateStitches}`);
-  if (after.unsupportedLongStitches > before.unsupportedLongStitches) reasons.push(`longSt ${before.unsupportedLongStitches}→${after.unsupportedLongStitches}`);
-  if (after.stitchCountOverLimit > before.stitchCountOverLimit) reasons.push(`stitchCountOverLimit ${before.stitchCountOverLimit}→${after.stitchCountOverLimit}`);
-  if (before.exportAllowed && !after.exportAllowed) reasons.push('exportAllowed true→false');
-  if (after.ce01Score < before.ce01Score - 0.5) reasons.push(`ce01Score ${before.ce01Score}→${after.ce01Score}`);
+  const blockingFix = !!opts.blockingFixPriority;
+
+  // ── Fallos duros (siempre revierten) ──
+  if (before.ce01Status !== 'INVALID' && after.ce01Status === 'INVALID') {
+    reasons.push('CE01 pasó a INVALID');
+  }
+  if (after.emptyBlocks > before.emptyBlocks) {
+    reasons.push(`emptyBlocks ${before.emptyBlocks}→${after.emptyBlocks}`);
+  }
+  if (after.invalidCommandSequence > before.invalidCommandSequence) {
+    reasons.push(`invalidCmd ${before.invalidCommandSequence}→${after.invalidCommandSequence}`);
+  }
+  if (after.regionOutsideBounds > before.regionOutsideBounds) {
+    reasons.push(`outOfBounds ${before.regionOutsideBounds}→${after.regionOutsideBounds}`);
+  }
+  if (after.duplicateStitches > before.duplicateStitches) {
+    reasons.push(`dups ${before.duplicateStitches}→${after.duplicateStitches}`);
+  }
+  if (after.unsupportedLongStitches > before.unsupportedLongStitches) {
+    reasons.push(`longSt ${before.unsupportedLongStitches}→${after.unsupportedLongStitches}`);
+  }
+  if (after.stitchCountOverLimit > before.stitchCountOverLimit) {
+    reasons.push(`stitchCountOverLimit ${before.stitchCountOverLimit}→${after.stitchCountOverLimit}`);
+  }
+  // shortStitches: aumento grave (>50) siempre revienta; pequeño permitido si blockingFix
+  const shortDelta = after.shortStitches - before.shortStitches;
+  if (shortDelta > 50) reasons.push(`shortSt +${shortDelta} (grave)`);
+
+  // ── ce01Score: flexible para fases que eliminan bloqueos ──
+  if (!blockingFix) {
+    if (after.ce01Score < before.ce01Score - 0.5) {
+      reasons.push(`ce01Score ${before.ce01Score}→${after.ce01Score}`);
+    }
+  } else {
+    // permitir bajada hasta 15 puntos si CE01 no pasó a INVALID y se reduce un bloqueo
+    const blockingReduced =
+      after.visibleDiagonalStitches < before.visibleDiagonalStitches ||
+      after.emptyBlocks < before.emptyBlocks ||
+      after.invalidCommandSequence < before.invalidCommandSequence ||
+      after.regionOutsideBounds < before.regionOutsideBounds;
+    if (!blockingReduced && after.ce01Score < before.ce01Score - 0.5) {
+      reasons.push(`ce01Score ${before.ce01Score}→${after.ce01Score} (sin reducción de bloqueos)`);
+    } else if (after.ce01Score < before.ce01Score - 15) {
+      reasons.push(`ce01Score caída excesiva ${before.ce01Score}→${after.ce01Score}`);
+    }
+  }
   return { accept: reasons.length === 0, reasons };
 }
 
 // ── Target de cada fase: debe mejorar si había algo que arreglar ───────────────
 const PHASE_TARGETS = {
   removeEmptyBlocks: 'emptyBlocks',
+  removeEmptyBlocksFinal: 'emptyBlocks',
   repairVisibleDiagonalStitches: 'visibleDiagonalStitches',
-  splitUnsafeLongStitches: 'unsupportedLongStitches',
   removeDuplicateStitches: 'duplicateStitches',
   mergeShortStitches: 'shortStitches',
   addTieInTieOff: 'missingTie',
@@ -81,6 +130,10 @@ function targetImproved(before, after, target) {
     const aT = after.missingTieIn + after.missingTieOff;
     if (bT === 0) return true; // nada que arreglar
     return aT < bT;
+  }
+  if (target === 'emptyBlocks') {
+    if (before.emptyBlocks === 0) return true;
+    return after.emptyBlocks < before.emptyBlocks;
   }
   if (before[target] === 0) return true; // nada que arreglar
   return after[target] < before[target];
@@ -98,7 +151,8 @@ function runRepairPhase({ name, commands, repairFn, seed, objects, regions, conf
     return { commands, accepted: false };
   }
   const after = measureMetrics(afterCommands, objects, regions, config, ms);
-  const gate = phaseGateAccepts(before, after);
+  const blockingFix = BLOCKING_FIX_PHASES.has(name);
+  const gate = phaseGateAccepts(before, after, { blockingFixPriority: blockingFix });
   const target = PHASE_TARGETS[name];
   const improved = target ? targetImproved(before, after, target) : true;
   const accept = gate.accept && improved;
@@ -106,22 +160,36 @@ function runRepairPhase({ name, commands, repairFn, seed, objects, regions, conf
     name,
     accepted: accept,
     rejected: !accept,
+    blockingFixPriority: blockingFix,
+    acceptedDespiteScoreDrop: blockingFix && accept && after.ce01Score < before.ce01Score - 0.5,
     reason: !gate.accept ? gate.reasons.join('; ') : (!improved ? `target ${target} no mejoró (${before[target]}→${after[target]})` : ''),
     before, after, stepReport,
   });
   return { commands: accept ? afterCommands : commands, accepted: accept };
 }
 
-// ── Criterio global de aceptación (FASE 8) ────────────────────────────────────
+// ── Criterio global de aceptación (v4: prioridad bloqueos) ────────────────────
 function globalRepairAccepted(sourceMetrics, finalMetrics) {
-  const ok =
+  const ce01NotInvalid = finalMetrics.ce01Status !== 'INVALID';
+  const noBlockingRemaining =
     finalMetrics.emptyBlocks === 0 &&
-    (finalMetrics.visibleDiagonalStitches === 0 || finalMetrics.visibleDiagonalStitches < sourceMetrics.visibleDiagonalStitches) &&
-    finalMetrics.shortStitches <= sourceMetrics.shortStitches &&
-    finalMetrics.ce01Score >= sourceMetrics.ce01Score - 0.5 &&
-    finalMetrics.exportAllowed &&
+    finalMetrics.visibleDiagonalStitches === 0 &&
+    finalMetrics.invalidCommandSequence === 0 &&
+    finalMetrics.regionOutsideBounds === 0;
+  const blockingReduced =
+    finalMetrics.visibleDiagonalStitches < sourceMetrics.visibleDiagonalStitches ||
+    finalMetrics.emptyBlocks < sourceMetrics.emptyBlocks ||
+    finalMetrics.invalidCommandSequence < sourceMetrics.invalidCommandSequence ||
+    finalMetrics.regionOutsideBounds < sourceMetrics.regionOutsideBounds;
+  const noSevereRegression =
+    finalMetrics.duplicateStitches <= sourceMetrics.duplicateStitches + 20 &&
+    finalMetrics.shortStitches <= sourceMetrics.shortStitches + 50 &&
     finalMetrics.stitchCountOverLimit <= sourceMetrics.stitchCountOverLimit;
-  return ok;
+  // ce01Score: aceptar bajada si se eliminó un bloqueo y CE01 no es INVALID
+  const scoreAcceptable =
+    finalMetrics.ce01Score >= sourceMetrics.ce01Score - 0.5 ||
+    (blockingReduced && ce01NotInvalid);
+  return ce01NotInvalid && noBlockingRemaining && noSevereRegression && scoreAcceptable;
 }
 
 /**
@@ -141,17 +209,17 @@ export function repairFinalLookCommandsForExport({ finalLookCommands, objects = 
   const phaseLog = [];
   let cmds = source;
 
-  // ── Pipeline transaccional en orden v2 ──
+  // ── Pipeline v4 (orden: removeEmpty → diagonales → dups → short → ties → trims → colors → emptyFinal) ──
   const darkSeed = { ...(darkStroke ? { darkStroke } : {}), config };
   const phases = [
     { name: 'removeEmptyBlocks', fn: removeEmptyBlocks, seed: {} },
     { name: 'repairVisibleDiagonalStitches', fn: repairVisibleDiagonalStitches, seed: darkSeed },
-    { name: 'splitUnsafeLongStitches', fn: splitUnsafeLongStitches, seed: darkSeed },
     { name: 'removeDuplicateStitches', fn: removeDuplicateStitches, seed: {} },
     { name: 'mergeShortStitches', fn: mergeShortStitches, seed: {} },
-    { name: 'optimizeTrimsAndJumps', fn: optimizeTrimsAndJumps, seed: {} },
     { name: 'addTieInTieOff', fn: addTieInTieOff, seed: {} },
+    { name: 'optimizeTrimsAndJumps', fn: optimizeTrimsAndJumps, seed: {} },
     { name: 'reduceColorChangesIfSafe', fn: reduceColorChangesIfSafe, seed: {} },
+    { name: 'removeEmptyBlocksFinal', fn: removeEmptyBlocks, seed: {} },
   ];
 
   for (const p of phases) {
@@ -168,22 +236,21 @@ export function repairFinalLookCommandsForExport({ finalLookCommands, objects = 
   const repairAccepted = globalRepairAccepted(sourceMetrics, finalMetrics);
   let repairedCommands = cmds;
   let repairRejected = false;
+  let rejectionReason = null;
   if (!repairAccepted) {
-    // revertir: devolver comandos originales
     repairedCommands = source;
     repairRejected = true;
+    rejectionReason = buildRejectionReason(sourceMetrics, finalMetrics);
   }
 
   // ── returnedMetrics = métricas de los comandos QUE SE DEVUELVEN ──
-  // Si repairAccepted → finalMetrics; si REPAIR_REJECTED → sourceMetrics.
-  // Esto garantiza que remainingBlockingIssues, exportAllowed y el resumen
-  // usen TODOS la misma fuente (no mezclar repaired con source).
   const exportDecisionSource = repairAccepted ? 'repaired' : 'source';
   const returnedMetrics = measureMetrics(repairedCommands, objects, regions, config, ms);
 
   // ── exportAllowed + remainingBlockingIssues sobre los comandos devueltos ──
   const finalDetect = detectExportErrors(repairedCommands, objects, regions, config, ms);
   const remainingBlockingIssues = finalDetect.errors.filter(e => e.severity === 'blocking' && e.count > 0);
+  // RISKY permite exportación; solo INVALID bloquea
   const exportAllowed = finalDetect.ce01.status !== 'INVALID' && repairedCommands.length > 0 && remainingBlockingIssues.length === 0;
 
   // ── Forensics de diagonales visibles (sobre los comandos devueltos) ──
@@ -202,6 +269,8 @@ export function repairFinalLookCommandsForExport({ finalLookCommands, objects = 
     visibleDiagonalStitches: { before: sourceMetrics.visibleDiagonalStitches, after: returnedMetrics.visibleDiagonalStitches },
     unsupportedLongStitches: { before: sourceMetrics.unsupportedLongStitches, after: returnedMetrics.unsupportedLongStitches },
     emptyBlocks: { before: sourceMetrics.emptyBlocks, after: returnedMetrics.emptyBlocks },
+    invalidCommandSequence: { before: sourceMetrics.invalidCommandSequence, after: returnedMetrics.invalidCommandSequence },
+    regionOutsideBounds: { before: sourceMetrics.regionOutsideBounds, after: returnedMetrics.regionOutsideBounds },
     colorCount: { before: sourceMetrics.colorCount, after: returnedMetrics.colorCount },
     ce01Status: { before: sourceMetrics.ce01Status, after: returnedMetrics.ce01Status },
     ce01Score: { before: sourceMetrics.ce01Score, after: returnedMetrics.ce01Score },
@@ -217,14 +286,15 @@ export function repairFinalLookCommandsForExport({ finalLookCommands, objects = 
     comparison,
     repairAccepted,
     repairRejected,
+    rejectionReason,
     exportAllowed,
     remainingBlockingIssues,
-    exportBlockedBecauseRepairRejected: repairRejected ? 'REPAIR_REJECTED — export usa sourceCommands (métricas no mejoraron globalmente)' : null,
+    exportBlockedBecauseRepairRejected: repairRejected ? `REPAIR_REJECTED — ${rejectionReason}` : null,
     visibleDiagForensics: vdForensics,
     visibleDiagDetection: vdDetection,
     report: generateExportRepairReport({
       phaseLog, sourceMetrics, finalMetrics, returnedMetrics, exportDecisionSource,
-      comparison, repairAccepted, repairRejected, exportAllowed, remainingBlockingIssues,
+      comparison, repairAccepted, repairRejected, rejectionReason, exportAllowed, remainingBlockingIssues,
       visibleDiagForensics: vdForensics, visibleDiagDetection: vdDetection,
     }),
   };
@@ -239,4 +309,17 @@ export function repairFinalLookCommandsForExport({ finalLookCommands, objects = 
     comparison,
     phaseLog,
   };
+}
+
+function buildRejectionReason(sourceMetrics, finalMetrics) {
+  const reasons = [];
+  if (finalMetrics.ce01Status === 'INVALID') reasons.push('CE01 pasó a INVALID');
+  if (finalMetrics.emptyBlocks > 0) reasons.push(`emptyBlocks=${finalMetrics.emptyBlocks} restantes`);
+  if (finalMetrics.visibleDiagonalStitches > 0 && finalMetrics.visibleDiagonalStitches >= sourceMetrics.visibleDiagonalStitches) {
+    reasons.push(`visibleDiag no redujo (${sourceMetrics.visibleDiagonalStitches}→${finalMetrics.visibleDiagonalStitches})`);
+  }
+  if (finalMetrics.duplicateStitches > sourceMetrics.duplicateStitches + 20) reasons.push(`dups regresión +${finalMetrics.duplicateStitches - sourceMetrics.duplicateStitches}`);
+  if (finalMetrics.shortStitches > sourceMetrics.shortStitches + 50) reasons.push(`shortSt regresión +${finalMetrics.shortStitches - sourceMetrics.shortStitches}`);
+  if (reasons.length === 0) reasons.push('criterios globales no satisfechos');
+  return reasons.join('; ');
 }

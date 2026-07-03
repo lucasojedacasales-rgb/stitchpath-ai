@@ -105,14 +105,16 @@ export function detectExportErrors(commands, objects = [], regions = [], config 
   let tinyObjects = 0;
   for (const [, g] of regionGroups) { if (g.count > 0 && g.count < 3) tinyObjects++; }
 
-  // missing tie-in/off: reconoce marcas hasTieIn/hasTieOff puestas por addTieInTieOff
+  // missing tie-in/off: reconoce marcas hasTieIn/hasTieOff Y stitches isTie
+  // (tie stitches insertados por addTieInTieOff) — mismo campo que lee la fase.
   let noTieIn = 0, noTieOff = 0;
   for (const [, g] of regionGroups) {
     if (g.count < 4) continue;
     const firstCmd = cmds[g.first];
     const lastCmd = cmds[g.last];
-    if (!firstCmd || !firstCmd.hasTieIn) noTieIn++;
-    if (!lastCmd || !lastCmd.hasTieOff) noTieOff++;
+    // tie-in satisfecho si el primer stitch del bloque tiene hasTieIn o es tie (isTie)
+    if (!firstCmd || (!firstCmd.hasTieIn && !firstCmd.isTie)) noTieIn++;
+    if (!lastCmd || (!lastCmd.hasTieOff && !lastCmd.isTie)) noTieOff++;
   }
 
   const totalColors = colorChanges + 1;

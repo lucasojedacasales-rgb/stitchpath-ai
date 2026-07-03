@@ -106,38 +106,106 @@ function segmentDarkSupport(ax, ay, bx, by, darkStroke) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  FASE 1 — removeEmptyBlocks
+//  FASE 1 — removeEmptyBlocks (robusto, multi-pasada)
 // ═══════════════════════════════════════════════════════════════════════════
-// Detecta bloques de color sin stitches reales y elimina el colorChange (y
-// trims redundantes) que los introduce. Conserva bloques con detalles pequeños
-// reales. No elimina jumps de posicionamiento (se reasocian al color previo).
+// Elimina bloques de color sin stitches reales:
+//   - colorChange sin stitches antes del siguiente colorChange/EOF
+//   - bloques con solo jump/trim y 0 stitches
+//   - bloque inicial (antes del primer colorChange) sin stitches
+//   - jumps/trims finales tras el último stitch
+//   - colorChanges redundantes creados por reducción de color
+// Recalcula bloques después de cada pasada (hasta 3 pasadas) porque eliminar
+// un colorChange puede dejar al descubierto un nuevo bloque vacío.
+// Si un bloque no se puede eliminar, registra forense (whyNotRemoved).
 export function removeEmptyBlocks(commands, _objects, _regions, report = {}) {
-  let removed = 0;
-  const dropIdx = new Set();
-  for (let i = 0; i < commands.length; i++) {
-    if (commands[i].type !== 'colorChange') continue;
-    let hasStitch = false;
-    for (let j = i + 1; j < commands.length; j++) {
-      if (commands[j].type === 'colorChange') break;
-      if (commands[j].type === 'stitch') { hasStitch = true; break; }
+  let cmds = commands;
+  let totalRemoved = 0;
+  let colorChangesRemoved = 0;
+  let trailingJumpsTrimsRemoved = 0;
+  let leadingEmptiesRemoved = 0;
+  const allRemovedIdx = [];
+
+  for (let pass = 0; pass < 3; pass++) {
+    const dropIdx = new Set();
+
+    // 1. colorChange sin stitches antes del siguiente colorChange/EOF
+    for (let i = 0; i < cmds.length; i++) {
+      if (cmds[i].type !== 'colorChange') continue;
+      let hasStitch = false;
+      for (let j = i + 1; j < cmds.length; j++) {
+        if (cmds[j].type === 'colorChange') break;
+        if (cmds[j].type === 'stitch') { hasStitch = true; break; }
+      }
+      if (!hasStitch) dropIdx.add(i);
     }
-    if (!hasStitch) { dropIdx.add(i); removed++; }
-  }
-  // también elimina trims redundantes que quedan colgados sin stitches después
-  for (let i = 0; i < commands.length; i++) {
-    if (commands[i].type !== 'trim') continue;
-    // trim seguido solo de jumps/trim/colorChange hasta fin o siguiente colorChange sin stitches → redundante
-    let hasStitchAfter = false;
-    for (let j = i + 1; j < commands.length; j++) {
-      if (commands[j].type === 'stitch') { hasStitchAfter = true; break; }
+
+    // 2. bloque inicial (antes del primer colorChange) sin stitches
+    let firstCC = -1;
+    for (let i = 0; i < cmds.length; i++) if (cmds[i].type === 'colorChange') { firstCC = i; break; }
+    const leadingEnd = firstCC === -1 ? cmds.length : firstCC;
+    let leadingHasStitch = false;
+    for (let j = 0; j < leadingEnd; j++) if (cmds[j].type === 'stitch') { leadingHasStitch = true; break; }
+    if (!leadingHasStitch && leadingEnd > 0) {
+      for (let j = 0; j < leadingEnd; j++) dropIdx.add(j);
     }
-    if (!hasStitchAfter && i === commands.length - 1) { dropIdx.add(i); }
+
+    // 3. jumps/trims finales tras el último stitch
+    let lastStitch = -1;
+    for (let i = cmds.length - 1; i >= 0; i--) if (cmds[i].type === 'stitch') { lastStitch = i; break; }
+    if (lastStitch >= 0 && lastStitch < cmds.length - 1) {
+      let allNonStitch = true;
+      for (let i = lastStitch + 1; i < cmds.length; i++) if (cmds[i].type === 'stitch') { allNonStitch = false; break; }
+      if (allNonStitch) for (let i = lastStitch + 1; i < cmds.length; i++) dropIdx.add(i);
+    }
+
+    if (dropIdx.size === 0) break;
+
+    // clasificar lo eliminado
+    for (const i of dropIdx) {
+      if (cmds[i].type === 'colorChange') colorChangesRemoved++;
+      else if (lastStitch >= 0 && i > lastStitch) trailingJumpsTrimsRemoved++;
+      else if (i < leadingEnd) leadingEmptiesRemoved++;
+      allRemovedIdx.push(i);
+    }
+    cmds = cmds.filter((_, i) => !dropIdx.has(i));
+    totalRemoved += dropIdx.size;
   }
-  if (removed === 0 && dropIdx.size === 0) { report.emptyBlocksRemoved = 0; return commands; }
-  const out = commands.filter((_, i) => !dropIdx.has(i));
-  report.emptyBlocksRemoved = removed;
-  report.redundantTrimsRemoved = dropIdx.size - removed;
-  return out;
+
+  // ── Forense de bloques no eliminables ──
+  // Recuento final de emptyBlocks; si queda alguno, registrar por qué.
+  const unremovableBlocks = [];
+  let emptyBlocksAfter = 0;
+  let blockStart = 0, blockSt = 0;
+  for (let i = 0; i <= cmds.length; i++) {
+    const c = cmds[i];
+    if (!c || c.type === 'colorChange' || c.type === 'end' || i === cmds.length) {
+      if (blockSt === 0 && i > blockStart) {
+        emptyBlocksAfter++;
+        // forense
+        const color = cmds[blockStart]?.color || cmds[Math.min(blockStart, cmds.length - 1)]?.color || '—';
+        const prevCmd = blockStart > 0 ? cmds[blockStart - 1] : null;
+        const nextCmd = i < cmds.length ? cmds[i] : null;
+        unremovableBlocks.push({
+          commandIndex: blockStart,
+          color,
+          previousCommand: prevCmd ? `${prevCmd.type}@${blockStart - 1}` : 'none',
+          nextCommand: nextCmd ? `${nextCmd.type}@${i}` : 'EOF',
+          reason: 'bloque sin stitches tras todas las pasadas',
+          whyNotRemoved: blockStart === 0 ? 'bloque inicial sin colorChange que lo delimite' : 'colorChange ya eliminado pero quedan jumps/trims no stitches',
+        });
+      }
+      blockStart = i; blockSt = 0;
+    } else if (c.type === 'stitch') blockSt++;
+  }
+
+  report.emptyBlocksRemoved = totalRemoved;
+  report.colorChangesRemoved = colorChangesRemoved;
+  report.trailingJumpsTrimsRemoved = trailingJumpsTrimsRemoved;
+  report.leadingEmptiesRemoved = leadingEmptiesRemoved;
+  report.commandIndexesRemoved = allRemovedIdx;
+  report.remainingEmptyBlocks = emptyBlocksAfter;
+  report.unremovableBlocks = unremovableBlocks;
+  return cmds;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
