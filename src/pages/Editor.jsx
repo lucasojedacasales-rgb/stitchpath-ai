@@ -680,6 +680,7 @@ export default function Editor() {
                 exportCommands={finalEmbroideryCommands.commands}
                 darkStroke={darkStroke}
                 config={config}
+                gate={finalEmbroideryCommands.professionalReport?.gate}
                 onToggleMode={(v) => setConfig(c => ({ ...c, professionalMode: v }))}
               />
             </div>

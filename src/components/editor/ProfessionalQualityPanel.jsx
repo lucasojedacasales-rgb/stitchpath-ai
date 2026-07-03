@@ -11,12 +11,15 @@ import {
 
 export default function ProfessionalQualityPanel({
   commands = [], objects = [], regions = [], exportCommands = [], darkStroke, config = {}, onToggleMode,
+  gate: providedGate,
 }) {
   const data = useMemo(() => {
-    const gate = professionalEmbroideryQualityGate(commands, objects, regions, darkStroke, config);
+    // Si llega el gate pre-calculado por el pipeline profesional (con métricas de
+    // reparación), lo usamos; si no, se recalcula para mantener el panel funcional.
+    const gate = providedGate || professionalEmbroideryQualityGate(commands, objects, regions, darkStroke, config);
     const cmp = compareFinalLookVsExport(commands, exportCommands || commands);
     return { gate, cmp };
-  }, [commands, objects, regions, exportCommands, darkStroke, config]);
+  }, [providedGate, commands, objects, regions, exportCommands, darkStroke, config]);
 
   const g = data.gate, c = data.cmp;
   const score = g.professionalScore;
@@ -56,7 +59,12 @@ export default function ProfessionalQualityPanel({
 
       {/* FASE 1 — Diagonales / travel */}
       <Section title="1 · Puntadas visibles">
-        <KV k="visibleDiagonalStitches" v={g.visibleDiagonalStitches} ok={g.visibleDiagonalStitches === 0} />
+        <KV k="visibleDiagonalStitchesBefore" v={g.visibleDiagonalStitchesBefore ?? '—'} />
+        <KV k="visibleDiagonalStitchesAfter" v={g.visibleDiagonalStitches} ok={g.visibleDiagonalStitches === 0} />
+        <KV k="removedVisibleDiagonalStitches" v={g.removedVisibleDiagonalStitches ?? 0} ok={(g.removedVisibleDiagonalStitches ?? 0) > 0 ? true : undefined} />
+        <KV k="convertedDiagonalToJump" v={g.convertedDiagonalToJump ?? 0} ok={(g.convertedDiagonalToJump ?? 0) > 0 ? true : undefined} />
+        <KV k="longestRemovedDiagonalMm" v={g.longestRemovedDiagonalMm != null ? Number(g.longestRemovedDiagonalMm).toFixed(1) : '—'} />
+        <KV k="repairedCommandsUsedForExport" v={String(g.repairedCommandsUsedForExport ?? false)} ok={!!g.repairedCommandsUsedForExport} />
         <KV k="unsupportedTravelStitches" v={g.unsupportedTravelStitches} ok={g.unsupportedTravelStitches === 0} />
         {g.blocks.find(b => b.name === 'unsupportedLongStitches') && <KV k="unsupportedLongStitches" v={g.blocks.find(b => b.name === 'unsupportedLongStitches').value} ok={g.blocks.find(b => b.name === 'unsupportedLongStitches').value === 0} />}
       </Section>

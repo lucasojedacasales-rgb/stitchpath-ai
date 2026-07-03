@@ -30,6 +30,12 @@ export const PROFESSIONAL_PARAMS = {
   maxColors: 8,
   colorMergeLabDelta: 12,
   travelVisibleMm: 0, // max travel visible = 0 → todo travel debe ocultarse
+  // ── Diagonal repair (FASE 1 real) ──
+  suspiciousDiagonalMinMm: 2.5,   // longitud mínima para considerar una puntada sospechosa
+  longConnectorMm: 6.0,          // > este umbral se considera "conector entre objetos" aunque no sea negro/contorno
+  contourDarkSupportMin: 0.5,    // contornos con soporte de línea negra real >= esto se conservan
+  diagonalAngleMin: 20,          // ángulo diagonal marcado (desde horizontal)
+  diagonalAngleMax: 70,
 };
 
 // ── Color helpers ────────────────────────────────────────────────────────────
@@ -160,6 +166,107 @@ export function validateVisibleStitchesBeforeExport(commands, regions = [], dark
     prev = { x, y };
   }
   return { commands: out, report };
+}
+
+// ── Clasificador de puntada diagonal visible sospechosa ──────────────────────
+// Devuelve { dist, suspicious, reason } para una puntada dada su punto anterior.
+// Una puntada es sospechosa si:
+//  - longitud > suspiciousDiagonalMinMm
+//  - ángulo diagonal marcado (20-70° o 110-160°)
+//  - cruza regiones (start/end en regiones distintas o sale a exterior)
+//  - NO es relleno tatami válido (misma región en ambos extremos)
+//  - es negra/contorno O es un conector largo (> longConnectorMm)
+//  - si es contorno, NO tiene soporte de línea negra real (máscara)
+function classifyVisibleDiagonalStitch(c, prev, regions, darkStroke, p) {
+  if (!prev) return { dist: 0, suspicious: false };
+  const dx = (c.x || 0) - prev.x, dy = (c.y || 0) - prev.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= p.suspiciousDiagonalMinMm) return { dist, suspicious: false };
+  // ángulo normalizado a 0-180°
+  let deg = Math.atan2(dy, dx) * 180 / Math.PI;
+  deg = ((deg % 180) + 180) % 180;
+  const isDiagonal = (deg >= p.diagonalAngleMin && deg <= p.diagonalAngleMax) ||
+                     (deg >= 180 - p.diagonalAngleMax && deg <= 180 - p.diagonalAngleMin);
+  if (!isDiagonal) return { dist, suspicious: false, reason: 'not-diagonal-angle' };
+  const regionPrev = regionSupportForPoint(prev.x, prev.y, regions);
+  const regionCur = regionSupportForPoint(c.x || 0, c.y || 0, regions);
+  const crosses = !regionPrev || !regionCur || regionPrev.id !== regionCur.id;
+  const sameRegionFill = c.stitchType === 'fill' && regionPrev && regionCur && regionPrev.id === regionCur.id;
+  if (!crosses || sameRegionFill) return { dist, suspicious: false, reason: 'same-region-fill' };
+  const lt = (c.layerType || '').toLowerCase();
+  const isContour = lt.includes('outline') || lt.includes('contour') || lt.includes('detail') || lt.includes('facial');
+  const isBlack = isDarkColor(c.color);
+  const longConnector = dist > p.longConnectorMm;
+  if (!(isBlack || isContour || longConnector)) return { dist, suspicious: false, reason: 'not-connector-color' };
+  if (isContour) {
+    const maskSup = segmentDarkSupport(prev.x, prev.y, c.x || 0, c.y || 0, darkStroke);
+    if (maskSup >= p.contourDarkSupportMin) return { dist, suspicious: false, reason: 'contour-has-dark-support' };
+  }
+  return { dist, suspicious: true, reason: 'crossing-diagonal' };
+}
+
+// ── FASE 1 (real): reparar puntadas diagonales visibles ──────────────────────
+// Convierte cada puntada diagonal sospechosa en trim + jump al punto destino,
+// de modo que la aguja viaja sin coser la diagonal. Las puntadas de relleno
+// tatami válidas (misma región) y los contornos con soporte de línea negra real
+// se conservan intactos.
+export function repairVisibleDiagonalStitches(commands = [], regions = [], darkStroke, config = {}) {
+  const p = { ...PROFESSIONAL_PARAMS, ...(config.professionalParams || {}) };
+  const report = {
+    visibleDiagonalStitchesBefore: 0,
+    visibleDiagonalStitchesAfter: 0,
+    removedVisibleDiagonalStitches: 0,
+    convertedDiagonalToJump: 0,
+    longestRemovedDiagonalMm: 0,
+    sourceCommandIndex: [],
+  };
+  const out = [];
+  let prev = null;
+  for (let i = 0; i < commands.length; i++) {
+    const c = commands[i];
+    if (c.type !== 'stitch') {
+      out.push(c);
+      if (c.type === 'jump') prev = { x: c.x, y: c.y };
+      continue;
+    }
+    const info = classifyVisibleDiagonalStitch(c, prev, regions, darkStroke, p);
+    if (info.suspicious) {
+      report.visibleDiagonalStitchesBefore++;
+      report.removedVisibleDiagonalStitches++;
+      report.convertedDiagonalToJump++;
+      report.longestRemovedDiagonalMm = Math.max(report.longestRemovedDiagonalMm, info.dist);
+      report.sourceCommandIndex.push(i);
+      // trim + jump: no coser la diagonal
+      out.push({ type: 'trim' });
+      out.push({ type: 'jump', x: c.x, y: c.y, color: c.color, layerType: c.layerType, regionId: c.regionId, stitchType: c.stitchType, source: c.source });
+      prev = { x: c.x, y: c.y };
+      continue;
+    }
+    out.push(c);
+    prev = { x: c.x, y: c.y };
+  }
+  // after: re-escaneo de salida para confirmar que no quedan diagonales sospechosas
+  let pa = null;
+  for (const c of out) {
+    if (c.type !== 'stitch') { if (c.type === 'jump') pa = { x: c.x, y: c.y }; continue; }
+    const info = classifyVisibleDiagonalStitch(c, pa, regions, darkStroke, p);
+    if (info.suspicious) report.visibleDiagonalStitchesAfter++;
+    pa = { x: c.x, y: c.y };
+  }
+  return { commands: out, report };
+}
+
+// Conteo aislado de diagonales visibles restantes (para el gate)
+export function countVisibleDiagonalStitches(commands = [], regions = [], darkStroke, config = {}) {
+  const p = { ...PROFESSIONAL_PARAMS, ...(config.professionalParams || {}) };
+  let count = 0, prev = null;
+  for (const c of commands) {
+    if (c.type !== 'stitch') { if (c.type === 'jump') prev = { x: c.x, y: c.y }; continue; }
+    const info = classifyVisibleDiagonalStitch(c, prev, regions, darkStroke, p);
+    if (info.suspicious) count++;
+    prev = { x: c.x, y: c.y };
+  }
+  return count;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -305,6 +412,10 @@ export function compareFinalLookVsExport(finalLookCommands = [], exportCommands 
 export function professionalEmbroideryQualityGate(commands = [], objects = [], regions = [], darkStroke, config = {}) {
   const p = { ...PROFESSIONAL_PARAMS, ...(config.professionalParams || {}) };
   const vis = validateVisibleStitchesBeforeExport(commands, regions, darkStroke, config);
+  // visibleDiagonalStitches: usa el clasificador de reparación (consistente con
+  // repairVisibleDiagonalStitches) en lugar del contador legacy que solo medía
+  // longitud+color. Esto refleja exactamente lo que el modo profesional repara.
+  const visibleDiagonalStitches = countVisibleDiagonalStitches(commands, regions, darkStroke, config);
   const colorCount = new Set(commands.filter(c => c.color).map(c => c.color.toLowerCase())).size;
 
   let shortStitches = 0, duplicateStitches = 0, jumps = 0, trims = 0, fillAfterContour = false;
@@ -350,7 +461,7 @@ export function professionalEmbroideryQualityGate(commands = [], objects = [], r
   const underlayCount = commands.filter(c => (c.layerType || '').toLowerCase().includes('underlay') || (c.source || '').toLowerCase().includes('underlay')).length;
 
   const blocks = [
-    { name: 'visibleDiagonalStitches', fail: vis.report.visibleDiagonalStitches > 0, value: vis.report.visibleDiagonalStitches, limit: 0 },
+    { name: 'visibleDiagonalStitches', fail: visibleDiagonalStitches > 0, value: visibleDiagonalStitches, limit: 0 },
     { name: 'unsupportedLongStitches', fail: vis.report.stitchWithoutDarkMaskSupport > 0, value: vis.report.stitchWithoutDarkMaskSupport, limit: 0 },
     { name: 'contourMissingOnOneFoot', fail: contourMissingOnOneFoot, value: contourMissingOnOneFoot, limit: 0 },
     { name: 'fillAfterContour', fail: fillAfterContour, value: fillAfterContour, limit: 0 },
@@ -362,7 +473,7 @@ export function professionalEmbroideryQualityGate(commands = [], objects = [], r
   ];
   const failed = blocks.filter(b => b.fail).map(b => b.name);
   let score = 100;
-  if (vis.report.visibleDiagonalStitches > 0) score -= 30;
+  if (visibleDiagonalStitches > 0) score -= 30;
   if (contourMissingOnOneFoot) score -= 20;
   if (fillAfterContour) score -= 15;
   if (colorCount > p.maxColors) score -= 10;
@@ -372,7 +483,7 @@ export function professionalEmbroideryQualityGate(commands = [], objects = [], r
   score = Math.max(0, score);
 
   return {
-    visibleDiagonalStitches: vis.report.visibleDiagonalStitches,
+    visibleDiagonalStitches,
     unsupportedTravelStitches: vis.report.unsupportedTravelStitches,
     satinContourCount, runningContourCount, fillRegionCount, underlayCount,
     colorCount, colorCountBefore: colorCount, colorCountAfter: colorCount,
@@ -399,14 +510,27 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
   // FASE 2 — reordenar capas
   procCommands = reorderProfessionalLayers(procCommands);
 
-  // FASE 1 — eliminar diagonales visibles
+  // FASE 1 (real) — reparar diagonales visibles ANTES del gate y de exportar.
+  // Cuenta las diagonales sospechosas en bruto, repara (trim+jump) y luego el
+  // gate se evalúa sobre los comandos ya reparados.
+  const diagonalBefore = countVisibleDiagonalStitches(procCommands, procRegions, darkStroke, config);
+  const repair = repairVisibleDiagonalStitches(procCommands, procRegions, darkStroke, config);
+  procCommands = repair.commands;
+  // Mantener el sanitize legacy para travel/long-black restante (no toca diagonales ya reparadas)
   const vis = validateVisibleStitchesBeforeExport(procCommands, procRegions, darkStroke, config);
   procCommands = vis.commands;
 
-  // FASE 6 — quality gate
+  // FASE 6 — quality gate (sobre comandos reparados)
   const gate = professionalEmbroideryQualityGate(procCommands, objects, procRegions, darkStroke, config);
   gate.colorCountBefore = colorRes.report.originalColorCount;
   gate.colorCountAfter = colorRes.report.reducedColorCount;
+  // Métricas de reparación de diagonales (FASE 1 real)
+  gate.visibleDiagonalStitchesBefore = diagonalBefore;
+  gate.visibleDiagonalStitchesAfter = gate.visibleDiagonalStitches;
+  gate.removedVisibleDiagonalStitches = repair.report.removedVisibleDiagonalStitches;
+  gate.convertedDiagonalToJump = repair.report.convertedDiagonalToJump;
+  gate.longestRemovedDiagonalMm = repair.report.longestRemovedDiagonalMm;
+  gate.repairedCommandsUsedForExport = true;
 
   return {
     commands: procCommands,
@@ -415,6 +539,7 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
     report: {
       color: colorRes.report,
       visible: vis.report,
+      repair: repair.report,
       gate,
     },
   };

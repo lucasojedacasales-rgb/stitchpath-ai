@@ -32,7 +32,7 @@ import {
   makeColorReductionFixture,
 } from './embroideryRegressionFixtures';
 import { prepareCE01ProductionExport } from '@/lib/ce01ProductionExport';
-import { applyProfessionalPipeline, professionalEmbroideryQualityGate, compareFinalLookVsExport } from '@/lib/professionalDigitizingMode';
+import { applyProfessionalPipeline, professionalEmbroideryQualityGate, compareFinalLookVsExport, repairVisibleDiagonalStitches, countVisibleDiagonalStitches } from '@/lib/professionalDigitizingMode';
 
 // ── Build a darkStroke context from a synthetic bitmap ─────────────────────────
 // Mirrors buildStrictDarkStrokeContextFromOriginalImage but skips Image loading.
@@ -285,6 +285,12 @@ function runFixture(fixture) {
     professionalColorCountAfter: professionalReport?.gate?.colorCountAfter ?? null,
     professionalContourMissingOnOneFoot: professionalReport?.gate?.contourMissingOnOneFoot ?? null,
     professionalPassed: professionalReport?.gate?.passed ?? null,
+    professionalDiagonalsBefore: professionalReport?.gate?.visibleDiagonalStitchesBefore ?? null,
+    professionalDiagonalsAfter: professionalReport?.gate?.visibleDiagonalStitchesAfter ?? null,
+    professionalRemovedDiagonals: professionalReport?.gate?.removedVisibleDiagonalStitches ?? null,
+    professionalConvertedDiagonalToJump: professionalReport?.gate?.convertedDiagonalToJump ?? null,
+    professionalLongestRemovedDiagonalMm: professionalReport?.gate?.longestRemovedDiagonalMm ?? null,
+    professionalRepairedUsedForExport: professionalReport?.gate?.repairedCommandsUsedForExport ?? null,
   };
 
   return { metrics, errors, darkStroke, universalReport: u };
@@ -392,6 +398,9 @@ function buildMarkdown(results) {
     for (const k of ['rawDarkPixels','darkComponents','rawSkeletonSegments','consolidatedContours','outerOutlineCount','innerOutlineCount','detailOpenCurveCount','rejectedNoiseCount','rejectedFillBoundaryCount','stitchCount','jumpCount','trimCount','colorCount','artificialGeometryCount','fillBoundaryExported','pinkBoundaryExported','mouthExported','eyesExported','lowerContourExported','feetContourExported','ce01Status','minPathDarkSupport','averagePathDarkSupport','longStraightSegments','ovalBoundaryUsed','removedArtificialBridges','longestUnsupportedSegmentMm','unsupportedLongContourSegmentsAfter','suspiciousBlackDiagonalDetected','leftFootContourObject','rightFootContourObject','leftFootExportedStitches','rightFootExportedStitches','leftFootExportStitchesInExport','rightFootExportStitchesInExport','feetAfterFill','simulationExportMismatch','professionalMode','professionalScore','professionalVisibleDiagonals','professionalUnsupportedTravel','professionalFillAfterContour','professionalColorCountBefore','professionalColorCountAfter','professionalContourMissingOnOneFoot','professionalPassed']) {
       lines.push(`| ${k} | ${m[k]} |`);
     }
+    for (const k of ['professionalDiagonalsBefore','professionalDiagonalsAfter','professionalRemovedDiagonals','professionalConvertedDiagonalToJump','professionalLongestRemovedDiagonalMm','professionalRepairedUsedForExport']) {
+      lines.push(`| ${k} | ${m[k]} |`);
+    }
     if (r.errors.length) { lines.push(''); lines.push('**Errores de ejecución:**'); for (const e of r.errors) lines.push(`- ${e}`); }
     if (r.fails.length) { lines.push(''); lines.push('**Fallos de assertion:**'); for (const f of r.fails) lines.push(`- ${f}`); }
     lines.push('');
@@ -425,6 +434,81 @@ function buildMarkdown(results) {
   return lines.join('\n');
 }
 
+// ── TEST 13: repairVisibleDiagonalStitches (unit test directo) ─────────────────
+// Dos zonas separadas + una puntada diagonal artificial que las conecta.
+// La reparación debe convertir esa unión en trim+jump sin coser la diagonal.
+function runVisibleDiagonalRepairTest() {
+  const errors = [];
+  const fails = [];
+  // Dos regiones circulares separadas (centros a ~45mm de distancia)
+  const circlePoly = (cx, cy, r, n = 32) => {
+    const pts = []; for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2; pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); } return pts;
+  };
+  const normPts = pts => pts.map(([x, y]) => [x / 200, y / 200]);
+  const regions = [
+    { id: 'zone_a', name: 'zone_a', color: '#dc2828', stitch_type: 'fill', region_class: 'fill', object_group: 'zone_a', area_mm2: 2500, path_points: normPts(circlePoly(55, 100, 28)) },
+    { id: 'zone_b', name: 'zone_b', color: '#dc2828', stitch_type: 'fill', region_class: 'fill', object_group: 'zone_b', area_mm2: 2500, path_points: normPts(circlePoly(145, 140, 28)) },
+  ];
+  // Comandos: fill de A, puntada diagonal negra A→B (artificial, ~34°), fill de B
+  const commands = [
+    { type: 'jump', x: 55, y: 100, color: '#dc2828', stitchType: 'fill', regionId: 'zone_a' },
+    { type: 'stitch', x: 55, y: 120, color: '#dc2828', stitchType: 'fill', regionId: 'zone_a', layerType: 'fill' },
+    { type: 'stitch', x: 55, y: 80, color: '#dc2828', stitchType: 'fill', regionId: 'zone_a', layerType: 'fill' },
+    // diagonal artificial negra conectando A → B (cruza regiones, contorno sin soporte de máscara)
+    { type: 'stitch', x: 145, y: 140, color: '#0c0c0c', stitchType: 'satin', regionId: 'zone_b', layerType: 'outer_outline' },
+    { type: 'stitch', x: 145, y: 120, color: '#dc2828', stitchType: 'fill', regionId: 'zone_b', layerType: 'fill' },
+    { type: 'stitch', x: 145, y: 160, color: '#dc2828', stitchType: 'fill', regionId: 'zone_b', layerType: 'fill' },
+  ];
+  const darkStroke = null; // sin máscara → el contorno no tiene soporte → sospechoso
+  const before = countVisibleDiagonalStitches(commands, regions, darkStroke, {});
+  const repair = repairVisibleDiagonalStitches(commands, regions, darkStroke, {});
+  const after = countVisibleDiagonalStitches(repair.commands, regions, darkStroke, {});
+
+  const ok = (cond, msg) => { if (!cond) fails.push(msg); };
+  ok(before > 0, `visibleDiagonalStitchesBefore debe ser > 0 (got ${before})`);
+  ok(after === 0, `visibleDiagonalStitchesAfter debe ser 0 (got ${after})`);
+  ok(repair.report.removedVisibleDiagonalStitches > 0, `removedVisibleDiagonalStitches debe ser > 0 (got ${repair.report.removedVisibleDiagonalStitches})`);
+  ok(repair.report.convertedDiagonalToJump > 0, `convertedDiagonalToJump debe ser > 0 (got ${repair.report.convertedDiagonalToJump})`);
+  // la salida contiene un trim y un jump donde estaba la diagonal
+  const hasTrim = repair.commands.some(c => c.type === 'trim');
+  const hasJump = repair.commands.some(c => c.type === 'jump' && c.x === 145 && c.y === 140);
+  ok(hasTrim, 'la salida no contiene el trim de la diagonal reparada');
+  ok(hasJump, 'la salida no contiene el jump al punto destino de la diagonal');
+  // no se eliminan las puntadas de relleno válidas (mismas región)
+  const fillStitches = repair.commands.filter(c => c.type === 'stitch' && c.stitchType === 'fill').length;
+  ok(fillStitches === 4, `puntadas de relleno válidas alteradas (esperaba 4, got ${fillStitches})`);
+
+  const metrics = {
+    rawDarkPixels: 0, darkComponents: 0, rawSkeletonSegments: 0, consolidatedContours: 0,
+    outerOutlineCount: 0, innerOutlineCount: 0, detailOpenCurveCount: 0, rejectedNoiseCount: 0,
+    rejectedFillBoundaryCount: 0, stitchCount: repair.commands.filter(c => c.type === 'stitch').length,
+    jumpCount: repair.commands.filter(c => c.type === 'jump').length,
+    trimCount: repair.commands.filter(c => c.type === 'trim').length, colorCount: 2,
+    artificialGeometryCount: 0, fillBoundaryExported: false, pinkBoundaryExported: false,
+    mouthExported: false, eyesExported: false, lowerContourExported: false, feetContourExported: false,
+    ce01Status: 'SAFE', minPathDarkSupport: 0, exportedPathsCount: 0, averagePathDarkSupport: 0,
+    longStraightSegments: 0, darkContourCoverage: 0, ovalBoundaryUsed: false,
+    removedArtificialBridges: 0, longestUnsupportedSegmentMm: 0,
+    unsupportedLongContourSegmentsAfter: 0, suspiciousBlackDiagonalDetected: after > 0,
+    leftFootContourObject: false, rightFootContourObject: false, leftFootExportedStitches: 0,
+    rightFootExportedStitches: 0, leftFootExportColor: null, rightFootExportColor: null,
+    leftFootExportStitchesInExport: 0, rightFootExportStitchesInExport: 0, feetAfterFill: false,
+    simulationExportMismatch: false, finalLookExportObjectsMissing: [],
+    professionalMode: true,
+    professionalScore: after === 0 ? 100 : 50,
+    professionalVisibleDiagonals: after,
+    professionalUnsupportedTravel: 0, professionalFillAfterContour: null,
+    professionalColorCountBefore: 2, professionalColorCountAfter: 2,
+    professionalContourMissingOnOneFoot: null, professionalPassed: after === 0 && before > 0,
+    professionalDiagonalsBefore: before, professionalDiagonalsAfter: after,
+    professionalRemovedDiagonals: repair.report.removedVisibleDiagonalStitches,
+    professionalConvertedDiagonalToJump: repair.report.convertedDiagonalToJump,
+    professionalLongestRemovedDiagonalMm: repair.report.longestRemovedDiagonalMm,
+    professionalRepairedUsedForExport: true,
+  };
+  return { name: 'professional_visible_diagonal_repair', pass: fails.length === 0 && errors.length === 0, fails, errors, metrics };
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────────
 export function runRegressionSuite() {
   const fixtures = [
@@ -452,6 +536,8 @@ export function runRegressionSuite() {
       metrics: run.metrics,
     };
   });
+  // TEST 13: reparación directa de diagonales visibles (unit test)
+  results.push(runVisibleDiagonalRepairTest());
   const markdown = buildMarkdown(results);
   const passCount = results.filter(r => r.pass).length;
   return {
