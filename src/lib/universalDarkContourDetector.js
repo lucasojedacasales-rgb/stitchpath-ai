@@ -110,11 +110,20 @@ export function consolidateDarkContourGraph(componentPaths, mask, W, H) {
   return chains;
 }
 
+// ── bbox w/h helper — components from rawDarkStrokeTest carry minX/minY/maxX/maxY
+//    but no w/h; without this bboxCov became NaN and nothing classified as outer.
+function getBboxWH(bbox) {
+  if (!bbox) return { w: 0, h: 0 };
+  const w = bbox.w ?? (bbox.maxX - bbox.minX + 1);
+  const h = bbox.h ?? (bbox.maxY - bbox.minY + 1);
+  return { w, h };
+}
+
 // ── CLASSIFY a component by geometry (no names, no character heuristics) ──────
 function classifyComponent(comp, subpaths, W, H) {
   const totalLen = subpaths.reduce((s, p) => s + pathLengthPx(p), 0);
-  const bbox = comp.bbox;
-  const bboxCov = (bbox.w * bbox.h) / (W * H);
+  const { w: bw, h: bh } = getBboxWH(comp.bbox);
+  const bboxCov = (bw * bh) / (W * H);
   const area = comp.area || 0;
 
   if (area < NOISE_AREA_REL * W * H && totalLen < NOISE_LEN_PX) {
@@ -130,11 +139,98 @@ function classifyComponent(comp, subpaths, W, H) {
     closed = (gap < CLOSURE_GAP_FRAC * L) || (gap < CLOSURE_GAP_PX);
   }
 
+  // BUG 2: a large closed ring fragmented into many micro-segments never shows
+  // a closed longest subpath. Use aggregate geometry: if the component's bbox
+  // coverage is large and total skeleton length is high, treat it as closed.
+  if (!closed && bboxCov >= OUTER_BBOX_COVERAGE_MIN && totalLen > 80) {
+    closed = true;
+  }
+
   if (!closed) {
     if (totalLen < NOISE_LEN_PX) return 'rejected_noise';
     return 'detail_open_curve';
   }
   return bboxCov >= OUTER_BBOX_COVERAGE_MIN ? 'outer_outline' : 'inner_outline';
+}
+
+// ── CONSOLIDATE CLOSED OUTER COMPONENT ───────────────────────────────────────
+// For components classified as outer_outline, chain ALL subpaths with relaxed
+// tolerances (larger gap, tangent optional for tiny gaps) plus a chain-merge
+// pass, so a fragmented ring reconstructs as few contours instead of dozens of
+// micro-chains. Only connects across gaps with strict-mask dark support — no
+// convex hull, bbox, oval, or invented diagonals.
+function consolidateClosedOuterComponent(componentPaths, mask, W, H) {
+  const used = new Array(componentPaths.length).fill(false);
+  const chains = [];
+  const order = componentPaths.map((_, i) => i)
+    .sort((a, b) => pathLengthPx(componentPaths[b]) - pathLengthPx(componentPaths[a]));
+  const GAP = 14;
+  for (const seed of order) {
+    if (used[seed]) continue;
+    used[seed] = true;
+    const chain = [...componentPaths[seed]];
+    let changed = true;
+    while (changed) {
+      changed = false;
+      const end = chain[chain.length - 1];
+      let bestJ = -1, bestRev = false, bestD = Infinity;
+      for (let j = 0; j < componentPaths.length; j++) {
+        if (used[j]) continue;
+        const sp = componentPaths[j];
+        for (const rev of [false, true]) {
+          const cand = rev ? sp[sp.length - 1] : sp[0];
+          const d = distPx(end, cand);
+          if (d >= GAP || d >= bestD) continue;
+          if (!gapHasDarkSupport(end, cand, mask, W, H)) continue;
+          const tangentOk = (d < 3) || tangentOkPix(chain, rev ? [...sp].reverse() : sp);
+          if (!tangentOk) continue;
+          bestJ = j; bestRev = rev; bestD = d;
+        }
+      }
+      if (bestJ >= 0) {
+        const sp = componentPaths[bestJ];
+        chain.push(...(bestRev ? [...sp].reverse() : sp));
+        used[bestJ] = true; changed = true;
+      }
+    }
+    chains.push(chain);
+  }
+  // Merge resulting chains among themselves (end-to-start) when close + supported.
+  let merged = chains;
+  let didMerge = true;
+  while (didMerge) {
+    didMerge = false;
+    const out = [];
+    const usedM = new Array(merged.length).fill(false);
+    for (let i = 0; i < merged.length; i++) {
+      if (usedM[i]) continue;
+      usedM[i] = true;
+      const ch = [...merged[i]];
+      let changed = true;
+      while (changed) {
+        changed = false;
+        const end = ch[ch.length - 1];
+        for (let j = 0; j < merged.length; j++) {
+          if (usedM[j] || i === j) continue;
+          const other = merged[j];
+          let mergedJ = false;
+          for (const rev of [false, true]) {
+            const cand = rev ? other[other.length - 1] : other[0];
+            const d = distPx(end, cand);
+            if (d < GAP && gapHasDarkSupport(end, cand, mask, W, H) &&
+                (d < 3 || tangentOkPix(ch, rev ? [...other].reverse() : other))) {
+              ch.push(...(rev ? [...other].reverse() : other));
+              usedM[j] = true; mergedJ = true; break;
+            }
+          }
+          if (mergedJ) { changed = true; break; }
+        }
+      }
+      out.push(ch);
+    }
+    if (out.length < merged.length) { merged = out; didMerge = true; }
+  }
+  return merged;
 }
 
 // ── COVERAGE: dark mask pixels covered by exported contours ───────────────────
@@ -223,8 +319,12 @@ export function buildUniversalDarkContoursFromContext(darkStroke, config = {}) {
     const cls = classifyComponent(comp, subs, W, H);
     if (cls === 'rejected_noise') { counts.rejected_noise++; continue; }
 
-    // Consolidate within this real component only
-    const chains = consolidateDarkContourGraph(subs, mask, W, H);
+    // Consolidate within this real component only. Large closed outer components
+    // use relaxed chaining so a fragmented ring reconstructs as few contours
+    // instead of dozens of micro-chains.
+    const chains = (cls === 'outer_outline')
+      ? consolidateClosedOuterComponent(subs, mask, W, H)
+      : consolidateDarkContourGraph(subs, mask, W, H);
     mergedCount += subs.length - chains.length;
 
     for (const chain of chains) {
