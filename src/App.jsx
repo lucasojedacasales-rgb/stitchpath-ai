@@ -8,6 +8,7 @@ import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import ScrollToTop from './components/ScrollToTop';
 import Dashboard from './pages/Dashboard';
 import Editor from './pages/Editor';
+import RegressionTestPage from './pages/RegressionTestPage';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -29,6 +30,7 @@ const AuthenticatedApp = () => {
     <Routes>
       <Route path="/" element={<Dashboard />} />
       <Route path="/editor/:id" element={<Editor />} />
+      <Route path="/regression" element={<RegressionTestPage />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );
