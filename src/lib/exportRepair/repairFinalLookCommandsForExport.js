@@ -24,6 +24,7 @@ import { validateCE01 } from '@/lib/ce01Validator';
 import { generateExportRepairReport } from './exportRepairReport';
 import { detectVisibleDiagonalStitches, generateVisibleDiagonalForensicsReport } from './visibleDiagonalDetector';
 import { polishRepairedCommands } from './exportPolish';
+import { polishTravelAfterV5 } from './travelPolish';
 
 const MAX_STITCHES = 12000;
 
@@ -251,6 +252,16 @@ export function repairFinalLookCommandsForExport({ finalLookCommands, objects = 
     if (polishResult.polishAccepted) repairedCommands = polishResult.polishedCommands;
   }
 
+  // ── Travel Polish V1 (post-V5 + post-Polish, reduce jumps/trims, transaccional) ──
+  // Se ejecuta SOLO sobre los repairedCommands (ya polished si Polish V1 aceptó).
+  // Reversible: si rompe un invariante V5, no mejora jumps/trims, o cae score >3,
+  // travelPolishedCommands = repairedCommands (idéntico al checkpoint V5).
+  let travelPolishResult = null;
+  if (repairAccepted) {
+    travelPolishResult = polishTravelAfterV5(repairedCommands, objects, regions, config, ms);
+    if (travelPolishResult.travelPolishAccepted) repairedCommands = travelPolishResult.travelPolishedCommands;
+  }
+
   // ── returnedMetrics = métricas de los comandos QUE SE DEVUELVEN ──
   const exportDecisionSource = repairAccepted ? 'repaired' : 'source';
   const returnedMetrics = measureMetrics(repairedCommands, objects, regions, config, ms);
@@ -305,6 +316,13 @@ export function repairFinalLookCommandsForExport({ finalLookCommands, objects = 
       polishComparison: polishResult.polishComparison,
       polishPhaseLog: polishResult.polishPhaseLog,
       report: polishResult.polishReport.report,
+    } : null,
+    travelPolish: travelPolishResult ? {
+      travelPolishAccepted: travelPolishResult.travelPolishAccepted,
+      travelPolishComparison: travelPolishResult.travelPolishComparison,
+      travelPolishPhaseLog: travelPolishResult.travelPolishPhaseLog,
+      forensics: travelPolishResult.forensics,
+      report: travelPolishResult.travelPolishReport.report,
     } : null,
     report: generateExportRepairReport({
       phaseLog, sourceMetrics, finalMetrics, returnedMetrics, exportDecisionSource,

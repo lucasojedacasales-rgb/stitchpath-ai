@@ -8,7 +8,7 @@
  * NO cambia el Final Look visual. El toggle solo afecta la previsualización.
  */
 import { useState, useMemo, useCallback } from 'react';
-import { Wrench, Download, AlertTriangle, CheckCircle2, XCircle, ShieldCheck, Eye, GitCompare, FileText, RotateCcw, Sparkles } from 'lucide-react';
+import { Wrench, Download, AlertTriangle, CheckCircle2, XCircle, ShieldCheck, Eye, GitCompare, FileText, RotateCcw, Sparkles, Route } from 'lucide-react';
 import { repairFinalLookCommandsForExport } from '@/lib/exportRepair/repairFinalLookCommandsForExport';
 import { detectExportErrors } from '@/lib/exportRepair/exportErrorDetector';
 
@@ -64,6 +64,24 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = 'EXPORT_POLISH_REPORT_V1.md'; a.click();
+    URL.revokeObjectURL(url);
+  }, [repair]);
+
+  const handleDownloadTravelPolish = useCallback(() => {
+    if (!repair?.repairReport?.travelPolish?.report) return;
+    const blob = new Blob([repair.repairReport.travelPolish.report], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'EXPORT_TRAVEL_POLISH_REPORT_V1.md'; a.click();
+    URL.revokeObjectURL(url);
+  }, [repair]);
+
+  const handleDownloadTravelForensics = useCallback(() => {
+    if (!repair?.repairReport?.travelPolish?.forensics) return;
+    const blob = new Blob([repair.repairReport.travelPolish.forensics], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'TRAVEL_POLISH_FORENSICS.md'; a.click();
     URL.revokeObjectURL(url);
   }, [repair]);
 
@@ -245,6 +263,51 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
             >
               <FileText className="w-3.5 h-3.5" /> Descargar EXPORT_POLISH_REPORT_V1.md
             </button>
+          </div>
+        );
+      })()}
+
+      {/* Travel Polish V1 (post-V5, reduce jumps/trims) */}
+      {repair?.repairReport?.travelPolish && (() => {
+        const tp = repair.repairReport.travelPolish;
+        const tc = tp.travelPolishComparison;
+        const acc = tp.travelPolishAccepted;
+        return (
+          <div className={`rounded-lg p-2.5 border ${acc ? 'bg-emerald-900/10 border-emerald-500/30' : 'bg-amber-900/10 border-amber-500/30'}`}>
+            <div className="flex items-center gap-2">
+              <Route className={`w-4 h-4 ${acc ? 'text-emerald-400' : 'text-amber-400'}`} />
+              <span className={`text-sm font-bold ${acc ? 'text-emerald-400' : 'text-amber-400'}`}>
+                Travel Polish V1 {acc ? 'aplicado' : 'revertido (base V5)'}
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1">
+              Post-V5 · reduce jumps/trims · invariantes V5 protegidos · score no baja &gt;3.
+            </p>
+            <div className="grid grid-cols-3 gap-1 mt-1.5 text-[10px]">
+              <PolishMini label="jumps" b={tc?.jumpCount} />
+              <PolishMini label="trims" b={tc?.trimCount} />
+              <PolishMini label="ce01Score" b={tc?.ce01Score} dir="higher" />
+              <PolishMini label="visibleDiag" b={tc?.visibleDiagonalStitches} />
+              <PolishMini label="emptyBlocks" b={tc?.emptyBlocks} />
+              <div className="flex items-center gap-1 bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
+                <span className="text-slate-500">ce01</span>
+                <span className={`font-bold ${tc?.ce01Status?.after === 'SAFE' ? 'text-emerald-400' : tc?.ce01Status?.after === 'RISKY' ? 'text-amber-300' : 'text-red-400'}`}>{tc?.ce01Status?.after ?? '—'}</span>
+              </div>
+            </div>
+            <div className="flex gap-1 mt-2">
+              <button
+                onClick={handleDownloadTravelPolish}
+                className="flex-1 flex items-center justify-center gap-2 py-1.5 rounded-lg bg-[#0d0f14] border border-emerald-500/30 text-emerald-300 text-xs font-bold hover:bg-emerald-900/20 transition-colors"
+              >
+                <FileText className="w-3.5 h-3.5" /> Travel Polish Report
+              </button>
+              <button
+                onClick={handleDownloadTravelForensics}
+                className="flex-1 flex items-center justify-center gap-2 py-1.5 rounded-lg bg-[#0d0f14] border border-cyan-500/30 text-cyan-300 text-xs font-bold hover:bg-cyan-900/20 transition-colors"
+              >
+                <FileText className="w-3.5 h-3.5" /> Travel Forensics
+              </button>
+            </div>
           </div>
         );
       })()}
