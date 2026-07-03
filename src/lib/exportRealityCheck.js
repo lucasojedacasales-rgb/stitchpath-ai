@@ -146,7 +146,6 @@ export function computeExportReality(regions = [], commands = []) {
     outerOutlineStitches: contourReport.outerOutlineStitches,
     outerOutlineColor: contourReport.outerOutlineColor,
     outerOutlineOrder: contourReport.outerOutlineOrder,
-    mouthExported: contourReport.mouthExported,
     mouthStitches: contourReport.mouthStitches,
     innerContoursExported: contourReport.innerContoursExported,
     innerOutlineStitches: contourReport.innerOutlineStitches,

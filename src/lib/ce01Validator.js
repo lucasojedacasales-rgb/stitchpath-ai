@@ -308,8 +308,12 @@ export function validateCE01(commands, objects = [], regions = [], config = {}, 
   let contourAsFill = 0;
   let fillAsContour = 0;
   for (const r of regions) {
-    if (r.type === 'contour' && r.stitch_type === 'fill') contourAsFill++;
-    if (r.type === 'fill' && r.stitch_type === 'running_stitch') fillAsContour++;
+    const rc = r.region_class || '';
+    const name = (r.name || '').toLowerCase();
+    const isContour = rc === 'outer_outline' || rc === 'inner_outline' || rc === 'detail_run' ||
+                      name.includes('outline') || name.includes('contour');
+    if (isContour && r.stitch_type === 'fill') contourAsFill++;
+    if (!isContour && r.stitch_type === 'running_stitch') fillAsContour++;
   }
   if (contourAsFill > 0) {
     blockingIssues.push({

@@ -276,9 +276,14 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       setExporting(true);
       setExportError(null);
       try {
-        // ── Direct DST: finalEmbroideryCommands → dstEncoder → Uint8Array → Blob ──
-        // No backend roundtrip, no base64, no atob/btoa, no DSB, no conversion.
-        const { bytes, blob, meta } = buildDSTFromCommands(sourceCommands, {
+        // ── Direct DST: CE01-repaired commands → dstEncoder → Uint8Array → Blob ──
+        // Use productionReport.commands (reparados + sanitizados, validados) so
+        // the encoded file matches the CE01 gate decision. Fallback to raw
+        // editorFinalCommands only if the repaired set is unavailable.
+        const exportCommands = (productionReport && productionReport.exportAllowed && productionReport.commands && productionReport.commands.length)
+          ? productionReport.commands
+          : sourceCommands;
+        const { bytes, blob, meta } = buildDSTFromCommands(exportCommands, {
           label: project?.name || 'design',
           ce01Strict: true,
         });
@@ -303,7 +308,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
         // CO coherent
         const coMatch = headerStr.match(/CO:\s*(\d+)/);
         const headerCO = coMatch ? parseInt(coMatch[1], 10) : -1;
-        const actualColorChanges = sourceCommands.filter(c => c.type === 'colorChange').length;
+        const actualColorChanges = exportCommands.filter(c => c.type === 'colorChange').length;
         const coCoherent = headerCO === actualColorChanges;
 
         // END present: 00 00 F3 (last record before EOF)
@@ -324,16 +329,16 @@ export default function ExportModal({ project, config: editorConfig, regions: in
         const boundsNotLine = headerWidth > 1 && headerHeight > 1;
 
         // Panel metrics
-        const panelStitches = sourceCommands.filter(c => c.type === 'stitch').length;
-        const panelJumps = sourceCommands.filter(c => c.type === 'jump').length;
-        const panelTrims = sourceCommands.filter(c => c.type === 'trim').length;
+        const panelStitches = exportCommands.filter(c => c.type === 'stitch').length;
+        const panelJumps = exportCommands.filter(c => c.type === 'jump').length;
+        const panelTrims = exportCommands.filter(c => c.type === 'trim').length;
 
         const exportReady = stMatches && hasEnd && axOk && ayOk && boundsNotLine && coCoherent && isUint8Array && hasHeader512;
 
         // ── Logs ────────────────────────────────────────────────────────────
         console.log('[dst-direct-export] format:', 'DST');
         console.log('[dst-direct-export] usingDSB:', usingDSB);
-        console.log('[dst-direct-export] finalEmbroideryCommands:', sourceCommands.length);
+        console.log('[dst-direct-export] finalEmbroideryCommands:', exportCommands.length);
         console.log('[dst-direct-export] stitches:', panelStitches);
         console.log('[dst-direct-export] jumps:', panelJumps);
         console.log('[dst-direct-export] trims:', panelTrims);

@@ -37,7 +37,7 @@ import { buildFinalCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
 import { calculateUnifiedCommandMetrics } from '@/lib/unifiedCommandMetrics';
 import { simplifyGeometry } from '@/lib/industrialStitchProcessor';
 import { buildStrictDarkStrokeContextFromOriginalImage } from '@/lib/rawDarkStrokeTest';
-import { runContourRefinementGuard } from '@/lib/contourRefinementGuard';
+
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
 import { useDecisionEngine } from '@/hooks/useDecisionEngine.js';
@@ -178,16 +178,16 @@ export default function Editor() {
       return { commands: cmds, objects: [], meta };
     }
     const built = buildFinalCommands(regions, configWithDarkStroke, editorMachineSettings);
-    // ── Transactional contour refinement: clean travel/artifacts, revert if
-    //    any protected metric (mouth, body-shadow, colors, DST) regresses.
-    const refinement = runContourRefinementGuard(built.commands, regions, configWithDarkStroke);
-    const finalCmds = refinement.accepted ? refinement.commands : built.commands;
+    // buildFinalCommands already runs the transactional contour refinement
+    // (validateContourRefinement + contourRefineGuard) internally — no extra
+    // guard needed here.
+    const finalCmds = built.commands;
     console.log('[commands-state] final commands metrics:', {
       stitches: finalCmds.filter(c => c.type === 'stitch').length,
       jumps: finalCmds.filter(c => c.type === 'jump').length,
       trims: finalCmds.filter(c => c.type === 'trim').length,
     });
-    return { commands: finalCmds, objects: built.objects, meta: { ...built.meta, refinementAccepted: refinement.accepted } };
+    return { commands: finalCmds, objects: built.objects, meta: built.meta };
   }, [regions, configWithDarkStroke, editorMachineSettings, optimizedCommandsOverride]);
 
   // ═══ Unified metrics — single source of truth for all panels ═══
@@ -470,7 +470,7 @@ export default function Editor() {
             )}
           </div>
           <div className="flex items-center gap-4 text-[11px]">
-            <span className="text-slate-600">Puntadas <span className="text-violet-400 font-bold">{totalStitches.toLocaleString()}</span></span>
+            <span className="text-slate-600">Puntadas <span className="text-violet-400 font-bold">{unifiedMetrics.stitchCount.toLocaleString()}</span></span>
             <span className="text-slate-600">Colores <span className="text-cyan-400 font-bold">{colorsUsed}</span></span>
             <span className="text-slate-600">Tamaño <span className="text-emerald-400 font-bold">{config.width_mm}×{config.height_mm}mm</span></span>
           </div>
@@ -734,7 +734,7 @@ export default function Editor() {
         </div>
       </div>
 
-      {showExport && <ExportModal project={project} config={config} regions={regions} darkStroke={darkStroke} finalCommands={finalEmbroideryCommands.commands} finalObjects={finalEmbroideryCommands.objects} commandVersion={commandVersion} onClose={() => setShowExport(false)} />}
+      {showExport && <ExportModal project={project} config={configWithDarkStroke} regions={regions} darkStroke={darkStroke} finalCommands={finalEmbroideryCommands.commands} finalObjects={finalEmbroideryCommands.objects} commandVersion={commandVersion} onClose={() => setShowExport(false)} />}
     </div>);
 
 }
