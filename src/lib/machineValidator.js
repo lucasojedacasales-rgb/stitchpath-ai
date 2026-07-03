@@ -31,10 +31,10 @@ const THRESHOLDS = {
   maxStitches: 12000,
   hoopW: 100,
   hoopH: 100,
-  maxTotalJumpsSafe: 300,       // total jumps — SAFE threshold
-  maxTotalJumpsRisky: 500,      // total jumps — RISKY threshold
-  maxTotalTrimsSafe: 60,        // total trims — SAFE threshold
-  maxTotalTrimsRisky: 100,      // total trims — RISKY threshold
+  maxTotalJumpsSafe: 250,       // aligned with ce01Validator (RISKY when >250)
+  maxTotalJumpsRisky: 500,      // aligned with ce01Validator
+  maxTotalTrimsSafe: 80,        // aligned with ce01Validator (RISKY when >80)
+  maxTotalTrimsRisky: 150,      // aligned with ce01Validator
 };
 
 // ─── Penalty weights ─────────────────────────────────────────────────────────

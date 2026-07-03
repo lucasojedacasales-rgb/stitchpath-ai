@@ -19,7 +19,7 @@
  *   stitchTypeForWidth(widthMm)       → 'running_stitch' | 'satin' | 'fill'
  */
 
-import { classifyRegionGroups, convexHull, sameObjectGroup } from './contourGroupClassifier.js';
+import { classifyRegionGroups, sameObjectGroup } from './contourGroupClassifier.js';
 import { overlapsDarkStrokeMask } from './darkStrokeDetector.js';
 
 const HIGH_CONTRAST_THRESHOLD = 80;
