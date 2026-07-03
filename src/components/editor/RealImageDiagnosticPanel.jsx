@@ -11,6 +11,7 @@ import { validateCE01 } from '@/lib/ce01Validator';
 import { computeExportReality } from '@/lib/exportRealityCheck';
 import { buildStrictDarkStrokeContextFromOriginalImage } from '@/lib/rawDarkStrokeTest';
 import { buildUniversalDarkContoursFromContext, getLastUniversalReport } from '@/lib/universalDarkContourDetector';
+import { validateFinalContourCommandsAgainstDarkMask } from '@/lib/contourSegmentValidator';
 
 const DARK_LUMA = 55;
 const DARK_SAT = 80;
@@ -104,7 +105,7 @@ function regionShouldBeContour(r) {
 export default function RealImageDiagnosticPanel({
   imageUrl, regions = [], config = {}, darkStroke,
   finalCommands = [], finalObjects = [], machineSettings = {},
-  originalImageUrl, darkStrokeSourceUrl,
+  originalImageUrl, darkStrokeSourceUrl, contourSegmentReport,
 }) {
   const [origAnalysis, setOrigAnalysis] = useState(null);
   const [origError, setOrigError] = useState(null);
@@ -210,6 +211,8 @@ export default function RealImageDiagnosticPanel({
   // ── CE01 validation + export reality ───────────────────────────────────────
   const ce01 = useMemo(() => validateCE01(finalCommands, finalObjects, regions, config, machineSettings), [finalCommands, finalObjects, regions, config, machineSettings]);
   const reality = useMemo(() => computeExportReality(regions, finalCommands), [regions, finalCommands]);
+  const guardCurrent = useMemo(() => validateFinalContourCommandsAgainstDarkMask(finalCommands, effectiveDark, config), [finalCommands, effectiveDark, config]);
+  const guardReport = contourSegmentReport || guardCurrent.report;
 
   // ── Color comparison ────────────────────────────────────────────────────────
   const colorComparison = useMemo(() => {
@@ -392,6 +395,18 @@ export default function RealImageDiagnosticPanel({
     lines.push(`- exportReality status: ${reality.status}  ready=${reality.ready}`);
     lines.push(`- colorMismatch=${reality.colorMismatch}  contourMismatch=${reality.contourMismatch}  mouthMismatch=${reality.mouthMismatch}`);
     lines.push('');
+    lines.push('## 6b. Guard de diagonales (dark mask)');
+    lines.push(`- unsupportedLongContourSegments (current): ${guardCurrent.report.unsupportedLongContourSegments}`);
+    lines.push(`- removedArtificialBridges: ${guardReport.removedArtificialBridges}`);
+    lines.push(`- longestUnsupportedSegmentMm: ${guardReport.longestUnsupportedSegmentMm}`);
+    lines.push(`- longestUnsupportedSegmentSupport: ${guardReport.longestUnsupportedSegmentSupport}`);
+    lines.push(`- suspiciousBlackDiagonalDetected (current): ${guardCurrent.report.suspiciousBlackDiagonalDetected}`);
+    if (guardReport.segments?.length) {
+      lines.push('- segments removed:');
+      guardReport.segments.slice(0, 10).forEach(s => lines.push(`  - obj=${s.objectId} name=${s.regionName} len=${s.lengthMm.toFixed(1)}mm support=${s.support.toFixed(2)}`));
+    }
+    lines.push('');
+    lines.push('## 7. Diagnóstico');
     lines.push('## 7. Diagnóstico');
     const diag = [];
     if (!imageUrl) diag.push('A) No hay imagen original cargada.');
@@ -403,6 +418,8 @@ export default function RealImageDiagnosticPanel({
     if (reality.contourMismatch) diag.push('E) finalCommands pierde contornos respecto a las regiones visuales.');
     if ((universalReport?.outerOutlineCount || 0) > 20) diag.push('TOO_MANY_OUTER_CONTOURS_REAL_IMAGE: ' + universalReport.outerOutlineCount + ' outer outlines — probable fondo negro contaminando la máscara.');
     if (ce01.status === 'INVALID') diag.push('G) Validador bloquea exportación (ver blockingIssues arriba).');
+    if (guardCurrent.report.suspiciousBlackDiagonalDetected) diag.push('SUSPICIOUS_BLACK_DIAGONAL: queda una puntada de contorno larga sin soporte en la máscara negra.');
+    if (guardReport.removedArtificialBridges > 0) diag.push('DIAGONAL_GUARD: se removieron ' + guardReport.removedArtificialBridges + ' puentes artificiales sin soporte dark.');
     if (ce01.status === 'RISKY' && ce01.blockingIssues.length === 0) diag.push('H) CE01 RISKY sin bloqueo: exceso de saltos/trims/colores y regiones pequeñas.');
     if (diag.length === 0) diag.push('Sin causa clara detectada — revisar métricas manualmente.');
     diag.forEach(d => lines.push(`- ${d}`));
@@ -467,6 +484,11 @@ export default function RealImageDiagnosticPanel({
         {(universalReport?.outerOutlineCount || 0) > 20 && (
           <div className="text-[11px] text-red-300 bg-red-900/20 border border-red-500/40 rounded-lg px-3 py-2 font-bold flex items-center gap-2">
             <AlertTriangle className="w-3.5 h-3.5" /> TOO_MANY_OUTER_CONTOURS_REAL_IMAGE — {universalReport.outerOutlineCount} outer outlines; probable fondo negro contaminando la máscara.
+          </div>
+        )}
+        {guardCurrent.report.suspiciousBlackDiagonalDetected && (
+          <div className="text-[11px] text-red-300 bg-red-900/20 border border-red-500/40 rounded-lg px-3 py-2 font-bold flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5" /> SUSPICIOUS_BLACK_DIAGONAL — puntada de contorno larga sin soporte en la máscara negra.
           </div>
         )}
         {/* 1. Imagen original */}
@@ -604,8 +626,21 @@ export default function RealImageDiagnosticPanel({
           </div>
         </Section>
 
-        {/* 7. Overlays */}
-        <Section title="7. Overlays visuales">
+        {/* 7. Guard de diagonales */}
+        <Section title="7. Guard de diagonales (dark mask)" status={guardCurrent.report.suspiciousBlackDiagonalDetected ? 'err' : (guardReport.removedArtificialBridges > 0 ? 'warn' : 'ok')}>
+          <Row k="unsupportedLongContourSegments" v={guardCurrent.report.unsupportedLongContourSegments} accent={guardCurrent.report.unsupportedLongContourSegments === 0 ? 'emerald' : 'red'} />
+          <Row k="removedArtificialBridges" v={guardReport.removedArtificialBridges} accent={guardReport.removedArtificialBridges === 0 ? 'slate' : 'amber'} />
+          <Row k="longestUnsupportedSegmentMm" v={guardReport.longestUnsupportedSegmentMm ? guardReport.longestUnsupportedSegmentMm.toFixed(1) : 0} />
+          <Row k="longestUnsupportedSegmentSupport" v={guardReport.longestUnsupportedSegmentSupport ? guardReport.longestUnsupportedSegmentSupport.toFixed(2) : '—'} />
+          <Row k="suspiciousBlackDiagonalDetected" v={String(guardCurrent.report.suspiciousBlackDiagonalDetected)} accent={guardCurrent.report.suspiciousBlackDiagonalDetected ? 'red' : 'emerald'} />
+          {guardReport.segments?.[0] && <>
+            <Row k="sourceObjectId" v={guardReport.segments[0].objectId || '—'} />
+            <Row k="sourceRegionName" v={guardReport.segments[0].regionName || '—'} />
+          </>}
+        </Section>
+
+        {/* 8. Overlays */}
+        <Section title="8. Overlays visuales">
           <div className="flex flex-wrap gap-1.5 mb-2">
             <Toggle id="original" label="Original" color="amber" />
             <Toggle id="mask" label="StrictDarkMask" color="red" />

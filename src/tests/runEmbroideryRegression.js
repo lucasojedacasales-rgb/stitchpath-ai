@@ -18,14 +18,15 @@ import {
   validatePaths, consolidateLowerOutlinePaths, RAW_PARAMS,
 } from '@/lib/rawDarkStrokeTest';
 import {
-  buildContourObjects, getLastUniversalReport,
+  buildContourObjects, getLastUniversalReport, getLastContourSegmentReport,
 } from '@/lib/contourExportBuilder';
 import { getLastLowerContourReport } from '@/lib/lowerContourRebuilder';
 import { buildFinalCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
 import { validateCE01 } from '@/lib/ce01Validator';
+import { validateFinalContourCommandsAgainstDarkMask } from '@/lib/contourSegmentValidator';
 import {
   makeCircleFixture, makeKirbyFixture, makeMulticolorFixture,
-  makeIrregularFixture, makeOpenDetailsFixture,
+  makeIrregularFixture, makeOpenDetailsFixture, makeDiagonalGuardFixture,
 } from './embroideryRegressionFixtures';
 
 // ── Build a darkStroke context from a synthetic bitmap ─────────────────────────
@@ -149,6 +150,11 @@ function runFixture(fixture) {
   const zones = zoneCoverageFromContours(contourObjects, darkStroke?.width || 200, darkStroke?.height || 200);
   const longSegs = longStraightSegments(contourObjects);
 
+  const contourSegReport = getLastContourSegmentReport() || {};
+  const commandGuard = commands.length
+    ? validateFinalContourCommandsAgainstDarkMask(commands, darkStroke, config)
+    : { report: {} };
+
   const metrics = {
     rawDarkPixels: darkStroke?.darkPixelsCount ?? 0,
     darkComponents: darkStroke?.components?.length ?? 0,
@@ -177,6 +183,10 @@ function runFixture(fixture) {
     longStraightSegments: longSegs,
     darkContourCoverage: u.darkContourCoverage ?? 0,
     ovalBoundaryUsed: u.ovalBoundaryUsed ?? false,
+    removedArtificialBridges: contourSegReport.removedArtificialBridges ?? 0,
+    longestUnsupportedSegmentMm: contourSegReport.longestUnsupportedSegmentMm ?? 0,
+    unsupportedLongContourSegmentsAfter: commandGuard.report?.unsupportedLongContourSegments ?? 0,
+    suspiciousBlackDiagonalDetected: commandGuard.report?.suspiciousBlackDiagonalDetected ?? false,
   };
 
   return { metrics, errors, darkStroke, universalReport: u };
@@ -209,6 +219,8 @@ function assertFixture(fixture, m) {
     ok(true, '');
   }
   if (e.notFill) ok(m.detailOpenCurveCount >= 1, 'open detail converted to fill');
+  if (e.guardRemoved) ok(m.removedArtificialBridges >= 1, `guard removed no bridges (${m.removedArtificialBridges})`);
+  if (e.noCommandDiagonal) ok(m.unsupportedLongContourSegmentsAfter === 0 && !m.suspiciousBlackDiagonalDetected, `command diagonal remains (after=${m.unsupportedLongContourSegmentsAfter}, susp=${m.suspiciousBlackDiagonalDetected})`);
 
   // universal: exported contours must come from real dark pixels, never fill boundaries.
   if (m.consolidatedContours > 0) {
@@ -258,7 +270,7 @@ function buildMarkdown(results) {
     lines.push('');
     lines.push('| Métrica | Valor |');
     lines.push('|---------|:-----:|');
-    for (const k of ['rawDarkPixels','darkComponents','rawSkeletonSegments','consolidatedContours','outerOutlineCount','innerOutlineCount','detailOpenCurveCount','rejectedNoiseCount','rejectedFillBoundaryCount','stitchCount','jumpCount','trimCount','colorCount','artificialGeometryCount','fillBoundaryExported','pinkBoundaryExported','mouthExported','eyesExported','lowerContourExported','feetContourExported','ce01Status','minPathDarkSupport','averagePathDarkSupport','longStraightSegments','ovalBoundaryUsed']) {
+    for (const k of ['rawDarkPixels','darkComponents','rawSkeletonSegments','consolidatedContours','outerOutlineCount','innerOutlineCount','detailOpenCurveCount','rejectedNoiseCount','rejectedFillBoundaryCount','stitchCount','jumpCount','trimCount','colorCount','artificialGeometryCount','fillBoundaryExported','pinkBoundaryExported','mouthExported','eyesExported','lowerContourExported','feetContourExported','ce01Status','minPathDarkSupport','averagePathDarkSupport','longStraightSegments','ovalBoundaryUsed','removedArtificialBridges','longestUnsupportedSegmentMm','unsupportedLongContourSegmentsAfter','suspiciousBlackDiagonalDetected']) {
       lines.push(`| ${k} | ${m[k]} |`);
     }
     if (r.errors.length) { lines.push(''); lines.push('**Errores de ejecución:**'); for (const e of r.errors) lines.push(`- ${e}`); }
@@ -302,6 +314,7 @@ export function runRegressionSuite() {
     makeMulticolorFixture(),
     makeIrregularFixture(),
     makeOpenDetailsFixture(),
+    makeDiagonalGuardFixture(),
   ];
   const results = fixtures.map(fixture => {
     const run = runFixture(fixture);

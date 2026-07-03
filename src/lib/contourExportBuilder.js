@@ -29,6 +29,7 @@ import { auditContours, computeFootContourCoverage } from './contourAudit.js';
 import { classifyContourSegment, isExportable, ensureMouthDetailExported, removeArtificialContourSegments, validateContourExport } from './segmentClassifier.js';
 import { rebuildLowerOuterContoursFromDarkStroke, getLastLowerContourReport, LOWER_CONTOUR_WIDTH } from './lowerContourRebuilder.js';
 import { buildUniversalDarkContoursFromContext, getLastUniversalReport as _getLastUniversalReport } from './universalDarkContourDetector.js';
+import { validateContourSegmentsAgainstDarkMask } from './contourSegmentValidator.js';
 
 // ─── Satin / run parameters (from preset) ──────────────────────────────────
 const SATIN_WIDTH_MM   = cleanCartoonOutlineCE01.outerSatinWidthMm;
@@ -261,6 +262,7 @@ function getContourPriority(outline) {
 let _lastContourAudit = null;
 let _lastSegmentClassification = null;
 let _lastDarkStroke = null;
+let _lastContourSegmentReport = null;
 let _lastOutlineClassifierReport = null;
 
 export function getLastContourAudit() {
@@ -277,6 +279,10 @@ export function getLastDarkStroke() {
 
 export function getLastUniversalReport() {
   return _getLastUniversalReport();
+}
+
+export function getLastContourSegmentReport() {
+  return _lastContourSegmentReport;
 }
 
 export function getLastOutlineClassifierReport() {
@@ -315,6 +321,9 @@ export function buildContourObjects(regions, config = {}) {
       let uObjects = universal.contours;
       uObjects = ensureMouthDetailExported(uObjects, regions, { config });
       uObjects = removeArtificialContourSegments(uObjects);
+      const _segGuard = validateContourSegmentsAgainstDarkMask(uObjects, darkStroke, config);
+      uObjects = _segGuard.objects;
+      _lastContourSegmentReport = _segGuard.report;
 
       console.log(`[universal-dark] primary motor — contours: ${uObjects.length}`);
       console.log(`[universal-dark] coverage: ${universal.report.darkContourCoverage}%`);
@@ -604,6 +613,10 @@ export function buildContourObjects(regions, config = {}) {
   console.log(`[outline-classifier] artificial closures removed: ${counts.artifact}`);
   console.log(`[outline-classifier] travel contamination removed: 0`);
   console.log(`[outline-classifier] accepted: true`);
+
+  const _segGuardFallback = validateContourSegmentsAgainstDarkMask(objects, darkStroke, config);
+  objects = _segGuardFallback.objects;
+  _lastContourSegmentReport = _segGuardFallback.report;
 
   return { objects, report };
 }

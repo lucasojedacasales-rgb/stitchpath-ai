@@ -120,6 +120,7 @@ export default function FinalLookSimulator({ regions, config, machineSettings, d
 
         const [px, py] = toPx(prev.x, prev.y);
         const [cx, cy] = toPx(c.x, c.y);
+        const segLenMm = Math.hypot(c.x - prev.x, c.y - prev.y) / scale;
 
         // Check if this region is an outline or detail
         const regionId = c.regionId;
@@ -127,6 +128,10 @@ export default function FinalLookSimulator({ regions, config, machineSettings, d
         const detail = detailMap.get(regionId);
         const isOutline = region?.stitch_type === 'running_stitch' || region?.stitch_type === 'contour';
         const isDetailRun = detail?.preserved && (detail?.class === 'detail_run' || detail?.class === 'decorative_detail');
+
+        // Defensive: never draw a long contour/detail stitch — it's an artificial
+        // bridge (real stitches are sub-divided ≤3.5mm). Travel must never render.
+        if (segLenMm > 6 && (isOutline || isDetailRun)) continue;
 
         // Filter: show outlines only
         if (showOutlinesOnly && !isOutline && !isDetailRun) continue;

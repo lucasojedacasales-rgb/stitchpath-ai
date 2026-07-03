@@ -31,6 +31,7 @@ import { optimizeCE01Trims } from './ce01TrimOptimizer.js';
 import { buildContourObjects, generateContourStitches, contoursPreservedInOptimization } from './contourExportBuilder.js';
 import { contourRefineGuard, validateContourRefinement } from './contourRefineValidator.js';
 import { auditAndCleanGeometry } from './geometryAudit.js';
+import { validateFinalContourCommandsAgainstDarkMask } from './contourSegmentValidator.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -1169,6 +1170,17 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   console.log(`[travel-audit] segments removed: ${geometryResult.segmentsRemoved}`);
   console.log(`[travel-audit] end position fixed: ${geometryResult.endPositionFixed}`);
 
+  // ── Stage 7: Dark-mask contour segment guard ──────────────────────────────
+  // Cut any contour/detail stitch longer than 2.5mm without dark-mask support
+  // (artificial diagonals / satin closing across gaps). Converts to jump + trim.
+  const { commands: _guardedCmds, report: contourSegmentReport } =
+    validateFinalContourCommandsAgainstDarkMask(commands, config.darkStroke, config);
+  if (contourSegmentReport.removedArtificialBridges > 0) {
+    commands = _guardedCmds;
+  }
+  console.log(`[contour-segment-guard] unsupported segments removed: ${contourSegmentReport.removedArtificialBridges}`);
+  console.log(`[contour-segment-guard] suspicious diagonal: ${contourSegmentReport.suspiciousBlackDiagonalDetected}`);
+
   const stitchCount = commands.filter(c => c.type === 'stitch').length;
   const jumpCount = commands.filter(c => c.type === 'jump').length;
   const trimCount = commands.filter(c => c.type === 'trim').length;
@@ -1188,7 +1200,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
 
   _lastFinalCommandsMeta = meta;
 
-  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, validation };
+  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, validation };
 }
 
 /**

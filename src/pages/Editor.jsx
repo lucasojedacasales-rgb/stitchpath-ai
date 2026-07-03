@@ -192,7 +192,7 @@ export default function Editor() {
       jumps: finalCmds.filter(c => c.type === 'jump').length,
       trims: finalCmds.filter(c => c.type === 'trim').length,
     });
-    return { commands: finalCmds, objects: built.objects, meta: built.meta };
+    return { commands: finalCmds, objects: built.objects, meta: built.meta, contourSegmentReport: built.contourSegmentReport };
   }, [regions, configWithDarkStroke, editorMachineSettings, optimizedCommandsOverride]);
 
   // ═══ Unified metrics — single source of truth for all panels ═══
@@ -640,6 +640,7 @@ export default function Editor() {
                 machineSettings={editorMachineSettings}
                 originalImageUrl={originalImageUrl}
                 darkStrokeSourceUrl={originalImageUrl || imageUrl}
+                contourSegmentReport={finalEmbroideryCommands.contourSegmentReport}
               />
             </div>
           ) : !imageUrl ?

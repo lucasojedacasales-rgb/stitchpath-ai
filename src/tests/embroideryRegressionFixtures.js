@@ -160,4 +160,27 @@ export function makeOpenDetailsFixture() {
   return { name: 'open_details', imageData: img, regions, expect: { openDetailPreserved: true, notClosed: true, notFill: true } };
 }
 
+// ─── FIXTURE 6: real-like diagonal guard ───────────────────────────────────────
+// Pink body + a black C-ring (open, gap on the right). The universal detector
+// forces it closed (large bbox) which would satin-close across the gap and
+// produce a long black diagonal crossing the body. The dark-mask segment guard
+// must cut that closing (force open) so no diagonal is exported.
+export function makeDiagonalGuardFixture() {
+  const img = makeImageData();
+  fillEllipse(img, 100, 100, 70, 70, LIGHT_PINK);
+  // open black ring: gap around angle 0 (right side) — ends separated ~40mm
+  for (let a = 0.6; a < Math.PI * 2 - 0.6; a += 0.01) {
+    const x = 100 + Math.cos(a) * 70, y = 100 + Math.sin(a) * 70;
+    fillDisk(img, x, y, 2, BLACK);
+  }
+  const regions = [
+    { id: 'body_pink', name: 'body_pink', color: '#ffb6c4', stitch_type: 'fill', region_class: 'fill', object_group: 'body', area_mm2: 12000, path_points: normPts(ellipsePolygon(100, 100, 70, 70)) },
+  ];
+  return {
+    name: 'real_like_diagonal_guard',
+    imageData: img, regions,
+    expect: { outerContour: true, noDiagonals: true, guardRemoved: true, noCommandDiagonal: true },
+  };
+}
+
 export const FIXTURE_DIMS = { W, H };
