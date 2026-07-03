@@ -78,6 +78,10 @@ export function detectExportErrors(commands, objects = [], regions = [], config 
       const d = Math.hypot((c.x ?? 0) - prevX, (c.y ?? 0) - prevY);
       const prev = i > 0 ? cmds[i - 1] : null;
       if (prev && prev.type === 'stitch' && d > LONG_JUMP_NO_TRIM_MM) longJumpNoTrim++;
+      // El jump mueve la aguja: la siguiente puntada se mide desde el aterrizaje
+      // del jump, no desde el último stitch. Sin esto, convertir una diagonal
+      // visible en trim+jump inflaría artificialmente longSt/shortSt/dups.
+      prevStitch = { x: c.x ?? 0, y: c.y ?? 0, isTie: false };
     }
     if (c.type === 'trim') trims++;
     if (c.type === 'colorChange') colorChanges++;

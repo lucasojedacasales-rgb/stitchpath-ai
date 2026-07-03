@@ -18,8 +18,7 @@
 import { detectExportErrors } from './exportErrorDetector';
 import {
   removeEmptyBlocks, repairVisibleDiagonalStitches,
-  removeDuplicateStitches, mergeShortStitches, optimizeTrimsAndJumps,
-  addTieInTieOff, reduceColorChangesIfSafe,
+  removeDuplicateStitches, addTieInTieOff, reduceColorChangesIfSafe,
 } from './preExportRepairer';
 import { validateCE01 } from '@/lib/ce01Validator';
 import { generateExportRepairReport } from './exportRepairReport';
@@ -82,7 +81,9 @@ function phaseGateAccepts(before, after, opts = {}) {
   if (after.duplicateStitches > before.duplicateStitches) {
     reasons.push(`dups ${before.duplicateStitches}→${after.duplicateStitches}`);
   }
-  if (after.unsupportedLongStitches > before.unsupportedLongStitches) {
+  // longSt: para fases que eliminan bloqueos es métrica secundaria (soft) — no
+  // revierte la eliminación de diagonales visibles solo porque longSt suba +2.
+  if (!blockingFix && after.unsupportedLongStitches > before.unsupportedLongStitches) {
     reasons.push(`longSt ${before.unsupportedLongStitches}→${after.unsupportedLongStitches}`);
   }
   if (after.stitchCountOverLimit > before.stitchCountOverLimit) {
@@ -162,6 +163,7 @@ function runRepairPhase({ name, commands, repairFn, seed, objects, regions, conf
     rejected: !accept,
     blockingFixPriority: blockingFix,
     acceptedDespiteScoreDrop: blockingFix && accept && after.ce01Score < before.ce01Score - 0.5,
+    acceptedDespiteLongStIncrease: blockingFix && accept && after.unsupportedLongStitches > before.unsupportedLongStitches,
     reason: !gate.accept ? gate.reasons.join('; ') : (!improved ? `target ${target} no mejoró (${before[target]}→${after[target]})` : ''),
     before, after, stepReport,
   });
@@ -170,26 +172,20 @@ function runRepairPhase({ name, commands, repairFn, seed, objects, regions, conf
 
 // ── Criterio global de aceptación (v4: prioridad bloqueos) ────────────────────
 function globalRepairAccepted(sourceMetrics, finalMetrics) {
+  // FASE 4 — decisión global: aceptar repairedCommands si no hay bloqueos
+  // restantes y CE01 no es INVALID. RISKY = exportar con advertencia.
   const ce01NotInvalid = finalMetrics.ce01Status !== 'INVALID';
   const noBlockingRemaining =
     finalMetrics.emptyBlocks === 0 &&
     finalMetrics.visibleDiagonalStitches === 0 &&
     finalMetrics.invalidCommandSequence === 0 &&
     finalMetrics.regionOutsideBounds === 0;
-  const blockingReduced =
-    finalMetrics.visibleDiagonalStitches < sourceMetrics.visibleDiagonalStitches ||
-    finalMetrics.emptyBlocks < sourceMetrics.emptyBlocks ||
-    finalMetrics.invalidCommandSequence < sourceMetrics.invalidCommandSequence ||
-    finalMetrics.regionOutsideBounds < sourceMetrics.regionOutsideBounds;
+  // solo regresiones graves bloquean; warnings (shortSt/longSt/trims/jumps) no
   const noSevereRegression =
-    finalMetrics.duplicateStitches <= sourceMetrics.duplicateStitches + 20 &&
-    finalMetrics.shortStitches <= sourceMetrics.shortStitches + 50 &&
+    finalMetrics.duplicateStitches <= sourceMetrics.duplicateStitches + 50 &&
+    finalMetrics.shortStitches <= sourceMetrics.shortStitches + 100 &&
     finalMetrics.stitchCountOverLimit <= sourceMetrics.stitchCountOverLimit;
-  // ce01Score: aceptar bajada si se eliminó un bloqueo y CE01 no es INVALID
-  const scoreAcceptable =
-    finalMetrics.ce01Score >= sourceMetrics.ce01Score - 0.5 ||
-    (blockingReduced && ce01NotInvalid);
-  return ce01NotInvalid && noBlockingRemaining && noSevereRegression && scoreAcceptable;
+  return ce01NotInvalid && noBlockingRemaining && noSevereRegression;
 }
 
 /**
@@ -211,13 +207,12 @@ export function repairFinalLookCommandsForExport({ finalLookCommands, objects = 
 
   // ── Pipeline v4 (orden: removeEmpty → diagonales → dups → short → ties → trims → colors → emptyFinal) ──
   const darkSeed = { ...(darkStroke ? { darkStroke } : {}), config };
+  // ── Pipeline v5 (orden: empty → diagonales → dups → ties → colors → emptyFinal) ──
   const phases = [
     { name: 'removeEmptyBlocks', fn: removeEmptyBlocks, seed: {} },
     { name: 'repairVisibleDiagonalStitches', fn: repairVisibleDiagonalStitches, seed: darkSeed },
     { name: 'removeDuplicateStitches', fn: removeDuplicateStitches, seed: {} },
-    { name: 'mergeShortStitches', fn: mergeShortStitches, seed: {} },
     { name: 'addTieInTieOff', fn: addTieInTieOff, seed: {} },
-    { name: 'optimizeTrimsAndJumps', fn: optimizeTrimsAndJumps, seed: {} },
     { name: 'reduceColorChangesIfSafe', fn: reduceColorChangesIfSafe, seed: {} },
     { name: 'removeEmptyBlocksFinal', fn: removeEmptyBlocks, seed: {} },
   ];

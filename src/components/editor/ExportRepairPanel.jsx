@@ -45,7 +45,7 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
     const blob = new Blob([repair.repairReport.report], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = 'EXPORT_REPAIR_REPORT_V4.md'; a.click();
+    a.href = url; a.download = 'EXPORT_REPAIR_REPORT_V5.md'; a.click();
     URL.revokeObjectURL(url);
   }, [repair]);
 
@@ -209,7 +209,7 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
             onClick={handleDownload}
             className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-[#0d0f14] border border-[#2a2d3a] text-slate-300 text-xs font-bold hover:bg-[#1e2130] transition-colors"
           >
-            <FileText className="w-3.5 h-3.5" /> Descargar EXPORT_REPAIR_REPORT_V4.md
+            <FileText className="w-3.5 h-3.5" /> Descargar EXPORT_REPAIR_REPORT_V5.md
           </button>
           <button
             onClick={handleDownloadForensics}
