@@ -12,6 +12,7 @@ import { compareAgainstReferences } from '@/lib/referenceLearning/wilcomStyleCom
 import { generateReferenceLearningReport } from '@/lib/referenceLearning/referenceReportGenerator';
 import { base44 } from '@/api/base44Client';
 import ReferenceEngineV2Section from './ReferenceEngineV2Section';
+import CorpusLearningSection from './CorpusLearningSection';
 
 /**
  * ReferenceLearningPanel — diagnostic UI for the Reference Embroidery
@@ -222,7 +223,16 @@ export default function ReferenceLearningPanel({ embeddedProjectCommands, embedd
         </p>
       </div>
 
-      {/* Reference Learning Engine v2 */}
+      {/* ── Aprendizaje de corpus — acción principal 🧠 APRENDER DEL CORPUS ── */}
+      <CorpusLearningSection
+        parsedFiles={parsedFiles}
+        embeddedProjectCommands={embeddedProjectCommands}
+        embeddedProjectRegions={embeddedProjectRegions}
+        embeddedProjectName={embeddedProjectName}
+        onApplyLearnedConfig={onApplyLearnedConfig}
+      />
+
+      {/* Reference Learning Engine v2 (comparación avanzada) */}
       <ReferenceEngineV2Section
         parsedFiles={parsedFiles}
         embeddedProjectCommands={embeddedProjectCommands}
