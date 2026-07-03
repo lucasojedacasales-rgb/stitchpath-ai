@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { ZoomIn, ZoomOut, Maximize2, Download, RotateCw } from 'lucide-react';
+import { ZoomIn, ZoomOut, RotateCw } from 'lucide-react';
 
 /**
  * EmbroideryPreview3D — Renders stitches as 3D cylinders with proper overlap/layering

@@ -1,9 +1,8 @@
 import { useState } from 'react';
 import {
   Brain, ShieldCheck, ShieldAlert, AlertTriangle, CheckCircle, XCircle,
-  TrendingUp, TrendingDown, RefreshCw, ChevronDown, ChevronRight, Activity,
+  TrendingUp, TrendingDown, ChevronDown, ChevronRight, Activity,
 } from 'lucide-react';
-import { runAdaptiveOptimization } from '@/lib/adaptiveOptimizationEngine';
 
 const STATUS_STYLES = {
   SAFE:    { wrap: 'bg-emerald-900/20 border-emerald-500/40', text: 'text-emerald-400', icon: ShieldCheck, label: 'SAFE — exportación permitida' },

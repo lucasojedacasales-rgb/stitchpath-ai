@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { ShieldCheck, ShieldAlert, Eye, EyeOff, Route, Scissors, Palette, Bug, Layers, Brush } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, Eye, Route, Scissors, Palette, Bug, Layers, Brush } from 'lucide-react';
 import { countContourStitches, getLastContourAudit, getLastSegmentClassification, getLastDarkStroke, getLastUniversalReport } from '@/lib/contourExportBuilder';
 import { getLastLowerContourReport } from '@/lib/lowerContourRebuilder';
 import { validateUniversalContours, DESIGN_SCENARIOS } from '@/lib/universalDarkContourTestSuite';

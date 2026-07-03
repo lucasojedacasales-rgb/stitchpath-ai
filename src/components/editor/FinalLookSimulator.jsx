@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Eye, EyeOff, Layers, Scissors, Sparkles, RefreshCw } from 'lucide-react';
+import { Eye, EyeOff, Layers, Sparkles } from 'lucide-react';
 import { DEFAULT_MACHINE } from '@/lib/exportPipeline';
 
 /**

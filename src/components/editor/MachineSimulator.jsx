@@ -3,7 +3,7 @@ import {
   Play, Pause, SkipForward, SkipBack, RotateCcw, Zap, Scissors,
   Palette, Flag, AlertTriangle, MapPin, Navigation, Gauge, Layers,
   Flame, Grid2x2, ShieldCheck, ShieldAlert, Bug, Eye, Activity,
-  EyeOff, Route,
+  Route,
 } from 'lucide-react';
 import { buildStitchObjects, flattenToCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
 import { analyzeSimulation } from '@/lib/simulationMetrics';

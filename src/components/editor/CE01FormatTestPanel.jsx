@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { FlaskConical, Download, Upload, Loader2, CheckCircle, AlertTriangle, XCircle, FileText, GitCompare } from 'lucide-react';
+import { FlaskConical, Download, Upload, Loader2, CheckCircle, AlertTriangle, XCircle, GitCompare } from 'lucide-react';
 import { downloadTestFile, generateTestFile, compareToWilcomDSB, compareDSBToWilcom, listTests } from '@/lib/ce01FormatTestSuite';
 
 /**
