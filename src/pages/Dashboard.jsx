@@ -68,12 +68,21 @@ export default function Dashboard() {
               <p className="text-[11px] text-slate-500">Motor de digitalización avanzado</p>
             </div>
           </div>
-          <button
-            onClick={createProject}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold transition-colors"
-          >
-            <Plus className="w-4 h-4" /> Nuevo proyecto
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate('/regression')}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161a23] border border-[#2a2d3a] hover:border-violet-500 text-slate-300 text-sm font-medium transition-colors"
+              title="Abrir suite de regresión"
+            >
+              🧪 Abrir regresión
+            </button>
+            <button
+              onClick={createProject}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold transition-colors"
+            >
+              <Plus className="w-4 h-4" /> Nuevo proyecto
+            </button>
+          </div>
         </div>
       </div>
 

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import { Activity, CheckCircle, XCircle, Download, Play } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { runRegressionSuite } from '@/tests/runEmbroideryRegression';
 
 /**
@@ -11,6 +13,7 @@ export default function RegressionTestPage() {
   const [result, setResult] = useState(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
+  const navigate = useNavigate();
 
   const run = () => {
     setRunning(true);
@@ -50,6 +53,10 @@ export default function RegressionTestPage() {
             <h1 className="text-lg font-bold text-white">Suite de Regresión — StitchPath AI</h1>
             <p className="text-xs text-slate-500">Ejecuta el motor real contra fixtures sintéticos. Sin datos de preview.</p>
           </div>
+          <button onClick={() => navigate('/')}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161a23] border border-[#2a2d3a] hover:border-violet-500 text-slate-300 text-xs font-bold">
+            <ArrowLeft className="w-3.5 h-3.5" /> Volver
+          </button>
           <button onClick={run} disabled={running}
             className="flex items-center gap-2 px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-xs font-bold">
             <Play className="w-3.5 h-3.5" /> {running ? 'Ejecutando...' : 'Re-ejecutar'}
