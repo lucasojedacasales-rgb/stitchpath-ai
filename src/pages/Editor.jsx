@@ -79,6 +79,7 @@ export default function Editor() {
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [step, setStep] = useState(1);
   const [imageUrl, setImageUrl] = useState(null);
+  const [originalImageUrl, setOriginalImageUrl] = useState(null);
   const [selectedRegionId, setSelectedRegionId] = useState(null);
   const [imageOpacity, setImageOpacity] = useState(50);
   const [stitchOpacity, setStitchOpacity] = useState(100);
@@ -102,14 +103,17 @@ export default function Editor() {
   // Computes a mask of real dark lines from the original image so the contour
   // pipeline can reject color boundaries (e.g. between two pinks) that have no
   // actual drawn line, and preserve the mouth/eyes as independent dark details.
+  // darkStroke must use the ORIGINAL uploaded bitmap, not the *_masked.png that
+  // vectorization may use afterwards. Falls back to imageUrl if no original kept.
   useEffect(() => {
-    if (!imageUrl) { setDarkStroke(null); return; }
+    const darkStrokeSourceUrl = originalImageUrl || imageUrl;
+    if (!darkStrokeSourceUrl) { setDarkStroke(null); return; }
     let cancelled = false;
-    buildStrictDarkStrokeContextFromOriginalImage(imageUrl, config)
+    buildStrictDarkStrokeContextFromOriginalImage(darkStrokeSourceUrl, config)
       .then(ctx => { if (!cancelled) setDarkStroke(ctx); })
       .catch(err => { console.warn('[dark-stroke] strict detection failed:', err); if (!cancelled) setDarkStroke(null); });
     return () => { cancelled = true; };
-  }, [imageUrl]);
+  }, [originalImageUrl, imageUrl]);
 
   // Config with dark stroke mask attached — flows through buildFinalCommands
   // to the contour export builder + segment classifier. Not persisted (mask is
@@ -243,6 +247,7 @@ export default function Editor() {
       setConfig({ ...DEFAULT_CONFIG, ...(p.config || {}) });
       setRegions(p.regions || []);
       setImageUrl(p.image_url || null);
+      setOriginalImageUrl(p.image_url || null);
       setStep(p.step || 1);
     } catch (e) {navigate('/');}
     finally {setLoading(false);}
@@ -295,9 +300,11 @@ export default function Editor() {
     setActiveTab('editor');
     setShowDecisionPanel(false);
     resetAI();
+    setOriginalImageUrl(null);
     try {
       const { file_url } = await base44.integrations.Core.UploadFile({ file });
       setImageUrl(file_url);
+      setOriginalImageUrl(file_url);
       setStep(2);
       await base44.entities.Project.update(id, { image_url: file_url, step: 2, status: 'draft', regions: [], total_stitches: 0, color_count: 0 });
 
@@ -631,6 +638,8 @@ export default function Editor() {
                 finalCommands={finalEmbroideryCommands.commands}
                 finalObjects={finalEmbroideryCommands.objects}
                 machineSettings={editorMachineSettings}
+                originalImageUrl={originalImageUrl}
+                darkStrokeSourceUrl={originalImageUrl || imageUrl}
               />
             </div>
           ) : !imageUrl ?

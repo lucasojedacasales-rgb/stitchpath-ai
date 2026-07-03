@@ -104,6 +104,7 @@ function regionShouldBeContour(r) {
 export default function RealImageDiagnosticPanel({
   imageUrl, regions = [], config = {}, darkStroke,
   finalCommands = [], finalObjects = [], machineSettings = {},
+  originalImageUrl, darkStrokeSourceUrl,
 }) {
   const [origAnalysis, setOrigAnalysis] = useState(null);
   const [origError, setOrigError] = useState(null);
@@ -116,6 +117,7 @@ export default function RealImageDiagnosticPanel({
     original: true, mask: false, contours: false, regions: true,
     commands: false, contoursOnly: false, fillsOnly: false,
   });
+  const isUsingMaskedForDarkStroke = /_masked/i.test(darkStrokeSourceUrl || '');
 
   // ── Analyze original image on mount / change ──────────────────────────────
   useEffect(() => {
@@ -154,6 +156,23 @@ export default function RealImageDiagnosticPanel({
     const support = regionDarkSupport(r, effectiveDark, config);
     const black = isBlackColor(r.color || r.hex);
     const shouldContour = regionShouldBeContour(r);
+    const widthMm = config.width_mm || 100, heightMm = config.height_mm || 100;
+    const totalMm = widthMm * heightMm;
+    const areaRatio = totalMm ? (r.area_mm2 || 0) / totalMm : 0;
+    let touchesCanvasEdge = false;
+    if (r.path_points?.length && effectiveDark) {
+      const Wd = effectiveDark.width, Hd = effectiveDark.height;
+      for (const [mx, my] of r.path_points) {
+        const px = (mx / widthMm + 0.5) * Wd, py = (my / heightMm + 0.5) * Hd;
+        if (px <= 2 || px >= Wd - 2 || py <= 2 || py >= Hd - 2) { touchesCanvasEdge = true; break; }
+      }
+    }
+    let blackRegionType = 'unknown';
+    if (black) {
+      if (touchesCanvasEdge && areaRatio > 0.15) blackRegionType = 'background';
+      else if (areaRatio < 0.02) blackRegionType = 'eye/mouth';
+      else if (shouldContour) blackRegionType = 'contour';
+    }
     return {
       id: r.id,
       name: r.name || '—',
@@ -163,10 +182,9 @@ export default function RealImageDiagnosticPanel({
       object_group: r.object_group || '—',
       area: r.area_mm2 || 0,
       points: r.path_points?.length || 0,
-      black,
-      shouldContour,
-      supportRatio: support.ratio,
-      supported: support.supported,
+      black, shouldContour,
+      supportRatio: support.ratio, supported: support.supported,
+      touchesCanvasEdge, areaRatio, blackRegionType,
     };
   }), [regions, effectiveDark, config]);
 
@@ -309,11 +327,18 @@ export default function RealImageDiagnosticPanel({
     lines.push('');
     lines.push('## 2. Dark stroke real (sobre imagen original)');
     if (effectiveDark) {
+      lines.push(`- darkStrokeSourceUrl: ${darkStrokeSourceUrl || '(n/a)'}`);
+      lines.push(`- originalUploadUrl: ${originalImageUrl || '(no guardada)'}`);
+      lines.push(`- processedImageUrl: ${imageUrl || '(n/a)'}`);
+      lines.push(`- isUsingMaskedForDarkStroke: ${isUsingMaskedForDarkStroke}`);
       lines.push(`- source: ${effectiveDark.source || '(desconocido)'}`);
       lines.push(`- width/height: ${effectiveDark.width}x${effectiveDark.height}`);
       lines.push(`- rawDarkPixels: ${effectiveDark.darkPixelsCount ?? '(n/a)'}`);
       lines.push(`- darkComponents: ${effectiveDark.components?.length ?? 0}`);
       lines.push(`- exportedPaths: ${effectiveDark.exportedPaths?.length ?? 0}`);
+      lines.push(`- darkBackgroundDetected: ${effectiveDark.darkBackgroundDetected ?? false}`);
+      lines.push(`- darkBackgroundPixelsRemoved: ${effectiveDark.darkBackgroundPixelsRemoved ?? 0}`);
+      lines.push(`- edgeConnectedDarkComponentsRemoved: ${effectiveDark.edgeConnectedDarkComponentsRemoved ?? 0}`);
       lines.push(`- consolidatedLowerPaths: ${effectiveDark.consolidatedLowerPaths ?? 0}`);
       lines.push(`- hasMouth: ${effectiveDark.hasMouth}  hasEyes: ${effectiveDark.hasEyes}  hasLowerContour: ${effectiveDark.hasLowerContour}`);
       lines.push(`- averagePathDarkSupport: ${effectiveDark.averagePathDarkSupport ?? '(n/a)'}`);
@@ -348,7 +373,7 @@ export default function RealImageDiagnosticPanel({
     lines.push('');
     lines.push('## 4. Regiones');
     regionRows.forEach(r => {
-      lines.push(`- ${r.id}  name=${r.name}  color=${r.color}  stitch_type=${r.stitch_type}  region_class=${r.region_class}  group=${r.object_group}  area=${r.area.toFixed(1)}mm²  points=${r.points}  black=${r.black}  shouldContour=${r.shouldContour}  darkSupport=${r.supportRatio.toFixed(2)}  supported=${r.supported}`);
+      lines.push(`- ${r.id}  name=${r.name}  color=${r.color}  stitch_type=${r.stitch_type}  region_class=${r.region_class}  group=${r.object_group}  area=${r.area.toFixed(1)}mm²  points=${r.points}  black=${r.black}  blackRegionType=${r.blackRegionType}  touchesCanvasEdge=${r.touchesCanvasEdge}  areaRatio=${r.areaRatio.toFixed(3)}  shouldContour=${r.shouldContour}  darkSupport=${r.supportRatio.toFixed(2)}  supported=${r.supported}`);
     });
     lines.push('');
     lines.push('## 5. Comandos finales');
@@ -370,11 +395,15 @@ export default function RealImageDiagnosticPanel({
     lines.push('## 7. Diagnóstico');
     const diag = [];
     if (!imageUrl) diag.push('A) No hay imagen original cargada.');
+    if (isUsingMaskedForDarkStroke) diag.push('DARKSTROKE_USING_MASKED_IMAGE: darkStroke usa una imagen *_masked.png — usar la imagen original subida.');
     if (effectiveDark?.source !== 'strict_raw_original_bitmap') diag.push('B) darkStroke NO se calcula desde la imagen original (source=' + (effectiveDark?.source || 'null') + ').');
+    if (regionRows.some(r => r.blackRegionType === 'background')) diag.push('FONDO_NEGRO: hay regiones negras conectadas al borde clasificadas como background — filtrar antes de contornizar.');
     if (colorComparison.blackDisappeared) diag.push('C) El vectorizador eliminó/absorbió el negro — no hay regiones negras.');
     if (colorComparison.blackBecameFill) diag.push('D) El negro se convirtió en relleno en lugar de contorno.');
     if (reality.contourMismatch) diag.push('E) finalCommands pierde contornos respecto a las regiones visuales.');
+    if ((universalReport?.outerOutlineCount || 0) > 20) diag.push('TOO_MANY_OUTER_CONTOURS_REAL_IMAGE: ' + universalReport.outerOutlineCount + ' outer outlines — probable fondo negro contaminando la máscara.');
     if (ce01.status === 'INVALID') diag.push('G) Validador bloquea exportación (ver blockingIssues arriba).');
+    if (ce01.status === 'RISKY' && ce01.blockingIssues.length === 0) diag.push('H) CE01 RISKY sin bloqueo: exceso de saltos/trims/colores y regiones pequeñas.');
     if (diag.length === 0) diag.push('Sin causa clara detectada — revisar métricas manualmente.');
     diag.forEach(d => lines.push(`- ${d}`));
     lines.push('');
@@ -430,6 +459,16 @@ export default function RealImageDiagnosticPanel({
           </div>
         </div>
 
+        {isUsingMaskedForDarkStroke && (
+          <div className="text-[11px] text-amber-300 bg-amber-900/20 border border-amber-500/40 rounded-lg px-3 py-2 font-bold flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5" /> DARKSTROKE_USING_MASKED_IMAGE — darkStroke usa una imagen *_masked.png; usa la imagen original.
+          </div>
+        )}
+        {(universalReport?.outerOutlineCount || 0) > 20 && (
+          <div className="text-[11px] text-red-300 bg-red-900/20 border border-red-500/40 rounded-lg px-3 py-2 font-bold flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5" /> TOO_MANY_OUTER_CONTOURS_REAL_IMAGE — {universalReport.outerOutlineCount} outer outlines; probable fondo negro contaminando la máscara.
+          </div>
+        )}
         {/* 1. Imagen original */}
         <Section title="1. Imagen original" status={origAnalysis ? (origAnalysis.hasBlack ? 'warn' : 'ok') : 'loading'}>
           {origError && <Err msg={origError} />}
@@ -451,10 +490,17 @@ export default function RealImageDiagnosticPanel({
         <Section title="2. Dark stroke real" status={effectiveDark ? (effectiveDark.source === 'strict_raw_original_bitmap' ? 'ok' : 'warn') : 'loading'}>
           {effectiveDark ? <>
             <Row k="source" v={effectiveDark.source || '(n/a)'} accent={effectiveDark.source === 'strict_raw_original_bitmap' ? 'emerald' : 'amber'} />
+            <Row k="darkStrokeSourceUrl" v={darkStrokeSourceUrl || '(n/a)'} accent={isUsingMaskedForDarkStroke ? 'amber' : 'emerald'} />
+            <Row k="originalUploadUrl" v={originalImageUrl || '(no guardada)'} />
+            <Row k="processedImageUrl" v={imageUrl || '(n/a)'} />
+            <Row k="isUsingMaskedForDarkStroke" v={String(isUsingMaskedForDarkStroke)} accent={isUsingMaskedForDarkStroke ? 'amber' : 'emerald'} />
             <Row k="rawDarkPixels" v={effectiveDark.darkPixelsCount ?? '(n/a)'} />
             <Row k="darkComponents" v={effectiveDark.components?.length ?? 0} />
             <Row k="exportedPaths" v={effectiveDark.exportedPaths?.length ?? 0} />
             <Row k="minPathDarkSupport" v={effectiveDark.minPathDarkSupport ?? '(n/a)'} />
+            <Row k="darkBackgroundDetected" v={String(effectiveDark.darkBackgroundDetected ?? false)} accent={effectiveDark.darkBackgroundDetected ? 'amber' : 'slate'} />
+            <Row k="darkBackgroundPixelsRemoved" v={effectiveDark.darkBackgroundPixelsRemoved ?? 0} />
+            <Row k="edgeComponentsRemoved" v={effectiveDark.edgeConnectedDarkComponentsRemoved ?? 0} />
             <Row k="hasMouth" v={String(effectiveDark.hasMouth)} />
             <Row k="hasEyes" v={String(effectiveDark.hasEyes)} />
           </> : <Err msg="darkStroke no disponible" />}
@@ -497,8 +543,9 @@ export default function RealImageDiagnosticPanel({
                 <span className="text-slate-500">{r.stitch_type}</span>
                 <span className="text-slate-600">{r.region_class}</span>
                 <span className={`ml-auto ${r.supported ? 'text-emerald-400' : 'text-red-400'}`}>dark {Math.round(r.supportRatio * 100)}%</span>
-                {r.black && <span className="text-red-400 font-bold">BLACK</span>}
-                {r.shouldContour && <span className="text-cyan-400">contour</span>}
+                {r.black && <span className={`font-bold ${r.blackRegionType === 'background' ? 'text-red-400' : r.blackRegionType === 'eye/mouth' ? 'text-cyan-400' : 'text-amber-400'}`}>{r.blackRegionType}</span>}
+                {r.shouldContour && !r.black && <span className="text-cyan-400">contour</span>}
+                {r.touchesCanvasEdge && <span className="text-amber-400">edge</span>}
               </div>
             ))}
             {regionRows.length === 0 && <div className="text-[10px] text-slate-600">Sin regiones.</div>}
@@ -542,6 +589,11 @@ export default function RealImageDiagnosticPanel({
             <div className="mt-1 space-y-0.5">
               <div className="text-[9px] text-amber-400 font-bold">Advertencias ({ce01.warnings.length}):</div>
               {ce01.warnings.map((w, i) => <div key={i} className="text-[10px] text-amber-300"><span className="font-bold text-amber-400">[R{w.check}]</span> {w.message}</div>)}
+            </div>
+          )}
+          {ce01.status === 'RISKY' && ce01.blockingIssues.length === 0 && (
+            <div className="mt-1 text-[10px] text-amber-300 bg-amber-900/15 border border-amber-500/30 rounded px-2 py-1">
+              Sin bloqueo crítico. RISKY por exceso de saltos/trims/colores y regiones pequeñas (probable máscara contaminada).
             </div>
           )}
           <div className="mt-1.5 pt-1.5 border-t border-[#1e2130]">

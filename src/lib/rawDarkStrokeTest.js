@@ -231,11 +231,59 @@ function traceSkeletonGraph(skel, W, H, minLen) {
   return { paths, junctionCount };
 }
 
+// ── Remove artificial dark backgrounds (mask residue / black frame) ──────────
+// Eliminates strict-mask components that touch the canvas border AND cover a
+// large area (background or erase-mask residue). Thin strokes (outlines) and
+// small internal details (eyes/mouth) are always preserved.
+export function detectAndRemoveDarkBackgroundFromMask(mask, W, H) {
+  const total = W * H;
+  const labels = new Int32Array(total).fill(0);
+  const cleaned = new Uint8Array(mask);
+  const stack = [];
+  let label = 0;
+  let darkBackgroundDetected = false;
+  let darkBackgroundPixelsRemoved = 0;
+  let edgeConnectedDarkComponentsRemoved = 0;
+  const BG_AREA_RATIO = 0.15;
+  for (let i = 0; i < total; i++) {
+    if (!mask[i] || labels[i]) continue;
+    label++;
+    let area = 0, minX = W, maxX = -1, minY = H, maxY = -1;
+    labels[i] = label; stack.push(i);
+    const pixels = [];
+    while (stack.length) {
+      const q = stack.pop(); const x = q % W, y = (q / W) | 0;
+      area++; pixels.push(q);
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        const nq = ny * W + nx;
+        if (mask[nq] && !labels[nq]) { labels[nq] = label; stack.push(nq); }
+      }
+    }
+    const touchesEdge = minX <= 0 || maxX >= W - 1 || minY <= 0 || maxY >= H - 1;
+    const areaRatio = area / total;
+    if (touchesEdge && areaRatio > BG_AREA_RATIO) {
+      darkBackgroundDetected = true;
+      for (const q of pixels) { cleaned[q] = 0; darkBackgroundPixelsRemoved++; }
+      edgeConnectedDarkComponentsRemoved++;
+    }
+  }
+  return { cleanedMask: cleaned, darkBackgroundDetected, darkBackgroundPixelsRemoved, edgeConnectedDarkComponentsRemoved };
+}
+
 // ── MAIN: extract raw dark stroke paths from the STRICT mask ──────────────────
 export function extractRawDarkStrokePaths(imageData, params = {}) {
   const p = { ...RAW_PARAMS, ...params };
   const { width: W, height: H } = imageData;
-  const strictMask = createStrictDarkMask(imageData, p);
+  const rawStrictMask = createStrictDarkMask(imageData, p);
+  // Remove artificial dark backgrounds (mask residue / black frame) before any
+  // skeleton tracing so backgrounds never become contours.
+  const bg = detectAndRemoveDarkBackgroundFromMask(rawStrictMask, W, H);
+  const strictMask = bg.cleanedMask;
   const darkPixelsCount = strictMask.reduce((s, v) => s + v, 0);
   const components = connectedComponents(strictMask, W, H, p.minComponentArea);
   let closedMask = strictMask;
@@ -243,7 +291,7 @@ export function extractRawDarkStrokePaths(imageData, params = {}) {
   for (let it = 0; it < p.closeGapPx; it++) closedMask = erode(closedMask, W, H);
   const skeleton = thinZhangSuen(closedMask, W, H);
   const { paths, junctionCount } = traceSkeletonGraph(skeleton, W, H, p.minPathLengthPx);
-  return { strictMask, closedMask, skeleton, paths, junctionCount, components, darkPixelsCount, width: W, height: H };
+  return { strictMask, closedMask, skeleton, paths, junctionCount, components, darkPixelsCount, darkBackground: bg, width: W, height: H };
 }
 
 // ── Dark support against the PURE strict mask ─────────────────────────────────
@@ -550,7 +598,7 @@ export async function runRawDarkStrokeTest(imageUrl, config = {}) {
   console.log('[dark-mask-source] usingVectorizedRegions: false');
 
   const { imageData, naturalW, naturalH } = await loadOriginalBitmap(imageUrl, RAW_PARAMS.maxProcessWidth);
-  const { strictMask, closedMask, skeleton, paths: rawPaths, junctionCount, components, darkPixelsCount, width: W, height: H } =
+  const { strictMask, closedMask, skeleton, paths: rawPaths, junctionCount, components, darkPixelsCount, darkBackground, width: W, height: H } =
     extractRawDarkStrokePaths(imageData, RAW_PARAMS);
 
   const maskAnalysis = analyzeStrictMask(strictMask, W, H);
@@ -711,7 +759,7 @@ export async function buildStrictDarkStrokeContextFromOriginalImage(imageUrl, co
   console.log('[dark-mask-source] production using strict raw original bitmap: true');
 
   const { imageData, naturalW, naturalH } = await loadOriginalBitmap(imageUrl, RAW_PARAMS.maxProcessWidth);
-  const { strictMask, closedMask, skeleton, paths: rawPaths, junctionCount, components, darkPixelsCount, width: W, height: H } =
+  const { strictMask, closedMask, skeleton, paths: rawPaths, junctionCount, components, darkPixelsCount, darkBackground, width: W, height: H } =
     extractRawDarkStrokePaths(imageData, RAW_PARAMS);
 
   const maskAnalysis = analyzeStrictMask(strictMask, W, H);
@@ -772,5 +820,11 @@ export async function buildStrictDarkStrokeContextFromOriginalImage(imageUrl, co
     options: { strokeTolerancePx: 2 },
     darkPixelsCount,
     naturalDims: `${naturalW}x${naturalH}`,
+    sourceUrl: imageUrl,
+    usingMaskedImageForDarkStroke: /_masked/i.test(imageUrl || ''),
+    darkBackground,
+    darkBackgroundDetected: darkBackground?.darkBackgroundDetected ?? false,
+    darkBackgroundPixelsRemoved: darkBackground?.darkBackgroundPixelsRemoved ?? 0,
+    edgeConnectedDarkComponentsRemoved: darkBackground?.edgeConnectedDarkComponentsRemoved ?? 0,
   };
 }
