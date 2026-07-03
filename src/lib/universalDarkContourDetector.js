@@ -39,6 +39,7 @@ const CLOSURE_GAP_PX = 8;
 const CHAIN_GAP_PX = 6;
 const CHAIN_ANGLE_DEG = 35;
 const MIN_CONTOUR_POINTS = 4;
+const MAX_SAFE_SEGMENT_PX = 6;
 
 // ── pixel-space geometry helpers ──────────────────────────────────────────────
 function distPx(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
@@ -233,6 +234,53 @@ function consolidateClosedOuterComponent(componentPaths, mask, W, H) {
   return merged;
 }
 
+// ── SPLIT / DENSIFY unsafe long segments ──────────────────────────────────────
+// Walks consecutive points of a chain. A segment > MAX_SAFE_SEGMENT_PX is:
+//   - DENSIFIED if the straight gap has strict-mask support (insert intermediate
+//     points every ~2.5px, each verified against the mask) — this follows the
+//     real black line, so it is NOT artificial geometry.
+//   - CUT if unsupported — never bridged with a straight line, never closed.
+// Returns { chains, split, densified }.
+function splitOrDensifyUnsafeSegments(chain, mask, W, H) {
+  if (chain.length < 2) return { chains: [chain], split: 0, densified: 0 };
+  const out = [];
+  let cur = [chain[0]];
+  let split = 0, densified = 0;
+  const pointSupported = (x, y) => {
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      const nx = Math.round(x) + dx, ny = Math.round(y) + dy;
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      if (mask[ny * W + nx]) return true;
+    }
+    return false;
+  };
+  for (let i = 1; i < chain.length; i++) {
+    const a = cur[cur.length - 1];
+    const b = chain[i];
+    const d = distPx(a, b);
+    if (d <= MAX_SAFE_SEGMENT_PX) { cur.push(b); continue; }
+    // long segment: densify only if the whole gap follows the real dark line
+    if (gapHasDarkSupport(a, b, mask, W, H)) {
+      const steps = Math.max(1, Math.ceil(d / 2.5));
+      const inserts = [];
+      let denseOk = true;
+      for (let s = 1; s < steps; s++) {
+        const t = s / steps;
+        const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+        if (!pointSupported(x, y)) { denseOk = false; break; }
+        inserts.push({ x, y });
+      }
+      if (denseOk) { cur.push(...inserts, b); densified++; continue; }
+    }
+    // unsupported long gap → cut the chain, never bridge
+    if (cur.length >= MIN_CONTOUR_POINTS) out.push(cur);
+    cur = [b];
+    split++;
+  }
+  if (cur.length >= MIN_CONTOUR_POINTS) out.push(cur);
+  return { chains: out, split, densified };
+}
+
 // ── COVERAGE: dark mask pixels covered by exported contours ───────────────────
 function computeCoverage(contours, mask, W, H) {
   const total = mask ? mask.reduce((s, v) => s + v, 0) : 0;
@@ -308,7 +356,7 @@ export function buildUniversalDarkContoursFromContext(darkStroke, config = {}) {
 
   const contours = [];
   const counts = { outer_outline: 0, inner_outline: 0, detail_open_curve: 0, rejected_noise: 0, fill_boundary_rejected: 0 };
-  let rawSkeletonSegments = 0, mergedCount = 0, rejectedShort = 0;
+  let rawSkeletonSegments = 0, mergedCount = 0, rejectedShort = 0, unsafeSegmentsSplit = 0, unsafeSegmentsDensified = 0;
 
   for (let i = 0; i < components.length; i++) {
     const comp = components[i];
@@ -322,10 +370,20 @@ export function buildUniversalDarkContoursFromContext(darkStroke, config = {}) {
     // Consolidate within this real component only. Large closed outer components
     // use relaxed chaining so a fragmented ring reconstructs as few contours
     // instead of dozens of micro-chains.
-    const chains = (cls === 'outer_outline')
+    const rawChains = (cls === 'outer_outline')
       ? consolidateClosedOuterComponent(subs, mask, W, H)
       : consolidateDarkContourGraph(subs, mask, W, H);
-    mergedCount += subs.length - chains.length;
+    mergedCount += subs.length - rawChains.length;
+
+    // Eliminate long straight segments: densify supported gaps along the real
+    // dark line, cut unsupported gaps. Never bridge with an artificial diagonal.
+    const chains = [];
+    for (const chain of rawChains) {
+      const { chains: sc, split, densified } = splitOrDensifyUnsafeSegments(chain, mask, W, H);
+      unsafeSegmentsSplit += split;
+      unsafeSegmentsDensified += densified;
+      chains.push(...sc);
+    }
 
     for (const chain of chains) {
       if (chain.length < MIN_CONTOUR_POINTS) { rejectedShort++; continue; }
@@ -377,6 +435,9 @@ export function buildUniversalDarkContoursFromContext(darkStroke, config = {}) {
     rejectedFillBoundaryCount: counts.fill_boundary_rejected,
     mergedSegments: mergedCount,
     rejectedShortSegments: rejectedShort,
+    longStraightSegmentsFixed: unsafeSegmentsSplit + unsafeSegmentsDensified,
+    unsafeSegmentsSplit,
+    unsafeSegmentsDensified,
     darkContourCoverage: coverage.darkContourCoverage,
     outerCoverage: coverage.outerCoverage,
     innerCoverage: coverage.innerCoverage,
