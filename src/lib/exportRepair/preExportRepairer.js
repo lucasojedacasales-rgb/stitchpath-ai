@@ -19,6 +19,8 @@
  *   8. reduceColorChangesIfSafe
  */
 
+import { detectVisibleDiagonalStitches } from './visibleDiagonalDetector';
+
 const DUP_TOL_MM = 0.1;          // duplicada consecutiva si dist < esto
 const SHORT_MERGE_MM = 0.6;      // fusionar si el segmento es menor a esto
 const MAX_STITCH_MM = 8.0;       // puntada larga insegura
@@ -139,73 +141,73 @@ export function removeEmptyBlocks(commands, _objects, _regions, report = {}) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  FASE 2 — repairVisibleDiagonalStitches
+//  FASE 2 — repairVisibleDiagonalStitches (usa el detector ÚNICO compartido)
 // ═══════════════════════════════════════════════════════════════════════════
-// Para cada stitch: longitud, ángulo, cruce de región, soporte darkStroke.
-// Si es diagonal visible sospechosa → trim + jump (no coser la diagonal).
-export function repairVisibleDiagonalStitches(commands, _objects, regions, report = {}) {
+// Llama a detectVisibleDiagonalStitches (mismos offenders que gate/detector)
+// y repara EXACTAMENTE esos commandIndex. Para cada offender reparable:
+//   - contourNoDarkMask → cortar cadena + jump
+//   - crossesEmptySpace → jump (sin coser el vacío)
+//   - travelBetweenObjects / crossesMultipleRegions / sameRegionNonFill → trim + jump
+// Los validFillTatami y contourWithDarkMask se conservan (preservedTatamiDiagonal).
+export function repairVisibleDiagonalStitches(commands, objects, regions, report = {}) {
   const darkStroke = report?.darkStroke || null;
+  const detection = detectVisibleDiagonalStitches(commands, objects, regions, darkStroke, report?.config || {});
+  const offenderByIdx = new Map();
+  for (const o of detection.offenders) {
+    if (o.repairable) offenderByIdx.set(o.commandIndex, o);
+  }
   const out = [];
   let removed = 0, converted = 0;
-  let prev = null;
+  let preservedTatami = 0, skippedValidFill = 0, skippedNoSafe = 0;
   for (let i = 0; i < commands.length; i++) {
     const c = commands[i];
-    if (c.type !== 'stitch') {
-      out.push(c);
-      if (c.type === 'jump') prev = { x: c.x, y: c.y };
-      continue;
-    }
-    const info = classifyDiagonal(c, prev, regions, darkStroke);
-    if (info.suspicious) {
-      removed++;
-      converted++;
+    const off = offenderByIdx.get(i);
+    if (!off) { out.push(c); continue; }
+    // reparar este offender exacto
+    removed++;
+    converted++;
+    if (off.reason === 'crossesEmptySpace') {
+      // sin coser el vacío → solo jump (no trim necesario)
+      out.push({
+        type: 'jump', x: c.x, y: c.y, color: c.color, layerType: c.layerType,
+        regionId: c.regionId, stitchType: c.stitchType, source: c.source,
+      });
+    } else if (off.reason === 'contourNoDarkMask') {
+      // cortar cadena: trim + jump al destino
       out.push({ type: 'trim' });
       out.push({
         type: 'jump', x: c.x, y: c.y, color: c.color, layerType: c.layerType,
         regionId: c.regionId, stitchType: c.stitchType, source: c.source,
       });
-      prev = { x: c.x, y: c.y };
-      continue;
+    } else {
+      // travel / crossesMultiple / sameRegionNonFill → trim + jump
+      out.push({ type: 'trim' });
+      out.push({
+        type: 'jump', x: c.x, y: c.y, color: c.color, layerType: c.layerType,
+        regionId: c.regionId, stitchType: c.stitchType, source: c.source,
+      });
     }
-    out.push(c);
-    prev = { x: c.x, y: c.y };
   }
+  preservedTatami = detection.preservedTatamiDiagonal;
+  skippedValidFill = detection.preservedTatamiDiagonal + detection.preservedContourWithMask;
+  report.visibleDiagonalStitchesDetected = detection.count;
   report.visibleDiagonalStitchesRemoved = removed;
   report.convertedDiagonalToJump = converted;
+  report.preservedTatamiDiagonal = preservedTatami;
+  report.skippedBecauseValidFill = skippedValidFill;
+  report.skippedBecauseNoSafeRepair = skippedNoSafe;
+  report._detection = detection;
   return out;
 }
 
-function classifyDiagonal(c, prev, regions, darkStroke) {
-  if (!prev) return { suspicious: false };
-  const dx = (c.x ?? 0) - prev.x, dy = (c.y ?? 0) - prev.y;
-  const dist = Math.hypot(dx, dy);
-  if (dist <= 2.5) return { suspicious: false };
-  if (dist > 8.0) return { suspicious: false }; // handled by splitUnsafeLongStitches
-  let deg = Math.atan2(dy, dx) * 180 / Math.PI;
-  deg = ((deg % 180) + 180) % 180;
-  const isDiag = (deg >= 20 && deg <= 70) || (deg >= 110 && deg <= 160);
-  if (!isDiag) return { suspicious: false };
-  const rPrev = regionAt(prev.x, prev.y, regions);
-  const rCur = regionAt(c.x ?? 0, c.y ?? 0, regions);
-  const crosses = !rPrev || !rCur || rPrev.id !== rCur.id;
-  const sameRegionFill = c.stitchType === 'fill' && rPrev && rCur && rPrev.id === rCur.id;
-  if (!crosses || sameRegionFill) return { suspicious: false };
-  const lt = String(c.layerType || '').toLowerCase();
-  const isContour = lt.includes('outline') || lt.includes('contour') || lt.includes('detail') || lt.includes('facial');
-  const isBlack = isDarkColor(c.color);
-  const longConnector = dist > 6.0;
-  if (!(isBlack || isContour || longConnector)) return { suspicious: false };
-  if (isContour) {
-    const sup = segmentDarkSupport(prev.x, prev.y, c.x ?? 0, c.y ?? 0, darkStroke);
-    if (sup >= 0.5) return { suspicious: false };
-  }
-  return { suspicious: true, dist };
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
-//  FASE 3 — splitUnsafeLongStitches
+//  FASE 3 — splitUnsafeLongStitches (NO divide diagonales visibles)
 // ═══════════════════════════════════════════════════════════════════════════
-// Puntada > 8mm: con soporte de región/dark → dividir; sin soporte → trim+jump.
+// Puntada > 8mm:
+//   - fill dentro de región válida → dividir en segmentos seguros
+//   - contorno CON soporte darkMask → dividir (sigue la línea negra)
+//   - diagonal visible sin soporte (contorno sin máscara / cruza regiones / vacío)
+//     → NO dividir (crearía más diagonales visibles) → trim + jump
 export function splitUnsafeLongStitches(commands, _objects, regions, report = {}) {
   const darkStroke = report?.darkStroke || null;
   const out = [];
@@ -222,18 +224,23 @@ export function splitUnsafeLongStitches(commands, _objects, regions, report = {}
       const rPrev = regionAt(prev.x, prev.y, regions);
       const rCur = regionAt(c.x ?? 0, c.y ?? 0, regions);
       const sameRegion = rPrev && rCur && rPrev.id === rCur.id;
-      const darkSup = isDarkColor(c.color) || isContourLayer(c)
+      const contour = isContourLayer(c);
+      const detail = isDetailLayer(c);
+      const isFill = !contour && !detail && (c.stitchType === 'fill' || !c.stitchType);
+      const darkSup = (contour || isDarkColor(c.color))
         ? segmentDarkSupport(prev.x, prev.y, c.x ?? 0, c.y ?? 0, darkStroke)
         : 0;
-      if (sameRegion || darkSup >= 0.5) {
-        // soporte → dividir en segmentos seguros
+      const sameRegionFill = sameRegion && isFill;
+      const contourWithMask = contour && darkSup >= 0.5;
+      if (sameRegionFill || contourWithMask) {
+        // soporte → dividir en segmentos seguros (no crea diagonales visibles)
         const steps = Math.ceil(d / SPLIT_SEG_MM);
         for (let s = 1; s <= steps; s++) {
           out.push({ ...c, x: prev.x + (c.x - prev.x) * s / steps, y: prev.y + (c.y - prev.y) * s / steps });
         }
         split++;
       } else {
-        // sin soporte → no coser la diagonal/línea larga
+        // diagonal visible sin soporte → NO dividir → trim + jump
         out.push({ type: 'trim' });
         out.push({ type: 'jump', x: c.x, y: c.y, color: c.color, layerType: c.layerType, regionId: c.regionId, stitchType: c.stitchType, source: c.source });
         converted++;

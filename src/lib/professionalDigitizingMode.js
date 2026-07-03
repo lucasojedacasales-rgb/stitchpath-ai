@@ -15,6 +15,8 @@
  * Solo post-procesa la lista de comandos/objetos que produce buildFinalCommands.
  */
 
+import { detectVisibleDiagonalStitches } from '@/lib/exportRepair/visibleDiagonalDetector';
+
 export const PROFESSIONAL_PARAMS = {
   minStitchMm: 0.7,
   maxVisibleStitchMm: 4.0,
@@ -211,62 +213,46 @@ function classifyVisibleDiagonalStitch(c, prev, regions, darkStroke, p) {
 // tatami válidas (misma región) y los contornos con soporte de línea negra real
 // se conservan intactos.
 export function repairVisibleDiagonalStitches(commands = [], regions = [], darkStroke, config = {}) {
-  const p = { ...PROFESSIONAL_PARAMS, ...(config.professionalParams || {}) };
-  const report = {
-    visibleDiagonalStitchesBefore: 0,
-    visibleDiagonalStitchesAfter: 0,
-    removedVisibleDiagonalStitches: 0,
-    convertedDiagonalToJump: 0,
-    longestRemovedDiagonalMm: 0,
-    sourceCommandIndex: [],
-  };
+  // Detector ÚNICO compartido — mismos offenders que gate + export repair
+  const detection = detectVisibleDiagonalStitches(commands, [], regions, darkStroke, config);
+  const offenderByIdx = new Map();
+  for (const o of detection.offenders) if (o.repairable) offenderByIdx.set(o.commandIndex, o);
   const out = [];
-  let prev = null;
+  let removed = 0, converted = 0, longest = 0;
+  const sourceIdx = [];
   for (let i = 0; i < commands.length; i++) {
     const c = commands[i];
-    if (c.type !== 'stitch') {
-      out.push(c);
-      if (c.type === 'jump') prev = { x: c.x, y: c.y };
-      continue;
-    }
-    const info = classifyVisibleDiagonalStitch(c, prev, regions, darkStroke, p);
-    if (info.suspicious) {
-      report.visibleDiagonalStitchesBefore++;
-      report.removedVisibleDiagonalStitches++;
-      report.convertedDiagonalToJump++;
-      report.longestRemovedDiagonalMm = Math.max(report.longestRemovedDiagonalMm, info.dist);
-      report.sourceCommandIndex.push(i);
-      // trim + jump: no coser la diagonal
+    const off = offenderByIdx.get(i);
+    if (!off) { out.push(c); continue; }
+    removed++; converted++;
+    longest = Math.max(longest, off.lengthMm);
+    sourceIdx.push(i);
+    if (off.reason === 'crossesEmptySpace') {
+      out.push({ type: 'jump', x: c.x, y: c.y, color: c.color, layerType: c.layerType, regionId: c.regionId, stitchType: c.stitchType, source: c.source });
+    } else {
       out.push({ type: 'trim' });
       out.push({ type: 'jump', x: c.x, y: c.y, color: c.color, layerType: c.layerType, regionId: c.regionId, stitchType: c.stitchType, source: c.source });
-      prev = { x: c.x, y: c.y };
-      continue;
     }
-    out.push(c);
-    prev = { x: c.x, y: c.y };
   }
-  // after: re-escaneo de salida para confirmar que no quedan diagonales sospechosas
-  let pa = null;
-  for (const c of out) {
-    if (c.type !== 'stitch') { if (c.type === 'jump') pa = { x: c.x, y: c.y }; continue; }
-    const info = classifyVisibleDiagonalStitch(c, pa, regions, darkStroke, p);
-    if (info.suspicious) report.visibleDiagonalStitchesAfter++;
-    pa = { x: c.x, y: c.y };
-  }
-  return { commands: out, report };
+  const afterDetection = detectVisibleDiagonalStitches(out, [], regions, darkStroke, config);
+  return {
+    commands: out,
+    report: {
+      visibleDiagonalStitchesBefore: detection.count,
+      visibleDiagonalStitchesAfter: afterDetection.count,
+      removedVisibleDiagonalStitches: removed,
+      convertedDiagonalToJump: converted,
+      longestRemovedDiagonalMm: longest,
+      sourceCommandIndex: sourceIdx,
+      preservedTatamiDiagonal: detection.preservedTatamiDiagonal,
+      preservedContourWithMask: detection.preservedContourWithMask,
+    },
+  };
 }
 
-// Conteo aislado de diagonales visibles restantes (para el gate)
+// Conteo aislado de diagonales visibles — delega al detector ÚNICO compartido
 export function countVisibleDiagonalStitches(commands = [], regions = [], darkStroke, config = {}) {
-  const p = { ...PROFESSIONAL_PARAMS, ...(config.professionalParams || {}) };
-  let count = 0, prev = null;
-  for (const c of commands) {
-    if (c.type !== 'stitch') { if (c.type === 'jump') prev = { x: c.x, y: c.y }; continue; }
-    const info = classifyVisibleDiagonalStitch(c, prev, regions, darkStroke, p);
-    if (info.suspicious) count++;
-    prev = { x: c.x, y: c.y };
-  }
-  return count;
+  return detectVisibleDiagonalStitches(commands, [], regions, darkStroke, config).count;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -23,6 +23,7 @@ import {
 } from './preExportRepairer';
 import { validateCE01 } from '@/lib/ce01Validator';
 import { generateExportRepairReport } from './exportRepairReport';
+import { detectVisibleDiagonalStitches, generateVisibleDiagonalForensicsReport } from './visibleDiagonalDetector';
 
 const MAX_STITCHES = 12000;
 
@@ -141,7 +142,7 @@ export function repairFinalLookCommandsForExport({ finalLookCommands, objects = 
   let cmds = source;
 
   // ── Pipeline transaccional en orden v2 ──
-  const darkSeed = darkStroke ? { darkStroke } : {};
+  const darkSeed = { ...(darkStroke ? { darkStroke } : {}), config };
   const phases = [
     { name: 'removeEmptyBlocks', fn: removeEmptyBlocks, seed: {} },
     { name: 'repairVisibleDiagonalStitches', fn: repairVisibleDiagonalStitches, seed: darkSeed },
@@ -173,41 +174,58 @@ export function repairFinalLookCommandsForExport({ finalLookCommands, objects = 
     repairRejected = true;
   }
 
-  // ── exportAllowed sobre los comandos finales que se devuelven ──
+  // ── returnedMetrics = métricas de los comandos QUE SE DEVUELVEN ──
+  // Si repairAccepted → finalMetrics; si REPAIR_REJECTED → sourceMetrics.
+  // Esto garantiza que remainingBlockingIssues, exportAllowed y el resumen
+  // usen TODOS la misma fuente (no mezclar repaired con source).
+  const exportDecisionSource = repairAccepted ? 'repaired' : 'source';
+  const returnedMetrics = measureMetrics(repairedCommands, objects, regions, config, ms);
+
+  // ── exportAllowed + remainingBlockingIssues sobre los comandos devueltos ──
   const finalDetect = detectExportErrors(repairedCommands, objects, regions, config, ms);
   const remainingBlockingIssues = finalDetect.errors.filter(e => e.severity === 'blocking' && e.count > 0);
   const exportAllowed = finalDetect.ce01.status !== 'INVALID' && repairedCommands.length > 0 && remainingBlockingIssues.length === 0;
 
-  // ── comparativa antes/después (sobre los comandos devueltos) ──
+  // ── Forensics de diagonales visibles (sobre los comandos devueltos) ──
+  const vdDetection = detectVisibleDiagonalStitches(repairedCommands, objects, regions, darkStroke, config);
+  const vdForensics = generateVisibleDiagonalForensicsReport(vdDetection);
+
+  // ── comparativa antes/después/retornadas (misma fuente: returnedMetrics) ──
   const comparison = {
-    stitchCount: { before: sourceMetrics.stitchCount, after: finalMetrics.stitchCount },
-    jumpCount: { before: sourceMetrics.jumpCount, after: finalMetrics.jumpCount },
-    trimCount: { before: sourceMetrics.trimCount, after: finalMetrics.trimCount },
-    shortStitches: { before: sourceMetrics.shortStitches, after: finalMetrics.shortStitches },
-    duplicateStitches: { before: sourceMetrics.duplicateStitches, after: finalMetrics.duplicateStitches },
-    missingTieIn: { before: sourceMetrics.missingTieIn, after: finalMetrics.missingTieIn },
-    missingTieOff: { before: sourceMetrics.missingTieOff, after: finalMetrics.missingTieOff },
-    visibleDiagonalStitches: { before: sourceMetrics.visibleDiagonalStitches, after: finalMetrics.visibleDiagonalStitches },
-    unsupportedLongStitches: { before: sourceMetrics.unsupportedLongStitches, after: finalMetrics.unsupportedLongStitches },
-    emptyBlocks: { before: sourceMetrics.emptyBlocks, after: finalMetrics.emptyBlocks },
-    colorCount: { before: sourceMetrics.colorCount, after: finalMetrics.colorCount },
-    ce01Status: { before: sourceMetrics.ce01Status, after: finalMetrics.ce01Status },
-    ce01Score: { before: sourceMetrics.ce01Score, after: finalMetrics.ce01Score },
+    stitchCount: { before: sourceMetrics.stitchCount, after: returnedMetrics.stitchCount },
+    jumpCount: { before: sourceMetrics.jumpCount, after: returnedMetrics.jumpCount },
+    trimCount: { before: sourceMetrics.trimCount, after: returnedMetrics.trimCount },
+    shortStitches: { before: sourceMetrics.shortStitches, after: returnedMetrics.shortStitches },
+    duplicateStitches: { before: sourceMetrics.duplicateStitches, after: returnedMetrics.duplicateStitches },
+    missingTieIn: { before: sourceMetrics.missingTieIn, after: returnedMetrics.missingTieIn },
+    missingTieOff: { before: sourceMetrics.missingTieOff, after: returnedMetrics.missingTieOff },
+    visibleDiagonalStitches: { before: sourceMetrics.visibleDiagonalStitches, after: returnedMetrics.visibleDiagonalStitches },
+    unsupportedLongStitches: { before: sourceMetrics.unsupportedLongStitches, after: returnedMetrics.unsupportedLongStitches },
+    emptyBlocks: { before: sourceMetrics.emptyBlocks, after: returnedMetrics.emptyBlocks },
+    colorCount: { before: sourceMetrics.colorCount, after: returnedMetrics.colorCount },
+    ce01Status: { before: sourceMetrics.ce01Status, after: returnedMetrics.ce01Status },
+    ce01Score: { before: sourceMetrics.ce01Score, after: returnedMetrics.ce01Score },
     exportAllowed: { before: sourceMetrics.exportAllowed, after: exportAllowed },
   };
 
   const repairReport = {
     phaseLog,
     sourceMetrics,
-    finalMetrics,
+    repairedMetrics: finalMetrics,
+    returnedMetrics,
+    exportDecisionSource,
     comparison,
     repairAccepted,
     repairRejected,
     exportAllowed,
     remainingBlockingIssues,
+    exportBlockedBecauseRepairRejected: repairRejected ? 'REPAIR_REJECTED — export usa sourceCommands (métricas no mejoraron globalmente)' : null,
+    visibleDiagForensics: vdForensics,
+    visibleDiagDetection: vdDetection,
     report: generateExportRepairReport({
-      phaseLog, sourceMetrics, finalMetrics, comparison,
-      repairAccepted, repairRejected, exportAllowed, remainingBlockingIssues,
+      phaseLog, sourceMetrics, finalMetrics, returnedMetrics, exportDecisionSource,
+      comparison, repairAccepted, repairRejected, exportAllowed, remainingBlockingIssues,
+      visibleDiagForensics: vdForensics, visibleDiagDetection: vdDetection,
     }),
   };
 

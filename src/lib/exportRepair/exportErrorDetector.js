@@ -9,6 +9,7 @@
  *   reparable: true si el preExportRepairer puede corregirlo
  */
 import { validateCE01 } from '@/lib/ce01Validator';
+import { detectVisibleDiagonalStitches } from './visibleDiagonalDetector';
 
 const HOOP_W = 100, HOOP_H = 100;
 const MAX_STITCHES = 12000;
@@ -83,22 +84,9 @@ export function detectExportErrors(commands, objects = [], regions = [], config 
     if (c.x !== undefined && Number.isFinite(c.x)) { prevX = c.x; prevY = c.y; }
   }
 
-  // visible diagonal stitches (reuse professional classifier concept)
-  let visibleDiag = 0;
-  {
-    let p = null;
-    for (const c of cmds) {
-      if (c.type !== 'stitch') { if (c.type === 'jump') p = { x: c.x, y: c.y }; continue; }
-      if (p) {
-        const d = Math.hypot((c.x ?? 0) - p.x, (c.y ?? 0) - p.y);
-        if (d > 3.0 && d <= MAX_STITCH_MM) {
-          const dark = isDarkColor(c.color);
-          if (dark || isDetailLayer(c)) visibleDiag++;
-        }
-      }
-      p = { x: c.x, y: c.y };
-    }
-  }
+  // visible diagonal stitches — detector ÚNICO compartido (mismos offenders que repair+gate)
+  const vdDetection = detectVisibleDiagonalStitches(cmds, objects, regions, config?.darkStroke || null, config);
+  const visibleDiag = vdDetection.count;
 
   // empty color blocks
   let emptyBlocks = 0;
@@ -153,7 +141,7 @@ export function detectExportErrors(commands, objects = [], regions = [], config 
   // stitch count cap → blocking, partially reparable by simplification
   push('stitchCountOverLimit', stitches > MAX_STITCHES ? stitches - MAX_STITCHES : 0, 'blocking', true, 'Reducir puntadas via merge de micro-stitches + simplificación de objetos diminutos');
 
-  return { errors, ce01, counts: { stitches, jumps, trims, shortSt, longSt, dups, outOfBounds, visibleDiag, totalColors, emptyBlocks, tinyObjects, maxCell, noTieIn, noTieOff, longJumpNoTrim } };
+  return { errors, ce01, counts: { stitches, jumps, trims, shortSt, longSt, dups, outOfBounds, visibleDiag, totalColors, emptyBlocks, tinyObjects, maxCell, noTieIn, noTieOff, longJumpNoTrim }, visibleDiagDetection: vdDetection };
 }
 
 export function summarizeErrors(errors) {
