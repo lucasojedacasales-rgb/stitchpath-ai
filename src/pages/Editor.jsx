@@ -187,7 +187,24 @@ export default function Editor() {
       console.log('[commands-state] final commands metrics (override):', meta);
       return { commands: cmds, objects: [], meta };
     }
-    const built = buildFinalCommands(regions, configWithDarkStroke, editorMachineSettings);
+    // ── Auto-apply learned density / angle / pull-compensation (Professional Mode) ──
+    // When the Reference Learning Engine mined these values from the corpus and
+    // the user applied a learned preset, project them onto the generation regions
+    // so the motor uses them automatically in every future generation. Gated by
+    // professionalMode — absent keys / regression suite → behavior unchanged.
+    let genRegions = regions;
+    if (configWithDarkStroke.professionalMode) {
+      const ld = configWithDarkStroke.learnedFillDensityMm;
+      const la = configWithDarkStroke.learnedFillAngleDeg;
+      if (ld != null || la != null) {
+        genRegions = regions.map(r => ({
+          ...r,
+          density: ld != null ? ld : (r.density ?? 0.4),
+          angle: la != null ? la : (r.angle ?? 45),
+        }));
+      }
+    }
+    const built = buildFinalCommands(genRegions, configWithDarkStroke, editorMachineSettings);
     const finalCmds = built.commands;
     // Professional mode post-processes the SAME command list used by Final Look
     // AND export, so both stay in sync (FASE 7).

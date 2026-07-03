@@ -7,6 +7,7 @@ import { buildDesignProfileFromDesign, retrieveSimilarReferences } from '@/lib/r
 import { compareAgainstCorpus } from '@/lib/referenceLearning/wilcomStyleComparator';
 import { classifyTechnicalBlocks } from '@/lib/referenceLearning/blockClassifier';
 import { applyLearnedProfileToMotor } from '@/lib/referenceLearning/applyLearnedProfileToMotor';
+import { mineDensityAngleCompensationRules } from '@/lib/referenceLearning/densityAngleCompensationMiner';
 import { generateReferenceLearningEngineReport } from '@/lib/referenceLearning/referenceLearningEngineReport';
 import { analyzeReferenceMetrics } from '@/lib/referenceLearning/referenceMetricsAnalyzer';
 
@@ -40,6 +41,7 @@ export default function ReferenceEngineV2Section({ parsedFiles, embeddedProjectC
   const rules = useMemo(() => (corpus ? mineProfessionalRules(corpus) : []), [corpus]);
   const profiles = useMemo(() => (corpus ? generateLearnedProfiles(corpus, rules) : []), [corpus, rules]);
   const summary = useMemo(() => (corpus ? summarizeCorpus(corpus) : null), [corpus]);
+  const dacSummary = useMemo(() => (corpus ? mineDensityAngleCompensationRules(corpus).summary : null), [corpus]);
 
   // Compare current design against corpus (v2 — with problems + justifying rules)
   const handleCompareV2 = useCallback(() => {
@@ -93,6 +95,10 @@ export default function ReferenceEngineV2Section({ parsedFiles, embeddedProjectC
         learnedLayerOrderRules: patch.layerOrderRules,
         learnedSatinWidthMm: patch.satinWidthMm,
         learnedFillStitchLengthMm: patch.fillStitchLengthMm,
+        learnedFillDensityMm: patch.fillDensityMm,
+        learnedFillAngleDeg: patch.fillAngleDeg,
+        learnedSatinColumnSpacingMm: patch.satinColumnSpacingMm,
+        learnedPullCompensationMm: patch.pullCompensationMm,
       });
     }
   }, [retrieval, onApplyLearnedConfig]);
@@ -177,6 +183,43 @@ export default function ReferenceEngineV2Section({ parsedFiles, embeddedProjectC
             <Stat label="Densidad (prom)" value={summary.avg.estimatedDensity.toFixed(3)} color="text-emerald-400" />
             <Stat label="Trim dens." value={summary.avg.trimDensity.toFixed(2)} color="text-amber-400" />
           </div>
+
+          {/* Density / angle / pull-compensation mined values */}
+          {dacSummary && (
+            <div className="mt-3 pt-3 border-t border-[#1e2130]">
+              <div className="flex items-center gap-1.5 mb-2">
+                <Sparkles className="w-3 h-3 text-emerald-400" />
+                <span className="text-[11px] font-bold text-emerald-300">Densidad · Ángulo · Compensación (mineros)</span>
+                <span className="text-[9px] text-slate-600 ml-auto">
+                  {dacSummary.samples.fillBlocks} fill / {dacSummary.samples.satinBlocks} satin bloques
+                </span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-center">
+                <Stat label="Densidad relleno (mm)" value={dacSummary.fillDensityMm.toFixed(3)} color="text-emerald-400" />
+                <Stat label="Ángulo relleno (°)" value={dacSummary.fillAngleDeg.toFixed(1)} color="text-violet-400" />
+                <Stat label="Espaciado satin (mm)" value={dacSummary.satinColumnSpacingMm.toFixed(3)} color="text-cyan-400" />
+                <Stat label="Pull compensation (mm)" value={dacSummary.pullCompensationMm.toFixed(3)} color="text-amber-400" />
+              </div>
+              {dacSummary.byArchetype && Object.keys(dacSummary.byArchetype).length > 0 && (
+                <div className="mt-2 space-y-1">
+                  <div className="text-[9px] text-slate-600 uppercase tracking-wider">Por arquetipo</div>
+                  {Object.entries(dacSummary.byArchetype).map(([k, v]) => (
+                    <div key={k} className="text-[10px] text-slate-400 flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-slate-300">{k}</span>
+                      <span className="text-emerald-400">dens {v.fillDensityMm.toFixed(2)}</span>
+                      <span className="text-violet-400">ang {v.fillAngleDeg.toFixed(0)}°</span>
+                      <span className="text-cyan-400">sat {v.satinColumnSpacingMm.toFixed(2)}</span>
+                      <span className="text-amber-400">pull {v.pullCompensationMm.toFixed(2)}</span>
+                      <span className="text-slate-600">({v.files})</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-[9px] text-slate-600 mt-2 italic">
+                El motor aplica estos valores automáticamente al generar rellenos/satin en Professional Mode.
+              </p>
+            </div>
+          )}
           {Object.keys(summary.patternFreq || {}).length > 0 && (
             <div className="mt-3">
               <div className="text-[10px] text-slate-500 mb-1">Patrones profesionales (frecuencia):</div>

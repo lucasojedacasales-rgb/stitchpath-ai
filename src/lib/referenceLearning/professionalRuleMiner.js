@@ -16,6 +16,7 @@
  */
 
 import { summarizeCorpus } from './referenceCorpus';
+import { mineDensityAngleCompensationRules } from './densityAngleCompensationMiner';
 
 const MIN_CONFIDENCE = 0.5;
 
@@ -54,6 +55,10 @@ export function mineProfessionalRules(corpus) {
   rules.push(mineColorCountByComplexity(corpus));
   rules.push(mineColorGrouping(corpus));
   rules.push(mineColorReduction(corpus));
+
+  // Density / angle / pull-compensation rules (from densityAngleCompensationMiner)
+  const dac = mineDensityAngleCompensationRules(corpus);
+  for (const r of dac.rules) rules.push(r);
 
   return rules.filter(r => r.confidence >= MIN_CONFIDENCE || r.ruleId === 'R000_need_corpus');
 }

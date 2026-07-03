@@ -23,7 +23,11 @@ export function applyLearnedProfileToMotor(profile, applicableRules = []) {
   if (!profile) return DEFAULT_MOTOR_PATCH;
   const base = {
     fillDensity: profile.recommendedFillDensity ?? 0.08,
+    fillDensityMm: profile.recommendedFillDensityMm ?? 0.4,
+    fillAngleDeg: profile.recommendedFillAngleDeg ?? 0,
     satinDensity: profile.recommendedSatinDensity ?? 0.25,
+    satinColumnSpacingMm: profile.recommendedSatinColumnSpacingMm ?? 0.4,
+    pullCompensationMm: profile.recommendedPullCompensationMm ?? 0.2,
     runningStep: profile.recommendedRunningLength ?? 0,
     underlayEnabled: !!(profile.useUnderlayRules && profile.useUnderlayRules.largeFills),
     contourAfterFill: !!profile.contourAfterFill,
@@ -58,13 +62,35 @@ export function applyLearnedProfileToMotor(profile, applicableRules = []) {
   if (ruleMap.F002_fill_stitch_length?.parameterRange?.mean) {
     base.fillStitchLengthMm = parseFloat(ruleMap.F002_fill_stitch_length.parameterRange.mean);
   }
+  // Density / angle / pull-compensation rules override the profile defaults when
+  // the corpus yielded a confident mined value.
+  if (ruleMap.D001_fill_row_spacing?.parameterRange?.median) {
+    const v = parseFloat(ruleMap.D001_fill_row_spacing.parameterRange.median);
+    if (Number.isFinite(v)) base.fillDensityMm = v;
+  }
+  if (ruleMap.D002_fill_angle?.parameterRange?.median) {
+    const v = parseFloat(ruleMap.D002_fill_angle.parameterRange.median);
+    if (Number.isFinite(v)) base.fillAngleDeg = v;
+  }
+  if (ruleMap.D003_satin_column_spacing?.parameterRange?.median) {
+    const v = parseFloat(ruleMap.D003_satin_column_spacing.parameterRange.median);
+    if (Number.isFinite(v)) base.satinColumnSpacingMm = v;
+  }
+  if (ruleMap.D004_pull_compensation?.parameterRange?.mean) {
+    const v = parseFloat(ruleMap.D004_pull_compensation.parameterRange.mean);
+    if (Number.isFinite(v)) base.pullCompensationMm = v;
+  }
 
   return base;
 }
 
 export const DEFAULT_MOTOR_PATCH = {
   fillDensity: 0.08,
+  fillDensityMm: 0.4,
+  fillAngleDeg: 0,
   satinDensity: 0.25,
+  satinColumnSpacingMm: 0.4,
+  pullCompensationMm: 0.2,
   runningStep: 0,
   underlayEnabled: false,
   contourAfterFill: false,
@@ -85,7 +111,11 @@ export function mergeLearnedConfig(existingConfig, patch) {
   return {
     ...existingConfig,
     learnedFillDensity: patch.fillDensity,
+    learnedFillDensityMm: patch.fillDensityMm,
+    learnedFillAngleDeg: patch.fillAngleDeg,
     learnedSatinDensity: patch.satinDensity,
+    learnedSatinColumnSpacingMm: patch.satinColumnSpacingMm,
+    learnedPullCompensationMm: patch.pullCompensationMm,
     learnedRunningStep: patch.runningStep,
     learnedUnderlayEnabled: patch.underlayEnabled,
     learnedContourAfterFill: patch.contourAfterFill,

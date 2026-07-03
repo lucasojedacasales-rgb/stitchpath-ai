@@ -12,6 +12,7 @@
  */
 
 import { summarizeCorpus } from './referenceCorpus';
+import { mineDensityAngleCompensationRules } from './densityAngleCompensationMiner';
 
 const PROFILE_KEYS = [
   'cartoon_character', 'simple_logo', 'text_design', 'patch_style',
@@ -25,16 +26,18 @@ const PROFILE_KEYS = [
  */
 export function generateLearnedProfiles(corpus, rules) {
   const summary = summarizeCorpus(corpus);
-  const profiles = PROFILE_KEYS.map(name => buildProfile(name, corpus, rules, summary));
+  // Density / angle / pull-compensation summary mined from the corpus.
+  const dac = mineDensityAngleCompensationRules(corpus).summary;
+  const profiles = PROFILE_KEYS.map(name => buildProfile(name, corpus, rules, summary, dac));
   // Attach which corpus entries fall into each profile (for traceability)
   for (const p of profiles) p.matchedFiles = corpus.filter(e => profileMatches(e, p)).map(e => e.filename);
   return profiles.filter(p => p.matchedFiles.length > 0 || p.isDefault);
 }
 
-function buildProfile(name, corpus, rules, summary) {
+function buildProfile(name, corpus, rules, summary, dac) {
   const candidates = corpus.filter(e => profileMatches(e, { name }));
   const sample = candidates.length ? candidates : corpus;
-  const base = baseParams(summary, rules);
+  const base = baseParams(summary, rules, dac);
 
   switch (name) {
     case 'cartoon_character':
@@ -164,11 +167,16 @@ function buildProfile(name, corpus, rules, summary) {
   }
 }
 
-function baseParams(summary, rules) {
+function baseParams(summary, rules, dac) {
   const avg = summary ? summary.avg : {};
+  const d = dac || {};
   return {
     recommendedFillDensity: avg.estimatedDensity || 0.08,
+    recommendedFillDensityMm: d.fillDensityMm || 0.4,
+    recommendedFillAngleDeg: d.fillAngleDeg || 0,
     recommendedSatinDensity: 0.25,
+    recommendedSatinColumnSpacingMm: d.satinColumnSpacingMm || 0.4,
+    recommendedPullCompensationMm: d.pullCompensationMm || 0.2,
     recommendedRunningLength: 0,
     maxVisibleStitchMm: 2.5,
     maxColorCount: 8,

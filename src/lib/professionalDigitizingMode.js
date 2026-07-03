@@ -518,6 +518,11 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
   if (config.learnedMaxColorCount != null) learnedParams.maxColors = config.learnedMaxColorCount;
   if (config.learnedSatinWidthMm != null) learnedParams.satinWidthMm = config.learnedSatinWidthMm;
   if (config.learnedFillStitchLengthMm != null) learnedParams.fillStitchLenMm = config.learnedFillStitchLengthMm;
+  // ── Density / angle / pull-compensation (auto-applied from reference corpus) ──
+  if (config.learnedFillDensityMm != null) learnedParams.fillDensityMm = config.learnedFillDensityMm;
+  if (config.learnedFillAngleDeg != null) learnedParams.fillAngleDeg = config.learnedFillAngleDeg;
+  if (config.learnedSatinColumnSpacingMm != null) learnedParams.satinDensityMm = config.learnedSatinColumnSpacingMm;
+  if (config.learnedPullCompensationMm != null) learnedParams.pullCompMm = config.learnedPullCompensationMm;
   const effectiveConfig = Object.keys(learnedParams).length
     ? { ...config, professionalParams: { ...(config.professionalParams || {}), ...learnedParams } }
     : config;
