@@ -37,6 +37,7 @@ import { buildFinalCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
 import { calculateUnifiedCommandMetrics } from '@/lib/unifiedCommandMetrics';
 import { simplifyGeometry } from '@/lib/industrialStitchProcessor';
 import { buildStrictDarkStrokeContextFromOriginalImage } from '@/lib/rawDarkStrokeTest';
+import RealImageDiagnosticPanel from '@/components/editor/RealImageDiagnosticPanel';
 
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
@@ -462,6 +463,7 @@ export default function Editor() {
               { id: 'finallook', label: '🎨 Final' },
               { id: 'validate',  label: '✓ Validar' },
               { id: 'details',   label: '🔍 Detalles' },
+              { id: 'diagnostic', label: '🔬 Diagnóstico' },
               { id: 'panel',     label: 'Panel' },
             ].map(({ id, label }) =>
               <button key={id} onClick={() => setActiveTab(id)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
@@ -617,6 +619,18 @@ export default function Editor() {
               <TravelOptimizerPanel
                 regions={regions}
                 onApplyOrder={(ordered) => setRegions(ordered)}
+              />
+            </div>
+          ) : activeTab === 'diagnostic' ? (
+            <div className="flex-1 overflow-hidden">
+              <RealImageDiagnosticPanel
+                imageUrl={imageUrl}
+                regions={regions}
+                config={config}
+                darkStroke={darkStroke}
+                finalCommands={finalEmbroideryCommands.commands}
+                finalObjects={finalEmbroideryCommands.objects}
+                machineSettings={editorMachineSettings}
               />
             </div>
           ) : !imageUrl ?
