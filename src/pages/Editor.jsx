@@ -44,6 +44,7 @@ import ReferenceLearningPanel from '@/components/referenceLearning/ReferenceLear
 import { applyProfessionalPipeline } from '@/lib/professionalDigitizingMode';
 import { autoApplyLearnedProfileForDesign } from '@/lib/referenceLearning/referenceLearningApplier';
 import LearnedConfigDiffPanel from '@/components/editor/LearnedConfigDiffPanel';
+import LearnedPresetValidationPanel from '@/components/referenceLearning/LearnedPresetValidationPanel';
 
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
@@ -733,6 +734,14 @@ export default function Editor() {
                   onDismiss={() => setAutoLearnedDiff(null)}
                 />
               )}
+              <LearnedPresetValidationPanel
+                regions={regions}
+                config={config}
+                darkStroke={darkStroke}
+                machineSettings={editorMachineSettings}
+                designName={project?.name}
+                onApplyConfig={(patch) => setConfig(c => ({ ...c, ...patch }))}
+              />
               <ProfessionalQualityPanel
                 commands={finalEmbroideryCommands.commands}
                 objects={finalEmbroideryCommands.objects}

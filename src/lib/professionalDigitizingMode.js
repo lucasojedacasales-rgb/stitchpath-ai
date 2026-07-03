@@ -285,13 +285,28 @@ function professionalPriority(cmd) {
   if (lt.includes('mouth') || lt.includes('facial') || lt.includes('eye') || lt === 'detail_run' || lt === 'detail_open_curve') return 70;
   return 25;
 }
-function blockTier(commands) {
+function blockTier(commands, pri) {
   // max priority in the block defines its tier
+  const fn = typeof pri === 'function' ? pri : professionalPriority;
   let max = 0;
-  for (const c of commands) if (c.type === 'stitch') max = Math.max(max, professionalPriority(c));
+  for (const c of commands) if (c.type === 'stitch') max = Math.max(max, fn(c));
   return max;
 }
-export function reorderProfessionalLayers(commands) {
+export function reorderProfessionalLayers(commands, params = {}) {
+  // contourAfterFill default true: contorno tras relleno (comportamiento profesional).
+  // Si el preset pone false → contorno ANTES del relleno (efecto real en el gate).
+  // detailsLast default true: detalles al final. false → detalles no forzados al final.
+  const contourAfterFill = params.contourAfterFill !== false;
+  const detailsLast = params.detailsLast !== false;
+  const pri = (cmd) => {
+    let base = professionalPriority(cmd);
+    const lt = (cmd.layerType || '').toLowerCase();
+    const isContour = lt.includes('outline') || lt.includes('contour');
+    const isDetail = lt.includes('detail') || lt.includes('facial') || lt.includes('mouth') || lt.includes('eye');
+    if (!contourAfterFill && isContour) base -= 45; // contorno antes del relleno
+    if (!detailsLast && isDetail) base -= 55;       // detalles no al final
+    return base;
+  };
   // Split into color-blocks (a color change starts a new block)
   const blocks = [];
   let cur = [];
@@ -306,9 +321,9 @@ export function reorderProfessionalLayers(commands) {
   }
   if (cur.length) blocks.push(cur);
   // Stable-sort within each block by priority (underlay → fill → contour → detail)
-  const sortedBlocks = blocks.map(b => b.slice().sort((a, b2) => professionalPriority(a) - professionalPriority(b2)));
+  const sortedBlocks = blocks.map(b => b.slice().sort((a, b2) => pri(a) - pri(b2)));
   // Sort blocks by tier (fills first, contours last), stable
-  const indexed = sortedBlocks.map((b, i) => ({ b, i, tier: blockTier(b) }));
+  const indexed = sortedBlocks.map((b, i) => ({ b, i, tier: blockTier(b, pri) }));
   indexed.sort((a, b) => a.tier - b.tier || a.i - b.i);
   const out = [];
   for (let k = 0; k < indexed.length; k++) {
@@ -535,6 +550,13 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
   if (config.learnedTrimBeforeTravelMm != null) {
     learnedParams.trimBeforeTravelMm = config.learnedTrimBeforeTravelMm;
   }
+  // ── Capa / contorno (CARTOON_OUTLINE_PROFESSIONAL_OVERRIDE + preset) ──
+  // Estas keys controlan orden de capas (contourAfterFill, detailsLast) y la
+  // conversión satin↔running del contorno exterior. Sin learned* → default
+  // (contour tras fill, satin outer, details al final) → regresión intacta.
+  if (config.learnedContourAfterFill != null) learnedParams.contourAfterFill = config.learnedContourAfterFill;
+  if (config.learnedUseSatinForOuterContours != null) learnedParams.useSatinForOuterContours = config.learnedUseSatinForOuterContours;
+  if (config.learnedDetailsLast != null) learnedParams.detailsLast = config.learnedDetailsLast;
   const effectiveConfig = Object.keys(learnedParams).length
     ? { ...config, professionalParams: { ...(config.professionalParams || {}), ...learnedParams } }
     : config;
@@ -544,8 +566,11 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
   let procCommands = colorRes.reducedCommands;
   const procRegions = colorRes.reducedRegions;
 
-  // FASE 2 — reordenar capas
-  procCommands = reorderProfessionalLayers(procCommands);
+  // FASE 2 — reordenar capas (respeta contourAfterFill + detailsLast del preset)
+  procCommands = reorderProfessionalLayers(procCommands, {
+    contourAfterFill: effectiveConfig.professionalParams?.contourAfterFill,
+    detailsLast: effectiveConfig.professionalParams?.detailsLast,
+  });
 
   // FASE 1 (real) — reparar diagonales visibles ANTES del gate y de exportar.
   // Cuenta las diagonales sospechosas en bruto, repara (trim+jump) y luego el
@@ -556,6 +581,15 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
   // Mantener el sanitize legacy para travel/long-black restante (no toca diagonales ya reparadas)
   const vis = validateVisibleStitchesBeforeExport(procCommands, procRegions, darkStroke, effectiveConfig);
   procCommands = vis.commands;
+
+  // ── CARTOON_OUTLINE_PROFESSIONAL_OVERRIDE / preset flags — efecto real ──
+  // useSatinForOuterContours=false → convierte satin de contorno exterior en
+  //   running stitch (centerline). useSatinForOuterContours=true (override
+  //   cartoon) → mantiene satin (default). Afecta a objects + commands reales.
+  if (effectiveConfig.professionalParams?.useSatinForOuterContours === false) {
+    procCommands = convertOuterSatinToRunning(procCommands);
+    objects = markOuterObjectsAsRunning(objects);
+  }
 
   // ── FASE 6 — trim antes de saltos largos (regla aprendida J002) ──
   // Si el preset aprendido define trimBeforeTravelMm, inserta un trim antes de
@@ -618,4 +652,56 @@ export function getProfessionalPanelMetrics(commands, objects, regions, exportCo
   const gate = professionalEmbroideryQualityGate(commands, objects, regions, darkStroke, config);
   const cmp = compareFinalLookVsExport(commands, exportCommands || commands);
   return { gate, cmp };
+}
+
+// ── Conversión outer satin → running (useSatinForOuterContours=false) ──────────
+// Efecto REAL: el contorno exterior deja de ser zigzag satin y pasa a ser una
+// línea running (centerline). Se reconstruye el centerline como el punto medio
+// de cada par de puntadas opuestas (left/right rail). Se etiqueta stitchType
+// como running_stitch. Es una conversión geométrica, no solo un relabel.
+function convertOuterSatinToRunning(commands) {
+  const out = [];
+  let i = 0;
+  while (i < commands.length) {
+    const c = commands[i];
+    const isOuterSatin = c.type === 'stitch' &&
+      (c.layerType || '').toLowerCase().includes('outer_outline') &&
+      ((c.stitchType || '').toLowerCase().includes('satin') || (c.source || '').toLowerCase().includes('satin'));
+    if (!isOuterSatin) { out.push(c); i++; continue; }
+    // recolectar run de satin outer continuo
+    const run = [];
+    while (i < commands.length) {
+      const cc = commands[i];
+      if (cc.type === 'stitch' &&
+        (cc.layerType || '').toLowerCase().includes('outer_outline') &&
+        ((cc.stitchType || '').toLowerCase().includes('satin') || (cc.source || '').toLowerCase().includes('satin'))) {
+        run.push(cc); i++;
+      } else break;
+    }
+    // centerline = punto medio de cada par (left/right rail)
+    const mid = [];
+    for (let k = 0; k + 1 < run.length; k += 2) {
+      const a = run[k], b = run[k + 1];
+      mid.push({ ...a, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, stitchType: 'running_stitch', source: 'satin_to_running' });
+    }
+    if (run.length % 2 === 1) {
+      // puntada impar residual: proyectar al último punto del run
+      const last = run[run.length - 1];
+      mid.push({ ...last, stitchType: 'running_stitch', source: 'satin_to_running' });
+    }
+    if (mid.length) out.push(...mid);
+  }
+  return out;
+}
+
+// Marca los objetos de contorno exterior como running para que el gate cuente
+// satinContourCount/runningContourCount de forma coherente con los comandos.
+function markOuterObjectsAsRunning(objects) {
+  if (!Array.isArray(objects)) return objects;
+  return objects.map((o) => {
+    if ((o.layerType || '').toLowerCase().includes('outer_outline') && o.stitch_type === 'satin') {
+      return { ...o, stitch_type: 'running_stitch' };
+    }
+    return o;
+  });
 }
