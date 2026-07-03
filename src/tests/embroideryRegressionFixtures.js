@@ -184,22 +184,86 @@ export function makeDiagonalGuardFixture() {
 }
 
 // ─── FIXTURE 7: both feet export guard ────────────────────────────────────────
-// Body + two separate feet, each red fill + real black outline ring. Both foot
-// contours must be detected and exported, sewn after their fill, same color.
 export function makeBothFeetFixture() {
   const img = makeImageData();
-  fillEllipse(img, 100, 90, 50, 50, LIGHT_PINK);   // body
-  fillEllipse(img, 70, 168, 19, 13, RED);           // left foot fill
-  fillEllipse(img, 130, 168, 19, 13, RED);         // right foot fill
-  ellipseRing(img, 100, 90, 50, 50, 2, BLACK);     // body outline
-  ring(img, 70, 168, 19, 2, BLACK);                // left foot outline
-  ring(img, 130, 168, 19, 2, BLACK);              // right foot outline
+  fillEllipse(img, 100, 90, 50, 50, LIGHT_PINK);
+  fillEllipse(img, 70, 168, 19, 13, RED);
+  fillEllipse(img, 130, 168, 19, 13, RED);
+  ellipseRing(img, 100, 90, 50, 50, 2, BLACK);
+  ring(img, 70, 168, 19, 2, BLACK);
+  ring(img, 130, 168, 19, 2, BLACK);
   const regions = [
     { id: 'body', name: 'body', color: '#ffb6c4', stitch_type: 'fill', region_class: 'fill', object_group: 'body', area_mm2: 8000, path_points: normPts(ellipsePolygon(100, 90, 50, 50)) },
     { id: 'foot_left', name: 'foot_left', color: '#dc2828', stitch_type: 'fill', region_class: 'fill', object_group: 'foot_left', area_mm2: 700, path_points: normPts(circlePolygon(70, 168, 19)) },
     { id: 'foot_right', name: 'foot_right', color: '#dc2828', stitch_type: 'fill', region_class: 'fill', object_group: 'foot_right', area_mm2: 700, path_points: normPts(circlePolygon(130, 168, 19)) },
   ];
   return { name: 'both_feet_export_guard', imageData: img, regions, expect: { bothFeet: true, feetAfterFill: true, noMismatch: true } };
+}
+
+// ─── FIXTURE 8: professional — no visible travel between separated zones ─────
+export function makeProfTravelFixture() {
+  const img = makeImageData();
+  fillDisk(img, 55, 100, 28, RED);
+  fillDisk(img, 145, 100, 28, RED);
+  ring(img, 55, 100, 28, 2, BLACK);
+  ring(img, 145, 100, 28, 2, BLACK);
+  const regions = [
+    { id: 'fill_a', name: 'zone_a', color: '#dc2828', stitch_type: 'fill', region_class: 'fill', object_group: 'zone_a', area_mm2: 2500, path_points: normPts(circlePolygon(55, 100, 28)) },
+    { id: 'fill_b', name: 'zone_b', color: '#dc2828', stitch_type: 'fill', region_class: 'fill', object_group: 'zone_b', area_mm2: 2500, path_points: normPts(circlePolygon(145, 100, 28)) },
+  ];
+  return { name: 'professional_no_visible_travel', imageData: img, regions, config: { professionalMode: true }, expect: { noVisibleTravel: true } };
+}
+
+// ─── FIXTURE 9: contour after fill (professional layer order) ────────────────
+export function makeContourAfterFillFixture() {
+  const img = makeImageData();
+  fillDisk(img, 100, 100, 60, RED);
+  ring(img, 100, 100, 60, 2, BLACK);
+  const regions = [
+    { id: 'fill_body', name: 'body', color: '#dc2828', stitch_type: 'fill', region_class: 'fill', object_group: 'body', area_mm2: 10000, path_points: normPts(circlePolygon(100, 100, 60)) },
+  ];
+  return { name: 'contour_after_fill', imageData: img, regions, config: { professionalMode: true }, expect: { contourAfterFill: true } };
+}
+
+// ─── FIXTURE 10: both feet professional outline ───────────────────────────────
+export function makeBothFeetProfessionalFixture() {
+  const base = makeBothFeetFixture();
+  return { ...base, name: 'both_feet_professional_outline', config: { professionalMode: true }, expect: { bothFeet: true, feetAfterFill: true } };
+}
+
+// ─── FIXTURE 11: final look vs export match ──────────────────────────────────
+export function makeFinalLookMatchFixture() {
+  const img = makeImageData();
+  fillEllipse(img, 100, 95, 50, 55, LIGHT_PINK);
+  fillEllipse(img, 70, 168, 19, 13, RED);
+  fillEllipse(img, 130, 168, 19, 13, RED);
+  ellipseRing(img, 100, 95, 50, 55, 2, BLACK);
+  ring(img, 70, 168, 19, 2, BLACK);
+  ring(img, 130, 168, 19, 2, BLACK);
+  const regions = [
+    { id: 'body', name: 'body', color: '#ffb6c4', stitch_type: 'fill', region_class: 'fill', object_group: 'body', area_mm2: 8000, path_points: normPts(ellipsePolygon(100, 95, 50, 55)) },
+    { id: 'foot_left', name: 'foot_left', color: '#dc2828', stitch_type: 'fill', region_class: 'fill', object_group: 'foot_left', area_mm2: 700, path_points: normPts(circlePolygon(70, 168, 19)) },
+    { id: 'foot_right', name: 'foot_right', color: '#dc2828', stitch_type: 'fill', region_class: 'fill', object_group: 'foot_right', area_mm2: 700, path_points: normPts(circlePolygon(130, 168, 19)) },
+  ];
+  return { name: 'final_look_export_match', imageData: img, regions, config: { professionalMode: true }, expect: { finalLookExportMatch: true } };
+}
+
+// ─── FIXTURE 12: color reduction simple design ──────────────────────────────
+export function makeColorReductionFixture() {
+  const img = makeImageData();
+  // 6 very similar pinks + black outline + one blue detail
+  const pinks = ['#ffb6c4', '#ffc4d0', '#fdaab8', '#feb8c6', '#f9a4b6', '#fcbac8'];
+  const pinksRgb = [[255,182,196],[255,196,208],[253,170,184],[254,184,198],[249,164,182],[252,186,200]];
+  const cols = [];
+  for (let i = 0; i < 6; i++) {
+    fillEllipse(img, 35 + i * 26, 100, 22, 22, pinksRgb[i]);
+    cols.push({ id: `p${i}`, name: `pink${i}`, color: pinks[i], stitch_type: 'fill', region_class: 'fill', object_group: 'body', area_mm2: 1500, path_points: normPts(circlePolygon(35 + i * 26, 100, 22)) });
+  }
+  fillDisk(img, 100, 170, 10, BLUE);
+  ellipseRing(img, 35, 100, 22, 2, BLACK);
+  ellipseRing(img, 145, 100, 22, 2, BLACK);
+  cols.push({ id: 'detail_blue', name: 'blue', color: '#2c54cc', stitch_type: 'fill', region_class: 'fill', object_group: 'detail', area_mm2: 300, path_points: normPts(circlePolygon(100, 170, 10)) });
+  return { name: 'color_reduction_simple_design', imageData: img, regions: cols, config: { professionalMode: true }, expect: { colorReduction: true } };
 }
 
 export const FIXTURE_DIMS = { W, H };

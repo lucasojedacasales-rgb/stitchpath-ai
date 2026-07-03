@@ -27,8 +27,12 @@ import { validateFinalContourCommandsAgainstDarkMask } from '@/lib/contourSegmen
 import {
   makeCircleFixture, makeKirbyFixture, makeMulticolorFixture,
   makeIrregularFixture, makeOpenDetailsFixture, makeDiagonalGuardFixture, makeBothFeetFixture,
+  makeProfTravelFixture, makeContourAfterFillFixture,
+  makeBothFeetProfessionalFixture, makeFinalLookMatchFixture,
+  makeColorReductionFixture,
 } from './embroideryRegressionFixtures';
 import { prepareCE01ProductionExport } from '@/lib/ce01ProductionExport';
+import { applyProfessionalPipeline, professionalEmbroideryQualityGate, compareFinalLookVsExport } from '@/lib/professionalDigitizingMode';
 
 // ── Build a darkStroke context from a synthetic bitmap ─────────────────────────
 // Mirrors buildStrictDarkStrokeContextFromOriginalImage but skips Image loading.
@@ -113,12 +117,13 @@ function runFixture(fixture) {
   const errors = [];
   let darkStroke = null, contourObjects = [], contourReport = null, universalReport = null, finalObjects = [];
   let lowerReport = null, commands = [], meta = null, cmdCounts = { stitches: 0, jumps: 0, trims: 0, colorChanges: 0, colorCount: 0 };
+  let professionalReport = null;
 
   try {
     darkStroke = buildDarkStrokeContextFromBitmap(fixture.imageData);
   } catch (e) { errors.push(`darkStroke: ${e.message}`); }
 
-  const config = { width_mm: 100, height_mm: 100, darkStroke, ce01SafeFillMode: true };
+  const config = { width_mm: 100, height_mm: 100, darkStroke, ce01SafeFillMode: true, ...(fixture.config || {}) };
 
   try {
     const built = buildContourObjects(fixture.regions, config);
@@ -133,6 +138,15 @@ function runFixture(fixture) {
     commands = res.commands || [];
     finalObjects = res.objects || [];
     meta = res.meta || null;
+    // ── Professional mode post-processing (FASE 1-7) ──
+    if (config.professionalMode) {
+      try {
+        const prof = applyProfessionalPipeline({ commands, objects: finalObjects, regions: fixture.regions, config, darkStroke });
+        commands = prof.commands;
+        finalObjects = prof.objects;
+        professionalReport = prof.report;
+      } catch (e) { errors.push(`professionalPipeline: ${e.message}`); }
+    }
     cmdCounts = countCommands(commands);
   } catch (e) { errors.push(`buildFinalCommands: ${e.message}`); }
 
@@ -210,6 +224,14 @@ function runFixture(fixture) {
   const feetAfterFill = footOrder.left.fill >= 0 && footOrder.left.contour > footOrder.left.fill &&
     footOrder.right.fill >= 0 && footOrder.right.contour > footOrder.right.fill;
 
+  // Final Look vs Export object-set comparison (TEST 11)
+  let finalLookExportObjectsMissing = [];
+  try {
+    const ec = (prepareCE01ProductionExport(commands, fixture.regions, config, DEFAULT_MACHINE, finalObjects, 'DST') || {}).commands || commands;
+    const cmp = compareFinalLookVsExport(commands, ec);
+    finalLookExportObjectsMissing = cmp.objectsInSimNotExport;
+  } catch { finalLookExportObjectsMissing = []; }
+
   const metrics = {
     rawDarkPixels: darkStroke?.darkPixelsCount ?? 0,
     darkComponents: darkStroke?.components?.length ?? 0,
@@ -252,6 +274,17 @@ function runFixture(fixture) {
     rightFootExportStitchesInExport: exportFootStitches.right,
     feetAfterFill,
     simulationExportMismatch: footStitches.left !== exportFootStitches.left || footStitches.right !== exportFootStitches.right,
+    finalLookExportObjectsMissing,
+    // ── Professional metrics (TEST 8-12) ──
+    professionalMode: !!config.professionalMode,
+    professionalScore: professionalReport?.gate?.professionalScore ?? null,
+    professionalVisibleDiagonals: professionalReport?.gate?.visibleDiagonalStitches ?? null,
+    professionalUnsupportedTravel: professionalReport?.gate?.unsupportedTravelStitches ?? null,
+    professionalFillAfterContour: professionalReport?.gate?.fillAfterContour ?? null,
+    professionalColorCountBefore: professionalReport?.gate?.colorCountBefore ?? null,
+    professionalColorCountAfter: professionalReport?.gate?.colorCountAfter ?? null,
+    professionalContourMissingOnOneFoot: professionalReport?.gate?.contourMissingOnOneFoot ?? null,
+    professionalPassed: professionalReport?.gate?.passed ?? null,
   };
 
   return { metrics, errors, darkStroke, universalReport: u };
@@ -295,6 +328,18 @@ function assertFixture(fixture, m) {
   }
   if (e.feetAfterFill) ok(m.feetAfterFill, 'feet contour not sewn after fill');
   if (e.noMismatch) ok(!m.simulationExportMismatch, `SIMULATION_EXPORT_MISMATCH (sim ${m.leftFootExportedStitches}/${m.rightFootExportedStitches} vs exp ${m.leftFootExportStitchesInExport}/${m.rightFootExportStitchesInExport})`);
+  if (e.noVisibleTravel) {
+    ok(m.professionalVisibleDiagonals === 0, `visible diagonal stitches remain (${m.professionalVisibleDiagonals})`);
+    ok(m.professionalUnsupportedTravel === 0, `unsupported travel stitches remain (${m.professionalUnsupportedTravel})`);
+  }
+  if (e.contourAfterFill) ok(m.professionalFillAfterContour === false, 'contour sewn before fill (not after)');
+  if (e.finalLookExportMatch) {
+    ok(m.finalLookExportObjectsMissing.length === 0, `objects in Final Look not in export: ${m.finalLookExportObjectsMissing.join(',')}`);
+  }
+  if (e.colorReduction) {
+    ok(m.professionalColorCountAfter !== null && m.professionalColorCountAfter <= 8, `color count not reduced (${m.professionalColorCountAfter})`);
+    ok(m.professionalColorCountAfter <= m.professionalColorCountBefore, `colors increased (${m.professionalColorCountBefore}→${m.professionalColorCountAfter})`);
+  }
 
   // universal: exported contours must come from real dark pixels, never fill boundaries.
   if (m.consolidatedContours > 0) {
@@ -344,7 +389,7 @@ function buildMarkdown(results) {
     lines.push('');
     lines.push('| Métrica | Valor |');
     lines.push('|---------|:-----:|');
-    for (const k of ['rawDarkPixels','darkComponents','rawSkeletonSegments','consolidatedContours','outerOutlineCount','innerOutlineCount','detailOpenCurveCount','rejectedNoiseCount','rejectedFillBoundaryCount','stitchCount','jumpCount','trimCount','colorCount','artificialGeometryCount','fillBoundaryExported','pinkBoundaryExported','mouthExported','eyesExported','lowerContourExported','feetContourExported','ce01Status','minPathDarkSupport','averagePathDarkSupport','longStraightSegments','ovalBoundaryUsed','removedArtificialBridges','longestUnsupportedSegmentMm','unsupportedLongContourSegmentsAfter','suspiciousBlackDiagonalDetected','leftFootContourObject','rightFootContourObject','leftFootExportedStitches','rightFootExportedStitches','leftFootExportStitchesInExport','rightFootExportStitchesInExport','feetAfterFill','simulationExportMismatch']) {
+    for (const k of ['rawDarkPixels','darkComponents','rawSkeletonSegments','consolidatedContours','outerOutlineCount','innerOutlineCount','detailOpenCurveCount','rejectedNoiseCount','rejectedFillBoundaryCount','stitchCount','jumpCount','trimCount','colorCount','artificialGeometryCount','fillBoundaryExported','pinkBoundaryExported','mouthExported','eyesExported','lowerContourExported','feetContourExported','ce01Status','minPathDarkSupport','averagePathDarkSupport','longStraightSegments','ovalBoundaryUsed','removedArtificialBridges','longestUnsupportedSegmentMm','unsupportedLongContourSegmentsAfter','suspiciousBlackDiagonalDetected','leftFootContourObject','rightFootContourObject','leftFootExportedStitches','rightFootExportedStitches','leftFootExportStitchesInExport','rightFootExportStitchesInExport','feetAfterFill','simulationExportMismatch','professionalMode','professionalScore','professionalVisibleDiagonals','professionalUnsupportedTravel','professionalFillAfterContour','professionalColorCountBefore','professionalColorCountAfter','professionalContourMissingOnOneFoot','professionalPassed']) {
       lines.push(`| ${k} | ${m[k]} |`);
     }
     if (r.errors.length) { lines.push(''); lines.push('**Errores de ejecución:**'); for (const e of r.errors) lines.push(`- ${e}`); }
@@ -390,6 +435,11 @@ export function runRegressionSuite() {
     makeOpenDetailsFixture(),
     makeDiagonalGuardFixture(),
     makeBothFeetFixture(),
+    makeProfTravelFixture(),
+    makeContourAfterFillFixture(),
+    makeBothFeetProfessionalFixture(),
+    makeFinalLookMatchFixture(),
+    makeColorReductionFixture(),
   ];
   const results = fixtures.map(fixture => {
     const run = runFixture(fixture);

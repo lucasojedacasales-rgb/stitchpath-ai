@@ -39,6 +39,8 @@ import { simplifyGeometry } from '@/lib/industrialStitchProcessor';
 import { buildStrictDarkStrokeContextFromOriginalImage } from '@/lib/rawDarkStrokeTest';
 import RealImageDiagnosticPanel from '@/components/editor/RealImageDiagnosticPanel';
 import FootContourExportDiagnostic from '@/components/editor/FootContourExportDiagnostic';
+import ProfessionalQualityPanel from '@/components/editor/ProfessionalQualityPanel';
+import { applyProfessionalPipeline } from '@/lib/professionalDigitizingMode';
 
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
@@ -64,6 +66,7 @@ const DEFAULT_CONFIG = {
   experimentalOutlineGenerator: false,
   experimentalFinalLookSimulator: false,
   experimentalAestheticPreservation: false,
+  professionalMode: false,
 };
 
 export default function Editor() {
@@ -184,17 +187,28 @@ export default function Editor() {
       return { commands: cmds, objects: [], meta };
     }
     const built = buildFinalCommands(regions, configWithDarkStroke, editorMachineSettings);
-    // buildFinalCommands already runs the transactional contour refinement
-    // (validateContourRefinement + contourRefineGuard) internally — no extra
-    // guard needed here.
     const finalCmds = built.commands;
+    // Professional mode post-processes the SAME command list used by Final Look
+    // AND export, so both stay in sync (FASE 7).
+    if (configWithDarkStroke.professionalMode) {
+      const prof = applyProfessionalPipeline({
+        commands: finalCmds, objects: built.objects, regions,
+        config: configWithDarkStroke, darkStroke,
+      });
+      console.log('[professional] applied pipeline — score:', prof.report?.gate?.professionalScore);
+      return {
+        commands: prof.commands, objects: prof.objects, meta: built.meta,
+        contourSegmentReport: built.contourSegmentReport,
+        professionalReport: prof.report,
+      };
+    }
     console.log('[commands-state] final commands metrics:', {
       stitches: finalCmds.filter(c => c.type === 'stitch').length,
       jumps: finalCmds.filter(c => c.type === 'jump').length,
       trims: finalCmds.filter(c => c.type === 'trim').length,
     });
     return { commands: finalCmds, objects: built.objects, meta: built.meta, contourSegmentReport: built.contourSegmentReport };
-  }, [regions, configWithDarkStroke, editorMachineSettings, optimizedCommandsOverride]);
+  }, [regions, configWithDarkStroke, editorMachineSettings, optimizedCommandsOverride, darkStroke]);
 
   // ═══ Unified metrics — single source of truth for all panels ═══
   const unifiedMetrics = useMemo(() => {
@@ -473,6 +487,7 @@ export default function Editor() {
               { id: 'details',   label: '🔍 Detalles' },
               { id: 'diagnostic', label: '🔬 Diagnóstico' },
               { id: 'feet',       label: '🦶 Pies' },
+              { id: 'prof',       label: '★ Profesional' },
               { id: 'panel',     label: 'Panel' },
             ].map(({ id, label }) =>
               <button key={id} onClick={() => setActiveTab(id)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
@@ -654,6 +669,18 @@ export default function Editor() {
                 finalCommands={finalEmbroideryCommands.commands}
                 finalObjects={finalEmbroideryCommands.objects}
                 machineSettings={editorMachineSettings}
+              />
+            </div>
+          ) : activeTab === 'prof' ? (
+            <div className="flex-1 overflow-hidden">
+              <ProfessionalQualityPanel
+                commands={finalEmbroideryCommands.commands}
+                objects={finalEmbroideryCommands.objects}
+                regions={regions}
+                exportCommands={finalEmbroideryCommands.commands}
+                darkStroke={darkStroke}
+                config={config}
+                onToggleMode={(v) => setConfig(c => ({ ...c, professionalMode: v }))}
               />
             </div>
           ) : !imageUrl ?
