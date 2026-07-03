@@ -693,6 +693,7 @@ export default function Editor() {
                   embeddedProjectCommands={finalEmbroideryCommands.commands}
                   embeddedProjectRegions={regions}
                   embeddedProjectName={project?.name}
+                  onApplyLearnedConfig={(patch) => setConfig(c => ({ ...c, ...patch }))}
                 />
               </div>
             </div>

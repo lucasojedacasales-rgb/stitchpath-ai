@@ -502,8 +502,28 @@ export function professionalEmbroideryQualityGate(commands = [], objects = [], r
 export function applyProfessionalPipeline({ commands, objects, regions, config, darkStroke }) {
   if (!config?.professionalMode) return { commands, objects, report: null };
 
+  // ── Reference Learning Engine v2: apply learned preset (gated) ──────────────
+  // When the project config carries learned* keys (from applyLearnedProfileToMotor),
+  // project them onto professionalParams so the existing phases use professional
+  // values mined from the corpus. Absent keys → default behavior unchanged
+  // (regression suite runs without learned config).
+  const learnedParams = {};
+  if (config.learnedMaxVisibleStitchMm != null) {
+    learnedParams.maxVisibleStitchMm = config.learnedMaxVisibleStitchMm;
+    learnedParams.suspiciousDiagonalMinMm = Math.min(
+      PROFESSIONAL_PARAMS.suspiciousDiagonalMinMm,
+      config.learnedMaxVisibleStitchMm,
+    );
+  }
+  if (config.learnedMaxColorCount != null) learnedParams.maxColors = config.learnedMaxColorCount;
+  if (config.learnedSatinWidthMm != null) learnedParams.satinWidthMm = config.learnedSatinWidthMm;
+  if (config.learnedFillStitchLengthMm != null) learnedParams.fillStitchLenMm = config.learnedFillStitchLengthMm;
+  const effectiveConfig = Object.keys(learnedParams).length
+    ? { ...config, professionalParams: { ...(config.professionalParams || {}), ...learnedParams } }
+    : config;
+
   // FASE 5 — reducción de colores primero (afecta colores de commands)
-  const colorRes = professionalColorReducer(regions, commands, config);
+  const colorRes = professionalColorReducer(regions, commands, effectiveConfig);
   let procCommands = colorRes.reducedCommands;
   const procRegions = colorRes.reducedRegions;
 
@@ -513,15 +533,15 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
   // FASE 1 (real) — reparar diagonales visibles ANTES del gate y de exportar.
   // Cuenta las diagonales sospechosas en bruto, repara (trim+jump) y luego el
   // gate se evalúa sobre los comandos ya reparados.
-  const diagonalBefore = countVisibleDiagonalStitches(procCommands, procRegions, darkStroke, config);
-  const repair = repairVisibleDiagonalStitches(procCommands, procRegions, darkStroke, config);
+  const diagonalBefore = countVisibleDiagonalStitches(procCommands, procRegions, darkStroke, effectiveConfig);
+  const repair = repairVisibleDiagonalStitches(procCommands, procRegions, darkStroke, effectiveConfig);
   procCommands = repair.commands;
   // Mantener el sanitize legacy para travel/long-black restante (no toca diagonales ya reparadas)
-  const vis = validateVisibleStitchesBeforeExport(procCommands, procRegions, darkStroke, config);
+  const vis = validateVisibleStitchesBeforeExport(procCommands, procRegions, darkStroke, effectiveConfig);
   procCommands = vis.commands;
 
   // FASE 6 — quality gate (sobre comandos reparados)
-  const gate = professionalEmbroideryQualityGate(procCommands, objects, procRegions, darkStroke, config);
+  const gate = professionalEmbroideryQualityGate(procCommands, objects, procRegions, darkStroke, effectiveConfig);
   gate.colorCountBefore = colorRes.report.originalColorCount;
   gate.colorCountAfter = colorRes.report.reducedColorCount;
   // Métricas de reparación de diagonales (FASE 1 real)

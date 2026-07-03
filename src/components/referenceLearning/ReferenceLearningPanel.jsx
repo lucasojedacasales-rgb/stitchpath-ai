@@ -11,6 +11,7 @@ import {
 import { compareAgainstReferences } from '@/lib/referenceLearning/wilcomStyleComparator';
 import { generateReferenceLearningReport } from '@/lib/referenceLearning/referenceReportGenerator';
 import { base44 } from '@/api/base44Client';
+import ReferenceEngineV2Section from './ReferenceEngineV2Section';
 
 /**
  * ReferenceLearningPanel — diagnostic UI for the Reference Embroidery
@@ -24,7 +25,7 @@ import { base44 } from '@/api/base44Client';
  * Read-only diagnostic. Never modifies the motor, export, CE01, the universal
  * contour detector, or the regression suite.
  */
-export default function ReferenceLearningPanel({ embeddedProjectCommands, embeddedProjectRegions, embeddedProjectName }) {
+export default function ReferenceLearningPanel({ embeddedProjectCommands, embeddedProjectRegions, embeddedProjectName, onApplyLearnedConfig }) {
   const [references, setReferences] = useState(() => listReferences());
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState(null);
@@ -32,6 +33,8 @@ export default function ReferenceLearningPanel({ embeddedProjectCommands, embedd
   const [rules, setRules] = useState(() => refreshRules(listReferences(), extractProfessionalRules));
   const [comparison, setComparison] = useState(null);
   const [comparing, setComparing] = useState(false);
+  // In-memory parsed files (with full commandSequence) for the v2 engine.
+  const [parsedFiles, setParsedFiles] = useState([]);
   const fileInputRef = useRef(null);
 
   const refresh = useCallback(() => {
@@ -46,12 +49,14 @@ export default function ReferenceLearningPanel({ embeddedProjectCommands, embedd
     setAnalyzing(true);
     setAnalyzeError(null);
     try {
+      const newlyParsed = [];
       for (const file of files) {
         const parsed = await parseReferenceFileFromFile(file);
         if (parsed.commands.length === 0) {
           setAnalyzeError(`No se pudieron leer puntadas de ${file.name}`);
           continue;
         }
+        newlyParsed.push(parsed);
         const classifiedBlocks = classifyStitchBlocks(parsed.commands);
         const metrics = analyzeReferenceMetrics(parsed.commands, parsed.metadata);
         addReference({
@@ -65,6 +70,7 @@ export default function ReferenceLearningPanel({ embeddedProjectCommands, embedd
           tags: [],
         });
       }
+      if (newlyParsed.length) setParsedFiles(prev => [...prev, ...newlyParsed]);
       refresh();
     } catch (e) {
       setAnalyzeError(e.message || 'Error al analizar archivos');
@@ -84,6 +90,7 @@ export default function ReferenceLearningPanel({ embeddedProjectCommands, embedd
     clearLibrary();
     refresh();
     setComparison(null);
+    setParsedFiles([]);
   }, [refresh]);
 
   const handleTagToggle = useCallback((id, tag) => {
@@ -214,6 +221,15 @@ export default function ReferenceLearningPanel({ embeddedProjectCommands, embedd
           El sistema extrae métricas y reglas técnicas — nunca copia puntadas ni diseños.
         </p>
       </div>
+
+      {/* Reference Learning Engine v2 */}
+      <ReferenceEngineV2Section
+        parsedFiles={parsedFiles}
+        embeddedProjectCommands={embeddedProjectCommands}
+        embeddedProjectRegions={embeddedProjectRegions}
+        embeddedProjectName={embeddedProjectName}
+        onApplyLearnedConfig={onApplyLearnedConfig}
+      />
 
       {/* Reference list */}
       {references.length === 0 ? (
