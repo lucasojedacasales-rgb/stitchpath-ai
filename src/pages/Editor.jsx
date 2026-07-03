@@ -38,6 +38,7 @@ import { calculateUnifiedCommandMetrics } from '@/lib/unifiedCommandMetrics';
 import { simplifyGeometry } from '@/lib/industrialStitchProcessor';
 import { buildStrictDarkStrokeContextFromOriginalImage } from '@/lib/rawDarkStrokeTest';
 import RealImageDiagnosticPanel from '@/components/editor/RealImageDiagnosticPanel';
+import FootContourExportDiagnostic from '@/components/editor/FootContourExportDiagnostic';
 
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
@@ -471,6 +472,7 @@ export default function Editor() {
               { id: 'validate',  label: '✓ Validar' },
               { id: 'details',   label: '🔍 Detalles' },
               { id: 'diagnostic', label: '🔬 Diagnóstico' },
+              { id: 'feet',       label: '🦶 Pies' },
               { id: 'panel',     label: 'Panel' },
             ].map(({ id, label }) =>
               <button key={id} onClick={() => setActiveTab(id)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
@@ -641,6 +643,17 @@ export default function Editor() {
                 originalImageUrl={originalImageUrl}
                 darkStrokeSourceUrl={originalImageUrl || imageUrl}
                 contourSegmentReport={finalEmbroideryCommands.contourSegmentReport}
+              />
+            </div>
+          ) : activeTab === 'feet' ? (
+            <div className="flex-1 overflow-hidden">
+              <FootContourExportDiagnostic
+                regions={regions}
+                config={config}
+                darkStroke={darkStroke}
+                finalCommands={finalEmbroideryCommands.commands}
+                finalObjects={finalEmbroideryCommands.objects}
+                machineSettings={editorMachineSettings}
               />
             </div>
           ) : !imageUrl ?

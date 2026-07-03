@@ -26,8 +26,9 @@ import { validateCE01 } from '@/lib/ce01Validator';
 import { validateFinalContourCommandsAgainstDarkMask } from '@/lib/contourSegmentValidator';
 import {
   makeCircleFixture, makeKirbyFixture, makeMulticolorFixture,
-  makeIrregularFixture, makeOpenDetailsFixture, makeDiagonalGuardFixture,
+  makeIrregularFixture, makeOpenDetailsFixture, makeDiagonalGuardFixture, makeBothFeetFixture,
 } from './embroideryRegressionFixtures';
+import { prepareCE01ProductionExport } from '@/lib/ce01ProductionExport';
 
 // ── Build a darkStroke context from a synthetic bitmap ─────────────────────────
 // Mirrors buildStrictDarkStrokeContextFromOriginalImage but skips Image loading.
@@ -155,6 +156,60 @@ function runFixture(fixture) {
     ? validateFinalContourCommandsAgainstDarkMask(commands, darkStroke, config)
     : { report: {} };
 
+  // ── Foot export guard (TEST 7) ──────────────────────────────────────────────
+  const Wd = darkStroke?.width || 200, Hd = darkStroke?.height || 200;
+  const wmm = 100, hmm = 100;
+  const footZoneMm = (x, y) => {
+    if (y < hmm * 0.2) return null;
+    if (x < -wmm * 0.05) return 'left';
+    if (x > wmm * 0.05) return 'right';
+    return null;
+  };
+  const footFromObjects = { left: null, right: null };
+  for (const o of contourObjects || []) {
+    const pts = o.points || [];
+    if (pts.length < 2) continue;
+    let cx = 0, cy = 0;
+    for (const p of pts) { cx += p[0]; cy += p[1]; }
+    cx /= pts.length; cy /= pts.length;
+    const z = footZoneMm(cx, cy);
+    if (z && !footFromObjects[z]) footFromObjects[z] = { exists: true, color: o.color, stitchType: o.stitch_type };
+  }
+  const footStitches = { left: 0, right: 0, leftColor: null, rightColor: null };
+  for (const c of commands || []) {
+    if (c.type !== 'stitch') continue;
+    const z = footZoneMm(c.x || 0, c.y || 0);
+    if (!z) continue;
+    footStitches[z]++;
+    if (!footStitches[z + 'Color']) footStitches[z + 'Color'] = c.color;
+  }
+  // export commands via productionReport
+  let exportFootStitches = { left: 0, right: 0 };
+  try {
+    const prod = prepareCE01ProductionExport(commands, fixture.regions, config, DEFAULT_MACHINE, finalObjects, 'DST');
+    const ec = prod.commands || commands;
+    for (const c of ec) {
+      if (c.type !== 'stitch') continue;
+      const z = footZoneMm(c.x || 0, c.y || 0);
+      if (!z) continue;
+      exportFootStitches[z]++;
+    }
+  } catch { exportFootStitches = { left: footStitches.left, right: footStitches.right }; }
+  // layer order: contour after fill per foot
+  const footOrder = { left: { fill: -1, contour: -1 }, right: { fill: -1, contour: -1 } };
+  for (let i = 0; i < (commands || []).length; i++) {
+    const c = commands[i];
+    if (c.type !== 'stitch') continue;
+    const z = footZoneMm(c.x || 0, c.y || 0);
+    if (!z) continue;
+    const isContour = c.stitchType === 'running_stitch' || c.stitchType === 'satin' || (c.layerType || '').toLowerCase().includes('outline');
+    const isFill = c.stitchType === 'fill' || c.source === 'clipped_fill_optimized';
+    if (isFill && footOrder[z].fill < 0) footOrder[z].fill = i;
+    if (isContour && footOrder[z].contour < 0) footOrder[z].contour = i;
+  }
+  const feetAfterFill = footOrder.left.fill >= 0 && footOrder.left.contour > footOrder.left.fill &&
+    footOrder.right.fill >= 0 && footOrder.right.contour > footOrder.right.fill;
+
   const metrics = {
     rawDarkPixels: darkStroke?.darkPixelsCount ?? 0,
     darkComponents: darkStroke?.components?.length ?? 0,
@@ -187,6 +242,16 @@ function runFixture(fixture) {
     longestUnsupportedSegmentMm: contourSegReport.longestUnsupportedSegmentMm ?? 0,
     unsupportedLongContourSegmentsAfter: commandGuard.report?.unsupportedLongContourSegments ?? 0,
     suspiciousBlackDiagonalDetected: commandGuard.report?.suspiciousBlackDiagonalDetected ?? false,
+    leftFootContourObject: !!footFromObjects.left,
+    rightFootContourObject: !!footFromObjects.right,
+    leftFootExportedStitches: footStitches.left,
+    rightFootExportedStitches: footStitches.right,
+    leftFootExportColor: footStitches.leftColor,
+    rightFootExportColor: footStitches.rightColor,
+    leftFootExportStitchesInExport: exportFootStitches.left,
+    rightFootExportStitchesInExport: exportFootStitches.right,
+    feetAfterFill,
+    simulationExportMismatch: footStitches.left !== exportFootStitches.left || footStitches.right !== exportFootStitches.right,
   };
 
   return { metrics, errors, darkStroke, universalReport: u };
@@ -221,6 +286,15 @@ function assertFixture(fixture, m) {
   if (e.notFill) ok(m.detailOpenCurveCount >= 1, 'open detail converted to fill');
   if (e.guardRemoved) ok(m.removedArtificialBridges >= 1, `guard removed no bridges (${m.removedArtificialBridges})`);
   if (e.noCommandDiagonal) ok(m.unsupportedLongContourSegmentsAfter === 0 && !m.suspiciousBlackDiagonalDetected, `command diagonal remains (after=${m.unsupportedLongContourSegmentsAfter}, susp=${m.suspiciousBlackDiagonalDetected})`);
+  if (e.bothFeet) {
+    ok(m.leftFootContourObject, 'left foot contour object missing');
+    ok(m.rightFootContourObject, 'right foot contour object missing');
+    ok(m.leftFootExportedStitches > 0, `left foot not exported (${m.leftFootExportedStitches})`);
+    ok(m.rightFootExportedStitches > 0, `right foot not exported (${m.rightFootExportedStitches})`);
+    ok(m.leftFootExportColor === m.rightFootExportColor, `feet contour color mismatch (${m.leftFootExportColor} vs ${m.rightFootExportColor})`);
+  }
+  if (e.feetAfterFill) ok(m.feetAfterFill, 'feet contour not sewn after fill');
+  if (e.noMismatch) ok(!m.simulationExportMismatch, `SIMULATION_EXPORT_MISMATCH (sim ${m.leftFootExportedStitches}/${m.rightFootExportedStitches} vs exp ${m.leftFootExportStitchesInExport}/${m.rightFootExportStitchesInExport})`);
 
   // universal: exported contours must come from real dark pixels, never fill boundaries.
   if (m.consolidatedContours > 0) {
@@ -270,7 +344,7 @@ function buildMarkdown(results) {
     lines.push('');
     lines.push('| Métrica | Valor |');
     lines.push('|---------|:-----:|');
-    for (const k of ['rawDarkPixels','darkComponents','rawSkeletonSegments','consolidatedContours','outerOutlineCount','innerOutlineCount','detailOpenCurveCount','rejectedNoiseCount','rejectedFillBoundaryCount','stitchCount','jumpCount','trimCount','colorCount','artificialGeometryCount','fillBoundaryExported','pinkBoundaryExported','mouthExported','eyesExported','lowerContourExported','feetContourExported','ce01Status','minPathDarkSupport','averagePathDarkSupport','longStraightSegments','ovalBoundaryUsed','removedArtificialBridges','longestUnsupportedSegmentMm','unsupportedLongContourSegmentsAfter','suspiciousBlackDiagonalDetected']) {
+    for (const k of ['rawDarkPixels','darkComponents','rawSkeletonSegments','consolidatedContours','outerOutlineCount','innerOutlineCount','detailOpenCurveCount','rejectedNoiseCount','rejectedFillBoundaryCount','stitchCount','jumpCount','trimCount','colorCount','artificialGeometryCount','fillBoundaryExported','pinkBoundaryExported','mouthExported','eyesExported','lowerContourExported','feetContourExported','ce01Status','minPathDarkSupport','averagePathDarkSupport','longStraightSegments','ovalBoundaryUsed','removedArtificialBridges','longestUnsupportedSegmentMm','unsupportedLongContourSegmentsAfter','suspiciousBlackDiagonalDetected','leftFootContourObject','rightFootContourObject','leftFootExportedStitches','rightFootExportedStitches','leftFootExportStitchesInExport','rightFootExportStitchesInExport','feetAfterFill','simulationExportMismatch']) {
       lines.push(`| ${k} | ${m[k]} |`);
     }
     if (r.errors.length) { lines.push(''); lines.push('**Errores de ejecución:**'); for (const e of r.errors) lines.push(`- ${e}`); }
@@ -315,6 +389,7 @@ export function runRegressionSuite() {
     makeIrregularFixture(),
     makeOpenDetailsFixture(),
     makeDiagonalGuardFixture(),
+    makeBothFeetFixture(),
   ];
   const results = fixtures.map(fixture => {
     const run = runFixture(fixture);

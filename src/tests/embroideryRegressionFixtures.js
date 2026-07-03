@@ -183,4 +183,23 @@ export function makeDiagonalGuardFixture() {
   };
 }
 
+// ─── FIXTURE 7: both feet export guard ────────────────────────────────────────
+// Body + two separate feet, each red fill + real black outline ring. Both foot
+// contours must be detected and exported, sewn after their fill, same color.
+export function makeBothFeetFixture() {
+  const img = makeImageData();
+  fillEllipse(img, 100, 90, 50, 50, LIGHT_PINK);   // body
+  fillEllipse(img, 70, 168, 19, 13, RED);           // left foot fill
+  fillEllipse(img, 130, 168, 19, 13, RED);         // right foot fill
+  ellipseRing(img, 100, 90, 50, 50, 2, BLACK);     // body outline
+  ring(img, 70, 168, 19, 2, BLACK);                // left foot outline
+  ring(img, 130, 168, 19, 2, BLACK);              // right foot outline
+  const regions = [
+    { id: 'body', name: 'body', color: '#ffb6c4', stitch_type: 'fill', region_class: 'fill', object_group: 'body', area_mm2: 8000, path_points: normPts(ellipsePolygon(100, 90, 50, 50)) },
+    { id: 'foot_left', name: 'foot_left', color: '#dc2828', stitch_type: 'fill', region_class: 'fill', object_group: 'foot_left', area_mm2: 700, path_points: normPts(circlePolygon(70, 168, 19)) },
+    { id: 'foot_right', name: 'foot_right', color: '#dc2828', stitch_type: 'fill', region_class: 'fill', object_group: 'foot_right', area_mm2: 700, path_points: normPts(circlePolygon(130, 168, 19)) },
+  ];
+  return { name: 'both_feet_export_guard', imageData: img, regions, expect: { bothFeet: true, feetAfterFill: true, noMismatch: true } };
+}
+
 export const FIXTURE_DIMS = { W, H };
