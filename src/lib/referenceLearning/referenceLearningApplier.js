@@ -15,6 +15,7 @@ import { selectBestLearnedProfileForCurrentDesign } from './referenceDesignSelec
 import { buildProfessionalPresetFromLearnedProfile } from './learnedPresetBuilder';
 import { compareCurrentDesignToLearnedCorpus } from './referenceDesignComparator';
 import { generateReferenceLearningAppliedReport } from './referenceAppliedReportGenerator';
+import { loadLearningState } from './referenceLearningState';
 
 /**
  * @param {object} ctx
@@ -74,6 +75,59 @@ export function applyLearnedProfileToProfessionalMode(ctx) {
  * Mapea el preset aprendido a las config keys que applyProfessionalPipeline lee.
  * Estas keys viajan en project.config y son aplicadas SOLO cuando professionalMode=true.
  */
+/**
+ * Auto-aplica el mejor perfil aprendido a un diseño recién generado.
+ * Lee el conocimiento persistido en localStorage (sin requerir botón manual),
+ * selecciona el perfil óptimo para las regiones actuales, construye el preset
+ * y devuelve el configPatch + un diff de parámetros para mostrar en pantalla.
+ *
+ * @param {Array} regions — regiones generadas por el pipeline
+ * @returns {object|null} { configPatch, selection, preset, diff } o null si no hay aprendizaje
+ */
+export function autoApplyLearnedProfileForDesign(regions) {
+  const state = loadLearningState();
+  if (!state || !state.learnedProfiles || state.learnedProfiles.length === 0) return null;
+  const selection = selectBestLearnedProfileForCurrentDesign(regions || [], [], state.learnedProfiles);
+  if (!selection.selectedProfile) return null;
+  const preset = buildProfessionalPresetFromLearnedProfile(selection.selectedProfile, state.learnedRules || []);
+  if (!preset) return null;
+  const configPatch = presetToConfigPatch(preset);
+  const diff = buildConfigDiff(configPatch);
+  return { configPatch, selection, preset, diff };
+}
+
+/**
+ * Construye un diff de parámetros (antes → después) para mostrar en pantalla.
+ * Compara los valores por defecto del motor con los valores aprendidos.
+ */
+export function buildConfigDiff(configPatch) {
+  const rows = [
+    { label: 'Densidad de relleno (mm)', key: 'learnedFillDensityMm', before: 0.40, unit: 'mm', precision: 3 },
+    { label: 'Ángulo de relleno (°)', key: 'learnedFillAngleDeg', before: 45, unit: '°', precision: 0 },
+    { label: 'Variación ángulo vecino (°)', key: 'learnedNeighborAngleVariationDeg', before: 0, unit: '°', precision: 0 },
+    { label: 'Espaciado satin (mm)', key: 'learnedSatinColumnSpacingMm', before: 0.40, unit: 'mm', precision: 3 },
+    { label: 'Ancho satin (mm)', key: 'learnedSatinWidthMm', before: 1.20, unit: 'mm', precision: 2 },
+    { label: 'Pull compensation (mm)', key: 'learnedPullCompensationMm', before: 0.30, unit: 'mm', precision: 2 },
+    { label: 'Puntada visible máx. (mm)', key: 'learnedMaxVisibleStitchMm', before: 4.0, unit: 'mm', precision: 1 },
+    { label: 'Colores máx.', key: 'learnedMaxColorCount', before: 8, unit: '', precision: 0 },
+    { label: 'Travel→jump > (mm)', key: 'learnedConvertTravelAboveMmToJump', before: 6.0, unit: 'mm', precision: 1 },
+    { label: 'Trim antes travel > (mm)', key: 'learnedTrimBeforeTravelMm', before: 0, unit: 'mm', precision: 1 },
+    { label: 'Underlay', key: 'learnedUnderlayEnabled', before: false, unit: '', precision: 0, isBool: true },
+    { label: 'Contorno tras relleno', key: 'learnedContourAfterFill', before: false, unit: '', precision: 0, isBool: true },
+    { label: 'Reducir colores similares', key: 'learnedReduceSimilarColors', before: false, unit: '', precision: 0, isBool: true },
+    { label: 'Satin contornos exteriores', key: 'learnedUseSatinForOuterContours', before: false, unit: '', precision: 0, isBool: true },
+    { label: 'Detalles al final', key: 'learnedDetailsLast', before: false, unit: '', precision: 0, isBool: true },
+  ];
+  return rows.map(r => {
+    const after = configPatch[r.key];
+    return {
+      ...r,
+      after,
+      changed: r.isBool ? (Boolean(after) !== Boolean(r.before)) : (after != null && Number(after) !== Number(r.before)),
+    };
+  }).filter(r => r.after != null);
+}
+
 export function presetToConfigPatch(preset) {
   if (!preset) return {};
   return {

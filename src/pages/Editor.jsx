@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Save, Download, Zap, ChevronRight, ArrowLeft, ShieldCheck, RefreshCw } from 'lucide-react';
+import { Save, Download, Zap, ChevronRight, ArrowLeft, ShieldCheck, RefreshCw, Sparkles } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import StepPipeline from '@/components/editor/StepPipeline';
 import AIProgressIndicator from '@/components/editor/AIProgressIndicator';
@@ -42,6 +42,8 @@ import FootContourExportDiagnostic from '@/components/editor/FootContourExportDi
 import ProfessionalQualityPanel from '@/components/editor/ProfessionalQualityPanel';
 import ReferenceLearningPanel from '@/components/referenceLearning/ReferenceLearningPanel';
 import { applyProfessionalPipeline } from '@/lib/professionalDigitizingMode';
+import { autoApplyLearnedProfileForDesign } from '@/lib/referenceLearning/referenceLearningApplier';
+import LearnedConfigDiffPanel from '@/components/editor/LearnedConfigDiffPanel';
 
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
@@ -157,6 +159,8 @@ export default function Editor() {
   const [discardedOptimizationReport, setDiscardedOptimizationReport] = useState(null);
   const [lastOptimizationAttempt, setLastOptimizationAttempt] = useState(null);
   const [optimizedCommandsOverride, setOptimizedCommandsOverride] = useState(null);
+  // ── Auto-aplicación del aprendizaje del corpus al generar ──
+  const [autoLearnedDiff, setAutoLearnedDiff] = useState(null);
 
   // Clear override + candidate when regions change
   useEffect(() => {
@@ -391,6 +395,23 @@ export default function Editor() {
       setOutlineReport(ctx.outlineReport || null);
       setStep(3);
       setShowDecisionPanel(false);
+
+      // ── Auto-aplicar reglas aprendidas del corpus al generar ──
+      // Si el motor de aprendizaje extrajo perfiles profesionales, se selecciona
+      // el mejor para este diseño y se aplica directamente al config (activa
+      // Professional Mode + learned* keys). El diff se muestra en pantalla.
+      const auto = autoApplyLearnedProfileForDesign(enrichedRegions);
+      if (auto?.configPatch) {
+        setConfig(c => ({ ...c, ...auto.configPatch }));
+        setAutoLearnedDiff({
+          diff: auto.diff,
+          profileName: auto.selection?.selectedProfile?.archetype || auto.selection?.selectedProfileId,
+          confidence: auto.selection?.confidence,
+        });
+        console.log('[auto-learn] perfil aplicado:', auto.selection?.selectedProfileId, 'confianza:', auto.selection?.confidence);
+      } else {
+        setAutoLearnedDiff(null);
+      }
 
       const label = aiStrategy ? 'Vectorización IA' : `Vectorización ${config.mode}`;
       const desc  = `${enrichedRegions.length} regiones generadas${aiStrategy ? ' (optimizado por IA)' : ''}`;
@@ -703,7 +724,15 @@ export default function Editor() {
               />
             </div>
           ) : activeTab === 'prof' ? (
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 overflow-y-auto p-3 space-y-3">
+              {autoLearnedDiff && (
+                <LearnedConfigDiffPanel
+                  diff={autoLearnedDiff.diff}
+                  profileName={autoLearnedDiff.profileName}
+                  confidence={autoLearnedDiff.confidence}
+                  onDismiss={() => setAutoLearnedDiff(null)}
+                />
+              )}
               <ProfessionalQualityPanel
                 commands={finalEmbroideryCommands.commands}
                 objects={finalEmbroideryCommands.objects}
@@ -758,6 +787,23 @@ export default function Editor() {
           <div className="flex-1 overflow-hidden">
               <StitchCanvas imageUrl={imageUrl} regions={regions} selectedRegionId={selectedRegionId} onRegionClick={handleRegionClick} imageOpacity={imageOpacity} stitchOpacity={stitchOpacity} showFill={showFill} showContour={showContour} />
             </div>
+          }
+
+          {autoLearnedDiff && !processing && activeTab !== 'prof' &&
+          <div className="border-t border-violet-500/30 bg-violet-900/15 px-4 py-2 flex items-center gap-3">
+            <Sparkles className="w-4 h-4 text-violet-400 flex-shrink-0" />
+            <div className="flex-1 text-[11px]">
+              <span className="text-violet-300 font-bold">Aprendizaje del corpus aplicado automáticamente:</span>
+              <span className="text-slate-400"> perfil </span>
+              <span className="text-violet-300 font-bold">{autoLearnedDiff.profileName || '—'}</span>
+              {autoLearnedDiff.confidence != null && (
+                <span className="text-cyan-400 ml-1">({(autoLearnedDiff.confidence * 100).toFixed(0)}%)</span>
+              )}
+              <span className="text-slate-400"> · {autoLearnedDiff.diff?.filter(d => d.changed).length || 0} parámetros ajustados</span>
+            </div>
+            <button onClick={() => setActiveTab('prof')} className="text-[10px] text-violet-300 hover:text-white font-bold transition-colors">Ver cambios →</button>
+            <button onClick={() => setAutoLearnedDiff(null)} className="p-1 rounded hover:bg-violet-900/30 text-slate-500 hover:text-white transition-colors">✕</button>
+          </div>
           }
 
           {imageUrl && regions.length > 0 && pathMetrics?.metrics && !processing &&
