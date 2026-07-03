@@ -28,6 +28,7 @@ import BinaryInspectorPanel from './BinaryInspectorPanel';
 import CE01FormatTestPanel from './CE01FormatTestPanel';
 import RawDarkStrokeTestPanel from './RawDarkStrokeTestPanel';
 import ExportRepairPanel from './ExportRepairPanel';
+import { getEffectiveExportCommands } from '@/lib/exportRepair/getEffectiveExportCommands';
 
 const FORMATS = ['DSB', 'DST', 'PES', 'JEF', 'EXP'];
 
@@ -175,13 +176,23 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     });
   }, [ce01ProductionMode, editorFinalCommands, pipelineResult.commands, productionReport]);
 
+  // ── Effective export commands (helper ÚNICO) ──────────────────────────────
+  // Prioridad: repairedCommands (V5) → productionReport.commands → editorFinalCommands → pipelineResult.commands
+  // Se usa en TODA exportación / validación de archivo real: handleExport, Kirby completo,
+  // ValidationPreview (exportable), ExportRealityCheck, ContourRefinePanel, unifiedMetrics.
+  const effectiveExport = useMemo(() => getEffectiveExportCommands({
+    repairAccepted,
+    repairedCommands,
+    editorFinalCommands,
+    pipelineCommands: pipelineResult.commands,
+    productionCommands: productionReport?.exportAllowed ? productionReport?.commands : null,
+  }), [repairAccepted, repairedCommands, editorFinalCommands, pipelineResult.commands, productionReport]);
+
   // ── Unified metrics — single source of truth for all display ──────────────
-  // Uses the SAME commands that will be exported, so modal numbers always match
-  // the Editor's bottom bar.
+  // Usa los mismos comandos que se exportarán (effectiveExport).
   const unifiedMetrics = useMemo(() => {
-    const cmds = editorFinalCommands || pipelineResult.commands;
-    return calculateUnifiedCommandMetrics(cmds, regions, { hoopSize: [widthMm, heightMm] });
-  }, [editorFinalCommands, pipelineResult.commands, regions, widthMm, heightMm]);
+    return calculateUnifiedCommandMetrics(effectiveExport.commands, regions, { hoopSize: [widthMm, heightMm] });
+  }, [effectiveExport.commands, regions, widthMm, heightMm]);
 
   // ── Metrics sync — single source: finalEmbroideryCommands ──────────────────
   // No comparison against pipelineResult (different rebuild can differ in
@@ -198,15 +209,13 @@ export default function ExportModal({ project, config: editorConfig, regions: in
 
   // ── Export Reality Check — visual vs exported comparison ──────────────────
   const realityCheck = useMemo(() => {
-    const cmds = editorFinalCommands || pipelineResult.commands;
-    return computeExportReality(regions, cmds);
-  }, [editorFinalCommands, pipelineResult.commands, regions]);
+    return computeExportReality(regions, effectiveExport.commands);
+  }, [effectiveExport.commands, regions]);
 
   // ── Contour reality check — outer outline must be real stitches ──────────
   const contourReport = useMemo(() => {
-    const cmds = editorFinalCommands || pipelineResult.commands;
-    return getContourExportReport(regions, cmds);
-  }, [editorFinalCommands, pipelineResult.commands, regions]);
+    return getContourExportReport(regions, effectiveExport.commands);
+  }, [effectiveExport.commands, regions]);
 
   // In production mode, stale adaptive/stability states are ignored entirely
   const effectiveAdaptiveReport = ce01ProductionMode ? null : adaptiveReport;
@@ -263,7 +272,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
 
       // ── Color mismatch validation — block if multi-color design exports as 1 color ──
       // Use repaired commands only when repairAccepted (they may have merged similar colors).
-      const ccSource = (repairAccepted && repairedCommands && repairedCommands.length > 0) ? repairedCommands : sourceCommands;
+      const ccSource = effectiveExport.commands;
       const colorChanges = ccSource.filter(c => c.type === 'colorChange').length;
       const visualColorCount = new Set(regions.map(r => r.color).filter(Boolean)).size;
       const ccIntegrity = validateColorChangeIntegrity(ccSource);
@@ -290,11 +299,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       try {
         // ── Direct DST: prefer pre-export repairedCommands (only if repairAccepted),
         //    then productionReport.commands (CE01 repair+sanitize), fallback raw.
-        const exportCommands = (repairAccepted && repairedCommands && repairedCommands.length > 0)
-          ? repairedCommands
-          : (productionReport && productionReport.exportAllowed && productionReport.commands && productionReport.commands.length
-            ? productionReport.commands
-            : sourceCommands);
+        const exportCommands = effectiveExport.commands;
         const { bytes, blob, meta } = buildDSTFromCommands(exportCommands, {
           label: project?.name || 'design',
           ce01Strict: true,
@@ -647,7 +652,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
 
               {/* CE01 Production mode panel — shows command source + protected metrics */}
               {ce01ProductionMode && productionReport && (
-                <CE01ProductionPanel report={productionReport} />
+                <CE01ProductionPanel report={productionReport} effectiveSource={effectiveExport.source} />
               )}
 
               {/* Export Reality Check — visual vs exported comparison */}
@@ -655,7 +660,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
 
               {/* Contour Refine Panel — metrics + debug views */}
               <ContourRefinePanel
-                commands={editorFinalCommands || pipelineResult.commands}
+                commands={effectiveExport.commands}
                 regions={regions}
                 config={config}
               />
@@ -727,7 +732,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
               <button
                 onClick={() => {
                   try {
-                    const cmds = editorFinalCommands || pipelineResult.commands;
+                    const cmds = effectiveExport.commands;
                     const { blob } = buildDSTFromCommands(cmds, {
                       label: 'KIRBY_COMPLETO',
                       ce01Strict: true,
@@ -802,7 +807,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
 
               {/* Visual preview — highlights problematic stitches in red */}
               <ValidationPreview
-                commands={exportView === 'exportable' && repairedCommands ? repairedCommands : (editorFinalCommands || pipelineResult.commands)}
+                commands={exportView === 'exportable' ? effectiveExport.commands : (editorFinalCommands || pipelineResult.commands)}
                 errors={blockingErrors}
                 machineSettings={machineSettings}
                 height={140}
