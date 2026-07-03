@@ -40,6 +40,7 @@ import { buildStrictDarkStrokeContextFromOriginalImage } from '@/lib/rawDarkStro
 import RealImageDiagnosticPanel from '@/components/editor/RealImageDiagnosticPanel';
 import FootContourExportDiagnostic from '@/components/editor/FootContourExportDiagnostic';
 import ProfessionalQualityPanel from '@/components/editor/ProfessionalQualityPanel';
+import ReferenceLearningPanel from '@/components/referenceLearning/ReferenceLearningPanel';
 import { applyProfessionalPipeline } from '@/lib/professionalDigitizingMode';
 
 
@@ -488,6 +489,7 @@ export default function Editor() {
               { id: 'diagnostic', label: '🔬 Diagnóstico' },
               { id: 'feet',       label: '🦶 Pies' },
               { id: 'prof',       label: '★ Profesional' },
+              { id: 'learn',      label: '✨ Aprendizaje' },
               { id: 'panel',     label: 'Panel' },
             ].map(({ id, label }) =>
               <button key={id} onClick={() => setActiveTab(id)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
@@ -683,6 +685,16 @@ export default function Editor() {
                 gate={finalEmbroideryCommands.professionalReport?.gate}
                 onToggleMode={(v) => setConfig(c => ({ ...c, professionalMode: v }))}
               />
+            </div>
+          ) : activeTab === 'learn' ? (
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="max-w-4xl mx-auto">
+                <ReferenceLearningPanel
+                  embeddedProjectCommands={finalEmbroideryCommands.commands}
+                  embeddedProjectRegions={regions}
+                  embeddedProjectName={project?.name}
+                />
+              </div>
             </div>
           ) : !imageUrl ?
           <UploadZone onUpload={handleImageUpload} fileInputRef={fileInputRef} uploading={uploadingImage} /> :

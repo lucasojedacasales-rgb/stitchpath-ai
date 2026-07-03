@@ -70,6 +70,13 @@ export default function Dashboard() {
           </div>
           <div className="flex items-center gap-2">
             <button
+              onClick={() => navigate('/reference-learning')}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161a23] border border-[#2a2d3a] hover:border-violet-500 text-slate-300 text-sm font-medium transition-colors"
+              title="Aprendizaje de referencias profesionales"
+            >
+              ✨ Aprendizaje de referencias
+            </button>
+            <button
               onClick={() => navigate('/regression')}
               className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161a23] border border-[#2a2d3a] hover:border-violet-500 text-slate-300 text-sm font-medium transition-colors"
               title="Abrir suite de regresión"
