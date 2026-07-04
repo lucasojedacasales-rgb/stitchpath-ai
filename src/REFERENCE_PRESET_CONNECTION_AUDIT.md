@@ -16,15 +16,17 @@ generador base de comandos** (`buildFinalCommands` / `flattenToCommands`). El re
 es que varias keys se aplican "en config" pero **no gobiernan los comandos reales**:
 
 - `learnedMaxVisibleStitchMm` no divide puntadas; solo umbraliza conversión de
-  diagonales oscuras/no soportadas → **maxVisibleStitchMm medido 11.77 > preset 4.03**.
+  diagonales oscuras/no soportadas → **maxVisibleStitchMm 7.31 → 11.77 (> preset 4.03)**.
 - `learnedUnderlayEnabled` es **completamente huérfana**: nadie la lee → underlayCount=0.
 - `learnedUseSatinForOuterContours=true` es **no-op**: el pipeline solo convierte
   satin→running cuando es `false`; nunca convierte running→satin → satinContourCount=0.
 - `learnedTrimBeforeTravelMm` sí se aplica, **sin límite ni deduplicación global** →
   trimCount 91 → 314 (+223).
+- `learnedConvertTravelAboveMmToJump` elimina diagonales (7→0) pero **no reduce** saltos
+  largos same-region → jumpCount 301 → 307 (+6).
 
-Veredicto global: **WORSENED** se explica por trimCount▲, jumpCount▲ y
-maxVisibleStitchMm▲, mientras que visibleDiagonalStitches✅ (7→0) no compensa.
+Veredicto global: **WORSENED** se explica por trimCount▲ (+223), jumpCount▲ (+6) y
+maxVisibleStitchMm▲ (7.31→11.77), mientras que visibleDiagonalStitches✅ (7→0) no compensa.
 
 ---
 
@@ -55,7 +57,7 @@ efecto y solo son consumidas después por `applyProfessionalPipeline`.
 | Llega al "detector de maxVisibleStitchMm" | n/a | No hay tal detector. El valor medido en el informe (`after.maxVisibleStitchMm`) lo calcula `learnedPresetValidator.maxVisibleStitchMm()` (líneas 177-188): **máxima longitud de puntada en el stream**, no el config. |
 | Se usa para cortar/split/convertir | ⚠️ parcial | `validateVisibleStitchesBeforeExport` (líneas 146, 159) convierte a trim+jump solo si `dist > maxVisibleStitchMm` **Y** (dark sin máscara sin región) **O** (no-dark sin región). **No divide** puntadas; **no corta** same-region fills. |
 
-### ¿Por qué maxVisibleStitchMm preset=4.03 pero medido=11.77?
+### ¿Por qué maxVisibleStitchMm preset=4.03 pero medido 7.31 → 11.77?
 
 1. `buildFinalCommands` genera puntadas de relleno de hasta **12.1mm** (límite DST),
    no 4.03mm. No existe un splitter que capee cada puntada visible a 4.03mm.
@@ -200,6 +202,66 @@ real sobre los comandos es nulo o parcial:
   (4.03, 11.77, 91→314, etc.) provienen de los datos reales reportados por el usuario
   (REFERENCE_LEARNING_VALIDATED_REPORT).
 - **No se modificó ningún archivo de código.** Este documento es solo auditoría.
+
+---
+---
+
+## 8. ROOT_CAUSE_SUMMARY
+
+### Parámetros que SÍ llegan a comandos reales (changedCommands=true)
+
+| Parámetro | Vía | Efecto real |
+|---|---|---|
+| `learnedConvertTravelAboveMmToJump` | `longConnectorMm` → `classifyVisibleDiagonalStitch` → `repairVisibleDiagonalStitches` | convierte diagonales que cruzan espacio vacío a trim+jump (visibleDiagonalStitches 7→0) |
+| `learnedTrimBeforeTravelMm` | `insertTrimBeforeLongJumps` | inserta trim antes de saltos largos (trimCount 91→314) |
+| `learnedContourAfterFill` | `reorderProfessionalLayers` | ordena contornos tras relleno |
+| `learnedDetailsLast` | `reorderProfessionalLayers` | reordena detalles al final |
+
+### Parámetros que SOLO cambian config (changedCommands=false o parcial)
+
+| Parámetro | configApplied | consumedByFunction | changedCommands | Causa raíz |
+|---|---|---|---|---|
+| `learnedMaxVisibleStitchMm` | ✅ | ⚠️ parcial | ⚠️ solo diagonales no soportadas | `buildFinalCommands` divide a 12.1mm (ms.maxStitchLength), no a 4.03mm. No existe splitter de visible-stitch para same-region fills. |
+| `learnedUseSatinForOuterContours` | ✅ | ⚠️ solo rama `=== false` | ❌ cuando `=true` | `contourExportBuilder` no lee la key; `applyProfessionalPipeline` solo convierte satin→running, nunca running→satin. |
+| `learnedUnderlayEnabled` | ✅ | ❌ | ❌ | **key huérfana**: escrita por `presetToConfigPatch`, sin ningún lector. No hay fase generadora de underlay en el pipeline profesional. |
+
+### Funciones que ignoran keys `learned*`
+
+- `buildFinalCommands` / `flattenToCommands` (`src/lib/exportPipeline.js`): solo leen `config.width_mm`, `config.height_mm`, `config.ce01SafeFillMode`, `config.darkStroke`. **No leen ninguna key `learned*`** → los valores aprendidos atraviesan el generador base sin efecto.
+- `contourExportBuilder.buildContourObjects` / `generateContourStitches` (`src/lib/contourExportBuilder.js`): usan constantes estáticas de `cleanCartoonOutlineCE01` y heurísticas de `stitch_type`/ancho. **No leen** `config.learnedUseSatinForOuterContours`.
+- `generateCE01SafeFillCommands` (`src/lib/ce01SafeFillGenerator.js`): bypass del underlay en `flattenToCommands`.
+- `processObjectStitches` (`src/lib/industrialStitchProcessor.js`): no lee `learnedUnderlayEnabled` y no etiqueta comandos con `layerType/source='underlay'`.
+
+### Funciones que usan valores hardcoded
+
+- `flattenToCommands`: splitter hardcoded a `ms.maxStitchLength` = **12.1mm** (límite DST). No existe un splitter con el valor aprendido 4.03mm.
+- `applyProfessionalPipeline`: `suspiciousDiagonalMinMm = min(2.5, config.learnedMaxVisibleStitchMm)` → clampeado a **2.5mm**; no sube a 4.03mm.
+- `cleanCartoonOutlineCE01`: `outerSatinWidthMm`, `outerSatinDensityMm`, `minSatinWidthMm` constantes.
+- `PROFESSIONAL_PARAMS`: `underlayMinAreaMm2` definido pero sin fase generadora que lo consuma.
+
+### Arreglos seguros (no tocan V5.1 / Safe Tie / encoders / exportación)
+
+1. **`learnedMaxVisibleStitchMm`** — añadir un splitter de visible-stitch en `applyProfessionalPipeline` (post-`buildFinalCommands`) que divida same-region fills >4.03mm en sub-puntadas. Reversible, no toca el generador base ni el encoder.
+2. **`learnedUseSatinForOuterContours=true`** — en `applyProfessionalPipeline`, convertir contornos outer `running_stitch` a `satin` cuando el ancho lo permita (≥ `minSatinWidthMm`). Reversible, no toca `contourExportBuilder`.
+3. **`learnedUnderlayEnabled`** — añadir una fase generadora de underlay en `applyProfessionalPipeline` conectada a la key, etiquetando comandos con `layerType='underlay'`. No toca el generador base.
+4. **`learnedTrimBeforeTravelMm`** — añadir tope máximo + deduplicación global / agrupación por bloque en `insertTrimBeforeLongJumps`. Reversible, no toca V5.1.
+
+### Arreglos peligrosos (requieren tocar motor protegido)
+
+1. **Modificar `buildFinalCommands` / `flattenToCommands`** para que divida a `learnedMaxVisibleStitchMm` → **PELIGROSO**: cambia el generador base usado por simulación, validation y export; rompería la equivalencia Final Look ↔ Exportable y el invariant SIMULATION_EXPORT_MISMATCH.
+2. **Modificar `contourExportBuilder`** para leer `learnedUseSatinForOuterContours` → **PELIGROSO**: el generador de contornos alimenta el motor base y el Final Look; cambiar stitch_type ahí afecta a toda la cadena de visualización y exportación.
+3. **Modificar `removeEmptyBlocks` / `repairVisibleDiagonalStitches`** para honrar `learnedMaxVisibleStitchMm` → **PROHIBIDO** por checkpoint (V5.1 intacto).
+4. **Modificar `dstDirectExport` / `dstEncoder`** → **PROHIBIDO** por checkpoint (encoders intactos).
+5. **Modificar `getEffectiveExportCommands` / `handleExport` / `canExportInCE01ProductionMode`** → **PROHIBIDO** por checkpoint (exportación intacta).
+
+### Conclusión raíz
+
+El preset aprendido se aplica "en config" pero **3 keys son fake config success**:
+`learnedMaxVisibleStitchMm` (parcial), `learnedUseSatinForOuterContours` (no-op cuando true),
+`learnedUnderlayEnabled` (huérfana). Las 3 producen `changedCommands=false`, lo que explica
+satinContourCount 0→0, runningContourCount 3→3, underlayCount 0→0 y maxVisibleStitchMm 7.31→11.77.
+El WORSENED lo domina `learnedTrimBeforeTravelMm` sin techo (trimCount 91→314). Los arreglos seguros
+se confinan a `applyProfessionalPipeline` (capa post-generador) y no tocan el motor protegido.
 
 ---
 _Auditoría de conexión del preset aprendido — Reference Learning Engine v2. Solo informe._
