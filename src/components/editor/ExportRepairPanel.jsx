@@ -123,7 +123,7 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
     const blob = new Blob([expResult.report], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = 'SAFE_TIE_V2_EXPERIMENT_REPORT.md'; a.click();
+    a.href = url; a.download = 'SAFE_TIE_V2_EXPERIMENT_REPORT_V2.md'; a.click();
     URL.revokeObjectURL(url);
   }, [expResult]);
 

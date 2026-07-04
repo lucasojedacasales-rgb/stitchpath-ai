@@ -121,6 +121,8 @@ function countMissingTie(cmds) {
  */
 export function safeAddTieInTieOffV2(commands, objects = [], regions = [], config = {}, darkStroke = null, report = {}) {
   const cmds = commands || [];
+  const originalStitchCount = cmds.filter(c => c?.type === 'stitch').length;
+  const originalCommandCount = cmds.length;
   const out = [];
   let safeTieInAdded = 0, safeTieOffAdded = 0;
   let safeBlocksTied = 0, safeBlocksSkipped = 0;
@@ -133,28 +135,33 @@ export function safeAddTieInTieOffV2(commands, objects = [], regions = [], confi
 
   const beforeMissingTie = countMissingTie(cmds);
 
-  // ── parsear bloques: runs de stitches consecutivos del mismo color+región ──
-  const blocks = [];
+  // ── FASE 1: parser con estructura etiquetada (NO mezclar stitches y sep) ──
+  //   block item:      { type: 'block', stitches: [...] }
+  //   separator item:  { type: 'separator', command: c }
+  const items = [];
   let cur = [];
-  const flush = (sep) => {
-    if (cur.length) blocks.push({ stitches: cur, sep });
-    else if (sep) blocks.push({ sep });
-    cur = [];
+  const flushBlock = () => {
+    if (cur.length) { items.push({ type: 'block', stitches: cur }); cur = []; }
   };
   for (const c of cmds) {
-    if (c.type === 'stitch') {
+    if (c?.type === 'stitch') {
       cur.push(c);
     } else {
-      flush(c);
+      flushBlock();
+      items.push({ type: 'separator', command: c });
     }
   }
-  flush(null);
+  flushBlock();
 
-  // ── aplicar ties bloque a bloque ──
-  for (let bi = 0; bi < blocks.length; bi++) {
-    const b = blocks[bi];
-    if (b.sep) { out.push(b.sep); continue; }
-    const st = b.stitches;
+  // ── FASE 2: reconstrucción. Nunca perder stitches. ──
+  for (let ii = 0; ii < items.length; ii++) {
+    const item = items[ii];
+    if (item.type === 'separator') {
+      out.push(item.command);
+      continue;
+    }
+    // type === 'block'
+    const st = item.stitches;
     if (st.length < MIN_BLOCK_FOR_TIE) {
       skippedBecauseTooSmall++;
       safeBlocksSkipped++;
@@ -211,8 +218,8 @@ export function safeAddTieInTieOffV2(commands, objects = [], regions = [], confi
         nearestStitchDist(tieIn2.x, tieIn2.y) > MAX_TIE_DIST_MM ||
         nearestStitchDist(tieOff1.x, tieOff1.y) > MAX_TIE_DIST_MM ||
         nearestStitchDist(tieOff2.x, tieOff2.y) > MAX_TIE_DIST_MM) {
-      // tie demasiado lejos — skip
-      skippedBecauseZeroDirection++; // no es dirección, pero es distancia insegura
+      // tie demasiado lejos — skip (mantiene stitches originales)
+      skippedBecauseZeroDirection++; // distancia insegura
       safeBlocksSkipped++;
       for (const s of st) out.push(s);
       continue;
@@ -273,12 +280,19 @@ export function safeAddTieInTieOffV2(commands, objects = [], regions = [], confi
       prevWindow.unshift(out[k]);
     }
     const nextWindow = [];
-    let nbi = bi + 1;
-    while (nextWindow.length < WINDOW_NEXT && nbi < blocks.length) {
-      const nb = blocks[nbi];
-      if (nb.sep) { if (nb.sep.type === 'stitch') nextWindow.push(nb.sep); break; }
-      else for (const s of nb.stitches) { nextWindow.push(s); if (nextWindow.length >= WINDOW_NEXT) break; }
-      nbi++;
+    let nii = ii + 1;
+    while (nextWindow.length < WINDOW_NEXT && nii < items.length) {
+      const ni = items[nii];
+      if (ni.type === 'separator') {
+        if (ni.command?.type === 'stitch') nextWindow.push(ni.command);
+        break;
+      } else {
+        for (const s of ni.stitches) {
+          nextWindow.push(s);
+          if (nextWindow.length >= WINDOW_NEXT) break;
+        }
+      }
+      nii++;
     }
     const localCmds = [...prevWindow, ...blockWithTies, ...nextWindow];
 
@@ -310,7 +324,23 @@ export function safeAddTieInTieOffV2(commands, objects = [], regions = [], confi
     for (const cmd of blockWithTies) out.push(cmd);
   }
 
-  const afterMissingTie = countMissingTie(out);
+  // ── FASE 3: invariant de preservación ──
+  // outputStitchCount debe ser >= originalStitchCount. Si baja, revertir todo.
+  const outputStitchCount = out.filter(c => c?.type === 'stitch').length;
+  const outputCommandCount = out.length;
+  let fatalPreservationError = false;
+  let preservationErrorReason = null;
+  let finalOut = out;
+  if (outputStitchCount < originalStitchCount) {
+    fatalPreservationError = true;
+    preservationErrorReason = 'stitchCountDropped';
+    finalOut = cmds.slice(); // revertir a comandos originales
+    safeTieInAdded = 0;
+    safeTieOffAdded = 0;
+    safeBlocksTied = 0;
+  }
+
+  const afterMissingTie = countMissingTie(finalOut);
 
   report.safeTieInAdded = safeTieInAdded;
   report.safeTieOffAdded = safeTieOffAdded;
@@ -326,6 +356,12 @@ export function safeAddTieInTieOffV2(commands, objects = [], regions = [], confi
   report.beforeMissingTieOff = beforeMissingTie.missingTieOff;
   report.afterMissingTieIn = afterMissingTie.missingTieIn;
   report.afterMissingTieOff = afterMissingTie.missingTieOff;
+  report.originalStitchCount = originalStitchCount;
+  report.outputStitchCount = outputStitchCount;
+  report.originalCommandCount = originalCommandCount;
+  report.outputCommandCount = outputCommandCount;
+  report.fatalPreservationError = fatalPreservationError;
+  report.preservationErrorReason = preservationErrorReason;
 
-  return { commands: out, report };
+  return { commands: finalOut, report };
 }

@@ -55,6 +55,8 @@ export function runSafeTieV2Experiment(repairedCommands, objects = [], regions =
   );
 
   const afterMetrics = measureMetrics(safeCommands, objects, regions, config, ms);
+  const commandCountBefore = (repairedCommands || []).length;
+  const commandCountAfter = safeCommands.length;
 
   // ── criterios de éxito ──
   const tieReduced = (afterMetrics.missingTieIn + afterMetrics.missingTieOff) <
@@ -77,10 +79,17 @@ export function runSafeTieV2Experiment(repairedCommands, objects = [], regions =
   if (!invalidCmdStillZero) reasons.push(`invalidCommandSequence=${afterMetrics.invalidCommandSequence} (>0)`);
   if (!outOfBoundsStillZero) reasons.push(`regionOutsideBounds=${afterMetrics.regionOutsideBounds} (>0)`);
 
-  const experimentAccepted = reasons.length === 0;
+  let experimentAccepted = reasons.length === 0;
+
+  // Si la V2 detectó un error fatal de preservación, el experimento se rechaza.
+  if (safeReport?.fatalPreservationError && !reasons.includes('fatalPreservationError: ' + safeReport.preservationErrorReason)) {
+    reasons.push('fatalPreservationError: ' + (safeReport.preservationErrorReason || 'stitchCountDropped'));
+    experimentAccepted = false;
+  }
 
   const report = generateReport({
     beforeMetrics, afterMetrics, safeReport, experimentAccepted, reasons,
+    commandCountBefore, commandCountAfter,
   });
 
   return {
@@ -93,9 +102,9 @@ export function runSafeTieV2Experiment(repairedCommands, objects = [], regions =
   };
 }
 
-function generateReport({ beforeMetrics, afterMetrics, safeReport, experimentAccepted, reasons }) {
+function generateReport({ beforeMetrics, afterMetrics, safeReport, experimentAccepted, reasons, commandCountBefore, commandCountAfter }) {
   const md = [];
-  md.push('# SAFE_TIE_V2_EXPERIMENT_REPORT — StitchPath AI\n');
+  md.push('# SAFE_TIE_V2_EXPERIMENT_REPORT_V2 — StitchPath AI\n');
   md.push(`> Generado: ${new Date().toISOString()}`);
   md.push('> Modo experimental. NO modifica el flujo V5.1. NO sustituye addTieInTieOff.');
   md.push('> safeAddTieInTieOffV2 se ejecuta sobre los repairedCommands V5.1 solo para informe.\n');
@@ -133,6 +142,14 @@ function generateReport({ beforeMetrics, afterMetrics, safeReport, experimentAcc
   row('ce01Score', 'ce01Score');
   row('ce01Status', 'ce01Status', 'str');
   row('exportAllowed', 'exportAllowed', 'str');
+  md.push('');
+  md.push('## Conteo de comandos / preservación\n');
+  md.push('| Métrica | Before | After |');
+  md.push('|---|---|---|');
+  md.push(`| commandCount | ${commandCountBefore} | ${commandCountAfter} |`);
+  md.push(`| stitchCount (preservación) | ${safeReport?.originalStitchCount ?? '—'} | ${safeReport?.outputStitchCount ?? '—'} |`);
+  md.push(`| fatalPreservationError | ${safeReport?.fatalPreservationError ? 'SÍ' : 'NO'} | — |`);
+  if (safeReport?.fatalPreservationError) md.push(`| preservationErrorReason | ${safeReport.preservationErrorReason} | — |`);
   md.push('');
 
   md.push('## Bloques tied / skipped\n');
