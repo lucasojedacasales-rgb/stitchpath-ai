@@ -79,7 +79,7 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'REFERENCE_LEARNING_VALIDATED_REPORT_AFTER_VISIBLE_SPLITTER_V1_1.md';
+    a.download = 'REFERENCE_LEARNING_VALIDATED_REPORT_AFTER_VISIBLE_SPLITTER_V1_2.md';
     a.click();
     URL.revokeObjectURL(url);
   }, [result]);
@@ -90,7 +90,7 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'REFERENCE_VISIBLE_STITCH_SPLITTER_REPORT_V1_1.md';
+    a.download = 'REFERENCE_VISIBLE_STITCH_SPLITTER_REPORT_V1_2.md';
     a.click();
     URL.revokeObjectURL(url);
   }, [result]);
@@ -152,7 +152,7 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
               onClick={handleDownloadSplitterReport}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-fuchsia-900/20 border border-fuchsia-500/30 text-fuchsia-300 text-xs font-bold hover:bg-fuchsia-900/30 transition-colors"
             >
-              <Download className="w-3.5 h-3.5" /> After Splitter V1_1
+              <Download className="w-3.5 h-3.5" /> After Splitter V1_2
             </button>
           )}
           {result && result.visibleSplitter?.md && (
@@ -160,7 +160,7 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
               onClick={handleDownloadSplitterV1_1Report}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-fuchsia-900/20 border border-fuchsia-500/30 text-fuchsia-300 text-xs font-bold hover:bg-fuchsia-900/30 transition-colors"
             >
-              <Download className="w-3.5 h-3.5" /> Splitter V1_1 Report
+              <Download className="w-3.5 h-3.5" /> Splitter V1_2 Report
             </button>
           )}
           {result && result.visibleSplitterForensics?.report && (
@@ -274,9 +274,12 @@ function LearnedValidationResult({ result }) {
         <div className={`rounded-lg p-2.5 border ${visibleSplitter.phaseAccepted ? 'bg-fuchsia-900/10 border-fuchsia-500/30' : 'bg-amber-900/10 border-amber-500/30'}`}>
           <div className="flex items-center gap-2 mb-1">
             <span className={`text-sm font-bold ${visibleSplitter.phaseAccepted ? 'text-fuchsia-400' : 'text-amber-400'}`}>
-              REFERENCE_VISIBLE_STITCH_SPLITTER_V1 {visibleSplitter.phaseAccepted ? 'aplicado' : 'revertido'}
+              REFERENCE_VISIBLE_STITCH_SPLITTER_V1_2 {visibleSplitter.phaseAccepted ? 'aplicado' : 'revertido'}
             </span>
             <span className="text-[10px] text-slate-500">target={visibleSplitter.targetMaxMm}mm · budget={visibleSplitter.maxAddedStitches}</span>
+            {visibleSplitter.phaseStatus && (
+              <span className={`ml-auto text-[9px] font-bold px-1.5 py-0.5 rounded ${visibleSplitter.phaseStatus === 'ACCEPTED' ? 'bg-emerald-900/40 text-emerald-300' : visibleSplitter.phaseStatus === 'NO_EFFECTIVE_REVERTED' ? 'bg-amber-900/40 text-amber-300' : 'bg-red-900/40 text-red-300'}`}>{visibleSplitter.phaseStatus}</span>
+            )}
           </div>
           <div className="grid grid-cols-4 gap-1 text-[10px]">
             <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
@@ -284,12 +287,12 @@ function LearnedValidationResult({ result }) {
               <span className="text-slate-300 ml-1">{visibleSplitter.beforeMaxVisibleStitchMm.toFixed(2)}→<b className="text-fuchsia-300">{visibleSplitter.afterMaxVisibleStitchMm.toFixed(2)}</b></span>
             </div>
             <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
-              <span className="text-slate-500">added</span>
-              <span className="text-fuchsia-300 font-bold ml-1">{visibleSplitter.addedStitches}</span>
+              <span className="text-slate-500">returned</span>
+              <span className="text-slate-300 font-bold ml-1">{visibleSplitter.returnedMaxVisibleStitchMm.toFixed(2)}</span>
             </div>
             <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
-              <span className="text-slate-500">split</span>
-              <span className="text-fuchsia-300 font-bold ml-1">{visibleSplitter.candidatesSplit}/{visibleSplitter.candidatesFound}</span>
+              <span className="text-slate-500">addedExp/Ret</span>
+              <span className="text-fuchsia-300 font-bold ml-1">{visibleSplitter.addedStitchesExperimental}/{visibleSplitter.addedStitchesReturned}</span>
             </div>
             <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
               <span className="text-slate-500">visDiag</span>
@@ -297,7 +300,10 @@ function LearnedValidationResult({ result }) {
             </div>
           </div>
           {!visibleSplitter.phaseAccepted && (
-            <div className="text-[10px] text-amber-300 mt-1.5">Revertido: {visibleSplitter.revertReason}</div>
+            <div className="text-[10px] text-amber-300 mt-1.5">Revertido ({visibleSplitter.commandsReturnedSource}): {visibleSplitter.revertReason}</div>
+          )}
+          {!visibleSplitter.splitterEffective && visibleSplitter.phaseStatus === 'NO_EFFECTIVE_REVERTED' && (
+            <div className="text-[10px] text-amber-400 mt-1 font-bold">NO_EFFECTIVE → recomendado: SATIN_OUTER_CONTOUR_CONVERTER_V1</div>
           )}
         </div>
       )}

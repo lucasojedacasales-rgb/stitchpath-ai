@@ -1292,27 +1292,68 @@ export function splitLongVisibleFillStitchesGuardedV1_1(commands, targetMaxMm, o
   else if (afterStitchCount > beforeStitchCount + maxAddedStitches)
     revertReason = `afterStitchCount (${afterStitchCount}) > before+maxAdded (${beforeStitchCount}+${maxAddedStitches})`;
 
-  const phaseAccepted = !revertReason;
-  const finalCommands = phaseAccepted ? out : commands;
-  const effectiveAfterMax = phaseAccepted ? afterMaxVisibleStitchMm : beforeMaxVisibleStitchMm;
-  const splitterEffective = phaseAccepted && effectiveAfterMax < beforeMaxVisibleStitchMm;
+  // ── Criterio de aceptación V1_2 ───────────────────────────────────────────
+  // 1) regressionRevert: si el split empeora métricas críticas → revertir.
+  // 2) splitterEffective: maxImprovement >= 0.25mm O afterMax <= target+tolerancia.
+  //    Si NO efectivo → revertir la fase completa (NO_EFFECTIVE_REVERTED).
+  // El resultado experimental (out) se mide siempre, pero solo se aplica si
+  // splitterEffective=true.
+  const maxImprovement = beforeMaxVisibleStitchMm - afterMaxVisibleStitchMm;
+  const reachedTarget = afterMaxVisibleStitchMm <= targetMaxMm + 0.10;
+  let phaseStatus;
+  let phaseAccepted;
+  let finalCommands;
+  let commandsReturnedSource;
+  if (revertReason) {
+    phaseStatus = 'REVERTED';
+    phaseAccepted = false;
+    finalCommands = commands;
+    commandsReturnedSource = 'beforeSplitter';
+  } else {
+    const splitterEffective = maxImprovement >= 0.25 || reachedTarget;
+    if (!splitterEffective) {
+      phaseStatus = 'NO_EFFECTIVE_REVERTED';
+      phaseAccepted = false;
+      revertReason = 'splitterEffective=false: maxVisibleStitchMm did not improve';
+      finalCommands = commands;
+      commandsReturnedSource = 'beforeSplitter';
+    } else {
+      phaseStatus = 'ACCEPTED';
+      phaseAccepted = true;
+      finalCommands = out;
+      commandsReturnedSource = 'splitter';
+    }
+  }
+  const returnedMaxVisibleStitchMm = maxVisibleStitchMmLocal(finalCommands);
+  const returnedStitchCount = finalCommands.filter((c) => c.type === 'stitch').length;
+  const returnedCommandCount = finalCommands.length;
+  const splitterEffective = phaseAccepted && (maxImprovement >= 0.25 || reachedTarget);
 
   const report = {
-    version: 'REFERENCE_VISIBLE_STITCH_SPLITTER_V1_1',
+    version: 'REFERENCE_VISIBLE_STITCH_SPLITTER_V1_2',
     targetMaxMm,
     effectiveMaxMm,
     beforeMaxVisibleStitchMm,
-    afterMaxVisibleStitchMm: effectiveAfterMax,
+    afterMaxVisibleStitchMm,
+    returnedMaxVisibleStitchMm,
+    maxImprovement,
+    reachedTarget,
     beforeStitchCount,
-    afterStitchCount: phaseAccepted ? afterStitchCount : beforeStitchCount,
+    afterStitchCount,
+    returnedStitchCount,
     beforeCommandCount,
-    afterCommandCount: phaseAccepted ? afterCommandCount : beforeCommandCount,
+    afterCommandCount,
+    returnedCommandCount,
     maxAddedStitches,
+    addedStitchesExperimental: addedStitches,
+    addedStitchesReturned: phaseAccepted ? addedStitches : 0,
     addedStitches: phaseAccepted ? addedStitches : 0,
     candidatesFound,
     candidatesPassedMetadata: passedMetadata,
     candidatesPassedGeometry: passedGeometry,
     candidatesPassedLocalGate: passedLocalGate,
+    dryRunCandidatesApplied: applied,
+    realCandidatesApplied: phaseAccepted ? applied : 0,
     candidatesApplied: phaseAccepted ? applied : 0,
     candidatesSkippedInterpolatedPointOutsideRegion: skip.interpolatedPointOutsideRegion,
     candidatesSkippedLocalVisibleDiagWouldIncrease: skip.localVisibleDiagWouldIncrease,
@@ -1327,56 +1368,65 @@ export function splitLongVisibleFillStitchesGuardedV1_1(commands, targetMaxMm, o
     candidatesSkippedNoRegion: skip.noRegion,
     candidatesSkippedBudgetExceeded: skip.budgetExceeded,
     phaseAccepted,
+    phaseStatus,
     splitterEffective,
+    commandsReturnedSource,
     revertReason,
     ce01StatusBefore: beforeHealth.ce01Status,
+    ce01StatusAfterExperimental: afterHealth.ce01Status,
     ce01StatusAfter: phaseAccepted ? afterHealth.ce01Status : beforeHealth.ce01Status,
     ce01ScoreBefore: beforeHealth.ce01Score,
     ce01ScoreAfter: phaseAccepted ? afterHealth.ce01Score : beforeHealth.ce01Score,
     professionalScoreBefore: beforeHealth.professionalScore,
     professionalScoreAfter: phaseAccepted ? afterHealth.professionalScore : beforeHealth.professionalScore,
     visibleDiagonalStitchesBefore: beforeHealth.visibleDiagonalStitches,
+    visibleDiagonalStitchesAfterExperimental: afterHealth.visibleDiagonalStitches,
     visibleDiagonalStitchesAfter: phaseAccepted ? afterHealth.visibleDiagonalStitches : beforeHealth.visibleDiagonalStitches,
     emptyBlocksBefore: beforeHealth.emptyBlocks,
+    emptyBlocksAfterExperimental: afterHealth.emptyBlocks,
     emptyBlocksAfter: phaseAccepted ? afterHealth.emptyBlocks : beforeHealth.emptyBlocks,
     unsupportedLongStitchesBefore: beforeHealth.unsupportedLongStitches,
+    unsupportedLongStitchesAfterExperimental: afterHealth.unsupportedLongStitches,
     unsupportedLongStitchesAfter: phaseAccepted ? afterHealth.unsupportedLongStitches : beforeHealth.unsupportedLongStitches,
     finalLookExportMismatchBefore: false,
     finalLookExportMismatchAfter: phaseAccepted ? cmpMismatch : false,
   };
-  report.md = buildVisibleSplitterReportMdV1_1(report);
+  report.md = buildVisibleSplitterReportMdV1_2(report);
   return { commands: finalCommands, report };
 }
 
-function buildVisibleSplitterReportMdV1_1(r) {
+function buildVisibleSplitterReportMdV1_2(r) {
   const md = [];
-  md.push('# REFERENCE_VISIBLE_STITCH_SPLITTER_REPORT_V1_1 — StitchPath AI\n');
+  md.push('# REFERENCE_VISIBLE_STITCH_SPLITTER_REPORT_V1_2 — StitchPath AI\n');
   md.push(`> Generado: ${new Date().toISOString()}`);
-  md.push('> REFERENCE_VISIBLE_STITCH_SPLITTER_V1_1 — gates por candidato + dry-run local.');
+  md.push('> REFERENCE_VISIBLE_STITCH_SPLITTER_V1_2 — cierra el splitter como NO_EFFECTIVE si maxVisibleStitchMm no mejora.');
   md.push('> No toca buildFinalCommands, encoders, CE01 validator, V5.1 repair, REFERENCE_TRIM_GUARD_V1 ni V1.\n');
   md.push('## Parámetros');
   md.push(`- **targetMaxMm** (learnedMaxVisibleStitchMm): ${r.targetMaxMm}`);
   md.push(`- **effectiveMaxMm** (target + tolerancia 0.10): ${r.effectiveMaxMm}`);
   md.push(`- **maxAddedStitches** (presupuesto): ${r.maxAddedStitches}`);
-  md.push('\n## Métricas clave antes/después');
-  md.push('| Métrica | Antes | Después |');
-  md.push('|---|---|---|');
-  md.push(`| maxVisibleStitchMm | ${r.beforeMaxVisibleStitchMm.toFixed(2)} | ${r.afterMaxVisibleStitchMm.toFixed(2)} |`);
-  md.push(`| stitchCount | ${r.beforeStitchCount} | ${r.afterStitchCount} |`);
-  md.push(`| commandCount | ${r.beforeCommandCount} | ${r.afterCommandCount} |`);
-  md.push(`| addedStitches | 0 | ${r.addedStitches} |`);
-  md.push(`| visibleDiagonalStitches | ${r.visibleDiagonalStitchesBefore} | ${r.visibleDiagonalStitchesAfter} |`);
-  md.push(`| emptyBlocks | ${r.emptyBlocksBefore} | ${r.emptyBlocksAfter} |`);
-  md.push(`| unsupportedLongStitches | ${r.unsupportedLongStitchesBefore} | ${r.unsupportedLongStitchesAfter} |`);
-  md.push(`| CE01 status | ${r.ce01StatusBefore} | ${r.ce01StatusAfter} |`);
-  md.push(`| professionalScore | ${r.professionalScoreBefore} | ${r.professionalScoreAfter} |`);
-  md.push(`| finalLookExportMismatch | ${r.finalLookExportMismatchBefore} | ${r.finalLookExportMismatchAfter} |`);
+  md.push(`- **maxImprovement**: ${r.maxImprovement.toFixed(2)} mm`);
+  md.push(`- **reachedTarget**: ${r.reachedTarget} (afterMax <= ${r.targetMaxMm + 0.10})`);
+  md.push('\n## Métricas: antes / experimental (split) / retornado');
+  md.push('| Métrica | Antes | Experimental | Retornado |');
+  md.push('|---|---|---|---|');
+  md.push(`| maxVisibleStitchMm | ${r.beforeMaxVisibleStitchMm.toFixed(2)} | ${r.afterMaxVisibleStitchMm.toFixed(2)} | ${r.returnedMaxVisibleStitchMm.toFixed(2)} |`);
+  md.push(`| stitchCount | ${r.beforeStitchCount} | ${r.afterStitchCount} | ${r.returnedStitchCount} |`);
+  md.push(`| commandCount | ${r.beforeCommandCount} | ${r.afterCommandCount} | ${r.returnedCommandCount} |`);
+  md.push(`| addedStitches | 0 | ${r.addedStitchesExperimental} | ${r.addedStitchesReturned} |`);
+  md.push(`| visibleDiagonalStitches | ${r.visibleDiagonalStitchesBefore} | ${r.visibleDiagonalStitchesAfterExperimental} | ${r.visibleDiagonalStitchesAfter} |`);
+  md.push(`| emptyBlocks | ${r.emptyBlocksBefore} | ${r.emptyBlocksAfterExperimental} | ${r.emptyBlocksAfter} |`);
+  md.push(`| unsupportedLongStitches | ${r.unsupportedLongStitchesBefore} | ${r.unsupportedLongStitchesAfterExperimental} | ${r.unsupportedLongStitchesAfter} |`);
+  md.push(`| CE01 status | ${r.ce01StatusBefore} | ${r.ce01StatusAfterExperimental} | ${r.ce01StatusAfter} |`);
+  md.push(`| professionalScore | ${r.professionalScoreBefore} | — | ${r.professionalScoreAfter} |`);
+  md.push(`| finalLookExportMismatch | ${r.finalLookExportMismatchBefore} | — | ${r.finalLookExportMismatchAfter} |`);
   md.push('\n## Candidates (gates por candidato)');
   md.push(`- **candidatesFound**: ${r.candidatesFound}`);
   md.push(`- candidatesPassedMetadata: ${r.candidatesPassedMetadata}`);
   md.push(`- candidatesPassedGeometry: ${r.candidatesPassedGeometry}`);
   md.push(`- candidatesPassedLocalGate: ${r.candidatesPassedLocalGate}`);
-  md.push(`- **candidatesApplied**: ${r.candidatesApplied}`);
+  md.push(`- **dryRunCandidatesApplied**: ${r.dryRunCandidatesApplied}`);
+  md.push(`- **realCandidatesApplied**: ${r.realCandidatesApplied}`);
   md.push('\n## Candidates skipped');
   md.push(`- interpolatedPointOutsideRegion: ${r.candidatesSkippedInterpolatedPointOutsideRegion}`);
   md.push(`- localVisibleDiagWouldIncrease: ${r.candidatesSkippedLocalVisibleDiagWouldIncrease}`);
@@ -1392,33 +1442,29 @@ function buildVisibleSplitterReportMdV1_1(r) {
   md.push(`- budgetExceeded: ${r.candidatesSkippedBudgetExceeded}`);
   md.push('\n## Veredicto');
   md.push(`- **phaseAccepted**: ${r.phaseAccepted}`);
+  md.push(`- **phaseStatus**: ${r.phaseStatus}`);
   md.push(`- **splitterEffective**: ${r.splitterEffective}`);
+  md.push(`- **commandsReturnedSource**: ${r.commandsReturnedSource}`);
+  md.push(`- **addedStitchesExperimental**: ${r.addedStitchesExperimental}`);
+  md.push(`- **addedStitchesReturned**: ${r.addedStitchesReturned}`);
   if (r.phaseAccepted) {
-    md.push(r.splitterEffective
-      ? '- La fase se aplicó y maxVisibleStitchMm bajó ✅'
-      : '- La fase se aplicó pero maxVisibleStitchMm no bajó (splitter inefectivo).');
+    md.push(`- La fase se aplicó. maxVisibleStitchMm ${r.beforeMaxVisibleStitchMm.toFixed(2)} → ${r.returnedMaxVisibleStitchMm.toFixed(2)} (mejora ${r.maxImprovement.toFixed(2)} mm).`);
   } else {
     md.push(`- **revertReason**: ${r.revertReason}`);
-    md.push('- La fase se revirtió — se conservan los comandos originales.');
+    md.push('- La fase se revirtió — se retornan los comandos previos al splitter (beforeSplitter).');
   }
   if (!r.splitterEffective) {
     md.push('\n## Decisión automática');
-    md.push('- splitterEffective=false → NO_EFFECTIVE.');
+    md.push('- splitterEffective=false → NO_EFFECTIVE_REVERTED.');
+    md.push('- No añadir puntadas si maxVisibleStitchMm no mejora.');
     md.push('- No insistir más con el splitter.');
-    md.push('- Recomendar pasar a SATIN_OUTER_CONTOUR_CONVERTER_V1.');
+    md.push('- **recommendation**: pasar a SATIN_OUTER_CONTOUR_CONVERTER_V1.');
   }
-  md.push('\n## Criterios de revertido global');
-  md.push('- visibleDiagonalStitches sube');
-  md.push('- emptyBlocks sube');
-  md.push('- unsupportedLongStitches sube');
-  md.push('- CE01 pasa a INVALID');
-  md.push('- exportAllowed pasa a false');
-  md.push('- professionalScore baja más de 3 puntos');
-  md.push('- afterStitchCount > beforeStitchCount + maxAddedStitches');
-  md.push('- finalLookExportMismatch pasa a true');
-  md.push('- comando con x/y no numérico');
+  md.push('\n## Criterios de aceptación V1_2');
+  md.push('- maxImprovement >= 0.25mm  OR  afterMaxVisibleStitchMm <= targetMaxMm + 0.10');
+  md.push('- sin regresión: visibleDiagonalStitches, emptyBlocks, unsupportedLongStitches, CE01 INVALID, exportAllowed, professionalScore, finalLookExportMismatch, coords numéricos');
   md.push('\n---');
-  md.push('_REFERENCE_VISIBLE_STITCH_SPLITTER_V1_1 — fix reversible post-generador. No modifica motor base ni exportación._');
+  md.push('_REFERENCE_VISIBLE_STITCH_SPLITTER_V1_2 — fix reversible post-generador. No modifica motor base ni exportación._');
   return md.join('\n');
 }
 

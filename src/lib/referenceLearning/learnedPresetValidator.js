@@ -138,7 +138,7 @@ export function validateLearnedPresetEffectiveness({ regions, baseConfig = {}, d
         selection, basePreset, finalPreset, cartoon,
         before, after, verdict, notEffective, corpusCeiling, integrity,
         learnedRules: state.learnedRules || [],
-        reportTitle: 'REFERENCE_LEARNING_VALIDATED_REPORT_AFTER_VISIBLE_SPLITTER_V1_1',
+        reportTitle: 'REFERENCE_LEARNING_VALIDATED_REPORT_AFTER_VISIBLE_SPLITTER_V1_2',
         visibleSplitter,
       })
     : null;
