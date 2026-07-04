@@ -8,9 +8,10 @@
  * NO cambia el Final Look visual. El toggle solo afecta la previsualización.
  */
 import { useState, useMemo, useCallback } from 'react';
-import { Wrench, Download, AlertTriangle, CheckCircle2, XCircle, ShieldCheck, Eye, GitCompare, FileText, RotateCcw, Sparkles, Route } from 'lucide-react';
+import { Wrench, Download, AlertTriangle, CheckCircle2, XCircle, ShieldCheck, Eye, GitCompare, FileText, RotateCcw, Sparkles, Route, FlaskConical } from 'lucide-react';
 import { repairFinalLookCommandsForExport } from '@/lib/exportRepair/repairFinalLookCommandsForExport';
 import { detectExportErrors } from '@/lib/exportRepair/exportErrorDetector';
+import { runSafeTieV2Experiment } from '@/lib/exportRepair/runSafeTieV2Experiment';
 
 export default function ExportRepairPanel({ finalCommands, finalObjects, regions, config, machineSettings, darkStroke, onRepairComplete, onViewChange }) {
   const [view, setView] = useState('final');
@@ -98,6 +99,33 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
     setView(v);
     if (onViewChange) onViewChange(v, repair?.repairAccepted ? repair.repairedCommands : null);
   };
+
+  const [expResult, setExpResult] = useState(null);
+  const [expRunning, setExpRunning] = useState(false);
+
+  const handleRunExperiment = useCallback(() => {
+    if (!repair?.repairedCommands?.length) return;
+    setExpRunning(true);
+    setTimeout(() => {
+      try {
+        const res = runSafeTieV2Experiment(
+          repair.repairedCommands, finalObjects, regions, config, machineSettings, darkStroke
+        );
+        setExpResult(res);
+      } catch (e) {
+        setError(`Experiment V2: ${e.message}`);
+      } finally { setExpRunning(false); }
+    }, 0);
+  }, [repair, finalObjects, regions, config, machineSettings, darkStroke]);
+
+  const handleDownloadExperiment = useCallback(() => {
+    if (!expResult?.report) return;
+    const blob = new Blob([expResult.report], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'SAFE_TIE_V2_EXPERIMENT_REPORT.md'; a.click();
+    URL.revokeObjectURL(url);
+  }, [expResult]);
 
   const comp = repair?.comparison;
   const repairAccepted = repair?.repairAccepted;
@@ -343,6 +371,72 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
           >
             <FileText className="w-3.5 h-3.5" /> Descargar EMPTY_BLOCK_FORENSICS.md
           </button>
+        </div>
+      )}
+
+      {/* Experimental: Safe Tie V2 (post-V5.1, solo informe) */}
+      {repair?.repairAccepted && (
+        <div className="rounded-lg p-2.5 border border-fuchsia-500/30 bg-fuchsia-900/10">
+          <div className="flex items-center gap-2">
+            <FlaskConical className="w-4 h-4 text-fuchsia-400" />
+            <span className="text-sm font-bold text-fuchsia-300">Experimental: Safe Tie V2</span>
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1">
+            Ejecuta safeAddTieInTieOffV2 sobre los repairedCommands V5.1. No modifica el flujo.
+            Solo genera informe de invariantes.
+          </p>
+          <button
+            onClick={handleRunExperiment}
+            disabled={expRunning}
+            className="w-full flex items-center justify-center gap-2 py-2 mt-2 rounded-lg bg-fuchsia-700 hover:bg-fuchsia-600 text-white text-xs font-bold transition-colors disabled:opacity-40"
+          >
+            {expRunning ? <><RotateCcw className="w-3.5 h-3.5 animate-spin" /> Ejecutando...</> : <><FlaskConical className="w-3.5 h-3.5" /> Ejecutar experimento V2</>}
+          </button>
+          {expResult && (
+            <div className="mt-2 space-y-1.5">
+              <div className={`flex items-center gap-2 text-xs font-bold ${expResult.experimentAccepted ? 'text-emerald-400' : 'text-red-400'}`}>
+                {expResult.experimentAccepted ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
+                {expResult.experimentAccepted ? 'Experiment accepted' : 'Experiment rejected'}
+              </div>
+              <div className="grid grid-cols-2 gap-1 text-[10px]">
+                <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
+                  <span className="text-slate-500">tieIn+Off</span>
+                  <span className="text-slate-300 ml-1">{expResult.beforeMetrics.missingTieIn + expResult.beforeMetrics.missingTieOff}</span>
+                  <span className="text-slate-600 mx-1">→</span>
+                  <span className={`font-bold ${(expResult.afterMetrics.missingTieIn + expResult.afterMetrics.missingTieOff) < (expResult.beforeMetrics.missingTieIn + expResult.beforeMetrics.missingTieOff) ? 'text-emerald-400' : 'text-slate-300'}`}>
+                    {expResult.afterMetrics.missingTieIn + expResult.afterMetrics.missingTieOff}
+                  </span>
+                </div>
+                <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
+                  <span className="text-slate-500">visibleDiag</span>
+                  <span className="text-slate-300 ml-1">{expResult.beforeMetrics.visibleDiagonalStitches}</span>
+                  <span className="text-slate-600 mx-1">→</span>
+                  <span className={`font-bold ${expResult.afterMetrics.visibleDiagonalStitches === 0 ? 'text-emerald-400' : 'text-red-400'}`}>{expResult.afterMetrics.visibleDiagonalStitches}</span>
+                </div>
+                <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
+                  <span className="text-slate-500">emptyBlocks</span>
+                  <span className="text-slate-300 ml-1">{expResult.beforeMetrics.emptyBlocks}</span>
+                  <span className="text-slate-600 mx-1">→</span>
+                  <span className={`font-bold ${expResult.afterMetrics.emptyBlocks === 0 ? 'text-emerald-400' : 'text-red-400'}`}>{expResult.afterMetrics.emptyBlocks}</span>
+                </div>
+                <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
+                  <span className="text-slate-500">longSt</span>
+                  <span className="text-slate-300 ml-1">{expResult.beforeMetrics.unsupportedLongStitches}</span>
+                  <span className="text-slate-600 mx-1">→</span>
+                  <span className={`font-bold ${expResult.afterMetrics.unsupportedLongStitches <= expResult.beforeMetrics.unsupportedLongStitches ? 'text-emerald-400' : 'text-red-400'}`}>{expResult.afterMetrics.unsupportedLongStitches}</span>
+                </div>
+              </div>
+              <div className="text-[10px] text-slate-500">
+                blocks tied: {expResult.safeReport.safeBlocksTied || 0} · skipped: {expResult.safeReport.safeBlocksSkipped || 0}
+              </div>
+              <button
+                onClick={handleDownloadExperiment}
+                className="w-full flex items-center justify-center gap-2 py-1.5 rounded-lg bg-[#0d0f14] border border-fuchsia-500/30 text-fuchsia-300 text-xs font-bold hover:bg-fuchsia-900/20 transition-colors"
+              >
+                <FileText className="w-3.5 h-3.5" /> Descargar SAFE_TIE_V2_EXPERIMENT_REPORT.md
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
