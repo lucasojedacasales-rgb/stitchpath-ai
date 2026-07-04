@@ -79,7 +79,18 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'REFERENCE_LEARNING_VALIDATED_REPORT_AFTER_VISIBLE_SPLITTER.md';
+    a.download = 'REFERENCE_LEARNING_VALIDATED_REPORT_AFTER_VISIBLE_SPLITTER_V1_1.md';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [result]);
+
+  const handleDownloadSplitterV1_1Report = useCallback(() => {
+    if (!result?.visibleSplitter?.md) return;
+    const blob = new Blob([result.visibleSplitter.md], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'REFERENCE_VISIBLE_STITCH_SPLITTER_REPORT_V1_1.md';
     a.click();
     URL.revokeObjectURL(url);
   }, [result]);
@@ -141,7 +152,15 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
               onClick={handleDownloadSplitterReport}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-fuchsia-900/20 border border-fuchsia-500/30 text-fuchsia-300 text-xs font-bold hover:bg-fuchsia-900/30 transition-colors"
             >
-              <Download className="w-3.5 h-3.5" /> After Visible Splitter
+              <Download className="w-3.5 h-3.5" /> After Splitter V1_1
+            </button>
+          )}
+          {result && result.visibleSplitter?.md && (
+            <button
+              onClick={handleDownloadSplitterV1_1Report}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-fuchsia-900/20 border border-fuchsia-500/30 text-fuchsia-300 text-xs font-bold hover:bg-fuchsia-900/30 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" /> Splitter V1_1 Report
             </button>
           )}
           {result && result.visibleSplitterForensics?.report && (
