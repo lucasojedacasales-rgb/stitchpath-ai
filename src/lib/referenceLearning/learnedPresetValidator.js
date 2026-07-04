@@ -123,17 +123,31 @@ export function validateLearnedPresetEffectiveness({ regions, baseConfig = {}, d
   };
 
   // 8. Informe
+  const visibleSplitter = prof.report?.visibleSplitter || null;
   const report = generateReferenceLearningValidatedReport({
     designName: designName || 'Diseño actual',
     selection, basePreset, finalPreset, cartoon,
     before, after, verdict, notEffective, corpusCeiling, integrity,
     learnedRules: state.learnedRules || [],
+    visibleSplitter,
   });
+  const splitterReport = visibleSplitter
+    ? generateReferenceLearningValidatedReport({
+        designName: designName || 'Diseño actual',
+        selection, basePreset, finalPreset, cartoon,
+        before, after, verdict, notEffective, corpusCeiling, integrity,
+        learnedRules: state.learnedRules || [],
+        reportTitle: 'REFERENCE_LEARNING_VALIDATED_REPORT_AFTER_VISIBLE_SPLITTER',
+        visibleSplitter,
+      })
+    : null;
 
   return {
     selection, basePreset, finalPreset, cartoon,
     before, after, verdict, notEffective, integrity, report,
     trimGuard: prof.report?.trimGuard || null,
+    visibleSplitter,
+    splitterReport,
     configPatch: afterPatch,
     corpusCeiling,
   };

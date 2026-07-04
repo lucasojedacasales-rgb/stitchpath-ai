@@ -16,11 +16,11 @@ export function generateReferenceLearningValidatedReport(ctx) {
   const {
     designName, selection, basePreset, finalPreset, cartoon,
     before, after, verdict, notEffective, corpusCeiling, integrity,
-    learnedRules,
+    learnedRules, reportTitle, visibleSplitter,
   } = ctx;
   const md = [];
 
-  md.push('# REFERENCE_LEARNING_VALIDATED_REPORT — StitchPath AI\n');
+  md.push(`# ${reportTitle || 'REFERENCE_LEARNING_VALIDATED_REPORT'} — StitchPath AI\n`);
   md.push(`> Generado: ${new Date().toISOString()}\n`);
   md.push('> Modo: validación real del preset aprendido (regenera finalCommands + Quality Gate).\n');
   md.push('> No inventa métricas. No oculta diagonales. No cambia solo el score.\n');
@@ -154,8 +154,32 @@ export function generateReferenceLearningValidatedReport(ctx) {
   }
   md.push('');
 
-  md.push('---');
-  md.push('_Reference Learning Engine v2 — validación real. Métricas medidas sobre finalCommands regenerados, no simuladas._');
+  // 7b. Sección REFERENCE_VISIBLE_STITCH_SPLITTER_V1 (si aplica)
+  if (visibleSplitter) {
+    md.push('\n## 7b. REFERENCE_VISIBLE_STITCH_SPLITTER_V1\n');
+    md.push(`- **targetMaxMm**: ${visibleSplitter.targetMaxMm} · **effectiveMaxMm**: ${visibleSplitter.effectiveMaxMm}`);
+    md.push(`- **maxAddedStitches** (presupuesto): ${visibleSplitter.maxAddedStitches}`);
+    md.push(`- **phaseAccepted**: ${visibleSplitter.phaseAccepted}${visibleSplitter.phaseAccepted ? ' ✅' : ' ❌'}`);
+    if (!visibleSplitter.phaseAccepted) md.push(`- **revertReason**: ${visibleSplitter.revertReason}`);
+    md.push('');
+    md.push('| Métrica | Antes | Después |');
+    md.push('|---|---|---|');
+    md.push(`| maxVisibleStitchMm | ${visibleSplitter.beforeMaxVisibleStitchMm.toFixed(2)} | ${visibleSplitter.afterMaxVisibleStitchMm.toFixed(2)} |`);
+    md.push(`| stitchCount | ${visibleSplitter.beforeStitchCount} | ${visibleSplitter.afterStitchCount} |`);
+    md.push(`| addedStitches | 0 | ${visibleSplitter.addedStitches} |`);
+    md.push(`| candidatesFound / split | ${visibleSplitter.candidatesFound} / ${visibleSplitter.candidatesSplit} |`);
+    md.push(`| visibleDiagonalStitches | ${visibleSplitter.visibleDiagonalStitchesBefore} | ${visibleSplitter.visibleDiagonalStitchesAfter} |`);
+    md.push(`| unsupportedLongStitches | ${visibleSplitter.unsupportedLongStitchesBefore} | ${visibleSplitter.unsupportedLongStitchesAfter} |`);
+    md.push(`| emptyBlocks | ${visibleSplitter.emptyBlocksBefore} | ${visibleSplitter.emptyBlocksAfter} |`);
+    md.push(`| CE01 status | ${visibleSplitter.ce01StatusBefore} | ${visibleSplitter.ce01StatusAfter} |`);
+    md.push(`| professionalScore | ${visibleSplitter.professionalScoreBefore} | ${visibleSplitter.professionalScoreAfter} |`);
+    md.push(`| finalLookExportMismatch | false | ${visibleSplitter.finalLookExportMismatch} |`);
+    md.push('');
+    md.push(`- Skips → contour:${visibleSplitter.candidatesSkippedBecauseContour} detail:${visibleSplitter.candidatesSkippedBecauseDetail} satin:${visibleSplitter.candidatesSkippedBecauseSatin} diffRegion:${visibleSplitter.candidatesSkippedBecauseDifferentRegion} diffColor:${visibleSplitter.candidatesSkippedBecauseDifferentColor} noRegion:${visibleSplitter.candidatesSkippedBecauseNoRegion} underlay:${visibleSplitter.candidatesSkippedBecauseUnderlay} budget:${visibleSplitter.candidatesSkippedBecauseBudgetExceeded} other:${visibleSplitter.candidatesSkippedBecauseOther}`);
+  }
+
+  md.push('\n---');
+  md.push('_Reference Learning Engine v2 — validación real. Métricas medidas sobre finalCommands regenerados, no simulados._');
 
   return md.join('\n');
 }
