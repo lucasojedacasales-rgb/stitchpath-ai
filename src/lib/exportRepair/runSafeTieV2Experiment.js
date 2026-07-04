@@ -1,19 +1,26 @@
 /**
- * runSafeTieV2Experiment.js — Runner experimental (post-V5.1, solo informe) — V3
+ * runSafeTieV2Experiment.js — Runner experimental (post-V5.1, solo informe) — V4
  * ─────────────────────────────────────────────────────────────────────────────
  * Ejecuta safeAddTieInTieOffV2 sobre los repairedCommands V5.1 y mide todas las
  * invariantes. NO modifica el flujo V5.1. NO sustituye addTieInTieOff.
  *
- * V3: la medición de missingTie se hace de DOS formas:
- *  - missingTieByRegion (antigua, por regionId global — la de exportErrorDetector)
- *  - missingTieByRealBlocks (nueva, por bloques consecutivos reales)
+ * V4 — Criterio corregido (NOT_NEEDED):
+ *  - Antes de ejecutar safeAddTieInTieOffV2 se calcula missingTieByRealBlocks.
+ *  - Si beforeRealMissing === 0 → NO se ejecuta safeAddTieInTieOffV2:
+ *      experimentStatus = "NOT_NEEDED"
+ *      experimentAccepted = false
+ *      safeCommands = repairedCommands (idénticos)
+ *      safeBlocksTied = 0, safeTieInAdded = 0, safeTieOffAdded = 0
+ *      reason = "No missing tie by real blocks"
+ *  - Si beforeRealMissing > 0 → se ejecuta y se acepta solo si baja y mantiene
+ *    invariantes (experimentStatus = "ACCEPTED" | "REJECTED").
+ *  - NOT_NEEDED no es error. REJECTED solo si había missingTie>0 y no mejoró.
  *
- * El criterio de éxito (tieReduced) usa la medición NUEVA por bloques reales,
- * porque es la que reconoce los ties insertados por safeAddTieInTieOffV2. La
- * medición antigua se conserva en el informe solo para comparación.
+ * V3 (heredado): medición de missingTie doble (region vs bloques reales).
  *
- * Devuelve { experimentAccepted, report, auditReport, safeCommands,
- *  beforeMetrics, afterMetrics, beforeRealBlocks, afterRealBlocks, safeReport }.
+ * Devuelve { experimentStatus, experimentAccepted, report, auditReport,
+ *  safeCommands, beforeMetrics, afterMetrics, beforeRealBlocks, afterRealBlocks,
+ *  safeReport, notNeeded }.
  */
 import { detectExportErrors } from './exportErrorDetector';
 import { safeAddTieInTieOffV2 } from './safeAddTieInTieOffV2';
@@ -48,19 +55,90 @@ function measureMetrics(commands, objects, regions, config, ms) {
   };
 }
 
+// ── Report V4 vacío para el caso NOT_NEEDED (no se ejecutó V2) ─────────────────
+function emptySafeReport(originalStitchCount) {
+  return {
+    safeBlocksTied: 0,
+    safeBlocksSkipped: 0,
+    safeTieInAdded: 0,
+    safeTieOffAdded: 0,
+    skippedBecauseTooSmall: 0,
+    skippedBecauseZeroDirection: 0,
+    skippedBecauseCreatesVisibleDiagonal: 0,
+    skippedBecauseCreatesLongStitch: 0,
+    skippedBecauseRegionMismatch: 0,
+    skippedBecauseImportantDetail: 0,
+    originalStitchCount,
+    outputStitchCount: originalStitchCount,
+    fatalPreservationError: false,
+    preservationErrorReason: null,
+  };
+}
+
 export function runSafeTieV2Experiment(repairedCommands, objects = [], regions = [], config = {}, machineSettings = {}, darkStroke = null) {
   const ms = { maxStitchLength: 12.1, maxJumpLength: 12.1, trimThreshold: 3.5, ...machineSettings };
-  const beforeMetrics = measureMetrics(repairedCommands || [], objects, regions, config, ms);
-  const beforeRealBlocks = detectMissingTieByRealBlocks(repairedCommands || []);
+  const src = repairedCommands || [];
+  const beforeMetrics = measureMetrics(src, objects, regions, config, ms);
+  const beforeRealBlocks = detectMissingTieByRealBlocks(src);
+  const beforeRealMissing = beforeRealBlocks.missingTieIn + beforeRealBlocks.missingTieOff;
+  const beforeRegionMissing = beforeMetrics.missingTieIn + beforeMetrics.missingTieOff;
+  const commandCountBefore = src.length;
 
+  // ── SHORT-CIRCUIT V4: si no hay missing tie por bloques reales, no ejecutar V2 ──
+  if (beforeRealMissing === 0) {
+    const safeCommands = src.slice();
+    const afterMetrics = beforeMetrics; // idéntico — no se tocó nada
+    const afterRealBlocks = beforeRealBlocks;
+    const safeReport = emptySafeReport(beforeMetrics.stitchCount);
+    const commandCountAfter = safeCommands.length;
+
+    const experimentStatus = 'NOT_NEEDED';
+    const experimentAccepted = false;
+    const reasons = ['No missing tie by real blocks'];
+    const notNeeded = true;
+
+    const auditReport = generateMissingTieDetectorAudit({
+      beforeMetrics, afterMetrics: beforeMetrics,
+      beforeRealBlocks, afterRealBlocks: beforeRealBlocks,
+      safeReport,
+      beforeRegionMissing, afterRegionMissing: beforeRegionMissing,
+      beforeRealMissing, afterRealMissing: 0,
+    });
+
+    const report = generateReport({
+      beforeMetrics, afterMetrics: beforeMetrics, safeReport,
+      experimentStatus, experimentAccepted, reasons,
+      commandCountBefore, commandCountAfter,
+      beforeRealBlocks, afterRealBlocks: beforeRealBlocks,
+      beforeRegionMissing, afterRegionMissing: beforeRegionMissing,
+      beforeRealMissing, afterRealMissing: 0,
+      tieReducedByRegion: false, tieReducedByRealBlocks: false,
+      notNeeded,
+    });
+
+    return {
+      experimentStatus,
+      experimentAccepted,
+      notNeeded,
+      report,
+      auditReport,
+      safeCommands,
+      beforeMetrics,
+      afterMetrics,
+      beforeRealBlocks,
+      afterRealBlocks,
+      safeReport,
+    };
+  }
+
+  // ── Hay missing tie por bloques reales → ejecutar Safe Tie V2 ──
   const tieReport = {};
   const { commands: safeCommands, report: safeReport } = safeAddTieInTieOffV2(
-    repairedCommands || [], objects, regions, config, darkStroke, tieReport
+    src, objects, regions, config, darkStroke, tieReport
   );
 
   const afterMetrics = measureMetrics(safeCommands, objects, regions, config, ms);
   const afterRealBlocks = detectMissingTieByRealBlocks(safeCommands);
-  const commandCountBefore = (repairedCommands || []).length;
   const commandCountAfter = safeCommands.length;
 
   // ── invariantes ──
@@ -74,11 +152,9 @@ export function runSafeTieV2Experiment(repairedCommands, objects = [], regions =
   const noStitchesLost = (safeReport?.outputStitchCount ?? afterMetrics.stitchCount) >= (safeReport?.originalStitchCount ?? beforeMetrics.stitchCount);
 
   // ── medición de missingTie (NUEVA: por bloques reales) ──
-  const beforeRealMissing = beforeRealBlocks.missingTieIn + beforeRealBlocks.missingTieOff;
   const afterRealMissing = afterRealBlocks.missingTieIn + afterRealBlocks.missingTieOff;
   const tieReducedByRealBlocks = afterRealMissing < beforeRealMissing;
   // medición antigua (solo informativa)
-  const beforeRegionMissing = beforeMetrics.missingTieIn + beforeMetrics.missingTieOff;
   const afterRegionMissing = afterMetrics.missingTieIn + afterMetrics.missingTieOff;
   const tieReducedByRegion = afterRegionMissing < beforeRegionMissing;
 
@@ -95,11 +171,13 @@ export function runSafeTieV2Experiment(repairedCommands, objects = [], regions =
 
   let experimentAccepted = reasons.length === 0;
 
-  // Si la V2 detectó un error fatal de preservación, el experimento se rechaza.
   if (safeReport?.fatalPreservationError && !reasons.includes('fatalPreservationError: ' + safeReport.preservationErrorReason)) {
     reasons.push('fatalPreservationError: ' + (safeReport.preservationErrorReason || 'stitchCountDropped'));
     experimentAccepted = false;
   }
+
+  const experimentStatus = experimentAccepted ? 'ACCEPTED' : 'REJECTED';
+  const notNeeded = false;
 
   const auditReport = generateMissingTieDetectorAudit({
     beforeMetrics, afterMetrics,
@@ -110,16 +188,19 @@ export function runSafeTieV2Experiment(repairedCommands, objects = [], regions =
   });
 
   const report = generateReport({
-    beforeMetrics, afterMetrics, safeReport, experimentAccepted, reasons,
+    beforeMetrics, afterMetrics, safeReport, experimentStatus, experimentAccepted, reasons,
     commandCountBefore, commandCountAfter,
     beforeRealBlocks, afterRealBlocks,
     beforeRegionMissing, afterRegionMissing,
     beforeRealMissing, afterRealMissing,
     tieReducedByRegion, tieReducedByRealBlocks,
+    notNeeded,
   });
 
   return {
+    experimentStatus,
     experimentAccepted,
+    notNeeded,
     report,
     auditReport,
     safeCommands,
@@ -133,25 +214,36 @@ export function runSafeTieV2Experiment(repairedCommands, objects = [], regions =
 
 function generateReport(ctx) {
   const {
-    beforeMetrics, afterMetrics, safeReport, experimentAccepted, reasons,
+    beforeMetrics, afterMetrics, safeReport, experimentStatus, experimentAccepted, reasons,
     commandCountBefore, commandCountAfter,
     beforeRealBlocks, afterRealBlocks,
     beforeRegionMissing, afterRegionMissing,
     beforeRealMissing, afterRealMissing,
     tieReducedByRegion, tieReducedByRealBlocks,
+    notNeeded,
   } = ctx;
   const md = [];
-  md.push('# SAFE_TIE_V2_EXPERIMENT_REPORT_V3 — StitchPath AI\n');
+  md.push('# SAFE_TIE_V2_EXPERIMENT_REPORT_V4 — StitchPath AI\n');
   md.push(`> Generado: ${new Date().toISOString()}`);
-  md.push('> V3: medición de missingTie por bloques reales (detectMissingTieByRealBlocks).');
+  md.push('> V4 — Criterio corregido: NOT_NEEDED cuando missingTieByRealBlocks before = 0.');
   md.push('> Modo experimental. NO modifica el flujo V5.1. NO sustituye addTieInTieOff.');
-  md.push('> safeAddTieInTieOffV2 se ejecuta sobre los repairedCommands V5.1 solo para informe.\n');
+  if (notNeeded) {
+    md.push('> safeAddTieInTieOffV2 **NO se ejecutó** (no había missing tie por bloques reales).\n');
+  } else {
+    md.push('> safeAddTieInTieOffV2 se ejecuta sobre los repairedCommands V5.1 solo para informe.\n');
+  }
 
   md.push('## Veredicto\n');
+  md.push(`- **experimentStatus: ${experimentStatus}**`);
   md.push(`- **experimentAccepted: ${experimentAccepted ? 'SÍ' : 'NO'}**`);
   if (!experimentAccepted) {
     md.push(`- razones: ${reasons.join('; ')}`);
   }
+  md.push('');
+  md.push('### Semántica del estado\n');
+  md.push('- `NOT_NEEDED`: beforeRealMissing = 0 → no se ejecuta V2. No es error.');
+  md.push('- `ACCEPTED`: beforeRealMissing > 0 y V2 bajó missingTie sin romper invariantes.');
+  md.push('- `REJECTED`: beforeRealMissing > 0 y V2 no pudo mejorar sin romper invariantes.');
   md.push('');
 
   md.push('## missingTie — doble medición\n');
@@ -164,6 +256,27 @@ function generateReport(ctx) {
   md.push('> bloques del fichero, solo cuenta un bloque. Por eso no reconoce los ties añadidos.');
   md.push('> La medición nueva cuenta bloques consecutivos reales y sí los reconoce.');
   md.push('');
+
+  if (notNeeded) {
+    md.push('## NOT_NEEDED — Safe Tie V2 no ejecutado\n');
+    md.push(`- missingTieByRealBlocks (before) = **0** → no hay nada que atar.`);
+    md.push(`- safeAddTieInTieOffV2: **NO invocado**.`);
+    md.push(`- safeCommands = repairedCommands V5.1 (idénticos, sin cambios).`);
+    md.push('');
+    md.push('## Confirmación de no-modificación\n');
+    md.push('| Métrica | Valor |');
+    md.push('|---|---|');
+    md.push(`| commandCount | ${commandCountBefore} (unchanged) |`);
+    md.push(`| stitchCount | ${beforeMetrics.stitchCount} (unchanged) |`);
+    md.push(`| exportAllowed | ${beforeMetrics.exportAllowed} |`);
+    md.push(`| visibleDiagonalStitches | ${beforeMetrics.visibleDiagonalStitches} |`);
+    md.push(`| emptyBlocks | ${beforeMetrics.emptyBlocks} |`);
+    md.push(`| missingTieByRealBlocks (before=after) | ${beforeRealMissing} |`);
+    md.push('');
+    md.push('---');
+    md.push('_V4 — NOT_NEEDED. No se ejecutó Safe Tie V2. Flujo V5.1 estable intacto._');
+    return md.join('\n');
+  }
 
   md.push('## Detalle bloques reales (before / after)\n');
   md.push('| Métrica | Before | After |');
@@ -242,45 +355,20 @@ function generateReport(ctx) {
   md.push(`| missingTieByRealBlocks baja si safeBlocksTied>0 | ${realBlocksTieCriterion(safeReport, beforeRealMissing, afterRealMissing) ? '✅' : '❌'} (${beforeRealMissing}→${afterRealMissing}) |`);
   md.push('');
 
-  md.push('## PREVIEW_DIAGONAL_AUDIT\n');
-  md.push('Auditoría del renderer Final Look (src/components/editor/FinalLookSimulator.jsx):\n');
-  md.push('- `jump`: **NO se dibuja** (`continue` en la línea 114). El comentario dice "Don\'t draw jumps in final look".');
-  md.push('- `trim` / `end`: **NO se dibujan** (`continue` en la línea 110).');
-  md.push('- `colorChange`: actualiza el color y no dibuja (`continue`).');
-  md.push('- Solo se dibujan segmentos `stitch` cuyo comando previo es `stitch` o `jump` (líneas 117-119).');
-  md.push('  Cuando el previo es un `jump`, el segmento va desde el aterrizaje del jump hasta el stitch — es');
-  md.push('  una puntada real (el jump reposicionó la aguja), no un travel visualizado.');
-  md.push('- Contornos/detalles largos (>6mm) se descartan defensivamente (línea 134) para evitar puentes artificiales.');
-  md.push('');
-  md.push('**Conclusión del renderer:** las líneas negras diagonales visibles en Final Look NO son');
-  md.push('jumps ni trims (esos se descartan). Son uno de:');
-  md.push('  1. **Stitches reales** de color oscuro (contorno negro / detalle `detail_run`). Si son stitches');
-  md.push('     reales que cruzan el diseño, `visibleDiagonalDetector` debe reportarlos; si no lo hace,');
-  md.push('     el detector está fallando y debe corregirse.');
-  md.push('  2. **Detail runs oscuros** (`renderColor = c.color || \'#1a1a1a\'`, línea 149) — son');
-  md.push('     intencionales (detalles decorativos). No son travel ni bug.');
-  md.push('');
-  md.push('**Acción recomendada:**');
-  md.push('- Si las diagonales son jumps/trims → ya están ocultos; no se requiere cambio.');
-  md.push('- Si las diagonales son stitches reales oscuros → ejecutar VISIBLE_DIAGONAL_FORENSICS sobre');
-  md.push('  los comandos devueltos (botón en ExportRepairPanel). Si visibleDiagonalStitches=0 pero las');
-  md.push('  líneas siguen visibles, el detector tiene un gap y debe auditarse (fuera del alcance V3).');
-  md.push('');
-
   md.push('## Decisión\n');
   if (experimentAccepted) {
-    md.push('**experimentAccepted = SÍ**. safeAddTieInTieOffV2 reduce missingTieByRealBlocks sin romper invariantes.');
+    md.push('**experimentStatus = ACCEPTED**. safeAddTieInTieOffV2 reduce missingTieByRealBlocks sin romper invariantes.');
     md.push('Puede considerarse para sustituir addTieInTieOff en una próxima iteración (previa validación en más diseños).');
     md.push('El flujo V5.1 **no se modifica**; safeCommands queda disponible como candidato pero export sigue usando repairedCommands V5.1.');
   } else {
-    md.push('**experimentAccepted = NO**. No se toca V5.1 ni se sustituye addTieInTieOff.');
+    md.push('**experimentStatus = REJECTED**. No se toca V5.1 ni se sustituye addTieInTieOff.');
     md.push(`Razones: ${reasons.join('; ')}.`);
     md.push('Revisar los bloques skipped y las regresiones antes de reintentar.');
   }
   md.push('');
 
   md.push('---');
-  md.push('_V3 — medición por bloques reales + auditoría de preview. Modo experimental. No modifica el flujo V5.1 estable._');
+  md.push('_V4 — criterio corregido (NOT_NEEDED/ACCEPTED/REJECTED). Modo experimental. No modifica el flujo V5.1 estable._');
   return md.join('\n');
 }
 

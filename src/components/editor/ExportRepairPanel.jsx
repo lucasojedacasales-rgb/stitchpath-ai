@@ -123,7 +123,7 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
     const blob = new Blob([expResult.report], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = 'SAFE_TIE_V2_EXPERIMENT_REPORT_V3.md'; a.click();
+    a.href = url; a.download = 'SAFE_TIE_V2_EXPERIMENT_REPORT_V4.md'; a.click();
     URL.revokeObjectURL(url);
   }, [expResult]);
 
@@ -403,9 +403,9 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
           </button>
           {expResult && (
             <div className="mt-2 space-y-1.5">
-              <div className={`flex items-center gap-2 text-xs font-bold ${expResult.experimentAccepted ? 'text-emerald-400' : 'text-red-400'}`}>
-                {expResult.experimentAccepted ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
-                {expResult.experimentAccepted ? 'Experiment accepted' : 'Experiment rejected'}
+              <div className={`flex items-center gap-2 text-xs font-bold ${expResult.experimentStatus === 'ACCEPTED' ? 'text-emerald-400' : expResult.experimentStatus === 'NOT_NEEDED' ? 'text-cyan-400' : 'text-red-400'}`}>
+                {expResult.experimentStatus === 'ACCEPTED' ? <CheckCircle2 className="w-3.5 h-3.5" /> : expResult.experimentStatus === 'NOT_NEEDED' ? <ShieldCheck className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
+                {expResult.experimentStatus === 'ACCEPTED' ? 'Experiment accepted' : expResult.experimentStatus === 'NOT_NEEDED' ? 'Experiment not needed' : 'Experiment rejected'}
               </div>
               <div className="grid grid-cols-2 gap-1 text-[10px]">
                 <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
