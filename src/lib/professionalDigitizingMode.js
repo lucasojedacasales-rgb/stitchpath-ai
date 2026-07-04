@@ -559,6 +559,19 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
     detailsLast: effectiveConfig.professionalParams?.detailsLast,
   });
 
+  // ── SATIN_OUTER_CONTOUR_CONVERTER_V1 ─────────────────────────────────────
+  // Convierte contornos exteriores running → satin de forma reversible y
+  // transaccional, sin tocar contourExportBuilder ni buildFinalCommands.
+  let satinOuterContourConverter = null;
+  if (effectiveConfig.professionalMode === true && effectiveConfig.learnedUseSatinForOuterContours === true) {
+    const satinRes = convertRunningOuterContoursToSatinGuardedV1(procCommands, {
+      objects, regions: procRegions, config: effectiveConfig, darkStroke,
+    });
+    procCommands = satinRes.commands;
+    objects = satinRes.objects;
+    satinOuterContourConverter = satinRes.report;
+  }
+
   // FASE 1 (real) — reparar diagonales visibles ANTES del gate y de exportar.
   // Cuenta las diagonales sospechosas en bruto, repara (trim+jump) y luego el
   // gate se evalúa sobre los comandos ya reparados.
@@ -628,8 +641,305 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
       gate,
       trimGuard,
       visibleSplitter,
+      satinOuterContourConverter,
     },
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  SATIN_OUTER_CONTOUR_CONVERTER_V1 — running outer contour → satin contour
+// ═══════════════════════════════════════════════════════════════════════════
+function isContourConverterRunningCandidate(cmd) {
+  if (!cmd || cmd.type !== 'stitch') return false;
+  const st = String(cmd.stitchType || '').toLowerCase();
+  const lt = String(cmd.layerType || '').toLowerCase();
+  const src = String(cmd.source || '').toLowerCase();
+  const role = String(cmd.role || cmd.region_class || '').toLowerCase();
+  const contourLike = st === 'running_stitch' || lt === 'contour' || lt.includes('outline') || src.includes('contour') || role.includes('outline');
+  if (!contourLike) return false;
+  if (st.includes('fill') || lt.includes('fill') || lt.includes('underlay') || src.includes('underlay')) return false;
+  if (lt.includes('tie') || src.includes('tie')) return false;
+  return true;
+}
+function contourConverterSkipReason(cmd) {
+  const lt = String(cmd.layerType || '').toLowerCase();
+  const src = String(cmd.source || '').toLowerCase();
+  const role = String(cmd.role || cmd.region_class || '').toLowerCase();
+  const text = `${lt} ${src} ${role}`;
+  if (text.includes('eye') || text.includes('mouth') || text.includes('facial') || text.includes('detail') || text.includes('small')) return 'detail';
+  if (!(isDarkColor(cmd.color) || text.includes('outer') || text.includes('outline') || text.includes('contour'))) return 'interiorContour';
+  if (!cmd.regionId && !cmd.objectId) return 'noStableRegion';
+  return null;
+}
+function stableContourKey(cmd) {
+  return [cmd.color || '', cmd.regionId || '', cmd.objectId || '', cmd.layerType || '', cmd.stitchType || ''].join('|');
+}
+function hasUnsafeContourGeometry(block) {
+  if (!block || block.length < 3) return true;
+  for (const c of block) {
+    if (typeof c.x !== 'number' || typeof c.y !== 'number' || Number.isNaN(c.x) || Number.isNaN(c.y)) return true;
+  }
+  let length = 0;
+  for (let i = 1; i < block.length; i++) length += Math.hypot((block[i].x ?? 0) - (block[i - 1].x ?? 0), (block[i].y ?? 0) - (block[i - 1].y ?? 0));
+  return length < 1.5;
+}
+function countRunningContourCommands(commands) {
+  return commands.filter((c) => c.type === 'stitch' && isContourConverterRunningCandidate(c) && !String(c.stitchType || '').toLowerCase().includes('satin')).length;
+}
+function measureSatinConverterMetrics(commands, objects, regions, config, darkStroke) {
+  const gate = professionalEmbroideryQualityGate(commands, objects || [], regions || [], darkStroke, config || {});
+  const ce01 = validateCE01(commands, objects || [], regions || [], config || {}, {});
+  const cmp = compareFinalLookVsExport(commands, commands);
+  return {
+    satinContourCount: gate.satinContourCount ?? 0,
+    runningContourCount: gate.runningContourCount ?? countRunningContourCommands(commands),
+    stitchCount: commands.filter((c) => c.type === 'stitch').length,
+    jumpCount: commands.filter((c) => c.type === 'jump').length,
+    trimCount: commands.filter((c) => c.type === 'trim').length,
+    visibleDiagonalStitches: gate.visibleDiagonalStitches ?? 0,
+    maxVisibleStitchMm: maxVisibleStitchMmLocal(commands),
+    underlayCount: gate.underlayCount ?? commands.filter((c) => String(c.layerType || '').toLowerCase().includes('underlay') || String(c.source || '').toLowerCase().includes('underlay')).length,
+    emptyBlocks: countEmptyColorBlocks(commands),
+    unsupportedLongStitches: gate.blocks?.find((b) => b.name === 'unsupportedLongStitches')?.value ?? 0,
+    ce01Status: ce01.status,
+    professionalScore: gate.professionalScore ?? 0,
+    finalLookExportMismatch: cmp.simulationExportMismatch === true,
+  };
+}
+export function convertRunningOuterContoursToSatinGuardedV1(commands = [], options = {}) {
+  const { objects, regions, config, darkStroke } = options;
+  const beforeCommandCount = commands.length;
+  const rawWidth = config?.learnedSatinWidthMm ?? config?.satinWidthMm ?? config?.professionalParams?.satinWidthMm ?? 1.2;
+  const rawWidthNum = Number(rawWidth) || 1.2;
+  const width = Math.max(0.8, Math.min(3.0, rawWidthNum));
+  const before = measureSatinConverterMetrics(commands, objects, regions, config, darkStroke);
+  const maxConvertedContourBlocks = 6;
+  const maxAddedCommands = Math.min(300, Math.max(40, Math.ceil(beforeCommandCount * 0.05)));
+  const skip = { tooThin: 0, detail: 0, interiorContour: 0, unsafeGeometry: 0, noStableRegion: 0 };
+
+  if (config?.professionalMode !== true || config?.learnedUseSatinForOuterContours !== true || before.ce01Status === 'INVALID' || before.runningContourCount <= 0) {
+    const report = buildSatinOuterContourConverterReport({
+      phaseAccepted: false,
+      revertReason: before.ce01Status === 'INVALID' ? 'CE01 INVALID antes de la fase' : 'activation conditions not met',
+      candidatesFound: 0,
+      candidatesConverted: 0,
+      candidatesSkippedTooThin: 0,
+      candidatesSkippedDetail: 0,
+      candidatesSkippedInteriorContour: 0,
+      candidatesSkippedUnsafeGeometry: 0,
+      candidatesSkippedNoStableRegion: 0,
+      before, after: before,
+    });
+    return { commands, objects, report };
+  }
+
+  const candidates = [];
+  let current = [];
+  let currentKey = null;
+  const flush = () => {
+    if (!current.length) return;
+    const first = current[0];
+    const reason = contourConverterSkipReason(first);
+    if (rawWidthNum < 0.8) skip.tooThin++;
+    else if (reason) skip[reason]++;
+    else if (hasUnsafeContourGeometry(current)) skip.unsafeGeometry++;
+    else candidates.push({ start: first.__idx, indexes: current.map((c) => c.__idx), block: current });
+    current = [];
+    currentKey = null;
+  };
+
+  for (let i = 0; i < commands.length; i++) {
+    const c = commands[i];
+    if (isContourConverterRunningCandidate(c) && !String(c.stitchType || '').toLowerCase().includes('satin')) {
+      const key = stableContourKey(c);
+      if (current.length && key !== currentKey) flush();
+      current.push({ ...c, __idx: i });
+      currentKey = key;
+    } else {
+      flush();
+    }
+  }
+  flush();
+
+  const applied = new Set();
+  const appliedRegionIds = new Set();
+  const appliedObjectIds = new Set();
+  const accepted = candidates.slice(0, maxConvertedContourBlocks);
+  for (const cand of accepted) {
+    for (const idx of cand.indexes) {
+      applied.add(idx);
+      const cmd = commands[idx];
+      if (cmd?.regionId) appliedRegionIds.add(cmd.regionId);
+      if (cmd?.objectId) appliedObjectIds.add(cmd.objectId);
+    }
+  }
+
+  const out = commands.map((c, i) => {
+    if (!applied.has(i)) return c;
+    const src = c.source ? `${c.source}:SATIN_OUTER_CONTOUR_CONVERTER_V1` : 'SATIN_OUTER_CONTOUR_CONVERTER_V1';
+    return {
+      ...c,
+      stitchType: 'satin',
+      layerType: 'contour',
+      source: src,
+      generatedBy: 'SATIN_OUTER_CONTOUR_CONVERTER_V1',
+      convertedFromRunningContour: true,
+      satinWidthMm: width,
+      isOuterContour: true,
+    };
+  });
+  const outObjects = Array.isArray(objects) ? objects.map((o) => {
+    const txt = `${String(o.layerType || '').toLowerCase()} ${String(o.source || '').toLowerCase()}`;
+    const stableMatch = (o.id && (appliedRegionIds.has(o.id) || appliedObjectIds.has(o.id))) ||
+      (o.regionId && appliedRegionIds.has(o.regionId)) ||
+      (o.objectId && appliedObjectIds.has(o.objectId));
+    if (stableMatch && (txt.includes('outer') || txt.includes('outline') || txt.includes('contour')) && o.stitch_type !== 'satin') {
+      return { ...o, stitch_type: 'satin', satinWidthMm: width, generatedBy: 'SATIN_OUTER_CONTOUR_CONVERTER_V1' };
+    }
+    return o;
+  }) : objects;
+
+  let badCoords = false;
+  for (const c of out) {
+    if ((c.type === 'stitch' || c.type === 'jump') && (typeof c.x !== 'number' || typeof c.y !== 'number' || Number.isNaN(c.x) || Number.isNaN(c.y))) { badCoords = true; break; }
+  }
+  const afterExperimental = measureSatinConverterMetrics(out, outObjects, regions, config, darkStroke);
+  let revertReason = null;
+  if (afterExperimental.satinContourCount <= before.satinContourCount) revertReason = 'afterSatinContourCount <= beforeSatinContourCount';
+  else if (afterExperimental.visibleDiagonalStitches > before.visibleDiagonalStitches) revertReason = 'visibleDiagonalStitches subió';
+  else if (afterExperimental.emptyBlocks > before.emptyBlocks) revertReason = 'emptyBlocks subió';
+  else if (afterExperimental.unsupportedLongStitches > before.unsupportedLongStitches) revertReason = 'unsupportedLongStitches subió';
+  else if (afterExperimental.ce01Status === 'INVALID') revertReason = 'CE01 pasó a INVALID';
+  else if (afterExperimental.finalLookExportMismatch === true) revertReason = 'finalLookExportMismatch pasó a true';
+  else if (afterExperimental.professionalScore < before.professionalScore - 3) revertReason = 'professionalScore bajó más de 3';
+  else if (afterExperimental.jumpCount > before.jumpCount + 10) revertReason = 'jumpCount subió más de 10';
+  else if (afterExperimental.trimCount > before.trimCount + 10) revertReason = 'trimCount subió más de 10';
+  else if (afterExperimental.stitchCount > before.stitchCount + maxAddedCommands) revertReason = 'stitchCount excede presupuesto';
+  else if (badCoords) revertReason = 'comando con x/y no numérico';
+
+  const phaseAccepted = !revertReason;
+  const finalCommands = phaseAccepted ? out : commands;
+  const finalObjects = phaseAccepted ? outObjects : objects;
+  const after = phaseAccepted ? afterExperimental : before;
+  const report = buildSatinOuterContourConverterReport({
+    phaseAccepted,
+    revertReason,
+    candidatesFound: candidates.length,
+    candidatesConverted: phaseAccepted ? accepted.length : 0,
+    candidatesSkippedTooThin: skip.tooThin,
+    candidatesSkippedDetail: skip.detail,
+    candidatesSkippedInteriorContour: skip.interiorContour,
+    candidatesSkippedUnsafeGeometry: skip.unsafeGeometry,
+    candidatesSkippedNoStableRegion: skip.noStableRegion,
+    before,
+    after,
+  });
+  return { commands: finalCommands, objects: finalObjects, report };
+}
+function buildSatinOuterContourConverterReport(r) {
+  const report = {
+    version: 'SATIN_OUTER_CONTOUR_CONVERTER_V1',
+    phaseAccepted: r.phaseAccepted,
+    revertReason: r.revertReason,
+    candidatesFound: r.candidatesFound,
+    candidatesConverted: r.candidatesConverted,
+    candidatesSkippedTooThin: r.candidatesSkippedTooThin,
+    candidatesSkippedDetail: r.candidatesSkippedDetail,
+    candidatesSkippedInteriorContour: r.candidatesSkippedInteriorContour,
+    candidatesSkippedUnsafeGeometry: r.candidatesSkippedUnsafeGeometry,
+    candidatesSkippedNoStableRegion: r.candidatesSkippedNoStableRegion,
+    beforeSatinContourCount: r.before.satinContourCount,
+    afterSatinContourCount: r.after.satinContourCount,
+    beforeRunningContourCount: r.before.runningContourCount,
+    afterRunningContourCount: r.after.runningContourCount,
+    beforeStitchCount: r.before.stitchCount,
+    afterStitchCount: r.after.stitchCount,
+    beforeJumpCount: r.before.jumpCount,
+    afterJumpCount: r.after.jumpCount,
+    beforeTrimCount: r.before.trimCount,
+    afterTrimCount: r.after.trimCount,
+    beforeVisibleDiagonalStitches: r.before.visibleDiagonalStitches,
+    afterVisibleDiagonalStitches: r.after.visibleDiagonalStitches,
+    beforeMaxVisibleStitchMm: r.before.maxVisibleStitchMm,
+    afterMaxVisibleStitchMm: r.after.maxVisibleStitchMm,
+    beforeUnderlayCount: r.before.underlayCount,
+    afterUnderlayCount: r.after.underlayCount,
+    beforeEmptyBlocks: r.before.emptyBlocks,
+    afterEmptyBlocks: r.after.emptyBlocks,
+    beforeUnsupportedLongStitches: r.before.unsupportedLongStitches,
+    afterUnsupportedLongStitches: r.after.unsupportedLongStitches,
+    beforeCE01Status: r.before.ce01Status,
+    afterCE01Status: r.after.ce01Status,
+    beforeProfessionalScore: r.before.professionalScore,
+    afterProfessionalScore: r.after.professionalScore,
+    beforeFinalLookExportMismatch: r.before.finalLookExportMismatch,
+    afterFinalLookExportMismatch: r.after.finalLookExportMismatch,
+  };
+  report.md = buildSatinOuterContourConverterReportMd(report);
+  report.referenceValidationMd = buildSatinOuterContourReferenceValidationMd(report);
+  return report;
+}
+function buildSatinOuterContourConverterReportMd(r) {
+  const md = [];
+  md.push('# SATIN_OUTER_CONTOUR_CONVERTER_REPORT_V1 — StitchPath AI\n');
+  md.push(`> Generado: ${new Date().toISOString()}`);
+  md.push('> Fase reversible: running outer contour → satin contour. No toca contourExportBuilder, buildFinalCommands, encoders, CE01 validator ni V5.1.\n');
+  md.push('## Veredicto');
+  md.push(`- **phaseAccepted**: ${r.phaseAccepted}`);
+  if (!r.phaseAccepted) md.push(`- **revertReason**: ${r.revertReason}`);
+  md.push('\n## Candidatos');
+  md.push(`- candidatesFound: ${r.candidatesFound}`);
+  md.push(`- candidatesConverted: ${r.candidatesConverted}`);
+  md.push(`- candidatesSkippedTooThin: ${r.candidatesSkippedTooThin}`);
+  md.push(`- candidatesSkippedDetail: ${r.candidatesSkippedDetail}`);
+  md.push(`- candidatesSkippedInteriorContour: ${r.candidatesSkippedInteriorContour}`);
+  md.push(`- candidatesSkippedUnsafeGeometry: ${r.candidatesSkippedUnsafeGeometry}`);
+  md.push(`- candidatesSkippedNoStableRegion: ${r.candidatesSkippedNoStableRegion}`);
+  md.push('\n## Métricas antes/después');
+  md.push('| Métrica | Antes | Después |');
+  md.push('|---|---:|---:|');
+  md.push(`| satinContourCount | ${r.beforeSatinContourCount} | ${r.afterSatinContourCount} |`);
+  md.push(`| runningContourCount | ${r.beforeRunningContourCount} | ${r.afterRunningContourCount} |`);
+  md.push(`| stitchCount | ${r.beforeStitchCount} | ${r.afterStitchCount} |`);
+  md.push(`| jumpCount | ${r.beforeJumpCount} | ${r.afterJumpCount} |`);
+  md.push(`| trimCount | ${r.beforeTrimCount} | ${r.afterTrimCount} |`);
+  md.push(`| visibleDiagonalStitches | ${r.beforeVisibleDiagonalStitches} | ${r.afterVisibleDiagonalStitches} |`);
+  md.push(`| emptyBlocks | ${r.beforeEmptyBlocks} | ${r.afterEmptyBlocks} |`);
+  md.push(`| unsupportedLongStitches | ${r.beforeUnsupportedLongStitches} | ${r.afterUnsupportedLongStitches} |`);
+  md.push(`| CE01Status | ${r.beforeCE01Status} | ${r.afterCE01Status} |`);
+  md.push(`| professionalScore | ${r.beforeProfessionalScore} | ${r.afterProfessionalScore} |`);
+  md.push(`| finalLookExportMismatch | ${r.beforeFinalLookExportMismatch} | ${r.afterFinalLookExportMismatch} |`);
+  md.push('\n---');
+  md.push('_SATIN_OUTER_CONTOUR_CONVERTER_V1 — fase post-generador segura y transaccional._');
+  return md.join('\n');
+}
+function buildSatinOuterContourReferenceValidationMd(r) {
+  const verdict = r.afterProfessionalScore > r.beforeProfessionalScore ? 'IMPROVED' : r.afterProfessionalScore < r.beforeProfessionalScore ? 'WORSENED' : 'NEUTRAL';
+  const md = [];
+  md.push('# REFERENCE_LEARNING_VALIDATED_REPORT_AFTER_SATIN_OUTER_CONTOUR\n');
+  md.push(`> Generado: ${new Date().toISOString()}`);
+  md.push(`> verdict: **${verdict}**\n`);
+  md.push('| Métrica | Before | After |');
+  md.push('|---|---:|---:|');
+  md.push(`| stitchCount | ${r.beforeStitchCount} | ${r.afterStitchCount} |`);
+  md.push(`| jumpCount | ${r.beforeJumpCount} | ${r.afterJumpCount} |`);
+  md.push(`| trimCount | ${r.beforeTrimCount} | ${r.afterTrimCount} |`);
+  md.push(`| visibleDiagonalStitches | ${r.beforeVisibleDiagonalStitches} | ${r.afterVisibleDiagonalStitches} |`);
+  md.push(`| maxVisibleStitchMm | ${r.beforeMaxVisibleStitchMm.toFixed(2)} | ${r.afterMaxVisibleStitchMm.toFixed(2)} |`);
+  md.push(`| satinContourCount | ${r.beforeSatinContourCount} | ${r.afterSatinContourCount} |`);
+  md.push(`| runningContourCount | ${r.beforeRunningContourCount} | ${r.afterRunningContourCount} |`);
+  md.push(`| underlayCount | ${r.beforeUnderlayCount} | ${r.afterUnderlayCount} |`);
+  md.push(`| professionalScore | ${r.beforeProfessionalScore} | ${r.afterProfessionalScore} |`);
+  md.push(`| finalLookExportMismatch | ${r.beforeFinalLookExportMismatch} | ${r.afterFinalLookExportMismatch} |`);
+  md.push(`| ce01Status | ${r.beforeCE01Status} | ${r.afterCE01Status} |`);
+  md.push('\n## Criterio de éxito');
+  md.push(`- satinContourCount > 0: ${r.afterSatinContourCount > 0}`);
+  md.push(`- runningContourCount baja: ${r.afterRunningContourCount < r.beforeRunningContourCount}`);
+  md.push(`- visibleDiagonalStitches sigue 0: ${r.afterVisibleDiagonalStitches === 0}`);
+  md.push(`- finalLookExportMismatch sigue false: ${r.afterFinalLookExportMismatch === false}`);
+  md.push(`- CE01 no INVALID: ${r.afterCE01Status !== 'INVALID'}`);
+  md.push(`- professionalScore no baja >3: ${r.afterProfessionalScore >= r.beforeProfessionalScore - 3}`);
+  return md.join('\n');
 }
 
 // ── Trim antes de saltos largos (regla aprendida J002) ─────────────────────────
