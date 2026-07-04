@@ -1,9 +1,10 @@
 /**
- * ExportRepairPanel.jsx — Reparación técnica pre-export (v2 transaccional)
+ * ExportRepairPanel.jsx — Reparación técnica pre-export (V5.1 transaccional)
  * ─────────────────────────────────────────────────────────────────────────────
  * Muestra: errores detectados, tabla de fases (Aceptada/Revertida), comparativa
  * antes/después, veredicto (repairAccepted / REPAIR_REJECTED) y descarga del
- * informe EXPORT_REPAIR_REPORT_V2.md. View toggles Final Look / Exportable.
+ * informe EXPORT_REPAIR_REPORT_V5_1.md. View toggles Final Look / Exportable.
+ * UI_EXPORT_CENTER_CLEANUP_V1: uiMode='simple'|'lab' oculta experimentos/forensics en Simple.
  *
  * NO cambia el Final Look visual. El toggle solo afecta la previsualización.
  */
@@ -13,7 +14,8 @@ import { repairFinalLookCommandsForExport } from '@/lib/exportRepair/repairFinal
 import { detectExportErrors } from '@/lib/exportRepair/exportErrorDetector';
 import { runSafeTieV2Experiment } from '@/lib/exportRepair/runSafeTieV2Experiment';
 
-export default function ExportRepairPanel({ finalCommands, finalObjects, regions, config, machineSettings, darkStroke, onRepairComplete, onViewChange }) {
+export default function ExportRepairPanel({ finalCommands, finalObjects, regions, config, machineSettings, darkStroke, uiMode = 'simple', onRepairComplete, onViewChange }) {
+  const lab = uiMode === 'lab';
   const [view, setView] = useState('final');
   const [repair, setRepair] = useState(null);
   const [running, setRunning] = useState(false);
@@ -275,8 +277,8 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
         </div>
       )}
 
-      {/* Polish V1 (post-V5, solo warnings) */}
-      {repair?.repairReport?.polish && (() => {
+      {/* Polish V1 (post-V5, solo warnings) — Laboratorio */}
+      {lab && repair?.repairReport?.polish && (() => {
         const pl = repair.repairReport.polish;
         const pc = pl.polishComparison;
         const safeReached = pc?.ce01Status?.after === 'SAFE';
@@ -313,8 +315,8 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
         );
       })()}
 
-      {/* Travel Polish V1 (post-V5, reduce jumps/trims) */}
-      {repair?.repairReport?.travelPolish && (() => {
+      {/* Travel Polish V1 (post-V5, reduce jumps/trims) — Laboratorio */}
+      {lab && repair?.repairReport?.travelPolish && (() => {
         const tp = repair.repairReport.travelPolish;
         const tc = tp.travelPolishComparison;
         const acc = tp.travelPolishAccepted;
@@ -365,26 +367,30 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
             onClick={handleDownload}
             className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-[#0d0f14] border border-[#2a2d3a] text-slate-300 text-xs font-bold hover:bg-[#1e2130] transition-colors"
           >
-            <FileText className="w-3.5 h-3.5" /> Descargar EXPORT_REPAIR_REPORT_V5.md
+            <FileText className="w-3.5 h-3.5" /> Descargar EXPORT_REPAIR_REPORT_V5_1.md
           </button>
-          <button
-            onClick={handleDownloadForensics}
-            className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-[#0d0f14] border border-violet-500/30 text-violet-300 text-xs font-bold hover:bg-violet-900/20 transition-colors"
-          >
-            <FileText className="w-3.5 h-3.5" /> Descargar VISIBLE_DIAGONAL_FORENSICS.md
-          </button>
-          <button
-            onClick={handleDownloadEmptyBlockForensics}
-            disabled={!repair?.repairReport?.emptyBlockForensics}
-            className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-[#0d0f14] border border-amber-500/30 text-amber-300 text-xs font-bold hover:bg-amber-900/20 transition-colors disabled:opacity-40"
-          >
-            <FileText className="w-3.5 h-3.5" /> Descargar EMPTY_BLOCK_FORENSICS.md
-          </button>
+          {lab && (
+            <button
+              onClick={handleDownloadForensics}
+              className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-[#0d0f14] border border-violet-500/30 text-violet-300 text-xs font-bold hover:bg-violet-900/20 transition-colors"
+            >
+              <FileText className="w-3.5 h-3.5" /> Descargar VISIBLE_DIAGONAL_FORENSICS.md
+            </button>
+          )}
+          {lab && (
+            <button
+              onClick={handleDownloadEmptyBlockForensics}
+              disabled={!repair?.repairReport?.emptyBlockForensics}
+              className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-[#0d0f14] border border-amber-500/30 text-amber-300 text-xs font-bold hover:bg-amber-900/20 transition-colors disabled:opacity-40"
+            >
+              <FileText className="w-3.5 h-3.5" /> Descargar EMPTY_BLOCK_FORENSICS.md
+            </button>
+          )}
         </div>
       )}
 
-      {/* Experimental: Safe Tie V2 (post-V5.1, solo informe) */}
-      {repair?.repairAccepted && (
+      {/* Experimental: Safe Tie V2 (post-V5.1, solo informe) — Laboratorio */}
+      {lab && repair?.repairAccepted && (
         <div className="rounded-lg p-2.5 border border-fuchsia-500/30 bg-fuchsia-900/10">
           <div className="flex items-center gap-2">
             <FlaskConical className="w-4 h-4 text-fuchsia-400" />
@@ -443,7 +449,7 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
                   onClick={handleDownloadExperiment}
                   className="flex-1 flex items-center justify-center gap-2 py-1.5 rounded-lg bg-[#0d0f14] border border-fuchsia-500/30 text-fuchsia-300 text-xs font-bold hover:bg-fuchsia-900/20 transition-colors"
                 >
-                  <FileText className="w-3.5 h-3.5" /> Report V3
+                  <FileText className="w-3.5 h-3.5" /> Report V4
                 </button>
                 <button
                   onClick={handleDownloadDetectorAudit}

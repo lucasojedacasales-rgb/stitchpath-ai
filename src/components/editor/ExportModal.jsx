@@ -28,6 +28,9 @@ import BinaryInspectorPanel from './BinaryInspectorPanel';
 import CE01FormatTestPanel from './CE01FormatTestPanel';
 import RawDarkStrokeTestPanel from './RawDarkStrokeTestPanel';
 import ExportRepairPanel from './ExportRepairPanel';
+import ExportTrafficLight from './exportCenter/ExportTrafficLight';
+import LabSection from './exportCenter/LabSection';
+import { detectExportErrors } from '@/lib/exportRepair/exportErrorDetector';
 import { getEffectiveExportCommands } from '@/lib/exportRepair/getEffectiveExportCommands';
 
 const FORMATS = ['DSB', 'DST', 'PES', 'JEF', 'EXP'];
@@ -79,6 +82,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   const [repairedCommands, setRepairedCommands] = useState(null);
   const [repairAccepted, setRepairAccepted] = useState(false);
   const [exportView, setExportView] = useState('final'); // 'final' | 'exportable' | 'compare'
+  const [uiMode, setUiMode] = useState('simple'); // 'simple' | 'lab'  — UI_EXPORT_CENTER_CLEANUP_V1
 
   const config = editorConfig || project?.config || {};
   const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
@@ -216,6 +220,20 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   const contourReport = useMemo(() => {
     return getContourExportReport(regions, effectiveExport.commands);
   }, [effectiveExport.commands, regions]);
+
+  // ── UI_EXPORT_CENTER_CLEANUP_V1: technical detection for traffic light + simple summary ──
+  // Solo lectura: no cambia la lógica de exportación. Mismo detector que el panel de reparación.
+  const techDetection = useMemo(() => detectExportErrors(
+    effectiveExport.commands,
+    editorFinalObjects || pipelineResult.objects,
+    regions, config, machineSettings
+  ), [effectiveExport.commands, editorFinalObjects, pipelineResult.objects, regions, config, machineSettings]);
+  const remainingBlocking = useMemo(
+    () => techDetection.errors.filter(e => e.severity === 'blocking' && e.count > 0),
+    [techDetection]
+  );
+  const lightLevel = (techDetection.ce01.status === 'INVALID' || remainingBlocking.length > 0)
+    ? 'red' : (techDetection.ce01.status === 'RISKY' ? 'amber' : 'green');
 
   // In production mode, stale adaptive/stability states are ignored entirely
   const effectiveAdaptiveReport = ce01ProductionMode ? null : adaptiveReport;
@@ -528,6 +546,35 @@ export default function ExportModal({ project, config: editorConfig, regions: in
             </div>
           ) : (
             <div className="p-6 space-y-5">
+              {/* ── UI_EXPORT_CENTER_CLEANUP_V1: mode toggle ── */}
+              <div className="flex items-center gap-2 bg-[#0d0f14] border border-[#1e2130] rounded-lg p-2">
+                <span className="text-[11px] text-slate-500 uppercase tracking-wider mr-1">Modo</span>
+                <button onClick={() => setUiMode('simple')}
+                  className={`px-3 py-1 rounded-md text-xs font-bold transition-colors ${uiMode === 'simple' ? 'bg-violet-600 text-white' : 'border border-[#2a2d3a] text-slate-400 hover:text-slate-200'}`}>Simple</button>
+                <button onClick={() => setUiMode('lab')}
+                  className={`px-3 py-1 rounded-md text-xs font-bold transition-colors ${uiMode === 'lab' ? 'bg-cyan-600 text-white' : 'border border-[#2a2d3a] text-slate-400 hover:text-slate-200'}`}>Laboratorio</button>
+                <span className="ml-auto text-[10px] text-slate-600">
+                  {uiMode === 'simple' ? 'Vista limpia para usuario normal' : 'Herramientas técnicas y forensics'}
+                </span>
+              </div>
+
+              {/* ── UI_EXPORT_CENTER_CLEANUP_V1: traffic light status ── */}
+              <ExportTrafficLight
+                level={lightLevel}
+                ce01Status={techDetection.ce01.status}
+                ce01Score={techDetection.ce01.score}
+                commandSource={effectiveExport.source}
+                visibleDiagonalStitches={techDetection.counts.visibleDiag}
+                emptyBlocks={techDetection.counts.emptyBlocks}
+                invalidCommandSequence={techDetection.errors.find(e => e.type === 'invalidCommandSequence')?.count || 0}
+                regionOutsideBounds={techDetection.errors.find(e => e.type === 'regionOutsideBounds')?.count || 0}
+                jumpCount={unifiedMetrics.jumpCount}
+                trimCount={unifiedMetrics.trimCount}
+                colorCount={unifiedMetrics.colorCount}
+                exportAllowed={techDetection.ce01.status !== 'INVALID' && remainingBlocking.length === 0}
+                format={ce01ProductionMode ? 'DST' : format}
+              />
+
               {/* ── Pre-export technical repair (FASE 1-6) ── */}
               <ExportRepairPanel
                 finalCommands={editorFinalCommands || pipelineResult.commands}
@@ -536,6 +583,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 config={config}
                 machineSettings={machineSettings}
                 darkStroke={darkStroke}
+                uiMode={uiMode}
                 onRepairComplete={(res) => {
                   setRepairAccepted(!!res.repairAccepted);
                   if (res.repairAccepted && res.repairedCommands?.length) {
@@ -655,6 +703,8 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 <CE01ProductionPanel report={productionReport} effectiveSource={effectiveExport.source} />
               )}
 
+              {uiMode === 'lab' && (
+              <LabSection title="Diagnóstico visual y contornos" icon={Route}>
               {/* Export Reality Check — visual vs exported comparison */}
               <ExportRealityCheck reality={realityCheck} />
 
@@ -664,7 +714,11 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 regions={regions}
                 config={config}
               />
+              </LabSection>
+              )}
 
+              {uiMode === 'lab' && (
+              <LabSection title="Tests y diagnóstico Kirby" icon={Palette}>
               {/* 3-color CE01 test — generates minimal DST with 2 real colorChange records */}
               <button
                 onClick={() => {
@@ -788,6 +842,8 @@ export default function ExportModal({ project, config: editorConfig, regions: in
 
               {/* DEBUG RAW dark stroke lower/feet — test totalmente aislado (CAMBIO 1-8) */}
               <RawDarkStrokeTestPanel project={project} config={config} />
+              </LabSection>
+              )}
 
               {/* Contour weak warning — not a block, just informational */}
               {contourReport.contourWeak && (
@@ -796,13 +852,15 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 </div>
               )}
 
-              {/* CE01 pre-export validation report — before/after sanitizer */}
-              {!ce01ProductionMode && (
+              {/* CE01 pre-export validation report — before/after sanitizer — Laboratorio */}
+              {uiMode === 'lab' && !ce01ProductionMode && (
+                <LabSection title="Forensics CE01" icon={FileText}>
                 <CE01ReportPanel
                   report={ce01ReportAfter}
                   beforeReport={ce01ReportBefore}
                   sanitizeReport={sanitizeReport}
                 />
+                </LabSection>
               )}
 
               {/* Visual preview — highlights problematic stitches in red */}
@@ -813,35 +871,42 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 height={140}
               />
 
-              {/* Debug toggle */}
-              <button
-                onClick={() => setDebugMode(!debugMode)}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-xs transition-colors ${
-                  debugMode ? 'bg-violet-900/20 border-violet-500/40 text-violet-300' : 'bg-[#0d0f14] border-[#2a2d3a] text-slate-400 hover:text-slate-300'
-                }`}
-              >
-                <Bug className="w-3.5 h-3.5" />
-                Modo Debug: {debugMode ? 'ON' : 'OFF'}
-                <ChevronRight className="w-3 h-3 ml-auto" />
-              </button>
+              {/* Debug avanzado — Laboratorio */}
+              {uiMode === 'lab' && (
+                <LabSection title="Debug avanzado" icon={Bug}>
+                <button
+                  onClick={() => setDebugMode(!debugMode)}
+                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-xs transition-colors ${
+                    debugMode ? 'bg-violet-900/20 border-violet-500/40 text-violet-300' : 'bg-[#0d0f14] border-[#2a2d3a] text-slate-400 hover:text-slate-300'
+                  }`}
+                >
+                  <Bug className="w-3.5 h-3.5" />
+                  Modo Debug: {debugMode ? 'ON' : 'OFF'}
+                  <ChevronRight className="w-3 h-3 ml-auto" />
+                </button>
 
-              {debugMode && (
-                <ExportDebugPanel pipeline={pipelineResult} />
+                {debugMode && (
+                  <ExportDebugPanel pipeline={pipelineResult} />
+                )}
+                </LabSection>
               )}
 
-              {/* Binary inspector — diagnostic tool for CE01 rejection analysis */}
-              <BinaryInspectorPanel
-                commands={pipelineResult.commands}
-                objects={pipelineResult.objects}
-                format={format}
-                machineSettings={machineSettings}
-                ce01ProductionMode={ce01ProductionMode}
-                editorFinalCommands={editorFinalCommands}
-                editorFinalObjects={editorFinalObjects}
-              />
+              {/* Forensics y tests de formato — Laboratorio */}
+              {uiMode === 'lab' && (
+                <LabSection title="Forensics y tests de formato" icon={FileText}>
+                <BinaryInspectorPanel
+                  commands={pipelineResult.commands}
+                  objects={pipelineResult.objects}
+                  format={format}
+                  machineSettings={machineSettings}
+                  ce01ProductionMode={ce01ProductionMode}
+                  editorFinalCommands={editorFinalCommands}
+                  editorFinalObjects={editorFinalObjects}
+                />
 
-              {/* CE01 format test suite — minimal DST/DSB test files */}
-              <CE01FormatTestPanel />
+                <CE01FormatTestPanel />
+                </LabSection>
+              )}
 
               {/* Commands empty warning — only real blocker, no false mismatch */}
               {commandsEmpty && (
@@ -868,24 +933,33 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 ))}
               </div>
 
-              {/* Format */}
+              {/* Format — UI_EXPORT_CENTER_CLEANUP_V1: CE01 Production fija DST */}
               <div>
                 <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-2 block">Formato de salida</label>
-                <div className="mb-2 text-[10px] text-cyan-400 bg-cyan-900/15 border border-cyan-500/30 rounded-lg px-2 py-1">
-                  Formato recomendado para CE01: DST — último formato funcional probado
-                </div>
-                {format === 'DSB' && (
+                {ce01ProductionMode ? (
+                  <div className="mb-2 text-[10px] text-emerald-400 bg-emerald-900/15 border border-emerald-500/30 rounded-lg px-2 py-1 font-bold">
+                    Formato CE01: DST — modo producción activo. DSB/PES/JEF/EXP no disponibles.
+                  </div>
+                ) : (
+                  <div className="mb-2 text-[10px] text-cyan-400 bg-cyan-900/15 border border-cyan-500/30 rounded-lg px-2 py-1">
+                    Formato recomendado para CE01: DST — último formato funcional probado
+                  </div>
+                )}
+                {!ce01ProductionMode && format === 'DSB' && (
                   <div className="mb-2 text-[10px] text-amber-400 bg-amber-900/15 border border-amber-500/30 rounded-lg px-2 py-1">
                     ⚠ DSB experimental. No usar para Caydo CE01 salvo prueba manual.
                   </div>
                 )}
                 <div className="grid grid-cols-5 gap-2">
-                  {FORMATS.map(f => (
-                    <button key={f} onClick={() => setFormat(f)}
-                      className={`py-2 rounded-lg border text-xs font-bold transition-all ${
-                        format === f ? 'bg-violet-900/30 border-violet-500 text-violet-300' : 'bg-[#0d0f14] border-[#2a2d3a] text-slate-500 hover:text-slate-300 hover:border-[#3a3d4a]'
-                      }`}>{f}</button>
-                  ))}
+                  {FORMATS.map(f => {
+                    const disabled = ce01ProductionMode && f !== 'DST';
+                    return (
+                      <button key={f} onClick={() => !disabled && setFormat(f)} disabled={disabled}
+                        className={`py-2 rounded-lg border text-xs font-bold transition-all ${
+                          format === f ? 'bg-violet-900/30 border-violet-500 text-violet-300' : 'bg-[#0d0f14] border-[#2a2d3a] text-slate-500'
+                        } ${disabled ? 'opacity-30 cursor-not-allowed line-through' : 'hover:text-slate-300 hover:border-[#3a3d4a]'}`}>{f}</button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -975,7 +1049,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                     ) : exporting ? (
                       <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>
                     ) : (
-                      <><Download className="w-4 h-4" /> Exportar versión actual</>
+                      <><Download className="w-4 h-4" /> Exportar DST</>
                     )
                   ) : (
                     blockingErrors.length > 0 && !wizardResult ? (
