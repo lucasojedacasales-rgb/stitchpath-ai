@@ -84,6 +84,17 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
     URL.revokeObjectURL(url);
   }, [result]);
 
+  const handleDownloadSplitterForensics = useCallback(() => {
+    if (!result?.visibleSplitterForensics?.report) return;
+    const blob = new Blob([result.visibleSplitterForensics.report], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'REFERENCE_VISIBLE_SPLITTER_FORENSICS_V1.md';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [result]);
+
   return (
     <div className="bg-[#161a23] border border-violet-500/30 rounded-xl p-3">
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
@@ -131,6 +142,14 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-fuchsia-900/20 border border-fuchsia-500/30 text-fuchsia-300 text-xs font-bold hover:bg-fuchsia-900/30 transition-colors"
             >
               <Download className="w-3.5 h-3.5" /> After Visible Splitter
+            </button>
+          )}
+          {result && result.visibleSplitterForensics?.report && (
+            <button
+              onClick={handleDownloadSplitterForensics}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/20 border border-amber-500/30 text-amber-300 text-xs font-bold hover:bg-amber-900/30 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" /> Splitter Forensics
             </button>
           )}
         </div>

@@ -30,6 +30,7 @@ import { presetToConfigPatch } from './referenceLearningApplier';
 import { detectCartoonOutlineOverride } from './cartoonOutlineOverride';
 import { generateReferenceLearningValidatedReport } from './referenceLearningValidatedReport';
 import { loadLearningState } from './referenceLearningState';
+import { generateVisibleSplitterForensics } from '@/lib/exportRepair/visibleSplitterForensics';
 
 const LEARNED_KEYS = [
   'learnedFillDensityMm', 'learnedFillAngleDeg', 'learnedSatinColumnSpacingMm',
@@ -142,12 +143,27 @@ export function validateLearnedPresetEffectiveness({ regions, baseConfig = {}, d
       })
     : null;
 
+  // ── Forense del splitter (read-only) — solo si el splitter se ejecutó ──
+  let visibleSplitterForensics = null;
+  if (visibleSplitter) {
+    const targetMax = afterConfig.learnedMaxVisibleStitchMm ?? 4.0;
+    try {
+      visibleSplitterForensics = generateVisibleSplitterForensics({
+        commands: afterCommands, regions: regions || [], darkStroke,
+        config: afterConfig, targetMaxMm: targetMax, limit: 50,
+      });
+    } catch (e) {
+      visibleSplitterForensics = { report: `# Forense error\n\n${e.message}`, candidatesFound: 0 };
+    }
+  }
+
   return {
     selection, basePreset, finalPreset, cartoon,
     before, after, verdict, notEffective, integrity, report,
     trimGuard: prof.report?.trimGuard || null,
     visibleSplitter,
     splitterReport,
+    visibleSplitterForensics,
     configPatch: afterPatch,
     corpusCeiling,
   };
