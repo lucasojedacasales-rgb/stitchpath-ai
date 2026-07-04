@@ -16,6 +16,7 @@
  */
 
 import { detectVisibleDiagonalStitches } from '@/lib/exportRepair/visibleDiagonalDetector';
+import { validateCE01 } from '@/lib/ce01Validator';
 
 export const PROFESSIONAL_PARAMS = {
   minStitchMm: 0.7,
@@ -578,11 +579,17 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
   }
 
   // ── FASE 6 — trim antes de saltos largos (regla aprendida J002) ──
-  // Si el preset aprendido define trimBeforeTravelMm, inserta un trim antes de
-  // cualquier jump cuya distancia supere el umbral (travel largo profesional).
+  // REFERENCE_TRIM_GUARD_V1: versión protegida — mide, presupuesta, filtra y
+  // revierte la fase completa si empeora métricas críticas. No elimina
+  // insertTrimBeforeLongJumps (legacy intacto).
   const trimBeforeMm = effectiveConfig.professionalParams?.trimBeforeTravelMm;
+  let trimGuard = null;
   if (trimBeforeMm && trimBeforeMm > 0) {
-    procCommands = insertTrimBeforeLongJumps(procCommands, trimBeforeMm);
+    const guardRes = insertTrimBeforeLongJumpsGuarded(procCommands, trimBeforeMm, {
+      objects, regions: procRegions, config: effectiveConfig, darkStroke,
+    });
+    procCommands = guardRes.commands;
+    trimGuard = guardRes.report;
   }
 
   // FASE 6 — quality gate (sobre comandos reparados)
@@ -606,6 +613,7 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
       visible: vis.report,
       repair: repair.report,
       gate,
+      trimGuard,
     },
   };
 }
@@ -632,6 +640,242 @@ function insertTrimBeforeLongJumps(commands, trimBeforeMm) {
     if (c.type === 'stitch' || c.type === 'jump') prev = { x: c.x, y: c.y };
   }
   return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  REFERENCE_TRIM_GUARD_V1 — versión protegida de insertTrimBeforeLongJumps
+// ═══════════════════════════════════════════════════════════════════════════
+// Evita que learnedTrimBeforeTravelMm dispare trimCount de forma descontrolada.
+// 1) mide before, 2) presupuesto maxNewTrims, 3) detecta/filtra candidatos,
+// 4) ordena por distancia desc y aplica solo hasta el presupuesto,
+// 5) guard transaccional: revierte la fase completa si empeora métricas críticas.
+// No elimina insertTrimBeforeLongJumps (legacy intacto).
+function countTrimJumpTotal(commands) {
+  let trims = 0, jumps = 0, total = 0;
+  for (const c of commands) {
+    total++;
+    if (c.type === 'trim') trims++;
+    else if (c.type === 'jump') jumps++;
+  }
+  return { trims, jumps, total };
+}
+
+function countEmptyColorBlocks(commands) {
+  let empty = 0, hasStitch = false, hasAny = false;
+  for (const c of commands) {
+    if (c.type === 'color_change' || c.type === 'colorChange') {
+      if (hasAny && !hasStitch) empty++;
+      hasStitch = false; hasAny = false; continue;
+    }
+    hasAny = true;
+    if (c.type === 'stitch') hasStitch = true;
+  }
+  if (hasAny && !hasStitch) empty++;
+  return empty;
+}
+
+function measureGuardHealth(commands, objects, regions, config, darkStroke) {
+  const ce01 = validateCE01(commands, objects || [], regions || [], config || {}, {});
+  const gate = professionalEmbroideryQualityGate(commands, objects || [], regions || [], darkStroke, config || {});
+  return {
+    ce01Status: ce01.status,
+    ce01Score: ce01.score,
+    exportAllowed: ce01.ce01Ready,
+    emptyBlocks: countEmptyColorBlocks(commands),
+    visibleDiagonalStitches: gate.visibleDiagonalStitches ?? 0,
+    unsupportedLongStitches: ce01.rawMetrics?.longStitches ?? 0,
+    professionalScore: gate.professionalScore ?? 0,
+  };
+}
+
+export function insertTrimBeforeLongJumpsGuarded(commands, trimBeforeMm, options = {}) {
+  const beforeMetrics = countTrimJumpTotal(commands);
+  const beforeHealth = measureGuardHealth(commands, options.objects, options.regions, options.config, options.darkStroke);
+  const beforeTrimCount = beforeMetrics.trims;
+
+  // Presupuesto máximo de trims nuevos (techo 40, suelo 12, 35% del baseline).
+  const maxNewTrims = Math.max(12, Math.min(40, Math.ceil(beforeTrimCount * 0.35)));
+
+  // ── Detectar candidatos: jumps con distancia > trimBeforeMm ──────────────
+  const candidates = [];
+  let prev = null;
+  for (let i = 0; i < commands.length; i++) {
+    const c = commands[i];
+    if (c.type === 'jump' && prev) {
+      const d = Math.hypot((c.x ?? 0) - prev.x, (c.y ?? 0) - prev.y);
+      if (d > trimBeforeMm) candidates.push({ index: i, dist: d });
+    }
+    if (c.type === 'stitch' || c.type === 'jump') prev = { x: c.x ?? 0, y: c.y ?? 0 };
+  }
+  const candidatesFound = candidates.length;
+
+  // ── Filtrar candidatos inseguros ─────────────────────────────────────────
+  const skip = { nearbyTrim: 0, colorChange: 0, microBlock: 0, unsafeCoords: 0, budgetExceeded: 0 };
+  const accepted = [];
+  for (const cand of candidates) {
+    const i = cand.index;
+    const jc = commands[i];
+    // unsafe coords
+    if (!jc || typeof jc.x !== 'number' || typeof jc.y !== 'number' ||
+        Number.isNaN(jc.x) || Number.isNaN(jc.y)) { skip.unsafeCoords++; continue; }
+    // trim anterior inmediato
+    const prevCmd = i > 0 ? commands[i - 1] : null;
+    if (prevCmd && prevCmd.type === 'trim') { skip.nearbyTrim++; continue; }
+    // trim en los 2 comandos anteriores
+    if (i >= 2 && commands[i - 2] && commands[i - 2].type === 'trim') { skip.nearbyTrim++; continue; }
+    // trim en los 2 comandos posteriores
+    if (commands[i + 1] && commands[i + 1].type === 'trim') { skip.nearbyTrim++; continue; }
+    if (commands[i + 2] && commands[i + 2].type === 'trim') { skip.nearbyTrim++; continue; }
+    // colorChange cerca (±3) — el cambio de color ya actúa como parada
+    let colorNear = false;
+    for (let k = Math.max(0, i - 3); k <= Math.min(commands.length - 1, i + 3); k++) {
+      const cc = commands[k];
+      if (cc && (cc.type === 'color_change' || cc.type === 'colorChange')) { colorNear = true; break; }
+    }
+    if (colorNear) { skip.colorChange++; continue; }
+    // microbloque protegido: < 4 comandos entre límites (trim/colorChange)
+    let bs = i;
+    while (bs > 0) { const p = commands[bs - 1]; if (!p || p.type === 'trim' || p.type === 'color_change' || p.type === 'colorChange') break; bs--; }
+    let be = i;
+    while (be < commands.length - 1) { const n = commands[be + 1]; if (!n || n.type === 'trim' || n.type === 'color_change' || n.type === 'colorChange') break; be++; }
+    if (be - bs + 1 < 4) { skip.microBlock++; continue; }
+    accepted.push(cand);
+  }
+
+  // ── Ordenar por distancia desc y aplicar hasta maxNewTrims ────────────────
+  accepted.sort((a, b) => b.dist - a.dist);
+  const applySet = new Set();
+  let applied = 0;
+  for (const cand of accepted) {
+    if (applied >= maxNewTrims) { skip.budgetExceeded++; continue; }
+    applySet.add(cand.index);
+    applied++;
+  }
+
+  // ── Construir salida insertando trim solo en los seleccionados ───────────
+  const out = [];
+  for (let i = 0; i < commands.length; i++) {
+    if (applySet.has(i)) {
+      const pc = out[out.length - 1];
+      if (!pc || pc.type !== 'trim') out.push({ type: 'trim' });
+    }
+    out.push(commands[i]);
+  }
+
+  const afterMetrics = countTrimJumpTotal(out);
+  const afterHealth = measureGuardHealth(out, options.objects, options.regions, options.config, options.darkStroke);
+
+  // ── Guard transaccional: revertir si empeora métricas críticas ────────────
+  let revertReason = null;
+  if (afterMetrics.trims > beforeTrimCount + maxNewTrims)
+    revertReason = `afterTrimCount (${afterMetrics.trims}) > before+maxNewTrims (${beforeTrimCount}+${maxNewTrims})`;
+  else if (afterMetrics.trims > beforeTrimCount * 1.5)
+    revertReason = `afterTrimCount (${afterMetrics.trims}) > before*1.5 (${(beforeTrimCount * 1.5).toFixed(0)})`;
+  else if (afterHealth.visibleDiagonalStitches > beforeHealth.visibleDiagonalStitches)
+    revertReason = `visibleDiagonalStitches subió (${beforeHealth.visibleDiagonalStitches} → ${afterHealth.visibleDiagonalStitches})`;
+  else if (afterHealth.emptyBlocks > beforeHealth.emptyBlocks)
+    revertReason = `emptyBlocks subió (${beforeHealth.emptyBlocks} → ${afterHealth.emptyBlocks})`;
+  else if (afterHealth.unsupportedLongStitches > beforeHealth.unsupportedLongStitches)
+    revertReason = `unsupportedLongStitches subió (${beforeHealth.unsupportedLongStitches} → ${afterHealth.unsupportedLongStitches})`;
+  else if (afterHealth.ce01Status === 'INVALID' && beforeHealth.ce01Status !== 'INVALID')
+    revertReason = `CE01 pasó a INVALID (${beforeHealth.ce01Status} → INVALID)`;
+  else if (afterHealth.exportAllowed === false && beforeHealth.exportAllowed === true)
+    revertReason = `exportAllowed pasó a false`;
+  else if (afterHealth.professionalScore < beforeHealth.professionalScore - 3)
+    revertReason = `professionalScore bajó más de 3 (${beforeHealth.professionalScore} → ${afterHealth.professionalScore})`;
+
+  const phaseAccepted = !revertReason;
+  const finalCommands = phaseAccepted ? out : commands;
+
+  const report = {
+    version: 'REFERENCE_TRIM_GUARD_V1',
+    trimBeforeMm,
+    beforeTrimCount,
+    afterTrimCount: phaseAccepted ? afterMetrics.trims : beforeTrimCount,
+    beforeJumpCount: beforeMetrics.jumps,
+    afterJumpCount: phaseAccepted ? afterMetrics.jumps : beforeMetrics.jumps,
+    beforeCommandCount: beforeMetrics.total,
+    afterCommandCount: phaseAccepted ? afterMetrics.total : beforeMetrics.total,
+    maxNewTrims,
+    candidatesFound,
+    candidatesApplied: applied,
+    candidatesSkippedBecauseNearbyTrim: skip.nearbyTrim,
+    candidatesSkippedBecauseColorChange: skip.colorChange,
+    candidatesSkippedBecauseMicroBlock: skip.microBlock,
+    candidatesSkippedBecauseUnsafeCoords: skip.unsafeCoords,
+    candidatesSkippedBecauseBudgetExceeded: skip.budgetExceeded,
+    phaseAccepted,
+    revertReason,
+    ce01StatusBefore: beforeHealth.ce01Status,
+    ce01StatusAfter: phaseAccepted ? afterHealth.ce01Status : beforeHealth.ce01Status,
+    ce01ScoreBefore: beforeHealth.ce01Score,
+    ce01ScoreAfter: phaseAccepted ? afterHealth.ce01Score : beforeHealth.ce01Score,
+    professionalScoreBefore: beforeHealth.professionalScore,
+    professionalScoreAfter: phaseAccepted ? afterHealth.professionalScore : beforeHealth.professionalScore,
+    visibleDiagonalStitchesBefore: beforeHealth.visibleDiagonalStitches,
+    visibleDiagonalStitchesAfter: phaseAccepted ? afterHealth.visibleDiagonalStitches : beforeHealth.visibleDiagonalStitches,
+    emptyBlocksBefore: beforeHealth.emptyBlocks,
+    emptyBlocksAfter: phaseAccepted ? afterHealth.emptyBlocks : beforeHealth.emptyBlocks,
+    unsupportedLongStitchesBefore: beforeHealth.unsupportedLongStitches,
+    unsupportedLongStitchesAfter: phaseAccepted ? afterHealth.unsupportedLongStitches : beforeHealth.unsupportedLongStitches,
+  };
+  report.md = buildTrimGuardReportMd(report);
+
+  return { commands: finalCommands, report };
+}
+
+// ── Generador del informe REFERENCE_TRIM_GUARD_REPORT_V1.md ──────────────────
+function buildTrimGuardReportMd(r) {
+  const md = [];
+  md.push('# REFERENCE_TRIM_GUARD_REPORT_V1 — StitchPath AI\n');
+  md.push(`> Generado: ${new Date().toISOString()}`);
+  md.push('> REFERENCE_TRIM_GUARD_V1 — guard transaccional sobre `insertTrimBeforeLongJumps`.');
+  md.push('> Evita que `learnedTrimBeforeTravelMm` dispare `trimCount` de forma descontrolada.\n');
+  md.push('## Parámetros');
+  md.push(`- **trimBeforeMm**: ${r.trimBeforeMm}`);
+  md.push(`- **maxNewTrims** (presupuesto): ${r.maxNewTrims} = max(12, min(40, ceil(${r.beforeTrimCount} * 0.35)))`);
+  md.push('\n## Conteo antes/después');
+  md.push('| Métrica | Antes | Después |');
+  md.push('|---|---|---|');
+  md.push(`| trimCount | ${r.beforeTrimCount} | ${r.afterTrimCount} |`);
+  md.push(`| jumpCount | ${r.beforeJumpCount} | ${r.afterJumpCount} |`);
+  md.push(`| commandCount | ${r.beforeCommandCount} | ${r.afterCommandCount} |`);
+  md.push('\n## Candidatos');
+  md.push(`- **candidatesFound**: ${r.candidatesFound}`);
+  md.push(`- **candidatesApplied**: ${r.candidatesApplied}`);
+  md.push(`- candidatesSkippedBecauseNearbyTrim: ${r.candidatesSkippedBecauseNearbyTrim}`);
+  md.push(`- candidatesSkippedBecauseColorChange: ${r.candidatesSkippedBecauseColorChange}`);
+  md.push(`- candidatesSkippedBecauseMicroBlock: ${r.candidatesSkippedBecauseMicroBlock}`);
+  md.push(`- candidatesSkippedBecauseUnsafeCoords: ${r.candidatesSkippedBecauseUnsafeCoords}`);
+  md.push(`- candidatesSkippedBecauseBudgetExceeded: ${r.candidatesSkippedBecauseBudgetExceeded}`);
+  md.push('\n## Veredicto de fase');
+  md.push(`- **phaseAccepted**: ${r.phaseAccepted}`);
+  if (r.phaseAccepted) {
+    md.push('- La fase se aplicó (mejora o neutro en métricas críticas).');
+  } else {
+    md.push(`- **revertReason**: ${r.revertReason}`);
+    md.push('- La fase se revirtió — se conservan los comandos originales.');
+  }
+  md.push('\n## Salud crítica antes/después');
+  md.push('| Métrica | Antes | Después |');
+  md.push('|---|---|---|');
+  md.push(`| CE01 status | ${r.ce01StatusBefore} | ${r.ce01StatusAfter} |`);
+  md.push(`| professionalScore | ${r.professionalScoreBefore} | ${r.professionalScoreAfter} |`);
+  md.push(`| visibleDiagonalStitches | ${r.visibleDiagonalStitchesBefore} | ${r.visibleDiagonalStitchesAfter} |`);
+  md.push(`| emptyBlocks | ${r.emptyBlocksBefore} | ${r.emptyBlocksAfter} |`);
+  md.push(`| unsupportedLongStitches | ${r.unsupportedLongStitchesBefore} | ${r.unsupportedLongStitchesAfter} |`);
+  md.push('\n## Criterios de revertido');
+  md.push('- afterTrimCount > beforeTrimCount + maxNewTrims');
+  md.push('- afterTrimCount > beforeTrimCount * 1.5');
+  md.push('- visibleDiagonalStitches sube');
+  md.push('- emptyBlocks sube');
+  md.push('- unsupportedLongStitches sube');
+  md.push('- CE01 pasa a INVALID');
+  md.push('- exportAllowed pasa a false');
+  md.push('- professionalScore baja más de 3 puntos');
+  md.push('\n---');
+  md.push('_REFERENCE_TRIM_GUARD_V1 — fix reversible. No toca V5.1, Safe Tie, encoders, ni exportación._');
+  return md.join('\n');
 }
 
 export function getProfessionalPanelMetrics(commands, objects, regions, exportCommands, darkStroke, config) {

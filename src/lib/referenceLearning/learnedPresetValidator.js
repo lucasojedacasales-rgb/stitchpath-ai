@@ -133,6 +133,7 @@ export function validateLearnedPresetEffectiveness({ regions, baseConfig = {}, d
   return {
     selection, basePreset, finalPreset, cartoon,
     before, after, verdict, notEffective, integrity, report,
+    trimGuard: prof.report?.trimGuard || null,
     configPatch: afterPatch,
     corpusCeiling,
   };

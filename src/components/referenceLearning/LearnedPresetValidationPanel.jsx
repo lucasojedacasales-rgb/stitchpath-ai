@@ -51,6 +51,28 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
     URL.revokeObjectURL(url);
   }, [result]);
 
+  const handleDownloadTrimGuard = useCallback(() => {
+    if (!result?.trimGuard?.md) return;
+    const blob = new Blob([result.trimGuard.md], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'REFERENCE_TRIM_GUARD_REPORT_V1.md';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [result]);
+
+  const handleDownloadAfterTrimGuard = useCallback(() => {
+    if (!result?.report) return;
+    const blob = new Blob([result.report], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'REFERENCE_LEARNING_VALIDATED_REPORT_AFTER_TRIM_GUARD.md';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [result]);
+
   return (
     <div className="bg-[#161a23] border border-violet-500/30 rounded-xl p-3">
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
@@ -74,6 +96,22 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-900/20 border border-emerald-500/30 text-emerald-300 text-xs font-bold hover:bg-emerald-900/30 transition-colors"
             >
               <Download className="w-3.5 h-3.5" /> Informe validado
+            </button>
+          )}
+          {result && result.trimGuard && (
+            <button
+              onClick={handleDownloadTrimGuard}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-900/20 border border-cyan-500/30 text-cyan-300 text-xs font-bold hover:bg-cyan-900/30 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" /> Trim Guard V1
+            </button>
+          )}
+          {result && (
+            <button
+              onClick={handleDownloadAfterTrimGuard}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-900/20 border border-violet-500/30 text-violet-300 text-xs font-bold hover:bg-violet-900/30 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" /> After Trim Guard
             </button>
           )}
         </div>
@@ -101,7 +139,7 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
 }
 
 function LearnedValidationResult({ result }) {
-  const { selection, cartoon, before, after, verdict, notEffective, integrity, basePreset, finalPreset } = result;
+  const { selection, cartoon, before, after, verdict, notEffective, integrity, basePreset, finalPreset, trimGuard } = result;
   const vColor = verdict.verdict === 'IMPROVED' ? 'text-emerald-400' : verdict.verdict === 'WORSENED' ? 'text-red-400' : 'text-amber-400';
   const vIcon = verdict.verdict === 'IMPROVED' ? CheckCircle2 : verdict.verdict === 'WORSENED' ? XCircle : AlertTriangle;
   const VIcon = vIcon;
@@ -140,6 +178,39 @@ function LearnedValidationResult({ result }) {
           </div>
         )}
       </div>
+
+      {/* Trim Guard V1 — resumen */}
+      {trimGuard && (
+        <div className={`rounded-lg p-2.5 border ${trimGuard.phaseAccepted ? 'bg-cyan-900/10 border-cyan-500/30' : 'bg-amber-900/10 border-amber-500/30'}`}>
+          <div className="flex items-center gap-2 mb-1">
+            <span className={`text-sm font-bold ${trimGuard.phaseAccepted ? 'text-cyan-400' : 'text-amber-400'}`}>
+              REFERENCE_TRIM_GUARD_V1 {trimGuard.phaseAccepted ? 'aplicado' : 'revertido'}
+            </span>
+            <span className="text-[10px] text-slate-500">maxNewTrims={trimGuard.maxNewTrims}</span>
+          </div>
+          <div className="grid grid-cols-4 gap-1 text-[10px]">
+            <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
+              <span className="text-slate-500">trimCount</span>
+              <span className="text-slate-300 ml-1">{trimGuard.beforeTrimCount}→<b className="text-cyan-300">{trimGuard.afterTrimCount}</b></span>
+            </div>
+            <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
+              <span className="text-slate-500">applied</span>
+              <span className="text-cyan-300 font-bold ml-1">{trimGuard.candidatesApplied}</span>
+            </div>
+            <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
+              <span className="text-slate-500">CE01</span>
+              <span className={`font-bold ml-1 ${trimGuard.ce01StatusAfter === 'SAFE' ? 'text-emerald-400' : trimGuard.ce01StatusAfter === 'RISKY' ? 'text-amber-300' : 'text-red-400'}`}>{trimGuard.ce01StatusAfter}</span>
+            </div>
+            <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
+              <span className="text-slate-500">profScore</span>
+              <span className="text-cyan-300 font-bold ml-1">{trimGuard.professionalScoreAfter}</span>
+            </div>
+          </div>
+          {!trimGuard.phaseAccepted && (
+            <div className="text-[10px] text-amber-300 mt-1.5">Revertido: {trimGuard.revertReason}</div>
+          )}
+        </div>
+      )}
 
       {/* Métricas antes/después */}
       <div className="overflow-x-auto">
