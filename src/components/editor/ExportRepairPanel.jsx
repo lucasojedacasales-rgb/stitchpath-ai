@@ -123,7 +123,16 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
     const blob = new Blob([expResult.report], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = 'SAFE_TIE_V2_EXPERIMENT_REPORT_V2.md'; a.click();
+    a.href = url; a.download = 'SAFE_TIE_V2_EXPERIMENT_REPORT_V3.md'; a.click();
+    URL.revokeObjectURL(url);
+  }, [expResult]);
+
+  const handleDownloadDetectorAudit = useCallback(() => {
+    if (!expResult?.auditReport) return;
+    const blob = new Blob([expResult.auditReport], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'SAFE_TIE_V2_MISSING_TIE_DETECTOR_AUDIT.md'; a.click();
     URL.revokeObjectURL(url);
   }, [expResult]);
 
@@ -429,12 +438,21 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
               <div className="text-[10px] text-slate-500">
                 blocks tied: {expResult.safeReport.safeBlocksTied || 0} · skipped: {expResult.safeReport.safeBlocksSkipped || 0}
               </div>
-              <button
-                onClick={handleDownloadExperiment}
-                className="w-full flex items-center justify-center gap-2 py-1.5 rounded-lg bg-[#0d0f14] border border-fuchsia-500/30 text-fuchsia-300 text-xs font-bold hover:bg-fuchsia-900/20 transition-colors"
-              >
-                <FileText className="w-3.5 h-3.5" /> Descargar SAFE_TIE_V2_EXPERIMENT_REPORT.md
-              </button>
+              <div className="flex gap-1">
+                <button
+                  onClick={handleDownloadExperiment}
+                  className="flex-1 flex items-center justify-center gap-2 py-1.5 rounded-lg bg-[#0d0f14] border border-fuchsia-500/30 text-fuchsia-300 text-xs font-bold hover:bg-fuchsia-900/20 transition-colors"
+                >
+                  <FileText className="w-3.5 h-3.5" /> Report V3
+                </button>
+                <button
+                  onClick={handleDownloadDetectorAudit}
+                  disabled={!expResult?.auditReport}
+                  className="flex-1 flex items-center justify-center gap-2 py-1.5 rounded-lg bg-[#0d0f14] border border-amber-500/30 text-amber-300 text-xs font-bold hover:bg-amber-900/20 transition-colors disabled:opacity-40"
+                >
+                  <FileText className="w-3.5 h-3.5" /> Detector Audit
+                </button>
+              </div>
             </div>
           )}
         </div>
