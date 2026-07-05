@@ -28,7 +28,7 @@ const TYPE_META = {
  * realistic thread rendering. Supports normal mode (clean) and debug mode
  * (jumps, path, warnings, block indices).
  */
-export default function MachineSimulator({ regions, config, machineSettings, onRegionsRepaired, exportGate }) {
+export default function MachineSimulator({ regions, config, machineSettings, finalCommands, finalObjects, commandSourceLabel = 'simulationFallback' }) {
   const canvasRef = useRef(null);
   const animRef = useRef(null);
 
@@ -37,13 +37,22 @@ export default function MachineSimulator({ regions, config, machineSettings, onR
   const h = config.height_mm || 100;
 
   // ── Build command sequence + analysis + simulation blocks (memoized) ──────
-  const { commands, analysis, simData } = useMemo(() => {
-    const objs = buildStitchObjects(regions, config);
-    const cmds = flattenToCommands(objs, ms);
+  const { commands, analysis, simData, commandSourceUsed, simulationMatchesFinalCommands, finalCommandCount } = useMemo(() => {
+    const hasFinalCommands = Array.isArray(finalCommands) && finalCommands.length > 0;
+    const objs = hasFinalCommands ? (finalObjects || []) : buildStitchObjects(regions, config);
+    const cmds = hasFinalCommands ? finalCommands : flattenToCommands(objs, ms);
+    const source = hasFinalCommands ? commandSourceLabel : 'buildStitchObjectsFallback';
     const sim = analyzeSimulation(cmds, objs, ms);
     const blocks = buildSimulationBlocks(cmds, regions, { width_mm: w, height_mm: h });
-    return { commands: cmds, analysis: sim, simData: blocks };
-  }, [regions, config, ms.maxStitchLength, ms.maxJumpLength, ms.trimThreshold, ms.designOffset, w, h]);
+    return {
+      commands: cmds,
+      analysis: sim,
+      simData: blocks,
+      commandSourceUsed: source,
+      simulationMatchesFinalCommands: hasFinalCommands,
+      finalCommandCount: hasFinalCommands ? finalCommands.length : 0,
+    };
+  }, [regions, config, finalCommands, finalObjects, commandSourceLabel, ms.maxStitchLength, ms.maxJumpLength, ms.trimThreshold, ms.designOffset, w, h]);
 
   // ── Projection bounds ─────────────────────────────────────────────────────
   const projection = useMemo(() => {
@@ -200,6 +209,20 @@ export default function MachineSimulator({ regions, config, machineSettings, onR
 
   return (
     <div className="flex flex-col h-full">
+      <div className="flex-shrink-0 border-b border-[#1e2130] bg-[#0a0c12] px-4 py-2">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-bold text-emerald-300">Simulación basada en comandos finales</div>
+            <div className="text-[10px] text-slate-500">Esta vista usa la misma secuencia que Final Look. La reparación real se hace desde Exportar → Reparar y validar.</div>
+          </div>
+          <div className="flex items-center gap-3 text-[10px] text-slate-500">
+            <span>simulationCommandCount <b className="text-violet-300">{commands.length}</b></span>
+            <span>finalCommandCount <b className="text-cyan-300">{finalCommandCount || commands.length}</b></span>
+            <span>commandSourceUsed <b className="text-emerald-300">{commandSourceUsed}</b></span>
+            <span className={simulationMatchesFinalCommands ? 'text-emerald-300 font-bold' : 'text-amber-300 font-bold'}>{simulationMatchesFinalCommands ? 'simulationMatchesFinalCommands=true' : 'fallback=true'}</span>
+          </div>
+        </div>
+      </div>
       {/* Canvas */}
       <div className="flex-1 relative bg-[#0a0c12] min-h-0">
         <canvas ref={canvasRef} width={800} height={500} className="w-full h-full" />

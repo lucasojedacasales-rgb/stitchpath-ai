@@ -681,7 +681,9 @@ export default function Editor() {
                     designOffset: [0, 0],
                     trimThreshold: 3.5,
                   }}
-                  onRegionsRepaired={handleRegionsUpdate}
+                  finalCommands={finalEmbroideryCommands.commands}
+                  finalObjects={finalEmbroideryCommands.objects}
+                  commandSourceLabel="finalEmbroideryCommands"
                 />
               </div>
               {isLabMode && !focusMode && (
@@ -692,7 +694,6 @@ export default function Editor() {
                     machineSettings={editorMachineSettings}
                     finalCommands={finalEmbroideryCommands.commands}
                     finalObjects={finalEmbroideryCommands.objects}
-                    onRegionsRepaired={handleRegionsUpdate}
                   />
                 </div>
               )}

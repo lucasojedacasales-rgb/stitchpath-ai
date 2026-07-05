@@ -1,21 +1,17 @@
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import {
-  ShieldCheck, ShieldAlert, AlertTriangle, Wrench, TrendingUp, Activity,
-  Zap, Scissors, Palette, Ruler, Clock, Route, RefreshCw, CheckCircle, XCircle,
+  ShieldCheck, ShieldAlert, AlertTriangle, TrendingUp, Activity,
+  Zap, Scissors, Palette, Ruler, Clock, Route, CheckCircle, XCircle,
   Flame, Layers,
 } from 'lucide-react';
 import { analyzeSimulation } from '@/lib/simulationMetrics';
-import { buildStitchObjects, flattenToCommands, DEFAULT_MACHINE, buildFinalCommands, logCommandsSync } from '@/lib/exportPipeline';
-import { runRepairEngine } from '@/lib/repairEngine';
+import { DEFAULT_MACHINE, buildFinalCommands, logCommandsSync } from '@/lib/exportPipeline';
 
 /**
- * SimulationReportPanel — metrics, recommendations, quality score, and
- * integrated auto-fixer loop. Runs the repair engine on detected errors,
- * re-simulates, and repeats until SAFE or iteration limit.
+ * SimulationReportPanel — read-only simulation metrics and recommendations.
+ * Real repair is intentionally reserved for Exportar → Reparar y validar.
  */
-export default function SimulationReportPanel({ regions, config, machineSettings, onRegionsRepaired, finalCommands, finalObjects }) {
-  const [repairing, setRepairing] = useState(false);
-  const [repairLog, setRepairLog] = useState(null);
+export default function SimulationReportPanel({ regions, config, machineSettings, finalCommands, finalObjects }) {
 
   const ms = { ...DEFAULT_MACHINE, ...machineSettings };
 
@@ -53,21 +49,6 @@ export default function SimulationReportPanel({ regions, config, machineSettings
       ? { wrap: 'bg-amber-900/20 border-amber-500/40', text: 'text-amber-400', icon: ShieldAlert }
       : { wrap: 'bg-red-900/20 border-red-500/40', text: 'text-red-400', icon: ShieldAlert };
   const StatusIcon = statusStyle.icon;
-
-  const handleAutoFix = async () => {
-    setRepairing(true);
-    setRepairLog(null);
-    await new Promise(r => setTimeout(r, 50));
-    try {
-      const res = runRepairEngine(regions, config, ms, 'DST');
-      setRepairLog(res);
-      if (res.regions && onRegionsRepaired) {
-        onRegionsRepaired(res.regions);
-      }
-    } finally {
-      setRepairing(false);
-    }
-  };
 
   return (
     <div className="space-y-4">
@@ -136,43 +117,16 @@ export default function SimulationReportPanel({ regions, config, machineSettings
         )}
       </div>
 
-      {/* Auto-fixer integration */}
-      <div className="border-t border-[#1e2130] pt-3 space-y-2">
-        <div className="flex items-center gap-2">
-          <Wrench className="w-4 h-4 text-violet-400" />
-          <span className="text-xs font-bold text-white">Auto-Fixer integrado</span>
-        </div>
-        <p className="text-[10px] text-slate-500">
-          Ejecuta el motor de reparación iterativa sobre las zonas con errores y vuelve a simular automáticamente.
-        </p>
-        <button
-          onClick={handleAutoFix}
-          disabled={repairing || analysis.status === 'SAFE'}
-          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-xs font-bold transition-colors"
-        >
-          {repairing
-            ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Reparando y resimulando...</>
-            : analysis.status === 'SAFE'
-              ? <><CheckCircle className="w-3.5 h-3.5" /> Diseño SAFE — no necesita reparación</>
-              : <><Wrench className="w-3.5 h-3.5" /> Reparar zonas afectadas y resimular</>}
-        </button>
-
-        {repairLog && (
-          <div className="bg-[#0d0f14] border border-[#1e2130] rounded-lg p-2.5">
-            <div className="flex items-center gap-2 mb-1.5">
-              <Activity className="w-3 h-3 text-violet-400" />
-              <span className="text-[10px] font-bold text-violet-300">
-                Reparación: {repairLog.iterations} iteración(es) · score {repairLog.score}
-              </span>
-              <span className={`text-[10px] font-bold ml-auto ${repairLog.status === 'SAFE' ? 'text-emerald-400' : repairLog.status === 'RISKY' ? 'text-amber-400' : 'text-red-400'}`}>
-                {repairLog.status}
-              </span>
-            </div>
-            <pre className="text-[9px] text-slate-400 whitespace-pre-wrap font-mono leading-relaxed">
-              {repairLog.report}
-            </pre>
+      <div className="border-t border-[#1e2130] pt-3">
+        <div className="rounded-lg border border-cyan-500/30 bg-cyan-900/10 p-3">
+          <div className="flex items-center gap-2 mb-1">
+            <ShieldCheck className="w-4 h-4 text-cyan-300" />
+            <span className="text-xs font-bold text-cyan-200">Reparación disponible en Exportar</span>
           </div>
-        )}
+          <p className="text-[10px] text-slate-400">
+            Para corregir errores reales del archivo, usa Exportar → Reparar y validar. La pestaña Simular es solo una vista previa de reproducción.
+          </p>
+        </div>
       </div>
     </div>
   );
