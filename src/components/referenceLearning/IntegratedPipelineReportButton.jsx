@@ -4,8 +4,12 @@ import { SATIN_PHASE_ORDER_FIX_REPORT_MD } from '@/components/referenceLearning/
 import { INTEGRATED_PIPELINE_AFTER_SATIN_V2_MD } from '@/components/referenceLearning/integratedPipelineAfterSatinV2Content';
 import { INTEGRATED_PIPELINE_AFTER_SATIN_V2_RUNTIME_MD } from '@/components/referenceLearning/integratedPipelineAfterSatinV2RuntimeContent';
 import { UNDERLAY_CANDIDATE_AUDIT_V1_MD } from '@/components/referenceLearning/underlayCandidateAuditV1Content';
+import { UNDERLAY_GENERATOR_REPORT_V1_MD } from '@/components/referenceLearning/underlayGeneratorReportV1Content';
+import { INTEGRATED_PIPELINE_AFTER_UNDERLAY_V1_MD } from '@/components/referenceLearning/integratedPipelineAfterUnderlayV1Content';
 
 const REPORTS = [
+  { label: 'Underlay V1', filename: 'UNDERLAY_GENERATOR_REPORT_V1.md', content: UNDERLAY_GENERATOR_REPORT_V1_MD, color: 'amber' },
+  { label: 'After Underlay', filename: 'REFERENCE_INTEGRATED_PIPELINE_AFTER_UNDERLAY_V1.md', content: INTEGRATED_PIPELINE_AFTER_UNDERLAY_V1_MD, color: 'amber' },
   { label: 'Underlay Audit', filename: 'UNDERLAY_CANDIDATE_AUDIT_V1.md', content: UNDERLAY_CANDIDATE_AUDIT_V1_MD, color: 'amber' },
   { label: 'Runtime V2', filename: 'REFERENCE_INTEGRATED_PIPELINE_AFTER_SATIN_V2_RUNTIME.md', content: INTEGRATED_PIPELINE_AFTER_SATIN_V2_RUNTIME_MD, color: 'emerald' },
   { label: 'Order Fix V1', filename: 'SATIN_PHASE_ORDER_FIX_REPORT_V1.md', content: SATIN_PHASE_ORDER_FIX_REPORT_MD, color: 'violet' },
@@ -25,7 +29,7 @@ export default function IntegratedPipelineReportButton() {
   };
 
   return (
-    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
       {REPORTS.map((report) => (
         <button
           key={report.filename}
