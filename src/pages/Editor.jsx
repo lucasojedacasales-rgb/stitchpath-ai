@@ -45,6 +45,7 @@ import { applyProfessionalPipeline } from '@/lib/professionalDigitizingMode';
 import { autoApplyLearnedProfileForDesign } from '@/lib/referenceLearning/referenceLearningApplier';
 import LearnedConfigDiffPanel from '@/components/editor/LearnedConfigDiffPanel';
 import LearnedPresetValidationPanel from '@/components/referenceLearning/LearnedPresetValidationPanel';
+import IntegratedPipelineReportButton from '@/components/referenceLearning/IntegratedPipelineReportButton';
 
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
@@ -734,6 +735,7 @@ export default function Editor() {
                   onDismiss={() => setAutoLearnedDiff(null)}
                 />
               )}
+              <IntegratedPipelineReportButton />
               <LearnedPresetValidationPanel
                 regions={regions}
                 config={config}
