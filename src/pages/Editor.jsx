@@ -204,10 +204,12 @@ export default function Editor() {
     trimThreshold: 3.5,
   }), [config.width_mm, config.height_mm]);
 
+  const activeTabNeedsCommands = activeTab === 'simulate' || activeTab === 'finallook' || activeTab === 'validate' || activeTab === 'diagnostic' || activeTab === 'prof' || activeTab === 'learn';
+  const needsFinalCommandBuild = !LIGHTWEIGHT_APP_BOOT_V1 || !!optimizedCommandsOverride || processing || showExport || activeTabNeedsCommands;
+
   // Single source of truth — computed ONCE, shared with all panels
   const finalEmbroideryCommands = useMemo(() => {
-    const shouldBuildCommands = !LIGHTWEIGHT_APP_BOOT_V1 || optimizedCommandsOverride || processing || showExport || activeTab === 'simulate' || activeTab === 'finallook' || activeTab === 'validate' || activeTab === 'diagnostic' || activeTab === 'prof' || activeTab === 'learn';
-    if (!shouldBuildCommands) {
+    if (!needsFinalCommandBuild) {
       console.log('[PERF] command analysis ms', 0, 'skipped-lightweight-boot');
       return {
         commands: [],
@@ -302,7 +304,7 @@ export default function Editor() {
       transitionGuardReport: guarded.report,
       transitionGuardMd: guarded.md,
     };
-  }, [regions, configWithDarkStroke, editorMachineSettings, optimizedCommandsOverride, darkStroke, activeTab, showExport, processing]);
+  }, [regions, configWithDarkStroke, editorMachineSettings, optimizedCommandsOverride, darkStroke, needsFinalCommandBuild]);
 
   // ═══ Unified metrics — single source of truth for all panels ═══
   const unifiedMetrics = useMemo(() => {

@@ -4,7 +4,8 @@ const GUARD_ID = 'STITCHED_TRANSITION_TO_JUMP_GUARD_V1';
 const MAX_CONVERTED = 260;
 
 export function applyStitchedTransitionToJumpGuard({ commands = [], objects = [], regions = [], config = {}, darkStroke = null, machineSettings = {} }) {
-  const beforeMetrics = measureTransitionGuardMetrics(commands, regions, config, darkStroke);
+  const regionIndex = buildRegionIndex(regions, config);
+  const beforeMetrics = measureTransitionGuardMetrics(commands, regions, config, darkStroke, regionIndex);
   const beforeCe01 = safeCE01(commands, objects, regions, config, machineSettings);
   const beforeEmptyBlocks = countEmptyBlocks(commands);
   const candidate = [];
@@ -21,7 +22,7 @@ export function applyStitchedTransitionToJumpGuard({ commands = [], objects = []
       continue;
     }
 
-    const inspection = inspectTransition({ index: i, previousIndex: prevCoord.index, prev: prevCoord.cmd, cmd, regions, config, darkStroke });
+    const inspection = inspectTransition({ index: i, previousIndex: prevCoord.index, prev: prevCoord.cmd, cmd, regions, config, darkStroke, regionIndex });
     const shouldConvert = inspection.distanceMm > 8 && inspection.isSuspicious && (inspection.severity === 'HIGH' || inspection.severity === 'CRITICAL') && converted.length < MAX_CONVERTED;
 
     if (shouldConvert && Number.isFinite(cmd.x) && Number.isFinite(cmd.y)) {
@@ -56,7 +57,7 @@ export function applyStitchedTransitionToJumpGuard({ commands = [], objects = []
   }
 
   const cleaned = dedupeConsecutiveTrims(candidate);
-  const afterMetrics = measureTransitionGuardMetrics(cleaned, regions, config, darkStroke);
+  const afterMetrics = measureTransitionGuardMetrics(cleaned, regions, config, darkStroke, regionIndex);
   const afterCe01 = safeCE01(cleaned, objects, regions, config, machineSettings);
   const afterEmptyBlocks = countEmptyBlocks(cleaned);
   const validation = validateTransaction({ beforeMetrics, afterMetrics, beforeCe01, afterCe01, beforeEmptyBlocks, afterEmptyBlocks, beforeCommands: commands, afterCommands: cleaned });
@@ -112,22 +113,23 @@ function validateTransaction({ beforeMetrics, afterMetrics, beforeCe01, afterCe0
   return { accepted: !failed, revertReason: failed ? failed[1] : null };
 }
 
-function inspectTransition({ index, previousIndex, prev, cmd, regions, config, darkStroke }) {
+function inspectTransition({ index, previousIndex, prev, cmd, regions, config, darkStroke, regionIndex }) {
+  const indexRef = regionIndex || buildRegionIndex(regions, config);
   const distanceMm = Math.hypot(cmd.x - prev.x, cmd.y - prev.y);
-  const regionId = cmd.regionId || findContainingRegionId(cmd.x, cmd.y, regions, config);
-  const prevRegionId = prev.regionId || findContainingRegionId(prev.x, prev.y, regions, config);
+  const regionId = cmd.regionId || findContainingRegionId(cmd.x, cmd.y, indexRef, config);
+  const prevRegionId = prev.regionId || findContainingRegionId(prev.x, prev.y, indexRef, config);
   const regionChanged = !!regionId && !!prevRegionId && regionId !== prevRegionId;
   const layerChanged = normalizeLayer(cmd.layerType || cmd.stitchType) !== normalizeLayer(prev.layerType || prev.stitchType);
   const sourceChanged = normalizeSource(cmd.source) !== normalizeSource(prev.source);
   const samples = sampleSegment(prev.x, prev.y, cmd.x, cmd.y, 10);
-  const crossesEmptySpace = samples.some(p => !findContainingRegionId(p.x, p.y, regions, config));
+  const crossesEmptySpace = samples.some(p => !findContainingRegionId(p.x, p.y, indexRef, config));
   const crossesAnotherRegion = samples.some(p => {
-    const rid = findContainingRegionId(p.x, p.y, regions, config);
+    const rid = findContainingRegionId(p.x, p.y, indexRef, config);
     return rid && rid !== regionId && rid !== prevRegionId;
   });
   const isFill = /fill|tatami|ce01_safe_fill/i.test(`${cmd.stitchType || ''} ${cmd.layerType || ''} ${cmd.source || ''}`);
-  const currentRegion = (regions || []).find(r => r.id === regionId);
-  const fillSegmentOutsidePolygon = isFill && currentRegion && samples.some(p => !pointInRegion(p.x, p.y, currentRegion, config));
+  const currentRegion = findIndexedRegion(indexRef, regionId);
+  const fillSegmentOutsidePolygon = isFill && currentRegion && samples.some(p => !pointInIndexedRegion(p.x, p.y, currentRegion));
   const fillSegmentCrossesHoleOrEmpty = isFill && crossesEmptySpace;
   const isBlackContour = isBlackColor(cmd.color) || /contour|outline|running|detail/i.test(`${cmd.stitchType || ''} ${cmd.layerType || ''} ${cmd.source || ''}`);
   const darkSupport = darkSegmentSupport(prev.x, prev.y, cmd.x, cmd.y, darkStroke, config);
@@ -175,14 +177,15 @@ function inspectTransition({ index, previousIndex, prev, cmd, regions, config, d
   };
 }
 
-export function measureTransitionGuardMetrics(commands = [], regions = [], config = {}, darkStroke = null) {
+export function measureTransitionGuardMetrics(commands = [], regions = [], config = {}, darkStroke = null, regionIndex = null) {
+  const indexRef = regionIndex || buildRegionIndex(regions, config);
   let prevCoord = null;
   const offenders = [];
   for (let i = 0; i < commands.length; i++) {
     const cmd = commands[i];
     if (!hasPoint(cmd)) continue;
     if (cmd.type === 'stitch' && prevCoord) {
-      const inspected = inspectTransition({ index: i, previousIndex: prevCoord.index, prev: prevCoord.cmd, cmd, regions, config, darkStroke });
+      const inspected = inspectTransition({ index: i, previousIndex: prevCoord.index, prev: prevCoord.cmd, cmd, regions, config, darkStroke, regionIndex: indexRef });
       if (inspected.distanceMm > 4 || inspected.isSuspicious) offenders.push(inspected);
     }
     prevCoord = { index: i, cmd };
@@ -268,5 +271,30 @@ function isBlackColor(hex) { const { r, g, b } = hexToRgb(hex); const l = 0.299 
 function toPolygonMm(points, config) { const w = config.width_mm || 100, h = config.height_mm || 100; const normalized = (points || []).every(([x, y]) => Math.abs(x) <= 1.5 && Math.abs(y) <= 1.5); return (points || []).map(([x, y]) => normalized ? [(x - 0.5) * w, (y - 0.5) * h] : [x, y]); }
 function pointInRegion(x, y, region, config) { const poly = toPolygonMm(region.path_points || [], config); return poly.length >= 3 && pointInPolygon(x, y, poly); }
 function pointInPolygon(x, y, poly) { let inside = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1]; if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / ((yj - yi) || 1e-9) + xi) inside = !inside; } return inside; }
-function findContainingRegionId(x, y, regions, config) { for (const r of regions || []) if (pointInRegion(x, y, r, config)) return r.id; return null; }
+function findContainingRegionId(x, y, regionsOrIndex, config) {
+  const items = regionsOrIndex?.items || buildRegionIndex(regionsOrIndex || [], config).items;
+  for (const r of items) {
+    if (x < r.bounds.minX || x > r.bounds.maxX || y < r.bounds.minY || y > r.bounds.maxY) continue;
+    if (pointInIndexedRegion(x, y, r)) return r.id;
+  }
+  return null;
+}
+function findIndexedRegion(regionIndex, id) { return regionIndex?.items?.find(r => r.id === id) || null; }
+function pointInIndexedRegion(x, y, indexedRegion) { return !!indexedRegion && pointInPolygon(x, y, indexedRegion.poly); }
+function buildRegionIndex(regions = [], config = {}) {
+  const items = [];
+  for (const r of regions || []) {
+    const poly = toPolygonMm(r.path_points || [], config);
+    if (poly.length < 3) continue;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [x, y] of poly) {
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+    items.push({ id: r.id, poly, bounds: { minX, minY, maxX, maxY } });
+  }
+  return { items };
+}
 function darkSegmentSupport(x1, y1, x2, y2, darkStroke, config) { if (!darkStroke?.mask || !darkStroke.width || !darkStroke.height) return { ratio: 0 }; const W = darkStroke.width, H = darkStroke.height, w = config.width_mm || 100, h = config.height_mm || 100, tol = darkStroke.options?.strokeTolerancePx ?? 2; let hits = 0, total = 0; for (const p of sampleSegment(x1, y1, x2, y2, 12)) { const px = Math.round((p.x / w + 0.5) * W); const py = Math.round((p.y / h + 0.5) * H); let on = false; for (let dy = -tol; dy <= tol && !on; dy++) for (let dx = -tol; dx <= tol; dx++) { const tx = px + dx, ty = py + dy; if (tx >= 0 && tx < W && ty >= 0 && ty < H && darkStroke.mask[ty * W + tx]) { on = true; break; } } total++; if (on) hits++; } return { ratio: total ? hits / total : 0 }; }
