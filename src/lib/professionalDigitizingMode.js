@@ -276,34 +276,134 @@ export function countVisibleDiagonalStitches(commands = [], regions = [], darkSt
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  FASE 2 — Reordenar capas profesionalmente (respeta bloques de color)
+//  FASE 2 — Reordenar capas profesionalmente (por bloques, no por puntadas)
 // ═══════════════════════════════════════════════════════════════════════════
-function professionalPriority(cmd) {
+function professionalPriority(cmd, params = {}) {
   const lt = (cmd.layerType || '').toLowerCase();
   const st = (cmd.stitchType || '').toLowerCase();
   const src = (cmd.source || '').toLowerCase();
+  const isOutline = lt === 'outer_outline' || lt === 'outer_silhouette' || lt === 'limb_contour' || lt === 'real_outline_lower' || lt === 'inner_outline' || lt === 'dark_stroke_outline' || lt.includes('outline') || lt.includes('contour');
+  const isDetail = lt.includes('mouth') || lt.includes('facial') || lt.includes('eye') || lt === 'detail_run' || lt === 'detail_open_curve' || lt.includes('detail');
   if (lt.includes('underlay') || src.includes('underlay')) return 10;
+  if (params.contourAfterFill === false && isOutline) return 15;
   if (st === 'fill' && !lt.includes('shadow')) return 20;
   if (lt.includes('shadow') || lt.includes('detail_color')) return 30;
   if (st === 'fill' && lt.includes('small')) return 40;
-  if (lt === 'outer_outline' || lt === 'outer_silhouette' || lt === 'limb_contour' || lt === 'real_outline_lower') return 50;
-  if (lt === 'inner_outline' || lt === 'dark_stroke_outline') return 60;
-  if (lt.includes('mouth') || lt.includes('facial') || lt.includes('eye') || lt === 'detail_run' || lt === 'detail_open_curve') return 70;
+  if (isOutline) return lt === 'outer_outline' || lt === 'outer_silhouette' || lt === 'limb_contour' || lt === 'real_outline_lower' ? 50 : 60;
+  if (isDetail) return params.detailsLast === false ? 45 : 70;
   return 25;
 }
 function blockTier(commands, pri) {
-  // max priority in the block defines its tier
   const fn = typeof pri === 'function' ? pri : professionalPriority;
   let max = 0;
   for (const c of commands) if (c.type === 'stitch') max = Math.max(max, fn(c));
-  return max;
+  return max || 25;
+}
+function professionalBlockKey(cmd) {
+  return [
+    String(cmd.color || '').toLowerCase(),
+    cmd.regionId || '',
+    cmd.objectId || '',
+    cmd.layerType || '',
+    cmd.stitchType || '',
+  ].join('|');
+}
+function firstStitchInBlock(block) {
+  return block.commands.find((c) => c.type === 'stitch' && Number.isFinite(c.x) && Number.isFinite(c.y));
+}
+function lastPositionIn(commands, fallback) {
+  let pos = fallback;
+  for (const c of commands) {
+    if ((c.type === 'stitch' || c.type === 'jump') && Number.isFinite(c.x) && Number.isFinite(c.y)) {
+      pos = { x: c.x, y: c.y, color: c.color, regionId: c.regionId };
+    }
+  }
+  return pos;
+}
+function appendTravelTo(out, from, to, color, params = {}) {
+  if (!from || !to) return;
+  const dist = Math.hypot(to.x - from.x, to.y - from.y);
+  if (dist <= 0.5) return;
+  const trimThreshold = Number(params.trimThreshold) || 3.5;
+  const maxJump = Number(params.maxJumpLength) || 12.1;
+  if (out.length > 0 && dist > trimThreshold) out.push({ type: 'trim', x: from.x, y: from.y, color, regionId: to.regionId, source: 'professional_block_reorder' });
+  const steps = Math.max(1, Math.ceil(dist / maxJump));
+  for (let s = 1; s <= steps; s++) {
+    out.push({
+      type: 'jump',
+      x: from.x + (to.x - from.x) * s / steps,
+      y: from.y + (to.y - from.y) * s / steps,
+      color,
+      regionId: to.regionId,
+      source: 'professional_block_reorder',
+    });
+  }
 }
 export function reorderProfessionalLayers(commands, params = {}) {
-  // Safety stabilization: generated stitch order is production path data.
-  // Do not sort individual commands or move completed stitch blocks here.
-  // Layer ordering remains an audit/report concern unless a future block-level
-  // transaction can prove it preserves path continuity and color integrity.
-  return (commands || []).map((c) => c?.type === 'colorChange' ? { ...c, type: 'colorChange' } : c);
+  const input = Array.isArray(commands) ? commands : [];
+  if (input.length === 0) return input;
+
+  const blocks = [];
+  let current = null;
+  let pendingTravel = [];
+  let endCommand = null;
+  const flush = () => {
+    if (!current || !current.commands.some((c) => c.type === 'stitch')) return;
+    current.tier = blockTier(current.commands, (cmd) => professionalPriority(cmd, params));
+    blocks.push(current);
+    current = null;
+    pendingTravel = [];
+  };
+
+  for (let i = 0; i < input.length; i++) {
+    const c = input[i];
+    if (!c || c.type === 'colorChange') continue;
+    if (c.type === 'end') { endCommand = c; continue; }
+    if (c.type === 'stitch') {
+      const key = professionalBlockKey(c);
+      if (current && current.key === key) {
+        current.commands.push(...pendingTravel, c);
+        pendingTravel = [];
+      } else {
+        flush();
+        current = {
+          key,
+          order: blocks.length,
+          commands: [c],
+          color: c.color || '#000000',
+        };
+      }
+      continue;
+    }
+    if (c.type === 'jump' || c.type === 'trim') {
+      if (current) pendingTravel.push(c);
+      continue;
+    }
+    if (current) current.commands.push(c);
+  }
+  flush();
+
+  if (blocks.length <= 1) return input.map((c) => c?.type === 'colorChange' ? { ...c, type: 'colorChange' } : c);
+
+  const sorted = [...blocks].sort((a, b) => (a.tier - b.tier) || (a.order - b.order));
+  const out = [];
+  let currentColor = null;
+  let lastPos = { x: 0, y: 0 };
+
+  for (const block of sorted) {
+    const first = firstStitchInBlock(block);
+    if (!first) continue;
+    if (currentColor !== null && String(currentColor).toLowerCase() !== String(block.color || '').toLowerCase()) {
+      out.push({ type: 'colorChange', x: lastPos.x, y: lastPos.y, color: block.color, regionId: first.regionId });
+    }
+    appendTravelTo(out, lastPos, first, block.color, params);
+    out.push(...block.commands);
+    lastPos = lastPositionIn(block.commands, first);
+    currentColor = block.color;
+  }
+
+  if (endCommand) out.push({ ...endCommand, x: lastPos.x, y: lastPos.y });
+  return out;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
