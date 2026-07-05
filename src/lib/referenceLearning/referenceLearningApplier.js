@@ -117,6 +117,9 @@ export function buildConfigDiff(configPatch) {
     { label: 'Reducir colores similares', key: 'learnedReduceSimilarColors', before: false, unit: '', precision: 0, isBool: true },
     { label: 'Satin contornos exteriores', key: 'learnedUseSatinForOuterContours', before: false, unit: '', precision: 0, isBool: true },
     { label: 'Detalles al final', key: 'learnedDetailsLast', before: false, unit: '', precision: 0, isBool: true },
+    { label: 'Rango aceptado observado', key: 'learnedMachineAcceptedStitchRangeObserved', before: 12000, unit: ' stitches', precision: 0 },
+    { label: 'Formato aceptado observado', key: 'learnedMachineAcceptedFormat', before: 'none', unit: '', precision: 0 },
+    { label: 'No usar como límite estricto', key: 'learnedMachineAcceptedDoNotUseAsStrictLimit', before: false, unit: '', precision: 0, isBool: true },
   ];
   return rows.map(r => {
     const after = configPatch[r.key];
@@ -148,6 +151,16 @@ export function presetToConfigPatch(preset) {
     learnedReduceSimilarColors: preset.reduceSimilarColors,
     learnedUseSatinForOuterContours: preset.useSatinForOuterContours,
     learnedDetailsLast: preset.detailsLast,
+    learnedMachineAcceptedStitchRangeMin: preset.learnedMachineAcceptedStitchRangeMin,
+    learnedMachineAcceptedStitchRangeObserved: preset.learnedMachineAcceptedStitchRangeObserved,
+    learnedMachineAcceptedFormat: preset.learnedMachineAcceptedFormat,
+    learnedMachineAcceptedHoopSize: preset.learnedMachineAcceptedHoopSize,
+    learnedMachineAcceptedDensityRange: preset.learnedMachineAcceptedDensityRange,
+    learnedMachineAcceptedTrimRange: preset.learnedMachineAcceptedTrimRange,
+    learnedMachineAcceptedColorCount: preset.learnedMachineAcceptedColorCount,
+    learnedMachineAcceptedMaxStitchMm: preset.learnedMachineAcceptedMaxStitchMm,
+    learnedMachineAcceptedMaxJumpMm: preset.learnedMachineAcceptedMaxJumpMm,
+    learnedMachineAcceptedDoNotUseAsStrictLimit: preset.learnedMachineAcceptedDoNotUseAsStrictLimit ?? true,
     learnedProfileId: preset.sourceProfileId,
     learnedPresetSource: 'reference_learning_engine_v2',
   };

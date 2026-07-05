@@ -38,6 +38,16 @@ export function buildProfessionalPresetFromLearnedProfile(selectedProfile, learn
     maxColorCount: selectedProfile.maxColorCount ?? 8,
     useSatinForOuterContours: !!selectedProfile.useSatinForOuterContours,
     useRunningForDetails: !selectedProfile.useDoubleRunForDetails,
+    learnedMachineAcceptedStitchRangeMin: selectedProfile.learnedMachineAcceptedStitchRangeMin,
+    learnedMachineAcceptedStitchRangeObserved: selectedProfile.learnedMachineAcceptedStitchRangeObserved,
+    learnedMachineAcceptedFormat: selectedProfile.learnedMachineAcceptedFormat,
+    learnedMachineAcceptedHoopSize: selectedProfile.learnedMachineAcceptedHoopSize,
+    learnedMachineAcceptedDensityRange: selectedProfile.learnedMachineAcceptedDensityRange,
+    learnedMachineAcceptedTrimRange: selectedProfile.learnedMachineAcceptedTrimRange,
+    learnedMachineAcceptedColorCount: selectedProfile.learnedMachineAcceptedColorCount,
+    learnedMachineAcceptedMaxStitchMm: selectedProfile.learnedMachineAcceptedMaxStitchMm,
+    learnedMachineAcceptedMaxJumpMm: selectedProfile.learnedMachineAcceptedMaxJumpMm,
+    learnedMachineAcceptedDoNotUseAsStrictLimit: selectedProfile.learnedMachineAcceptedDoNotUseAsStrictLimit ?? true,
   };
 
   // ── Sobreescribir con valores minados del corpus (alta confianza) ──

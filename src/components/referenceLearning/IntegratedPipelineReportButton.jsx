@@ -6,8 +6,12 @@ import { INTEGRATED_PIPELINE_AFTER_SATIN_V2_RUNTIME_MD } from '@/components/refe
 import { UNDERLAY_CANDIDATE_AUDIT_V1_MD } from '@/components/referenceLearning/underlayCandidateAuditV1Content';
 import { UNDERLAY_GENERATOR_REPORT_V1_MD } from '@/components/referenceLearning/underlayGeneratorReportV1Content';
 import { INTEGRATED_PIPELINE_AFTER_UNDERLAY_V1_MD } from '@/components/referenceLearning/integratedPipelineAfterUnderlayV1Content';
+import { ACCEPTED_WILCOM_SAMPLE_UPDATE_REPORT_V1_MD } from '@/components/referenceLearning/acceptedWilcomSampleUpdateReportContent';
+import { VALIDATION_AFTER_WILCOM_SAMPLE_V1_MD } from '@/components/referenceLearning/validationAfterWilcomSampleV1Content';
 
 const REPORTS = [
+  { label: 'Wilcom Sample', filename: 'REFERENCE_LEARNING_ACCEPTED_WILCOM_SAMPLE_UPDATE_REPORT_V1.md', content: ACCEPTED_WILCOM_SAMPLE_UPDATE_REPORT_V1_MD, color: 'emerald' },
+  { label: 'After Wilcom', filename: 'REFERENCE_LEARNING_VALIDATION_AFTER_WILCOM_SAMPLE_V1.md', content: VALIDATION_AFTER_WILCOM_SAMPLE_V1_MD, color: 'emerald' },
   { label: 'Underlay V1', filename: 'UNDERLAY_GENERATOR_REPORT_V1.md', content: UNDERLAY_GENERATOR_REPORT_V1_MD, color: 'amber' },
   { label: 'After Underlay', filename: 'REFERENCE_INTEGRATED_PIPELINE_AFTER_UNDERLAY_V1.md', content: INTEGRATED_PIPELINE_AFTER_UNDERLAY_V1_MD, color: 'amber' },
   { label: 'Underlay Audit', filename: 'UNDERLAY_CANDIDATE_AUDIT_V1.md', content: UNDERLAY_CANDIDATE_AUDIT_V1_MD, color: 'amber' },

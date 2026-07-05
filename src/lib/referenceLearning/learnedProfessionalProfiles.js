@@ -13,6 +13,7 @@
 
 import { summarizeCorpus } from './referenceCorpus';
 import { mineDensityAngleCompensationRules } from './densityAngleCompensationMiner';
+import { ACCEPTED_MACHINE_SAMPLE_CONFIG_PATCH, ACCEPTED_WILCOM_SAMPLE_V1 } from './acceptedMachineSamples';
 
 const PROFILE_KEYS = [
   'cartoon_character', 'simple_logo', 'text_design', 'patch_style',
@@ -192,6 +193,10 @@ function baseParams(summary, rules, dac) {
     contourAfterFill: false,
     reduceSimilarColors: true,
     learnedFromFiles: summary ? summary.count : 0,
+    acceptedMachineSample: ACCEPTED_WILCOM_SAMPLE_V1,
+    ...ACCEPTED_MACHINE_SAMPLE_CONFIG_PATCH,
+    stitchCountBlocking: false,
+    old12000LimitBlocking: false,
   };
 }
 

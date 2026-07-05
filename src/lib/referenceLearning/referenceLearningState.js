@@ -7,6 +7,8 @@
  * completas (demasiado grandes); solo el conocimiento minado.
  */
 
+import { getAcceptedMachineSamples } from './acceptedMachineSamples';
+
 const STORAGE_KEY = 'referenceLearningState_v2';
 
 export function saveLearningState(state) {
@@ -27,6 +29,7 @@ export function saveLearningState(state) {
       generatedAt: state.generatedAt || new Date().toISOString(),
       corpusVersion: state.corpusVersion || 2,
       uploadedFileNames: state.uploadedFileNames || [],
+      acceptedMachineSamples: state.acceptedMachineSamples || getAcceptedMachineSamples(),
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(compact));
   } catch (e) {
@@ -38,7 +41,8 @@ export function loadLearningState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return { ...parsed, acceptedMachineSamples: parsed.acceptedMachineSamples || getAcceptedMachineSamples() };
   } catch (e) {
     console.warn('[referenceLearningState] load failed:', e.message);
     return null;
