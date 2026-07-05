@@ -96,6 +96,7 @@ export default function Editor() {
   const [showContour, setShowContour] = useState(true);
   const [showExport, setShowExport] = useState(false);
   const [activeTab, setActiveTab] = useState('editor');
+  const [editorUiMode, setEditorUiMode] = useState('simple');
   const [uploadingImage, setUploadingImage] = useState(false);
   const [preprocessSettings, setPreprocessSettings] = useState(DEFAULT_PREPROCESS);
   const [preprocessedUrl, setPreprocessedUrl] = useState(null);
@@ -491,6 +492,28 @@ export default function Editor() {
 
   const totalStitches = useMemo(() => regions.reduce((s, r) => s + (r.stitch_count || 0), 0), [regions]);
   const colorsUsed = useMemo(() => new Set(regions.map((r) => r.color)).size, [regions]);
+  const isLabMode = editorUiMode === 'lab';
+  const simpleTabs = [
+    { id: 'editor',    label: 'Editor' },
+    { id: 'mask',      label: '✂ Máscara' },
+    { id: 'simulate',  label: '▶ Simular' },
+    { id: 'finallook', label: '🎨 Final' },
+  ];
+  const labTabs = [
+    ...simpleTabs,
+    { id: 'planner',   label: '✦ Planner' },
+    { id: 'travel',    label: '⚡ Travel' },
+    { id: 'validate',  label: '✓ Validar' },
+    { id: 'details',   label: '🔍 Detalles' },
+    { id: 'diagnostic', label: '🔬 Diagnóstico' },
+    { id: 'prof',       label: '★ Profesional' },
+    { id: 'learn',      label: '✨ Aprendizaje' },
+    { id: 'panel',     label: 'Panel' },
+  ];
+  const visibleTabs = isLabMode ? labTabs : simpleTabs;
+  useEffect(() => {
+    if (!isLabMode && !simpleTabs.some((tab) => tab.id === activeTab)) setActiveTab('editor');
+  }, [isLabMode, activeTab]);
 
   const handleRegenerateCommands = useCallback(() => {
     console.log('[command-sync] regenerate: clearing override, rebuilding from regions');
@@ -520,6 +543,20 @@ export default function Editor() {
           <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
           <span className="text-xs text-slate-400">{config.mode || 'hybrid'}</span>
           <div className="flex-1 flex justify-center"><StepPipeline currentStep={step} /></div>
+          <div className="flex items-center gap-1 rounded-lg border border-[#2a2d3a] bg-[#11141c] p-1">
+            <button
+              onClick={() => setEditorUiMode('simple')}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${editorUiMode === 'simple' ? 'bg-violet-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+            >
+              Vista limpia
+            </button>
+            <button
+              onClick={() => setEditorUiMode('lab')}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${editorUiMode === 'lab' ? 'bg-cyan-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+            >
+              Herramientas técnicas
+            </button>
+          </div>
           <AIProgressIndicator active={processing} elapsed={processingElapsed} />
           <div className="flex items-center gap-1.5">
             <NavButton onClick={() => setShowExport(true)} icon={Download} label="Exportar" accent />
@@ -529,21 +566,7 @@ export default function Editor() {
         </div>
         <div className="flex items-center justify-between px-4 py-1.5 border-t border-[#1a1d27]">
           <div className="flex items-center gap-1">
-            {[
-              { id: 'editor',    label: 'Editor' },
-              { id: 'mask',      label: '✂ Máscara' },
-              { id: 'planner',   label: '✦ Planner' },
-              { id: 'travel',    label: '⚡ Travel' },
-              { id: 'simulate',  label: '▶ Simular' },
-              { id: 'finallook', label: '🎨 Final' },
-              { id: 'validate',  label: '✓ Validar' },
-              { id: 'details',   label: '🔍 Detalles' },
-              { id: 'diagnostic', label: '🔬 Diagnóstico' },
-              { id: 'feet',       label: '🦶 Pies' },
-              { id: 'prof',       label: '★ Profesional' },
-              { id: 'learn',      label: '✨ Aprendizaje' },
-              { id: 'panel',     label: 'Panel' },
-            ].map(({ id, label }) =>
+            {visibleTabs.map(({ id, label }) =>
               <button key={id} onClick={() => setActiveTab(id)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
                 {label}
               </button>
@@ -560,10 +583,15 @@ export default function Editor() {
       <div className="flex-1 flex overflow-hidden">
         <div className="w-64 flex-shrink-0 border-r border-[#1e2130] overflow-y-auto space-y-4 p-4">
           <ConfigPanel config={config} onChange={setConfig} regions={regions} selectedRegionIds={selectedRegionId ? [selectedRegionId] : []} onRegionsUpdate={handleRegionsUpdate} />
-          <AestheticPreservationPanel config={config} onChange={setConfig} />
-          <QualityAnalysisPanel projectId={project?.id} onAnalysisComplete={(analysis) => console.log('Quality:', analysis)} />
-          <PreprocessingPanel settings={preprocessSettings} onChange={setPreprocessSettings} />
-          <NeedlePathPanel regions={regions} pathMetrics={pathMetrics} config={config} />
+          {isLabMode && (
+            <div className="space-y-4 border-t border-[#1e2130] pt-4">
+              <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Avanzado · Laboratorio</div>
+              <AestheticPreservationPanel config={config} onChange={setConfig} />
+              <QualityAnalysisPanel projectId={project?.id} onAnalysisComplete={(analysis) => console.log('Quality:', analysis)} />
+              <PreprocessingPanel settings={preprocessSettings} onChange={setPreprocessSettings} />
+              <NeedlePathPanel regions={regions} pathMetrics={pathMetrics} config={config} />
+            </div>
+          )}
         </div>
 
         <div className="flex-1 flex flex-col overflow-hidden">
@@ -700,7 +728,7 @@ export default function Editor() {
               />
             </div>
           ) : activeTab === 'diagnostic' ? (
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 overflow-y-auto p-3 space-y-3">
               <RealImageDiagnosticPanel
                 imageUrl={imageUrl}
                 regions={regions}
@@ -713,17 +741,18 @@ export default function Editor() {
                 darkStrokeSourceUrl={originalImageUrl || imageUrl}
                 contourSegmentReport={finalEmbroideryCommands.contourSegmentReport}
               />
-            </div>
-          ) : activeTab === 'feet' ? (
-            <div className="flex-1 overflow-hidden">
-              <FootContourExportDiagnostic
-                regions={regions}
-                config={config}
-                darkStroke={darkStroke}
-                finalCommands={finalEmbroideryCommands.commands}
-                finalObjects={finalEmbroideryCommands.objects}
-                machineSettings={editorMachineSettings}
-              />
+              <div className="rounded-xl border border-amber-500/30 bg-amber-900/10 p-3">
+                <div className="mb-2 text-xs font-bold text-amber-300">Diagnóstico de pies / contorno inferior</div>
+                <div className="mb-3 text-[11px] text-slate-500">Solo lectura · diagnóstico técnico · no es una herramienta principal de usuario final.</div>
+                <FootContourExportDiagnostic
+                  regions={regions}
+                  config={config}
+                  darkStroke={darkStroke}
+                  finalCommands={finalEmbroideryCommands.commands}
+                  finalObjects={finalEmbroideryCommands.objects}
+                  machineSettings={editorMachineSettings}
+                />
+              </div>
             </div>
           ) : activeTab === 'prof' ? (
             <div className="flex-1 overflow-y-auto p-3 space-y-3">
@@ -812,12 +841,12 @@ export default function Editor() {
               )}
               <span className="text-slate-400"> · {autoLearnedDiff.diff?.filter(d => d.changed).length || 0} parámetros ajustados</span>
             </div>
-            <button onClick={() => setActiveTab('prof')} className="text-[10px] text-violet-300 hover:text-white font-bold transition-colors">Ver cambios →</button>
+            <button onClick={() => { setEditorUiMode('lab'); setActiveTab('prof'); }} className="text-[10px] text-violet-300 hover:text-white font-bold transition-colors">Ver cambios →</button>
             <button onClick={() => setAutoLearnedDiff(null)} className="p-1 rounded hover:bg-violet-900/30 text-slate-500 hover:text-white transition-colors">✕</button>
           </div>
           }
 
-          {imageUrl && regions.length > 0 && pathMetrics?.metrics && !processing &&
+          {isLabMode && imageUrl && regions.length > 0 && pathMetrics?.metrics && !processing &&
           <div className="border-t border-[#1a1d27] p-2.5 flex items-center gap-4 bg-[#0a0c12] text-[11px]">
              <div className="flex-1 text-slate-400">
                Recorrido: <span className="text-cyan-400 font-bold">{pathMetrics.metrics.totalJumps} saltos</span>
@@ -828,8 +857,10 @@ export default function Editor() {
            </div>
           }
 
-          {imageUrl && regions.length > 0 && !processing &&
+          {isLabMode && imageUrl && regions.length > 0 && !processing &&
           <div className="border-t border-[#1a1d27] px-3 py-1.5 flex items-center gap-3 bg-[#0a0c12] text-[10px]">
+             <span className="text-cyan-300 font-bold">Debug de sincronización de comandos</span>
+             <span className="text-slate-700">·</span>
              <span className="text-slate-600">Command source:</span>
              <span className="text-emerald-400 font-mono font-bold">finalEmbroideryCommands</span>
              <span className="text-slate-700">·</span>
