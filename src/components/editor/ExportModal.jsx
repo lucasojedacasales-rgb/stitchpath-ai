@@ -8,7 +8,7 @@ import ValidationPreview from './ValidationPreview';
 import RepairProgressPanel from './RepairProgressPanel';
 import AdaptiveOptimizationReport from './AdaptiveOptimizationReport';
 import CE01ReportPanel from './CE01ReportPanel';
-import { encodeOptimizedToFile, encodeToFile, buildFinalCommands, logCommandsSync } from '@/lib/exportPipeline';
+import { encodeOptimizedToFile, encodeToFile, encodeCanonicalCommandsToFile, buildFinalCommands, logCommandsSync } from '@/lib/exportPipeline';
 import { autoCleanupRegions } from '@/lib/autoCleanup';
 import { validateCE01 } from '@/lib/ce01Validator';
 import { sanitizeCommandsForCE01 } from '@/lib/ce01CommandSanitizer';
@@ -39,6 +39,7 @@ import UniversalExportAcceptanceTestPanel from './UniversalExportAcceptanceTestP
 import ExportBlockingCausePanel from './ExportBlockingCausePanel';
 import { analyzeExportBlocking } from '@/lib/exportBlockingAudit';
 import { runExportedFileBinaryRoundtripForensics } from '@/lib/exportedFileBinaryRoundtripForensics';
+import { verifyCanonicalBinaryExport, buildExportTruthFixReportMarkdown } from '@/lib/exportBinaryCommandSourceTruth';
 
 const FORMATS = ['DSB', 'DST', 'PES', 'JEF', 'EXP'];
 
@@ -67,7 +68,11 @@ function canExportInCE01ProductionMode({ commands, productionValidation, encodeR
   return { allowed: true, reason: 'Exportación permitida; warnings no bloqueantes', blockingCheck: 'REAL_EXPORT_GATE' };
 }
 
-export default function ExportModal({ project, config: editorConfig, regions: initialRegions, darkStroke, finalCommands: editorFinalCommands, finalObjects: editorFinalObjects, commandVersion, onClose }) {
+export default function ExportModal({ project, config: editorConfig, regions: initialRegions, darkStroke, canonicalFinalCommands = [], canonicalFinalObjects = [], canonicalCommandMeta = null, finalCommands: legacyFinalCommands = [], finalObjects: legacyFinalObjects = [], finalMeta: legacyFinalMeta = null, commandVersion, onClose }) {
+  const editorFinalCommands = canonicalFinalCommands?.length ? canonicalFinalCommands : legacyFinalCommands;
+  const editorFinalObjects = canonicalFinalObjects?.length ? canonicalFinalObjects : legacyFinalObjects;
+  const editorFinalMeta = canonicalCommandMeta || legacyFinalMeta;
+  const canonicalCommandsReceived = editorFinalCommands?.length > 0;
   const [step, setStep] = useState('preflight'); // 'preflight' | 'export'
   const [regions, setRegions] = useState(initialRegions || []);
   const [cleanupReport, setCleanupReport] = useState(null);
@@ -113,12 +118,28 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     trimThreshold: 3.5,
   };
 
-  // Run pipeline whenever regions/format change (memoized) — uses buildFinalCommands
-  // so display metrics match simulation + validation exactly.
+  // Export surface uses canonical commands when Editor already computed them.
+  // buildFinalCommands is only a legacy fallback when canonicalFinalCommands are absent.
   const pipelineResult = useMemo(() => {
+    if (editorFinalCommands?.length > 0) {
+      const meta = editorFinalMeta || { source: 'canonicalFinalCommands' };
+      console.log('[commands-state] export uses: canonicalFinalCommands');
+      logCommandsSync('export-canonical', meta);
+      return {
+        commands: editorFinalCommands,
+        objects: editorFinalObjects || [],
+        ready: true,
+        blockingErrors: [],
+        warnings: [],
+        stages: { fixReport: { applied: [] } },
+        _meta: meta,
+        _sanitizeReport: null,
+      };
+    }
+    console.warn('Export está regenerando comandos porque no hay canonicalFinalCommands');
     const { commands, objects, meta, sanitizeReport, validation } = buildFinalCommands(regions, config, machineSettings, format);
-    console.log('[commands-state] export uses: buildFinalCommands');
-    logCommandsSync('export', meta);
+    console.log('[commands-state] export uses: buildFinalCommands LEGACY FALLBACK');
+    logCommandsSync('export-legacy', meta);
     return {
       commands,
       objects,
@@ -129,7 +150,10 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       _meta: meta,
       _sanitizeReport: sanitizeReport,
     };
-  }, [regions, format, widthMm, heightMm]);
+  }, [editorFinalCommands, editorFinalObjects, editorFinalMeta, regions, config, machineSettings, format]);
+
+  const exportCommandSource = editorFinalCommands?.length ? editorFinalCommands : pipelineResult.commands;
+  const exportObjectSource = editorFinalObjects?.length ? editorFinalObjects : pipelineResult.objects;
 
   // CE01 validation + sanitization — before/after comparison
   const { ce01ReportBefore, ce01ReportAfter, sanitizeReport } = useMemo(() => {
@@ -177,17 +201,17 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   }, [ce01ProductionMode]);
   const productionReport = useMemo(() => {
     if (!ce01ProductionMode) return null;
-    const sourceCommands = editorFinalCommands || pipelineResult.commands;
-    const sourceObjects = editorFinalObjects || pipelineResult.objects;
+    const sourceCommands = exportCommandSource;
+    const sourceObjects = exportObjectSource;
     return prepareCE01ProductionExport(sourceCommands, regions, config, machineSettings, sourceObjects, format);
   }, [ce01ProductionMode, editorFinalCommands, editorFinalObjects, regions, config, machineSettings, format]);
 
   const productionValidation = useMemo(() => {
     if (!ce01ProductionMode) return null;
-    const sourceCommands = editorFinalCommands || pipelineResult.commands;
+    const sourceCommands = exportCommandSource;
     return validateEmbroideryCompatibility({
       commands: sourceCommands,
-      objects: editorFinalObjects || pipelineResult.objects,
+      objects: exportObjectSource,
       regions,
       config,
       machineSettings,
@@ -199,7 +223,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   // CE01 only blocks when validationMode === 'ce01_strict'.
   const productionGateDecision = useMemo(() => {
     if (!ce01ProductionMode) return null;
-    const sourceCommands = editorFinalCommands || pipelineResult.commands;
+    const sourceCommands = exportCommandSource;
     return canExportInCE01ProductionMode({
       commands: sourceCommands,
       productionValidation,
@@ -253,7 +277,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   // Solo lectura: no cambia la lógica de exportación. Mismo detector que el panel de reparación.
   const techDetection = useMemo(() => detectExportErrors(
     effectiveExport.commands,
-    editorFinalObjects || pipelineResult.objects,
+    exportObjectSource,
     regions, config, machineSettings
   ), [effectiveExport.commands, editorFinalObjects, pipelineResult.objects, regions, config, machineSettings]);
   const exportBlockingAudit = useMemo(() => analyzeExportBlocking({
@@ -285,7 +309,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     try {
       const { markdown } = await runExportedFileBinaryRoundtripForensics({
         commands: effectiveExport.commands,
-        objects: editorFinalObjects || pipelineResult.objects,
+        objects: exportObjectSource,
         projectName: project?.name || 'design',
         machineSettings,
         base44Client: base44,
@@ -308,7 +332,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     // ── Pre-export sync validation ──────────────────────────────────────────
     // Verify the export command source is valid and log metrics for traceability.
     // In production mode, export uses editorFinalCommands (same as simulation/validation).
-    const sourceCommands = editorFinalCommands || pipelineResult.commands;
+    const sourceCommands = exportCommandSource;
     const sourceMetrics = calculateUnifiedCommandMetrics(sourceCommands, regions, machineSettings);
     console.log('[command-sync] export source: finalEmbroideryCommands');
     console.log('[command-sync] export metrics:', { stitches: sourceMetrics.stitchCount, jumps: sourceMetrics.jumpCount, trims: sourceMetrics.trimCount });
@@ -329,7 +353,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
 
     // ── CE01 Production path: no recalculation, no aggressive optimizers ──
     if (ce01ProductionMode) {
-      const sourceCommands = editorFinalCommands || pipelineResult.commands;
+      const sourceCommands = exportCommandSource;
       const gateDecision = canExportInCE01ProductionMode({
         commands: sourceCommands,
         productionValidation,
@@ -374,102 +398,30 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       setExporting(true);
       setExportError(null);
       try {
-        // ── Production export: same final command sequence for DST and DSB.
         const exportCommands = effectiveExport.commands;
-        if (format === 'DSB') {
-          const blob = await encodeToFile(exportCommands, editorFinalObjects || pipelineResult.objects, 'DSB', machineSettings, base44);
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `${(project?.name || 'design').replace(/[^a-zA-Z0-9_-]/g, '_')}.dsb`;
-          a.click();
-          URL.revokeObjectURL(url);
-          onClose();
-          return;
-        }
-        const { bytes, blob, meta } = buildDSTFromCommands(exportCommands, {
-          label: project?.name || 'design',
-          ce01Strict: true,
+        const exportObjects = exportObjectSource;
+        const { blob } = await encodeCanonicalCommandsToFile({
+          commands: exportCommands,
+          objects: exportObjects,
+          format,
+          machineSettings,
+          base44Client: base44,
         });
-
-        // ── Binary validation before download ──────────────────────────────
-        const filename = `${(project?.name || 'design').replace(/[^a-zA-Z0-9_-]/g, '_')}.dst`;
-        const usingDSB = false;
-        const isUint8Array = bytes instanceof Uint8Array;
-        const hasHeader512 = bytes.length >= 512;
-        const headerStr = hasHeader512
-          ? new TextDecoder('ascii').decode(bytes.slice(0, 512))
-          : '';
-
-        // ST from header vs actual records
-        const stMatch = headerStr.match(/ST:\s*(\d+)/);
-        const headerST = stMatch ? parseInt(stMatch[1], 10) : -1;
-        const hasEof = bytes[bytes.length - 1] === 0x1A;
-        const dataEnd = hasEof ? bytes.length - 1 : bytes.length;
-        const actualRecords = Math.floor((dataEnd - 512) / 3);
-        const stMatches = headerST === actualRecords;
-
-        // CO coherent
-        const coMatch = headerStr.match(/CO:\s*(\d+)/);
-        const headerCO = coMatch ? parseInt(coMatch[1], 10) : -1;
-        const actualColorChanges = exportCommands.filter(c => c.type === 'colorChange').length;
-        const coCoherent = headerCO === actualColorChanges;
-
-        // END present: 00 00 F3 (last record before EOF)
-        const endOffset = hasEof ? bytes.length - 4 : bytes.length - 3;
-        const hasEnd = bytes[endOffset] === 0x00 && bytes[endOffset + 1] === 0x00 && bytes[endOffset + 2] === 0xF3;
-
-        // AX/AY signed format
-        const axOk = /AX:[+-]\d{5}/.test(headerStr);
-        const ayOk = /AY:[+-]\d{5}/.test(headerStr);
-
-        // Bounds from header — detect collapsed line
-        const pxMatch = headerStr.match(/\+X:\s*(\d+)/);
-        const nxMatch = headerStr.match(/-X:\s*(\d+)/);
-        const pyMatch = headerStr.match(/\+Y:\s*(\d+)/);
-        const nyMatch = headerStr.match(/-Y:\s*(\d+)/);
-        const headerWidth = (pxMatch && nxMatch) ? (parseInt(pxMatch[1]) + parseInt(nxMatch[1])) / 10 : 0;
-        const headerHeight = (pyMatch && nyMatch) ? (parseInt(pyMatch[1]) + parseInt(nyMatch[1])) / 10 : 0;
-        const boundsNotLine = headerWidth > 1 && headerHeight > 1;
-
-        // Panel metrics
-        const panelStitches = exportCommands.filter(c => c.type === 'stitch').length;
-        const panelJumps = exportCommands.filter(c => c.type === 'jump').length;
-        const panelTrims = exportCommands.filter(c => c.type === 'trim').length;
-
-        const exportReady = stMatches && hasEnd && axOk && ayOk && boundsNotLine && coCoherent && isUint8Array && hasHeader512;
-
-        // ── Logs ────────────────────────────────────────────────────────────
-        console.log('[dst-direct-export] format:', 'DST');
-        console.log('[dst-direct-export] usingDSB:', usingDSB);
-        console.log('[dst-direct-export] finalEmbroideryCommands:', exportCommands.length);
-        console.log('[dst-direct-export] stitches:', panelStitches);
-        console.log('[dst-direct-export] jumps:', panelJumps);
-        console.log('[dst-direct-export] trims:', panelTrims);
-        console.log('[dst-direct-export] header ST:', headerST);
-        console.log('[dst-direct-export] actual records:', actualRecords);
-        console.log('[dst-direct-export] width/height:', `${headerWidth}mm / ${headerHeight}mm`);
-        console.log('[dst-direct-export] end present:', hasEnd);
-        console.log('[dst-direct-export] export ready:', exportReady);
-
-        // ── Block conditions ────────────────────────────────────────────────
-        if (!filename.endsWith('.dst')) { setExportError('Filename no termina en .dst'); return; }
-        if (format !== 'DST') { setExportError('Formato no es DST'); return; }
-        if (usingDSB) { setExportError('usingDSB es true — no permitido en CE01'); return; }
-        if (!isUint8Array) { setExportError('bytes no es Uint8Array'); return; }
-        if (!hasHeader512) { setExportError('Header no tiene 512 bytes'); return; }
-        if (!stMatches) {
-          setExportError(`ST del header (${headerST}) no coincide con registros reales (${actualRecords}).`);
+        const shouldRoundtripVerify = ['DST', 'DSB'].includes(String(format).toUpperCase());
+        const verification = shouldRoundtripVerify ? await verifyCanonicalBinaryExport({ canonicalCommands: exportCommands, blob, format }) : null;
+        const truthReport = buildExportTruthFixReportMarkdown({
+          verification,
+          exportedFormat: format,
+          oldExportPathUsedBuildFinalCommands: true,
+          canonicalCommandsReceived,
+        });
+        console.log('[export-binary-command-source-truth]', verification || { skipped: true, format });
+        console.log(truthReport);
+        if (shouldRoundtripVerify && verification.commandToBinaryMismatchAfter) {
+          setExportError(`El binario no coincide con los comandos canónicos: ST=${verification.binaryHeaderST}, CO=${verification.binaryHeaderCO}, records=${verification.binaryRecordCount}.`);
           return;
         }
-        if (!hasEnd) { setExportError('END 00 00 F3 no presente.'); return; }
-        if (!axOk || !ayOk) { setExportError('AX/AY no tienen formato correcto con signo.'); return; }
-        if (!boundsNotLine) {
-          setExportError('Archivo corrupto: recorrido colapsado en línea.');
-          return;
-        }
-
-        // ── Download validated .dst ─────────────────────────────────────────
+        const filename = `${(project?.name || 'design').replace(/[^a-zA-Z0-9_-]/g, '_')}.${format.toLowerCase()}`;
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -486,9 +438,10 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       return;
     }
 
-    // ── Standard path (adaptive optimization engine) ─────────────────────
-    const commands = wizardResult?.commands || pipelineResult.commands;
-    const objects = wizardResult?.objects || pipelineResult.objects;
+    // ── Standard path: canonical export first, legacy fallback only if canonical is absent ─────────────────────
+    const commands = canonicalCommandsReceived ? effectiveExport.commands : (wizardResult?.commands || pipelineResult.commands);
+    const objects = canonicalCommandsReceived ? (exportObjectSource) : (wizardResult?.objects || pipelineResult.objects);
+    if (!canonicalCommandsReceived) console.warn('Export está regenerando comandos porque no hay canonicalFinalCommands');
 
     // Emergency gate: validation warnings do not block export. Hard blockers were already checked by exportBlockingAudit.
     if (!pipelineResult.ready && !wizardResult) {
@@ -503,8 +456,23 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     setExportError(null);
     setAdaptiveReport(null);
     try {
-      // Emergency stabilization: encode the already-built command list directly. Adaptive scoring is diagnostic only.
-      const blob = await encodeToFile(commands, objects, format, machineSettings, base44);
+      const { blob } = canonicalCommandsReceived
+        ? await encodeCanonicalCommandsToFile({ commands, objects, format, machineSettings, base44Client: base44 })
+        : { blob: await encodeToFile(commands, objects, format, machineSettings, base44) };
+      const shouldRoundtripVerify = ['DST', 'DSB'].includes(String(format).toUpperCase());
+      const verification = shouldRoundtripVerify ? await verifyCanonicalBinaryExport({ canonicalCommands: commands, blob, format }) : null;
+      const truthReport = buildExportTruthFixReportMarkdown({
+        verification,
+        exportedFormat: format,
+        oldExportPathUsedBuildFinalCommands: true,
+        canonicalCommandsReceived,
+      });
+      console.log('[export-binary-command-source-truth]', verification || { skipped: true, format });
+      console.log(truthReport);
+      if (canonicalCommandsReceived && shouldRoundtripVerify && verification.commandToBinaryMismatchAfter) {
+        setExportError(`El binario no coincide con los comandos canónicos: ST=${verification.binaryHeaderST}, CO=${verification.binaryHeaderCO}, records=${verification.binaryRecordCount}.`);
+        return;
+      }
       setAdaptiveReport(null);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -650,8 +618,8 @@ export default function ExportModal({ project, config: editorConfig, regions: in
 
               {/* ── Pre-export technical repair (FASE 1-6) ── */}
               <ExportRepairPanel
-                finalCommands={editorFinalCommands || pipelineResult.commands}
-                finalObjects={editorFinalObjects || pipelineResult.objects}
+                finalCommands={exportCommandSource}
+                finalObjects={exportObjectSource}
                 regions={regions}
                 config={config}
                 machineSettings={machineSettings}
@@ -675,8 +643,8 @@ export default function ExportModal({ project, config: editorConfig, regions: in
 
               {uiMode === 'lab' && (
                 <UniversalExportAcceptanceTestPanel
-                  commands={editorFinalCommands || pipelineResult.commands}
-                  objects={editorFinalObjects || pipelineResult.objects}
+                  commands={exportCommandSource}
+                  objects={exportObjectSource}
                   regions={regions}
                   config={config}
                   machineSettings={machineSettings}
@@ -950,7 +918,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
 
               {/* Visual preview — highlights problematic stitches in red */}
               <ValidationPreview
-                commands={exportView === 'exportable' ? effectiveExport.commands : (editorFinalCommands || pipelineResult.commands)}
+                commands={exportView === 'exportable' ? effectiveExport.commands : (exportCommandSource)}
                 errors={blockingErrors}
                 machineSettings={machineSettings}
                 height={140}

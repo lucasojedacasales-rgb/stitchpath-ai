@@ -1120,7 +1120,7 @@ export default function Editor() {
         )}
       </div>
 
-      {showExport && <ExportModal project={project} config={configWithDarkStroke} regions={regions} darkStroke={darkStroke} finalCommands={finalEmbroideryCommands.commands} finalObjects={finalEmbroideryCommands.objects} commandVersion={commandVersion} onClose={() => setShowExport(false)} />}
+      {showExport && <ExportModal project={project} config={configWithDarkStroke} regions={regions} darkStroke={darkStroke} canonicalFinalCommands={finalEmbroideryCommands.commands} canonicalFinalObjects={finalEmbroideryCommands.objects} canonicalCommandMeta={finalEmbroideryCommands.meta} finalCommands={finalEmbroideryCommands.commands} finalObjects={finalEmbroideryCommands.objects} finalMeta={finalEmbroideryCommands.meta} commandVersion={commandVersion} onClose={() => setShowExport(false)} />}
     </div>);
 
 }

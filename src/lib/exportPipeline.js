@@ -928,6 +928,17 @@ export function runExportPipeline(regions, config, machineSettings, format) {
  * Returns the Blob on success, or throws with the engine report attached:
  *   { blocked: true, report: <engineResult> }
  */
+export async function encodeCanonicalCommandsToFile({ commands, objects = [], format, machineSettings, base44Client }) {
+  const cleanCommands = (commands || []).filter(c => {
+    if (!c || !c.type) return false;
+    if (c.type === 'colorChange' || c.type === 'end') return true;
+    return Number.isFinite(c.x) && Number.isFinite(c.y);
+  });
+  const removedInvalidCommands = (commands || []).length - cleanCommands.length;
+  const blob = await encodeToFile(cleanCommands, objects, format, machineSettings, base44Client);
+  return { blob, commands: cleanCommands, removedInvalidCommands };
+}
+
 export async function encodeOptimizedToFile(regions, config, format, machineSettings, base44Client) {
   // Lazy import to avoid circular dependency at module load time.
   const { runAdaptiveOptimization } = await import('./adaptiveOptimizationEngine');

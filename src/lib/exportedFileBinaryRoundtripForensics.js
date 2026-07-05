@@ -266,6 +266,11 @@ export function parseDSB(bytes) {
   if (!endPresent) errors.push('dsbEndMissing');
   if (unknownCommands > 0) errors.push(`unknownDSBCommandBytes:${unknownCommands}`);
 
+  const headerST = readHeaderNumber(headerText, 'ST');
+  const headerCO = readHeaderNumber(headerText, 'CO');
+  if (Number.isFinite(headerST) && recordCount && Math.abs(headerST - recordCount) > 1) errors.push(`headerSTMismatch:${headerST}_vs_${recordCount}`);
+  if (Number.isFinite(headerCO) && headerCO !== colorChanges) errors.push(`headerCOMismatch:${headerCO}_vs_${colorChanges}`);
+
   const dsbActuallyDstRenamed = recordLengthValid && dstLikeRecords > Math.max(10, recordCount * 0.8);
   if (dsbActuallyDstRenamed) errors.push('dsbActuallyDstRenamed');
   const structureRecognized = headerValid && recordLengthValid && unknownCommands === 0 && !dsbActuallyDstRenamed;
@@ -275,6 +280,8 @@ export function parseDSB(bytes) {
     binaryFileValid,
     machineReadableLikely: binaryFileValid,
     headerValid,
+    headerST,
+    headerCO,
     recordCount,
     recordLengthValid,
     endPresent,
@@ -450,7 +457,7 @@ function emptyDSTParse(parseErrors) {
 }
 
 function emptyDSBParse(parseErrors) {
-  return { format: 'DSB', binaryFileValid: false, machineReadableLikely: false, headerValid: false, recordCount: 0, recordLengthValid: false, endPresent: false, dsbActuallyDstRenamed: false, dsbStructureRecognized: false, parsedCommands: 0, parsedStitches: 0, parsedJumps: 0, parsedTrims: 0, parsedColorChanges: 0, parsedColors: 0, parseErrors };
+  return { format: 'DSB', binaryFileValid: false, machineReadableLikely: false, headerValid: false, headerST: null, headerCO: null, recordCount: 0, recordLengthValid: false, endPresent: false, dsbActuallyDstRenamed: false, dsbStructureRecognized: false, parsedCommands: 0, parsedStitches: 0, parsedJumps: 0, parsedTrims: 0, parsedColorChanges: 0, parsedColors: 0, parseErrors };
 }
 
 function toHex(bytes) {
