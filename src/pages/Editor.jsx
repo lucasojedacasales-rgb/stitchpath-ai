@@ -706,6 +706,19 @@ export default function Editor() {
         )}
       </div>
 
+      <div className="flex-shrink-0 border-b border-emerald-500/30 bg-emerald-950/20 px-4 py-3 text-sm text-slate-300">
+        <div className="max-w-6xl mx-auto">
+          <div className="mb-1 font-bold text-emerald-300">Prueba recomendada:</div>
+          <ol className="list-decimal space-y-0.5 pl-5">
+            <li>Exporta primero DSB.</li>
+            <li>Si DSB no abre, prueba DST.</li>
+            <li>Haz foto de la pantalla de la máquina.</li>
+            <li>Comprueba si la máquina muestra tamaño, colores y puntadas.</li>
+            <li>No bordar todavía si visualmente ves líneas peligrosas; primero confirmar que lo acepta.</li>
+          </ol>
+        </div>
+      </div>
+
       <div className="flex-1 flex overflow-hidden">
         {!focusMode && isCleanMode && (
           cleanConfigOpen ? (

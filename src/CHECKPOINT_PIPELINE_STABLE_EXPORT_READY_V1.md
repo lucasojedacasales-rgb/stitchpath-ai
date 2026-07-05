@@ -3,11 +3,12 @@
 checkpointName=CHECKPOINT_PIPELINE_STABLE_EXPORT_READY_V1
 checkpointCreated=true
 createdAt=2026-07-05
-projectId=6a48d4f03ec7e0d075352fc9
 
-## Estado congelado
+## Estado estable congelado
 
 pipelineStable=true
+safeToTestExport=true
+safeToContinueQualityWork=true
 exportAllowed=true
 exportBlocked=false
 exportBlockingReason=none
@@ -20,10 +21,16 @@ finalLookMatchesFinalCommands=true
 exportUsesSameCommandSequence=true
 visualWorse=false
 visualSame=true
+fillStillPicado=false
+silhouettePreserved=true
+eyesMouthPreserved=true
+orangeFeetPreserved=true
+blackOutlineTooDirty=false
 noCriticalVisualRegression=true
 
-## Métricas base
+## Secuencia congelada
 
+commandSource=finalEmbroideryCommands
 totalCommands=8288
 totalStitches=7780
 totalJumps=380
@@ -34,30 +41,33 @@ visibleDiagonalStitches=86
 unsupportedLongStitches=0
 fillOutsideRegionCount=38
 
-## Prueba de generación
+## Preparación de prueba real
 
 dstGenerated=true
 dsbGenerated=true
-dstBytes=26073
-dsbBytes=25029
 recommendedFirstFormat=DSB
 recommendedSecondFormat=DST
+machineTestReady=true
+safeToProceedToLocalLongStitchRepair=true
+localLongStitchRepairApplied=false
 
-## Restricciones
+## Alcance protegido
 
 vectorizationEngineUnchanged=true
 stitchGenerationUnchanged=true
 referenceLearningUnchanged=true
 stpFilesUnchanged=true
-encodersUnchanged=true
+encodersDstDsbUnchanged=true
 exportModalUnchanged=true
 v51Unchanged=true
 universalValidationUnchanged=true
 ce01SafeFillGeneratorUnchanged=true
-professionalDigitizingModeUnchanged=true
-reorderProfessionalLayersUnchanged=true
+professionalDigitizingModeUnchangedInThisCheckpointStep=true
+reorderProfessionalLayersUnchangedInThisCheckpointStep=true
 underlayUnchanged=true
 splitterUnchanged=true
 satinUnchanged=true
 regionSafeTatamiRebuilderUnchanged=true
-localLongStitchRepairNotApplied=true
+commandsRepaired=false
+fillsRebuilt=false
+qualityImprovementApplied=false

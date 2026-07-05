@@ -1,12 +1,11 @@
 # EXPORT_MACHINE_ACCEPTANCE_TEST_V1
 
-Objetivo: preparar prueba real de aceptación en máquina usando el estado estable congelado del pipeline.
+Objetivo: congelar el estado estable validado y preparar prueba real de exportación en máquina antes de seguir con mejoras visuales.
 
 ## Checkpoint
 
 checkpointCreated=true
 checkpointName=CHECKPOINT_PIPELINE_STABLE_EXPORT_READY_V1
-projectId=6a48d4f03ec7e0d075352fc9
 
 ## Estado de exportación
 
@@ -19,23 +18,20 @@ formatStatusDSB=VALID
 
 ## Archivos generados
 
-Los archivos DST y DSB fueron generados mediante el backend existente `exportEmbroideryFile`, usando exactamente la misma secuencia `finalEmbroideryCommands` validada.
-
+commandSource=finalEmbroideryCommands
 dstGenerated=true
 dsbGenerated=true
-dstBytes=26073
-dsbBytes=25029
 recommendedFirstFormat=DSB
 recommendedSecondFormat=DST
 
-## Sincronización de comandos
+## Sincronización
 
 finalLookExportMismatch=false
 simulationMatchesFinalCommands=true
 finalLookMatchesFinalCommands=true
 exportUsesSameCommandSequence=true
 
-## Métricas de comandos
+## Métricas de aceptación
 
 totalCommands=8288
 totalStitches=7780
@@ -47,7 +43,17 @@ visibleDiagonalStitches=86
 unsupportedLongStitches=0
 fillOutsideRegionCount=38
 
-## Instrucciones visibles para la prueba
+## Estado visual validado
+
+visualWorse=false
+visualSame=true
+fillStillPicado=false
+silhouettePreserved=true
+eyesMouthPreserved=true
+orangeFeetPreserved=true
+blackOutlineTooDirty=false
+
+## Instrucciones visibles para el usuario
 
 Prueba recomendada:
 1. Exporta primero DSB.
@@ -58,9 +64,18 @@ Prueba recomendada:
 
 ## Decisión
 
-DSB y DST son válidos, el export no está bloqueado y Simular/Final/Export usan la misma secuencia de comandos. No se aplicó reparación local ni mejora visual en este paso.
-
 machineTestReady=true
 recommendedFirstFormat=DSB
 recommendedSecondFormat=DST
 safeToProceedToLocalLongStitchRepair=true
+
+## Restricciones cumplidas
+
+localLongStitchRepairApplied=false
+qualityImprovementApplied=false
+commandsTouched=false
+fillsRebuilt=false
+stpProcessed=false
+referenceLearningChanged=false
+encodersChanged=false
+exportModalChanged=false
