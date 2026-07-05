@@ -1,0 +1,63 @@
+# CHECKPOINT_PIPELINE_STABLE_EXPORT_READY_V1
+
+checkpointName=CHECKPOINT_PIPELINE_STABLE_EXPORT_READY_V1
+checkpointCreated=true
+createdAt=2026-07-05
+projectId=6a48d4f03ec7e0d075352fc9
+
+## Estado congelado
+
+pipelineStable=true
+exportAllowed=true
+exportBlocked=false
+exportBlockingReason=none
+universalStatus=VALID
+formatStatusDST=VALID
+formatStatusDSB=VALID
+finalLookExportMismatch=false
+simulationMatchesFinalCommands=true
+finalLookMatchesFinalCommands=true
+exportUsesSameCommandSequence=true
+visualWorse=false
+visualSame=true
+noCriticalVisualRegression=true
+
+## Métricas base
+
+totalCommands=8288
+totalStitches=7780
+totalJumps=380
+totalTrims=116
+totalColors=7
+maxVisibleStitchMm=5.316
+visibleDiagonalStitches=86
+unsupportedLongStitches=0
+fillOutsideRegionCount=38
+
+## Prueba de generación
+
+dstGenerated=true
+dsbGenerated=true
+dstBytes=26073
+dsbBytes=25029
+recommendedFirstFormat=DSB
+recommendedSecondFormat=DST
+
+## Restricciones
+
+vectorizationEngineUnchanged=true
+stitchGenerationUnchanged=true
+referenceLearningUnchanged=true
+stpFilesUnchanged=true
+encodersUnchanged=true
+exportModalUnchanged=true
+v51Unchanged=true
+universalValidationUnchanged=true
+ce01SafeFillGeneratorUnchanged=true
+professionalDigitizingModeUnchanged=true
+reorderProfessionalLayersUnchanged=true
+underlayUnchanged=true
+splitterUnchanged=true
+satinUnchanged=true
+regionSafeTatamiRebuilderUnchanged=true
+localLongStitchRepairNotApplied=true

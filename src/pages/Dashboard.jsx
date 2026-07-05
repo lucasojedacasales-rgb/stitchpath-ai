@@ -104,6 +104,17 @@ export default function Dashboard() {
           />
         </div>
 
+        <div className="mb-6 rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-4 text-sm text-slate-300">
+          <div className="mb-2 font-bold text-emerald-300">Prueba recomendada:</div>
+          <ol className="list-decimal space-y-1 pl-5">
+            <li>Exporta primero DSB.</li>
+            <li>Si DSB no abre, prueba DST.</li>
+            <li>Haz foto de la pantalla de la máquina.</li>
+            <li>Comprueba si la máquina muestra tamaño, colores y puntadas.</li>
+            <li>No bordar todavía si visualmente ves líneas peligrosas; primero confirmar que lo acepta.</li>
+          </ol>
+        </div>
+
         {loading ? (
           <div className="flex items-center justify-center py-24">
             <div className="w-8 h-8 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" />
