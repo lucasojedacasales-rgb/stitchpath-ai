@@ -48,6 +48,7 @@ import LearnedPresetValidationPanel from '@/components/referenceLearning/Learned
 import IntegratedPipelineReportButton from '@/components/referenceLearning/IntegratedPipelineReportButton';
 import CommandRuntimeForensicsPanel from '@/components/editor/CommandRuntimeForensicsPanel';
 import { applyStitchedTransitionToJumpGuard } from '@/lib/stitchTransitionGuard';
+import { logSafeBootStatus } from '@/lib/safeBoot';
 
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
@@ -115,6 +116,10 @@ export default function Editor() {
   const [outlineReport, setOutlineReport] = useState(null);
   const [darkStroke, setDarkStroke] = useState(null);
   const timerRef = useRef(null);
+
+  useEffect(() => {
+    logSafeBootStatus('Editor');
+  }, []);
 
   // ── Dark stroke detection — "dark stroke first" contour system ──
   // Computes a mask of real dark lines from the original image so the contour

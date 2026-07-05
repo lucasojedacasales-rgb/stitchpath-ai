@@ -72,5 +72,9 @@ export default function LearnedConfigDiffPanel({ diff, profileName, confidence, 
 
 function fmtVal(v, d) {
   if (v == null) return '—';
-  return `${Number(v).toFixed(d.precision)}${d.unit}`;
+  if (typeof v === 'boolean') return v ? 'sí' : 'no';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'object') return JSON.stringify(v);
+  const n = Number(v);
+  return Number.isFinite(n) ? `${n.toFixed(d.precision)}${d.unit}` : String(v);
 }

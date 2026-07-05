@@ -16,6 +16,7 @@ import { buildProfessionalPresetFromLearnedProfile } from './learnedPresetBuilde
 import { compareCurrentDesignToLearnedCorpus } from './referenceDesignComparator';
 import { generateReferenceLearningAppliedReport } from './referenceAppliedReportGenerator';
 import { loadLearningState } from './referenceLearningState';
+import { SAFE_APP_BOOT_MODE_V1, logBootError } from '@/lib/safeBoot';
 
 /**
  * @param {object} ctx
@@ -84,16 +85,25 @@ export function applyLearnedProfileToProfessionalMode(ctx) {
  * @param {Array} regions — regiones generadas por el pipeline
  * @returns {object|null} { configPatch, selection, preset, diff } o null si no hay aprendizaje
  */
-export function autoApplyLearnedProfileForDesign(regions) {
-  const state = loadLearningState();
-  if (!state || !state.learnedProfiles || state.learnedProfiles.length === 0) return null;
-  const selection = selectBestLearnedProfileForCurrentDesign(regions || [], [], state.learnedProfiles);
-  if (!selection.selectedProfile) return null;
-  const preset = buildProfessionalPresetFromLearnedProfile(selection.selectedProfile, state.learnedRules || []);
-  if (!preset) return null;
-  const configPatch = presetToConfigPatch(preset);
-  const diff = buildConfigDiff(configPatch);
-  return { configPatch, selection, preset, diff };
+export function autoApplyLearnedProfileForDesign(regions, options = {}) {
+  if (SAFE_APP_BOOT_MODE_V1 && !options.allowAutoApply) {
+    console.log('[BOOT] reference learning skipped until manual run');
+    return null;
+  }
+  try {
+    const state = loadLearningState();
+    if (!state || !state.learnedProfiles || state.learnedProfiles.length === 0) return null;
+    const selection = selectBestLearnedProfileForCurrentDesign(regions || [], [], state.learnedProfiles);
+    if (!selection.selectedProfile) return null;
+    const preset = buildProfessionalPresetFromLearnedProfile(selection.selectedProfile, state.learnedRules || []);
+    if (!preset) return null;
+    const configPatch = presetToConfigPatch(preset);
+    const diff = buildConfigDiff(configPatch);
+    return { configPatch, selection, preset, diff };
+  } catch (error) {
+    logBootError(error);
+    return null;
+  }
 }
 
 /**

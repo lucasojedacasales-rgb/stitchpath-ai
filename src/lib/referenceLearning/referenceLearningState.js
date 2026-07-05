@@ -10,6 +10,7 @@
 import { getAcceptedMachineSamples } from './acceptedMachineSamples';
 
 const STORAGE_KEY = 'referenceLearningState_v2';
+const MAX_SAFE_LEARNING_STATE_BYTES = 2_000_000;
 
 export function saveLearningState(state) {
   if (!state) return;
@@ -41,10 +42,16 @@ export function loadLearningState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
+    if (raw.length > MAX_SAFE_LEARNING_STATE_BYTES) {
+      console.warn('[referenceLearningState] oversized state ignored for safe boot');
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
     const parsed = JSON.parse(raw);
     return { ...parsed, acceptedMachineSamples: parsed.acceptedMachineSamples || getAcceptedMachineSamples() };
   } catch (e) {
-    console.warn('[referenceLearningState] load failed:', e.message);
+    console.warn('[referenceLearningState] load failed, state ignored for safe boot:', e.message);
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
     return null;
   }
 }
