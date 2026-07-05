@@ -508,7 +508,6 @@ export default function Editor() {
     { id: 'diagnostic', label: '🔬 Diagnóstico' },
     { id: 'prof',       label: '★ Profesional' },
     { id: 'learn',      label: '✨ Aprendizaje' },
-    { id: 'panel',     label: 'Panel' },
   ];
   const visibleTabs = isLabMode ? labTabs : simpleTabs;
   useEffect(() => {
@@ -818,7 +817,7 @@ export default function Editor() {
                   result={aiResult} status={aiStatus} progress={aiProgress}
                   error={aiError} isLoading={aiLoading}
                   onProceed={() => {if (aiResult) startProcessing(aiResult.strategy);}}
-                  onAdjustParams={() => {setShowDecisionPanel(false);setActiveTab('panel');}}
+                  onAdjustParams={() => {setShowDecisionPanel(false);setEditorUiMode('lab');setActiveTab('editor');}}
                   onCancel={() => {setShowDecisionPanel(false);resetAI();}}
                 />
               </div>
