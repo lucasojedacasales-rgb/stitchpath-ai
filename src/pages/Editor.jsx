@@ -625,6 +625,17 @@ export default function Editor() {
     }));
   }, []);
 
+  const handleApplyLearnedConfig = useCallback((patch) => {
+    const nextConfig = { ...configRef.current, ...patch };
+    configRef.current = nextConfig;
+    setConfig(nextConfig);
+    if (project?.id) {
+      base44.entities.Project.update(project.id, { config: nextConfig })
+        .then(setProject)
+        .catch((error) => console.error('[reference-learning] persist learned config failed:', error));
+    }
+  }, [project?.id]);
+
   if (loading) return <div className="min-h-screen bg-[#0d0f14] flex items-center justify-center"><div className="w-8 h-8 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" /></div>;
 
   return (
@@ -936,7 +947,7 @@ export default function Editor() {
                 darkStroke={darkStroke}
                 machineSettings={editorMachineSettings}
                 designName={project?.name}
-                onApplyConfig={(patch) => setConfig(c => ({ ...c, ...patch }))}
+                onApplyConfig={handleApplyLearnedConfig}
                 showDownloads={showProfessionalReports}
               />
               {showProfessionalReports && (
@@ -956,7 +967,7 @@ export default function Editor() {
                   embeddedProjectCommands={finalEmbroideryCommands.commands}
                   embeddedProjectRegions={regions}
                   embeddedProjectName={project?.name}
-                  onApplyLearnedConfig={(patch) => setConfig(c => ({ ...c, ...patch }))}
+                  onApplyLearnedConfig={handleApplyLearnedConfig}
                 />
               </div>
             </div>
