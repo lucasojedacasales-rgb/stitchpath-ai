@@ -1,242 +1,303 @@
 # REFERENCE_INTEGRATED_PIPELINE_AFTER_SATIN_V1 — StitchPath AI
 
 > Generado: 2026-07-05  
-> Alcance: validación integrada posterior a `SATIN_OUTER_CONTOUR_CONVERTER_V1`.  
-> Restricción aplicada: **no se modificó código**. Este informe compara el flujo integrado observado en el código con las métricas reportadas por `SATIN_OUTER_CONTOUR_CONVERTER_REPORT_V1` y `REFERENCE_LEARNING_VALIDATED_REPORT_AFTER_SATIN_OUTER_CONTOUR`.
+> Tipo: informe obligatorio de validación integrada posterior a `SATIN_OUTER_CONTOUR_CONVERTER_V1`.  
+> Restricción: **NO modificar código**.  
+> No se regeneran: `SATIN_OUTER_CONTOUR_CONVERTER_REPORT_V1.md` ni `REFERENCE_LEARNING_VALIDATED_REPORT_AFTER_SATIN_OUTER_CONTOUR.md`.
 
 ---
 
-## 1. Punto de partida
+## 1. Objetivo del informe
 
-Checkpoint/base declarada:
-
-- `CHECKPOINT_UI_EXPORT_CENTER_CLEANUP_V1_VALIDATED`
-- `REFERENCE_TRIM_GUARD_V1` aplicado
-- `REFERENCE_VISIBLE_STITCH_SPLITTER_V1_2` cerrado como `NO_EFFECTIVE_REVERTED`
-- `SATIN_OUTER_CONTOUR_CONVERTER_V1` implementado
-
-Métricas aportadas por los reportes existentes:
-
-### SATIN_OUTER_CONTOUR_CONVERTER_REPORT_V1
-
-| Métrica | Antes SATIN | Después SATIN | Δ |
-|---|---:|---:|---:|
-| satinContourCount | 0 | 1 | +1 |
-| runningContourCount | 3 | 2 | -1 |
-| jumpCount | 301 | 301 | 0 |
-| trimCount | 91 | 91 | 0 |
-| CE01 status | RISKY | RISKY | — |
-| finalLookExportMismatch | false | false | — |
-| phaseAccepted | — | true | — |
-
-### REFERENCE_LEARNING_VALIDATED_REPORT_AFTER_SATIN_OUTER_CONTOUR
-
-| Métrica | Antes | Después | Δ |
-|---|---:|---:|---:|
-| visibleDiagonalStitches | 6 | 6 | 0 |
-| professionalScore | 60 | 60 | 0 |
-| trimCount | 91 | 91 | 0 |
-| verdict | — | NEUTRAL | — |
-
----
-
-## 2. Pipeline integrado solicitado
-
-Orden solicitado para esta validación:
+Validar si `SATIN_OUTER_CONTOUR_CONVERTER_V1` está siendo medido como parte del pipeline completo integrado, con SATIN aplicado **después** de:
 
 1. `buildFinalCommands`
 2. `applyProfessionalPipeline` con preset `learned*`
-3. conversión de diagonales/travel existente
+3. conversión/reparación de diagonales/travel existente
 4. `REFERENCE_TRIM_GUARD_V1`
 5. `REFERENCE_VISIBLE_STITCH_SPLITTER_V1_2`
-   - debe quedar `NO_EFFECTIVE_REVERTED`
-   - no debe añadir puntadas reales
 6. `SATIN_OUTER_CONTOUR_CONVERTER_V1`
 7. `professionalEmbroideryQualityGate` final
 
 ---
 
-## 3. Pipeline integrado observado en la implementación actual
+## 2. Resultado ejecutivo obligatorio
 
-La implementación actual de `applyProfessionalPipeline` ejecuta las fases en este orden efectivo:
+```txt
+integratedValidation=false
+trimGuardApplied=true
+visibleSplitterStatus=NO_EFFECTIVE_REVERTED
+satinPhaseApplied=true
+qualityGateMeasuredFinalReturnedCommands=true
+safeToKeepSatin=false
+```
 
-1. Proyección de parámetros `learned*` a `professionalParams`
-2. `professionalColorReducer`
-3. `reorderProfessionalLayers`
+### Motivo principal
+
+`safeToKeepSatin=false` **en esta validación integrada estricta** porque el criterio exige `integratedValidation=true`, y el pipeline actual no mide SATIN en el orden obligatorio solicitado.
+
+La fase SATIN puede ser localmente segura, pero este informe no puede marcarla como segura de conservar bajo el contrato integrado porque SATIN no está siendo aplicado después de Trim Guard + Splitter dentro del pipeline actual.
+
+---
+
+## 3. Pipeline obligatorio a medir
+
+| Paso | Fase obligatoria | Estado en validación integrada estricta |
+|---:|---|---|
+| 1 | `buildFinalCommands` | presente |
+| 2 | `applyProfessionalPipeline` con preset `learned*` | presente |
+| 3 | conversión/reparación de diagonales/travel existente | presente |
+| 4 | `REFERENCE_TRIM_GUARD_V1` | presente |
+| 5 | `REFERENCE_VISIBLE_STITCH_SPLITTER_V1_2` | presente, esperado `NO_EFFECTIVE_REVERTED` |
+| 6 | `SATIN_OUTER_CONTOUR_CONVERTER_V1` | presente, pero actualmente ejecutado antes de pasos 3–5 |
+| 7 | `professionalEmbroideryQualityGate` final | presente |
+
+---
+
+## 4. Orden real observado del pipeline actual
+
+El orden efectivo actual de `applyProfessionalPipeline` es:
+
+1. proyección de preset `learned*` a `professionalParams`
+2. reducción de colores
+3. reordenamiento de capas
 4. `SATIN_OUTER_CONTOUR_CONVERTER_V1`
-5. `repairVisibleDiagonalStitches`
-6. `validateVisibleStitchesBeforeExport`
-7. conversión `useSatinForOuterContours=false` si aplica
+5. reparación de diagonales visibles
+6. sanitizado/travel existente
+7. conversión `useSatinForOuterContours=false`, si aplica
 8. `REFERENCE_TRIM_GUARD_V1`
 9. `REFERENCE_VISIBLE_STITCH_SPLITTER_V1_2`
 10. `professionalEmbroideryQualityGate` final
 
-### Hallazgo principal
+### Validación de integración
 
-El orden real **no coincide** con el orden solicitado para la validación integrada posterior a SATIN:
+```txt
+integratedValidation=false
+```
 
-- En el código actual, `SATIN_OUTER_CONTOUR_CONVERTER_V1` se ejecuta **antes** de:
-  - reparación de diagonales/travel,
-  - `REFERENCE_TRIM_GUARD_V1`,
-  - `REFERENCE_VISIBLE_STITCH_SPLITTER_V1_2`,
-  - quality gate final.
+Razón:
 
-Por tanto, el reporte propio de SATIN mide un checkpoint local de la fase SATIN, no un checkpoint “post Trim Guard + post Splitter”.
-
----
-
-## 4. A. Estado antes de SATIN
-
-Según `SATIN_OUTER_CONTOUR_CONVERTER_REPORT_V1`, el estado inmediatamente anterior a SATIN es:
-
-| Métrica | Valor |
-|---|---:|
-| stitchCount | no incluido en el extracto aportado |
-| jumpCount | 301 |
-| trimCount | 91 |
-| visibleDiagonalStitches | 6 según validación global aportada |
-| maxVisibleStitchMm | no incluido en el extracto aportado |
-| satinContourCount | 0 |
-| runningContourCount | 3 |
-| underlayCount | no incluido en el extracto aportado |
-| professionalScore | 60 según validación global aportada |
-| finalLookExportMismatch | false |
-| ce01Status | RISKY |
-
-Notas:
-
-- `SATIN_OUTER_CONTOUR_CONVERTER_REPORT_V1` sí contiene campos para `beforeMaxVisibleStitchMm` y `beforeUnderlayCount`, pero esos valores no aparecen en el extracto proporcionado.
-- El baseline “antes de SATIN” es un checkpoint interno dentro de `applyProfessionalPipeline`, no necesariamente el estado integrado después de Trim Guard/Splitter.
+- El contrato obligatorio pide medir SATIN **después** de Trim Guard y Splitter.
+- El pipeline actual ejecuta SATIN **antes** de reparación de diagonales/travel, Trim Guard y Splitter.
+- Por tanto, cualquier tabla antes/después de SATIN generada por la fase actual es un baseline local de SATIN, no un baseline integrado post-TrimGuard/post-Splitter.
 
 ---
 
-## 5. B. Estado después de SATIN
+## 5. Flags requeridos
 
-Según `SATIN_OUTER_CONTOUR_CONVERTER_REPORT_V1` y la validación global aportada:
-
-| Métrica | Valor |
-|---|---:|
-| stitchCount | no incluido en el extracto aportado |
-| jumpCount | 301 |
-| trimCount | 91 |
-| visibleDiagonalStitches | 6 |
-| maxVisibleStitchMm | no incluido en el extracto aportado |
-| satinContourCount | 1 |
-| runningContourCount | 2 |
-| underlayCount | no incluido en el extracto aportado |
-| professionalScore | 60 |
-| finalLookExportMismatch | false |
-| ce01Status | RISKY |
-
-Resultado local de SATIN:
-
-- `phaseAccepted=true`
-- `satinContourCount` sube: `0 → 1`
-- `runningContourCount` baja: `3 → 2`
-- `jumpCount` no sube: `301 → 301`
-- `trimCount` no sube: `91 → 91`
-- `CE01` no pasa a `INVALID`: `RISKY → RISKY`
-- `finalLookExportMismatch` permanece `false`
-- `professionalScore` permanece estable: `60 → 60`
-- `visibleDiagonalStitches` permanece estable: `6 → 6`
-
----
-
-## 6. C. Verificación de baseline integrado
-
-| Verificación | Resultado | Evidencia |
+| Flag | Valor | Justificación |
 |---|---|---|
-| El reporte no usa baseline aislado | **false / parcial** | El reporte de SATIN usa un checkpoint local antes/después de SATIN dentro de `applyProfessionalPipeline`; no usa el estado final posterior a Trim Guard + Splitter como baseline previo. |
-| Trim Guard está activo | **true** | `applyProfessionalPipeline` ejecuta `insertTrimBeforeLongJumpsGuarded` cuando `trimBeforeTravelMm > 0`. El escenario base declara `REFERENCE_TRIM_GUARD_V1 aplicado`. |
-| Splitter V1_2 está revertido si no efectivo | **true** | `splitLongVisibleFillStitchesGuardedV1_1` genera reporte versión `REFERENCE_VISIBLE_STITCH_SPLITTER_V1_2` y retorna `commandsReturnedSource='beforeSplitter'` cuando `phaseStatus='NO_EFFECTIVE_REVERTED'`. |
-| Splitter no añade puntadas reales cuando queda `NO_EFFECTIVE_REVERTED` | **true esperado** | En V1_2, si `phaseAccepted=false`, `addedStitchesReturned=0` y se devuelven los comandos previos al splitter. |
-| SATIN se aplica después del Trim Guard | **false** | En el orden actual, SATIN se ejecuta antes de reparación de diagonales, Trim Guard y Splitter. |
-| SATIN se aplica después del Splitter V1_2 | **false** | En el orden actual, Splitter corre después de SATIN. |
-| Quality Gate final mide comandos realmente devueltos | **true** | El gate final se ejecuta sobre `procCommands` tras las fases transaccionales y sus posibles reversiones. |
+| integratedValidation | false | SATIN no está medido después de Trim Guard + Splitter. |
+| trimGuardApplied | true | `REFERENCE_TRIM_GUARD_V1` está en el pipeline y se ejecuta cuando `trimBeforeTravelMm > 0`. |
+| visibleSplitterStatus | NO_EFFECTIVE_REVERTED | Estado esperado/declarado para V1_2; al quedar no efectivo debe devolver `beforeSplitter`. |
+| satinPhaseApplied | true | `SATIN_OUTER_CONTOUR_CONVERTER_V1` está implementado y aplicado cuando `professionalMode=true` + `learnedUseSatinForOuterContours=true`. |
+| qualityGateMeasuredFinalReturnedCommands | true | El quality gate final mide `procCommands` después de las fases transaccionales y sus reversiones. |
 
 ---
 
-## 7. Explicación de la discrepancia observada
+## 6. Verificación específica de Splitter V1_2
 
-La discrepancia entre:
+| Condición requerida | Resultado |
+|---|---|
+| Debe quedar `NO_EFFECTIVE_REVERTED` | true esperado |
+| Debe devolver `beforeSplitter` | true esperado |
+| No debe añadir puntadas reales | true esperado |
 
-- `SATIN_OUTER_CONTOUR_CONVERTER_REPORT_V1`: `phaseAccepted=true`, mejora de contornos;
-- `REFERENCE_LEARNING_VALIDATED_REPORT_AFTER_SATIN_OUTER_CONTOUR`: `verdict NEUTRAL`, `visibleDiagonalStitches 6 → 6`, `professionalScore 60 → 60`;
+Cuando V1_2 queda como `NO_EFFECTIVE_REVERTED`, el comportamiento correcto es:
 
-no indica necesariamente una regresión técnica.
+```txt
+phaseAccepted=false
+phaseStatus=NO_EFFECTIVE_REVERTED
+commandsReturnedSource=beforeSplitter
+addedStitchesReturned=0
+```
 
-Indica que los reportes están midiendo niveles distintos:
-
-1. **SATIN_OUTER_CONTOUR_CONVERTER_REPORT_V1** mide el efecto local de convertir running outer contour a satin en el punto donde se ejecuta la fase.
-2. **REFERENCE_LEARNING_VALIDATED_REPORT_AFTER_SATIN_OUTER_CONTOUR** mide el resultado global del preset aprendido contra el baseline general del flujo de referencia.
-3. Como SATIN solo mejora la clasificación de contorno (`satinContourCount 0 → 1`, `runningContourCount 3 → 2`) pero no cambia diagonales, trims, jumps ni score, el veredicto global puede quedar `NEUTRAL` aunque la fase SATIN sea aceptada y segura.
-
----
-
-## 8. D. Resultado esperado solicitado
-
-| Flag | Valor | Motivo |
-|---|---|---|
-| integratedValidation | **false** | El orden observado no valida SATIN después de Trim Guard + Splitter; SATIN corre antes. |
-| satinPhaseAccepted | **true** | Reporte SATIN: `phaseAccepted=true`. |
-| satinImprovedContour | **true** | `satinContourCount 0 → 1` y `runningContourCount 3 → 2`. |
-| visibleDiagonalRegression | **false** | `visibleDiagonalStitches 6 → 6`; no sube. |
-| finalLookExportMismatchRegression | **false** | `finalLookExportMismatch false → false`. |
-| ce01InvalidRegression | **false** | `CE01 RISKY → RISKY`; no pasa a `INVALID`. |
-| safeToKeepSatin | **true, con nota de orden** | La fase cumple criterios de seguridad locales; falta validar el orden solicitado si se requiere SATIN estrictamente después de Trim Guard/Splitter. |
+Esto evita que el splitter modifique realmente la secuencia final cuando no mejora `maxVisibleStitchMm`.
 
 ---
 
-## 9. Criterio para mantener SATIN_OUTER_CONTOUR_CONVERTER_V1
+## 7. Tabla antes/después de SATIN dentro del pipeline integrado
+
+### Estado de medición
+
+La tabla integrada estricta **no puede certificarse como medida en el orden obligatorio** sin modificar el pipeline o añadir un validador dedicado, porque SATIN actualmente ocurre antes de Trim Guard + Splitter.
+
+Por tanto, los valores disponibles corresponden al reporte local de SATIN y/o al reporte global posterior, pero no a una medición integrada con SATIN como paso 6.
+
+### Antes de SATIN — estado integrado requerido
+
+| Métrica | Valor integrado requerido |
+|---|---|
+| stitchCount | NOT_MEASURED_IN_REQUIRED_ORDER |
+| jumpCount | NOT_MEASURED_IN_REQUIRED_ORDER |
+| trimCount | NOT_MEASURED_IN_REQUIRED_ORDER |
+| visibleDiagonalStitches | NOT_MEASURED_IN_REQUIRED_ORDER |
+| maxVisibleStitchMm | NOT_MEASURED_IN_REQUIRED_ORDER |
+| satinContourCount | NOT_MEASURED_IN_REQUIRED_ORDER |
+| runningContourCount | NOT_MEASURED_IN_REQUIRED_ORDER |
+| underlayCount | NOT_MEASURED_IN_REQUIRED_ORDER |
+| professionalScore | NOT_MEASURED_IN_REQUIRED_ORDER |
+| finalLookExportMismatch | NOT_MEASURED_IN_REQUIRED_ORDER |
+| ce01Status | NOT_MEASURED_IN_REQUIRED_ORDER |
+
+### Después de SATIN — estado integrado requerido
+
+| Métrica | Valor integrado requerido |
+|---|---|
+| stitchCount | NOT_MEASURED_IN_REQUIRED_ORDER |
+| jumpCount | NOT_MEASURED_IN_REQUIRED_ORDER |
+| trimCount | NOT_MEASURED_IN_REQUIRED_ORDER |
+| visibleDiagonalStitches | NOT_MEASURED_IN_REQUIRED_ORDER |
+| maxVisibleStitchMm | NOT_MEASURED_IN_REQUIRED_ORDER |
+| satinContourCount | NOT_MEASURED_IN_REQUIRED_ORDER |
+| runningContourCount | NOT_MEASURED_IN_REQUIRED_ORDER |
+| underlayCount | NOT_MEASURED_IN_REQUIRED_ORDER |
+| professionalScore | NOT_MEASURED_IN_REQUIRED_ORDER |
+| finalLookExportMismatch | NOT_MEASURED_IN_REQUIRED_ORDER |
+| ce01Status | NOT_MEASURED_IN_REQUIRED_ORDER |
+
+---
+
+## 8. Valores existentes, no integrados en el orden obligatorio
+
+Estos valores existen en los reportes previos, pero **no deben confundirse** con la tabla integrada estricta anterior.
+
+| Métrica | Antes SATIN local | Después SATIN local | Interpretación |
+|---|---:|---:|---|
+| satinContourCount | 0 | 1 | SATIN mejora contorno localmente |
+| runningContourCount | 3 | 2 | SATIN reduce running contour localmente |
+| jumpCount | 301 | 301 | sin regresión local |
+| trimCount | 91 | 91 | sin regresión local |
+| visibleDiagonalStitches | 6 | 6 | no cambia en validación global/local aportada |
+| professionalScore | 60 | 60 | no cambia en validación global/local aportada |
+| ce01Status | RISKY | RISKY | sin regresión local |
+| finalLookExportMismatch | false | false | sin regresión local |
+
+Estos valores sostienen que SATIN es localmente no regresivo, pero no prueban `integratedValidation=true`.
+
+---
+
+## 9. Criterio `safeToKeepSatin`
+
+Criterio solicitado:
+
+`safeToKeepSatin=true` solo si:
+
+- `integratedValidation=true`
+- `satinContourCount` sube
+- `runningContourCount` baja o se mantiene
+- `visibleDiagonalStitches` no sube respecto al estado integrado anterior
+- `jumpCount` no sube más de 10
+- `trimCount` no sube más de 10
+- CE01 no pasa a `INVALID`
+- `finalLookExportMismatch` sigue `false`
+- `professionalScore` no baja más de 3
+
+Evaluación:
 
 | Criterio | Resultado |
 |---|---|
-| satinContourCount sube | ✅ `0 → 1` |
-| runningContourCount baja o se mantiene | ✅ `3 → 2` |
-| visibleDiagonalStitches no sube respecto al estado integrado anterior | ✅ `6 → 6` según reporte global aportado |
+| integratedValidation=true | ❌ false |
+| satinContourCount sube | ✅ localmente `0 → 1` |
+| runningContourCount baja o se mantiene | ✅ localmente `3 → 2` |
+| visibleDiagonalStitches no sube | ✅ valores aportados `6 → 6` |
 | jumpCount no sube más de 10 | ✅ `301 → 301` |
 | trimCount no sube más de 10 | ✅ `91 → 91` |
 | CE01 no pasa a INVALID | ✅ `RISKY → RISKY` |
 | finalLookExportMismatch sigue false | ✅ `false → false` |
 | professionalScore no baja más de 3 | ✅ `60 → 60` |
 
-### Veredicto de conservación
+Resultado:
 
-`SATIN_OUTER_CONTOUR_CONVERTER_V1` es **seguro de mantener** bajo las métricas actuales porque mejora la estructura de contorno sin degradar trims, jumps, CE01, mismatch, diagonales ni score.
+```txt
+safeToKeepSatin=false
+```
 
-Sin embargo, este informe marca `integratedValidation=false` porque la validación solicitada específicamente exige SATIN después de Trim Guard y Splitter, y la implementación actual lo ejecuta antes.
+Motivo:
+
+- Aunque todos los criterios técnicos locales pasan, falla el primer criterio obligatorio: `integratedValidation=true`.
+- Bajo la definición estricta del usuario, no se puede marcar `safeToKeepSatin=true` hasta medir SATIN después de Trim Guard + Splitter dentro del pipeline integrado.
 
 ---
 
-## 10. Conclusión
+## 10. Diagnóstico de `visibleDiagonalStitches 6→6` y `professionalScore 60→60`
+
+Si el informe vuelve a mostrar:
+
+```txt
+visibleDiagonalStitches 6 → 6
+professionalScore 60 → 60
+```
+
+la explicación correcta es:
+
+```txt
+B) baseline aislado de satin
+C) fallo de integración del validador
+```
+
+### A) baseline anterior al professional pipeline
+
+No es la explicación principal.
+
+El baseline de SATIN no parece ser el baseline bruto anterior a todo `professional pipeline`; ocurre dentro de `applyProfessionalPipeline` después de reducción de color y reordenamiento de capas.
+
+### B) baseline aislado de satin
+
+Sí.
+
+El reporte SATIN mide el antes/después local de la fase `convertRunningOuterContoursToSatinGuardedV1`, no el antes/después de SATIN colocado como paso 6 posterior a Trim Guard + Splitter.
+
+### C) fallo de integración del validador
+
+Sí, para el objetivo solicitado.
+
+El validador/reporting actual no construye explícitamente estos dos snapshots:
+
+```txt
+snapshotBeforeSatin = después de Trim Guard + después de Splitter revertido
+snapshotAfterSatin = SATIN aplicado sobre snapshotBeforeSatin
+```
+
+Por eso no puede probar la integración en el orden obligatorio.
+
+### D) fallo real del pipeline integrado
+
+No demostrado.
+
+No hay evidencia de que el pipeline integrado degrade el diseño. Lo que sí hay es un fallo de cobertura de validación: la medición no corresponde al orden contractual solicitado.
+
+---
+
+## 11. Conclusión final
 
 ```txt
 integratedValidation=false
-satinPhaseAccepted=true
-satinImprovedContour=true
-visibleDiagonalRegression=false
-finalLookExportMismatchRegression=false
-ce01InvalidRegression=false
-safeToKeepSatin=true
+trimGuardApplied=true
+visibleSplitterStatus=NO_EFFECTIVE_REVERTED
+satinPhaseApplied=true
+qualityGateMeasuredFinalReturnedCommands=true
+safeToKeepSatin=false
 ```
 
-Conclusión técnica:
+Conclusión:
 
-- SATIN V1 es **seguro de conservar**.
-- La mejora es estructural: convierte un contorno exterior running en satin.
-- No reduce diagonales visibles ni sube score, por eso el reporte global queda `NEUTRAL`.
-- No hay regresión CE01, trims, jumps ni Final Look/Export.
-- La cadena actual no valida SATIN como fase posterior a Trim Guard/Splitter; para ese contrato exacto haría falta reordenar o añadir un validador integrado específico en una iteración posterior.
-
----
-
-## 11. Acciones no realizadas por instrucción
-
-- No se implementó underlay.
-- No se cambió SATIN.
-- No se reordenó el pipeline.
-- No se modificó código.
+- El informe integrado obligatorio existe como este archivo.
+- La validación estricta falla porque SATIN no está medido después de Trim Guard + Splitter.
+- Los valores locales de SATIN no muestran regresión.
+- Aun así, por criterio explícito, `safeToKeepSatin` queda `false` hasta disponer de una medición integrada real con SATIN como paso 6.
 
 ---
 
-_Referencia integrada posterior a SATIN V1 — informe de validación sin cambios de código._
+## 12. Cambios realizados
+
+Ningún cambio de código.
+
+No se regeneraron:
+
+- `SATIN_OUTER_CONTOUR_CONVERTER_REPORT_V1.md`
+- `REFERENCE_LEARNING_VALIDATED_REPORT_AFTER_SATIN_OUTER_CONTOUR.md`
+
+Solo se creó/actualizó:
+
+- `REFERENCE_INTEGRATED_PIPELINE_AFTER_SATIN_V1.md
