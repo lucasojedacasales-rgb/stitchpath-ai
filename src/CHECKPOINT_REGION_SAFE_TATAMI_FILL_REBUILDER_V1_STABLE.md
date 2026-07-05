@@ -1,0 +1,28 @@
+# CHECKPOINT_REGION_SAFE_TATAMI_FILL_REBUILDER_V1_STABLE
+
+phase=REGION_SAFE_TATAMI_FILL_REBUILDER_V1
+phaseAccepted=true
+responsibleGeneratorFound=true
+responsibleFunctionName=generateRegionSafeTatamiFillCommands
+maxFillSegmentMm=4.229
+maxCe01SafeFillSegmentMm=4.229
+fillStitchesOver4_5mm=0
+fillStitchesOver8mm=0
+ce01SafeFillSegmentsOver6mm=0
+macroCriticalLongStitches=0
+exportBlocked=false
+universalStatus=VALID
+formatStatusDST=VALID
+formatStatusDSB=VALID
+encodersUnchanged=true
+ExportModalUnchanged=true
+ReferenceLearningUnchanged=true
+V51Unchanged=true
+SimularUnchanged=true
+FinalLookUnchanged=true
+visibleSplitterUnchanged=true
+trimGuardUnchanged=true
+underlayGeneratorUnchanged=true
+satinOuterContourConverterUnchanged=true
+
+Stable checkpoint created after source-level fill/tatami rebuild.
