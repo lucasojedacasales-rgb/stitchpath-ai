@@ -559,18 +559,11 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
     detailsLast: effectiveConfig.professionalParams?.detailsLast,
   });
 
-  // ── SATIN_OUTER_CONTOUR_CONVERTER_V1 ─────────────────────────────────────
-  // Convierte contornos exteriores running → satin de forma reversible y
-  // transaccional, sin tocar contourExportBuilder ni buildFinalCommands.
+  // ── SATIN_PHASE_ORDER_FIX_V1 ─────────────────────────────────────────────
+  // SATIN_OUTER_CONTOUR_CONVERTER_V1 se ejecuta después de Trim Guard +
+  // Splitter V1_2 y justo antes del quality gate final.
   let satinOuterContourConverter = null;
-  if (effectiveConfig.professionalMode === true && effectiveConfig.learnedUseSatinForOuterContours === true) {
-    const satinRes = convertRunningOuterContoursToSatinGuardedV1(procCommands, {
-      objects, regions: procRegions, config: effectiveConfig, darkStroke,
-    });
-    procCommands = satinRes.commands;
-    objects = satinRes.objects;
-    satinOuterContourConverter = satinRes.report;
-  }
+  let satinPhaseOrderFix = null;
 
   // FASE 1 (real) — reparar diagonales visibles ANTES del gate y de exportar.
   // Cuenta las diagonales sospechosas en bruto, repara (trim+jump) y luego el
@@ -618,7 +611,19 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
     visibleSplitter = splitRes.report;
   }
 
-  // FASE 6 — quality gate (sobre comandos reparados)
+  // ── SATIN_OUTER_CONTOUR_CONVERTER_V1 — después de Trim Guard + Splitter ──
+  const splitterStatusBeforeSatin = visibleSplitter?.phaseStatus || (visibleSplitter ? (visibleSplitter.phaseAccepted ? 'ACCEPTED' : 'REVERTED') : 'NOT_RUN');
+  const commandsSourceBeforeSatin = visibleSplitter?.commandsReturnedSource || (trimGuard ? (trimGuard.phaseAccepted ? 'trimGuard' : 'beforeTrimGuard') : 'postTravelRepair');
+  if (effectiveConfig.professionalMode === true && effectiveConfig.learnedUseSatinForOuterContours === true) {
+    const satinRes = convertRunningOuterContoursToSatinGuardedV1(procCommands, {
+      objects, regions: procRegions, config: effectiveConfig, darkStroke,
+    });
+    procCommands = satinRes.commands;
+    objects = satinRes.objects;
+    satinOuterContourConverter = satinRes.report;
+  }
+
+  // FASE 6 — quality gate (sobre comandos reparados + SATIN si fue aceptado)
   const gate = professionalEmbroideryQualityGate(procCommands, objects, procRegions, darkStroke, effectiveConfig);
   gate.colorCountBefore = colorRes.report.originalColorCount;
   gate.colorCountAfter = colorRes.report.reducedColorCount;
@@ -629,6 +634,73 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
   gate.convertedDiagonalToJump = repair.report.convertedDiagonalToJump;
   gate.longestRemovedDiagonalMm = repair.report.longestRemovedDiagonalMm;
   gate.repairedCommandsUsedForExport = true;
+
+  const satinSafeToKeep = !!satinOuterContourConverter &&
+    satinOuterContourConverter.phaseAccepted === true &&
+    satinOuterContourConverter.afterSatinContourCount > satinOuterContourConverter.beforeSatinContourCount &&
+    satinOuterContourConverter.afterRunningContourCount <= satinOuterContourConverter.beforeRunningContourCount &&
+    satinOuterContourConverter.afterVisibleDiagonalStitches <= satinOuterContourConverter.beforeVisibleDiagonalStitches &&
+    satinOuterContourConverter.afterJumpCount <= satinOuterContourConverter.beforeJumpCount + 10 &&
+    satinOuterContourConverter.afterTrimCount <= satinOuterContourConverter.beforeTrimCount + 10 &&
+    satinOuterContourConverter.afterCE01Status !== 'INVALID' &&
+    satinOuterContourConverter.afterFinalLookExportMismatch === false &&
+    satinOuterContourConverter.afterProfessionalScore >= satinOuterContourConverter.beforeProfessionalScore - 3;
+
+  satinPhaseOrderFix = {
+    version: 'SATIN_PHASE_ORDER_FIX_V1',
+    oldOrder: ['colorReducer', 'reorderLayers', 'satinOuterContourConverter', 'visibleDiagonalRepair', 'travelSanitize', 'outerSatinToRunning', 'trimGuard', 'visibleSplitter', 'qualityGate'],
+    newOrder: ['colorReducer', 'reorderLayers', 'visibleDiagonalRepair', 'travelSanitize', 'outerSatinToRunning', 'trimGuard', 'visibleSplitter', 'satinOuterContourConverter', 'qualityGate'],
+    satinMovedAfterTrimGuard: true,
+    satinMovedAfterSplitter: true,
+    satinRunsBeforeFinalQualityGate: true,
+    satinRunsOnlyOnce: true,
+    splitterStatusBeforeSatin,
+    commandsSourceBeforeSatin,
+    commandsSourceAfterSatin: satinOuterContourConverter ? (satinOuterContourConverter.phaseAccepted ? 'satinAccepted' : 'beforeSatin') : commandsSourceBeforeSatin,
+    integratedValidation: true,
+    trimGuardApplied: !!trimGuard,
+    visibleSplitterStatus: splitterStatusBeforeSatin,
+    satinPhaseApplied: !!satinOuterContourConverter,
+    qualityGateMeasuredFinalReturnedCommands: true,
+    safeToKeepSatin: satinSafeToKeep,
+    beforeSatin: satinOuterContourConverter ? {
+      stitchCount: satinOuterContourConverter.beforeStitchCount,
+      jumpCount: satinOuterContourConverter.beforeJumpCount,
+      trimCount: satinOuterContourConverter.beforeTrimCount,
+      visibleDiagonalStitches: satinOuterContourConverter.beforeVisibleDiagonalStitches,
+      maxVisibleStitchMm: satinOuterContourConverter.beforeMaxVisibleStitchMm,
+      satinContourCount: satinOuterContourConverter.beforeSatinContourCount,
+      runningContourCount: satinOuterContourConverter.beforeRunningContourCount,
+      underlayCount: satinOuterContourConverter.beforeUnderlayCount,
+      professionalScore: satinOuterContourConverter.beforeProfessionalScore,
+      finalLookExportMismatch: satinOuterContourConverter.beforeFinalLookExportMismatch,
+      ce01Status: satinOuterContourConverter.beforeCE01Status,
+    } : null,
+    afterSatin: satinOuterContourConverter ? {
+      stitchCount: satinOuterContourConverter.afterStitchCount,
+      jumpCount: satinOuterContourConverter.afterJumpCount,
+      trimCount: satinOuterContourConverter.afterTrimCount,
+      visibleDiagonalStitches: satinOuterContourConverter.afterVisibleDiagonalStitches,
+      maxVisibleStitchMm: satinOuterContourConverter.afterMaxVisibleStitchMm,
+      satinContourCount: satinOuterContourConverter.afterSatinContourCount,
+      runningContourCount: satinOuterContourConverter.afterRunningContourCount,
+      underlayCount: satinOuterContourConverter.afterUnderlayCount,
+      professionalScore: satinOuterContourConverter.afterProfessionalScore,
+      finalLookExportMismatch: satinOuterContourConverter.afterFinalLookExportMismatch,
+      ce01Status: satinOuterContourConverter.afterCE01Status,
+    } : null,
+    finalQualityGate: {
+      stitchCount: procCommands.filter((c) => c.type === 'stitch').length,
+      jumpCount: procCommands.filter((c) => c.type === 'jump').length,
+      trimCount: procCommands.filter((c) => c.type === 'trim').length,
+      visibleDiagonalStitches: gate.visibleDiagonalStitches,
+      satinContourCount: gate.satinContourCount,
+      runningContourCount: gate.runningContourCount,
+      underlayCount: gate.underlayCount,
+      professionalScore: gate.professionalScore,
+    },
+    codeFilesModified: ['src/lib/professionalDigitizingMode.js'],
+  };
 
   return {
     commands: procCommands,
@@ -642,6 +714,8 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
       trimGuard,
       visibleSplitter,
       satinOuterContourConverter,
+      satinPhaseOrderFix,
+      integratedSatinValidation: satinPhaseOrderFix,
     },
   };
 }
