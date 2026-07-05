@@ -46,6 +46,7 @@ import { autoApplyLearnedProfileForDesign } from '@/lib/referenceLearning/refere
 import LearnedConfigDiffPanel from '@/components/editor/LearnedConfigDiffPanel';
 import LearnedPresetValidationPanel from '@/components/referenceLearning/LearnedPresetValidationPanel';
 import IntegratedPipelineReportButton from '@/components/referenceLearning/IntegratedPipelineReportButton';
+import CommandRuntimeForensicsPanel from '@/components/editor/CommandRuntimeForensicsPanel';
 
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
@@ -781,6 +782,14 @@ export default function Editor() {
             </div>
           ) : activeTab === 'diagnostic' ? (
             <div className="flex-1 overflow-y-auto p-3 space-y-3">
+              <CommandRuntimeForensicsPanel
+                finalCommands={finalEmbroideryCommands.commands}
+                finalObjects={finalEmbroideryCommands.objects}
+                regions={regions}
+                config={config}
+                darkStroke={darkStroke}
+                machineSettings={editorMachineSettings}
+              />
               <RealImageDiagnosticPanel
                 imageUrl={imageUrl}
                 regions={regions}
