@@ -4,6 +4,7 @@ import { learnFromReferenceCorpus } from '@/lib/referenceLearning/referenceCorpu
 import { applyLearnedProfileToMotor, mergeLearnedConfig } from '@/lib/referenceLearning/applyLearnedProfileToMotor';
 import { saveLearningState, loadLearningState, clearLearningState } from '@/lib/referenceLearning/referenceLearningState';
 import { applyLearnedProfileToProfessionalMode } from '@/lib/referenceLearning/referenceLearningApplier';
+import { isReferenceLearningManualOnly } from '@/lib/emergencyStabilization';
 
 /**
  * CorpusLearningSection — Panel principal "Aprendizaje de referencias".
@@ -14,7 +15,7 @@ import { applyLearnedProfileToProfessionalMode } from '@/lib/referenceLearning/r
 export default function CorpusLearningSection({ parsedFiles, embeddedProjectCommands, embeddedProjectRegions, embeddedProjectName, onApplyLearnedConfig }) {
   const [learning, setLearning] = useState(false);
   const [progress, setProgress] = useState(null);
-  const [result, setResult] = useState(() => loadLearningState());
+  const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [showRules, setShowRules] = useState(true);
   const [showProfiles, setShowProfiles] = useState(true);
@@ -205,6 +206,12 @@ export default function CorpusLearningSection({ parsedFiles, embeddedProjectComm
             )}
           </div>
         </div>
+
+        {isReferenceLearningManualOnly() && (
+          <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-900/15 px-3 py-2 text-[11px] text-amber-300">
+            Reference Learning está en modo manual para evitar lentitud y errores. Nada se procesa hasta pulsar APRENDER DEL CORPUS.
+          </div>
+        )}
 
         {/* Archivos cargados — stats */}
         <div className="grid grid-cols-2 md:grid-cols-7 gap-2 text-center mb-3">

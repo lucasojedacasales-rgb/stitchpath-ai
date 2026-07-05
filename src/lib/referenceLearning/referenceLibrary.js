@@ -8,6 +8,8 @@
  * only — no backend entity yet). Each entry is serializable.
  */
 
+import { referenceLibraryAutoLoad } from '@/lib/emergencyStabilization';
+
 const STORAGE_KEY = 'stitchpath_reference_library_v1';
 
 const TAGS = ['cartoon', 'logo', 'text', 'animal', 'character', 'simple', 'complex'];
@@ -18,7 +20,7 @@ const TAGS = ['cartoon', 'logo', 'text', 'animal', 'character', 'simple', 'compl
  * @returns {object} the saved entry (with id + timestamp)
  */
 export function addReference(entry) {
-  const lib = listReferences();
+  const lib = listReferences({ manual: true });
   const id = `ref_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const record = {
     id,
@@ -48,7 +50,8 @@ export function addReference(entry) {
   return record;
 }
 
-export function listReferences() {
+export function listReferences(options = {}) {
+  if (!referenceLibraryAutoLoad && !options.manual) return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : [];
@@ -58,11 +61,11 @@ export function listReferences() {
 }
 
 export function getReference(id) {
-  return listReferences().find(r => r.id === id);
+  return listReferences({ manual: true }).find(r => r.id === id);
 }
 
 export function removeReference(id) {
-  const lib = listReferences().filter(r => r.id !== id);
+  const lib = listReferences({ manual: true }).filter(r => r.id !== id);
   saveLib(lib);
 }
 
@@ -71,7 +74,7 @@ export function clearLibrary() {
 }
 
 export function updateReferenceTags(id, tags) {
-  const lib = listReferences();
+  const lib = listReferences({ manual: true });
   const r = lib.find(x => x.id === id);
   if (r) { r.tags = tags.filter(t => TAGS.includes(t)); saveLib(lib); }
 }

@@ -17,6 +17,7 @@ import { compareCurrentDesignToLearnedCorpus } from './referenceDesignComparator
 import { generateReferenceLearningAppliedReport } from './referenceAppliedReportGenerator';
 import { loadLearningState } from './referenceLearningState';
 import { SAFE_APP_BOOT_MODE_V1, logBootError } from '@/lib/safeBoot';
+import { referenceLearningAutoRun, referenceLearningEnabled } from '@/lib/emergencyStabilization';
 
 /**
  * @param {object} ctx
@@ -86,6 +87,10 @@ export function applyLearnedProfileToProfessionalMode(ctx) {
  * @returns {object|null} { configPatch, selection, preset, diff } o null si no hay aprendizaje
  */
 export function autoApplyLearnedProfileForDesign(regions, options = {}) {
+  if (!referenceLearningEnabled || !referenceLearningAutoRun) {
+    console.log('[REFERENCE_QUARANTINE] auto learned profile disabled');
+    return null;
+  }
   if (SAFE_APP_BOOT_MODE_V1 && !options.allowAutoApply) {
     console.log('[BOOT] reference learning skipped until manual run');
     return null;

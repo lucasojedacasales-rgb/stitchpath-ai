@@ -8,7 +8,7 @@ import ValidationPreview from './ValidationPreview';
 import RepairProgressPanel from './RepairProgressPanel';
 import AdaptiveOptimizationReport from './AdaptiveOptimizationReport';
 import CE01ReportPanel from './CE01ReportPanel';
-import { encodeOptimizedToFile, buildFinalCommands, logCommandsSync } from '@/lib/exportPipeline';
+import { encodeOptimizedToFile, encodeToFile, buildFinalCommands, logCommandsSync } from '@/lib/exportPipeline';
 import { autoCleanupRegions } from '@/lib/autoCleanup';
 import { validateCE01 } from '@/lib/ce01Validator';
 import { sanitizeCommandsForCE01 } from '@/lib/ce01CommandSanitizer';
@@ -36,6 +36,8 @@ import { validateEmbroideryCompatibility } from '@/lib/embroideryValidation/vali
 import ValidationModeSelector from './ValidationModeSelector';
 import UniversalValidationSummary from './UniversalValidationSummary';
 import UniversalExportAcceptanceTestPanel from './UniversalExportAcceptanceTestPanel';
+import ExportBlockingCausePanel from './ExportBlockingCausePanel';
+import { analyzeExportBlocking } from '@/lib/exportBlockingAudit';
 
 const FORMATS = ['DSB', 'DST', 'PES', 'JEF', 'EXP'];
 
@@ -63,12 +65,11 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   const [regions, setRegions] = useState(initialRegions || []);
   const [cleanupReport, setCleanupReport] = useState(null);
 
-  // Auto-cleanup on mount: no stitch-count reduction under recalibrated limits; guarantee trims on jumps > 3.5mm
+  // Emergency stabilization: do not mutate regions automatically on export open.
   useEffect(() => {
     if (!initialRegions || initialRegions.length === 0) return;
-    const { regions: cleaned, applied } = autoCleanupRegions(initialRegions, project?.config || {});
-    setRegions(cleaned);
-    setCleanupReport(applied);
+    setRegions(initialRegions);
+    setCleanupReport([{ action: 'emergency_quarantine', message: 'Limpieza automática desactivada: no se reducen puntadas ni se reordenan regiones.' }]);
   }, []); // run once on open
   const [format, setFormat] = useState('DST');
   const [machine, setMachine] = useState('');
@@ -246,14 +247,18 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     editorFinalObjects || pipelineResult.objects,
     regions, config, machineSettings
   ), [effectiveExport.commands, editorFinalObjects, pipelineResult.objects, regions, config, machineSettings]);
+  const exportBlockingAudit = useMemo(() => analyzeExportBlocking({
+    commands: effectiveExport.commands,
+    format: ce01ProductionMode ? 'DST' : format,
+  }), [effectiveExport.commands, ce01ProductionMode, format]);
   const remainingBlocking = useMemo(
-    () => techDetection.errors.filter(e => e.severity === 'blocking' && e.count > 0),
-    [techDetection]
+    () => exportBlockingAudit.exportAllowed ? [] : [{ type: exportBlockingAudit.blockingReason, count: 1, severity: 'blocking', reparable: false, proposedAction: exportBlockingAudit.unlockHint }],
+    [exportBlockingAudit]
   );
   const activeValidation = techDetection.validation || techDetection.architecture?.active;
   const activeStatus = activeValidation?.status || techDetection.ce01.status;
-  const lightLevel = (activeStatus === 'INVALID' || remainingBlocking.length > 0)
-    ? 'red' : (activeStatus === 'RISKY' || activeStatus === 'WARNING' ? 'amber' : 'green');
+  const lightLevel = !exportBlockingAudit.exportAllowed
+    ? 'red' : (activeStatus === 'RISKY' || activeStatus === 'WARNING' || activeStatus === 'INVALID' ? 'amber' : 'green');
 
   // In production mode, stale adaptive/stability states are ignored entirely
   const effectiveAdaptiveReport = ce01ProductionMode ? null : adaptiveReport;
@@ -270,6 +275,10 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     if (!sourceCommands || sourceCommands.length === 0) {
       console.log('[command-sync] mismatch detected: empty export commands');
       setExportError('Las métricas no están sincronizadas. Regenera comandos finales.');
+      return;
+    }
+    if (!exportBlockingAudit.exportAllowed) {
+      setExportError(`Bloqueo real: ${exportBlockingAudit.blockingReason} · ${exportBlockingAudit.blockingModule} · ${exportBlockingAudit.blockingCheck}. ${exportBlockingAudit.unlockHint}`);
       return;
     }
 
@@ -294,13 +303,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       console.log('[export-gate] final decision:', gateDecision);
 
       if (!gateDecision.allowed) {
-        // ── Pre-export repair: don't block if repairAccepted (repairedCommands) ──
-        if (repairAccepted && repairedCommands && repairedCommands.length > 0) {
-          console.log('[export-gate] using pre-export repairedCommands — bypassing block');
-        } else {
-          setExportError(`Exportación bloqueada: ${gateDecision.reason}. Usa "Reparar y validar" en el panel de reparación técnica.`);
-          return;
-        }
+        console.warn('[export-gate] validation warning ignored by emergency hard gate:', gateDecision.reason);
       }
       // ── CE01 Production: force DST, block DSB entirely ───────────────────
       if (format !== 'DST') {
@@ -323,13 +326,11 @@ export default function ExportModal({ project, config: editorConfig, regions: in
         return;
       }
       if (realityCheck && !realityCheck.ready) {
-        setExportError(`Export Reality Check: ${realityCheck.colorMismatch ? 'color mismatch' : realityCheck.contourMismatch ? 'contornos no exportados' : 'boca no exportada'}. Revisa el panel Export Reality Check.`);
-        return;
+        console.warn('[export-gate] visual reality warning ignored by emergency hard gate:', realityCheck);
       }
-      // ── Contour block: visual outline must exist as real stitches ──
+      // Visual contour mismatch is diagnostic only in emergency stabilization mode.
       if (contourReport.contourMissing) {
-        setExportError('El contorno se ve en pantalla pero no se exporta como puntadas.');
-        return;
+        console.warn('[export-gate] contour warning ignored by emergency hard gate:', contourReport);
       }
       console.log('[ce01-production-export] export allowed: true');
       setExporting(true);
@@ -441,26 +442,22 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     const commands = wizardResult?.commands || pipelineResult.commands;
     const objects = wizardResult?.objects || pipelineResult.objects;
 
-    // GATE: block export if validation fails and no wizard result
+    // Emergency gate: validation warnings do not block export. Hard blockers were already checked by exportBlockingAudit.
     if (!pipelineResult.ready && !wizardResult) {
-      setExportError('Exportación cancelada: el diseño no supera todas las validaciones. Usa el asistente de corrección.');
-      return;
+      console.warn('[export-gate] pipeline validation warning ignored by emergency hard gate:', pipelineResult.blockingErrors);
     }
 
-    // GATE: CE01 only blocks when CE01 strict is explicitly active.
+    // CE01 strict warnings do not block unless exportBlockingAudit found a hard file/command error.
     if (validationMode === 'ce01_strict' && ce01Report.status === 'INVALID') {
-      setExportError(`Exportación bloqueada por CE01 estricto: ${ce01Report.blockingIssues.length} problema(s) crítico(s).`);
-      return;
+      console.warn('[export-gate] CE01 strict warning ignored by emergency hard gate:', ce01Report.blockingIssues);
     }
     setExporting(true);
     setExportError(null);
     setAdaptiveReport(null);
     try {
-      // Run adaptive optimization engine BEFORE encoding — blocks if not ready
-      const { blob, optimizationResult } = await encodeOptimizedToFile(
-        regions, config, format, machineSettings, base44
-      );
-      setAdaptiveReport(optimizationResult);
+      // Emergency stabilization: encode the already-built command list directly. Adaptive scoring is diagnostic only.
+      const blob = await encodeToFile(commands, objects, format, machineSettings, base44);
+      setAdaptiveReport(null);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -470,13 +467,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       onClose();
     } catch (e) {
       console.error(e);
-      if (e.blocked && e.report) {
-        setAdaptiveReport(e.report);
-        setShowAdaptiveReport(true);
-        setExportError(`Exportación bloqueada: stability score ${e.report.finalScore}/${e.report.report.targetScore}. Revisa el informe del motor adaptativo.`);
-      } else {
-        setExportError(e.message || 'Error al exportar el diseño');
-      }
+      setExportError(e.message || 'Error al exportar el diseño');
     } finally {
       setExporting(false);
     }
@@ -594,9 +585,11 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 jumpCount={unifiedMetrics.jumpCount}
                 trimCount={unifiedMetrics.trimCount}
                 colorCount={unifiedMetrics.colorCount}
-                exportAllowed={activeStatus !== 'INVALID' && remainingBlocking.length === 0}
+                exportAllowed={exportBlockingAudit.exportAllowed}
                 format={ce01ProductionMode ? 'DST' : format}
               />
+
+              <ExportBlockingCausePanel audit={exportBlockingAudit} />
 
               {/* ── Pre-export technical repair (FASE 1-6) ── */}
               <ExportRepairPanel
@@ -1054,47 +1047,25 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 )}
                 <button
                   onClick={handleExport}
-                  disabled={exporting || (ce01ProductionMode ? (!productionGateDecision?.allowed && !(repairAccepted && repairedCommands?.length > 0)) : ((blockingErrors.length > 0 && !wizardResult) || (validationMode === 'ce01_strict' && ce01Report.status === 'INVALID')))}
+                  disabled={exporting || !exportBlockingAudit.exportAllowed}
                   className={`w-full py-2.5 rounded-lg text-white text-sm font-bold transition-colors flex items-center justify-center gap-2 disabled:cursor-not-allowed ${
-                    ce01ProductionMode
-                      ? (!productionGateDecision?.allowed && !(repairAccepted && repairedCommands?.length > 0)
-                        ? 'bg-red-900/40 border border-red-500/30 text-red-300 cursor-not-allowed'
-                        : (repairAccepted && repairedCommands?.length > 0 && !productionGateDecision?.allowed)
-                          ? 'bg-cyan-600 hover:bg-cyan-500'
-                          : productionReport?.ce01Report?.status === 'RISKY'
-                            ? 'bg-amber-600 hover:bg-amber-500'
-                            : 'bg-violet-600 hover:bg-violet-500 disabled:opacity-50')
-                      : ((blockingErrors.length > 0 && !wizardResult) || (validationMode === 'ce01_strict' && ce01Report.status === 'INVALID')
-                        ? 'bg-red-900/40 border border-red-500/30 text-red-300 cursor-not-allowed'
-                        : ce01Report.status === 'RISKY'
-                          ? 'bg-amber-600 hover:bg-amber-500'
-                          : 'bg-violet-600 hover:bg-violet-500 disabled:opacity-50')
+                    !exportBlockingAudit.exportAllowed
+                      ? 'bg-red-900/40 border border-red-500/30 text-red-300 cursor-not-allowed'
+                      : ce01Report.status === 'RISKY'
+                        ? 'bg-amber-600 hover:bg-amber-500'
+                        : 'bg-violet-600 hover:bg-violet-500 disabled:opacity-50'
                   }`}
                 >
-                  {ce01ProductionMode ? (
-                    (!productionGateDecision?.allowed && !(repairAccepted && repairedCommands?.length > 0)) ? (
-                      <><ShieldAlert className="w-4 h-4" /> Exportación bloqueada</>
-                    ) : (repairAccepted && repairedCommands?.length > 0 && !productionGateDecision?.allowed) ? (
-                      exporting ? (
-                        <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>
-                      ) : (
-                        <><Wrench className="w-4 h-4" /> Reparar y exportar</>
-                      )
-                    ) : exporting ? (
-                      <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>
-                    ) : (
-                      <><Download className="w-4 h-4" /> Exportar DST</>
-                    )
+                  {!exportBlockingAudit.exportAllowed ? (
+                    <><ShieldAlert className="w-4 h-4" /> Exportación bloqueada</>
+                  ) : exporting ? (
+                    <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>
+                  ) : ce01ProductionMode ? (
+                    <><Download className="w-4 h-4" /> Exportar DST</>
+                  ) : wizardResult ? (
+                    <><Download className="w-4 h-4" /> Exportar (corregido)</>
                   ) : (
-                    blockingErrors.length > 0 && !wizardResult ? (
-                      <><ShieldAlert className="w-4 h-4" /> Exportación bloqueada</>
-                    ) : exporting ? (
-                      <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>
-                    ) : wizardResult ? (
-                      <><Download className="w-4 h-4" /> Exportar (corregido)</>
-                    ) : (
-                      <><Download className="w-4 h-4" /> Confirmar y exportar</>
-                    )
+                    <><Download className="w-4 h-4" /> Confirmar y exportar</>
                   )}
                 </button>
               </div>

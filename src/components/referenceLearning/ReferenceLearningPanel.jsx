@@ -13,6 +13,7 @@ import { generateReferenceLearningReport } from '@/lib/referenceLearning/referen
 import { base44 } from '@/api/base44Client';
 import ReferenceEngineV2Section from './ReferenceEngineV2Section';
 import CorpusLearningSection from './CorpusLearningSection';
+import { isReferenceLearningManualOnly } from '@/lib/emergencyStabilization';
 
 /**
  * ReferenceLearningPanel — diagnostic UI for the Reference Embroidery
@@ -27,11 +28,12 @@ import CorpusLearningSection from './CorpusLearningSection';
  * contour detector, or the regression suite.
  */
 export default function ReferenceLearningPanel({ embeddedProjectCommands, embeddedProjectRegions, embeddedProjectName, onApplyLearnedConfig }) {
-  const [references, setReferences] = useState(() => listReferences());
+  const [references, setReferences] = useState([]);
+  const [manualLoaded, setManualLoaded] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState(null);
   const [selectedRefId, setSelectedRefId] = useState(null);
-  const [rules, setRules] = useState(() => refreshRules(listReferences(), extractProfessionalRules));
+  const [rules, setRules] = useState([]);
   const [comparison, setComparison] = useState(null);
   const [comparing, setComparing] = useState(false);
   // In-memory parsed files (with full commandSequence) for the v2 engine.
@@ -39,10 +41,15 @@ export default function ReferenceLearningPanel({ embeddedProjectCommands, embedd
   const fileInputRef = useRef(null);
 
   const refresh = useCallback(() => {
-    const lib = listReferences();
+    const lib = listReferences({ manual: true });
     setReferences(lib);
     setRules(refreshRules(lib, extractProfessionalRules));
+    setManualLoaded(true);
   }, []);
+
+  const handleManualLoadReferences = useCallback(() => {
+    refresh();
+  }, [refresh]);
 
   const handleFiles = useCallback(async (fileList) => {
     const files = Array.from(fileList || []);
@@ -95,7 +102,7 @@ export default function ReferenceLearningPanel({ embeddedProjectCommands, embedd
   }, [refresh]);
 
   const handleTagToggle = useCallback((id, tag) => {
-    const ref = listReferences().find(r => r.id === id);
+    const ref = listReferences({ manual: true }).find(r => r.id === id);
     if (!ref) return;
     const tags = ref.tags || [];
     const next = tags.includes(tag) ? tags.filter(t => t !== tag) : [...tags, tag];
@@ -126,7 +133,7 @@ export default function ReferenceLearningPanel({ embeddedProjectCommands, embedd
         return;
       }
       const ourMetrics = analyzeReferenceMetrics(ourCommands, computeMetadataFromCommands(ourCommands));
-      const cmp = compareAgainstReferences(ourCommands, ourMetrics, listReferences());
+      const cmp = compareAgainstReferences(ourCommands, ourMetrics, listReferences({ manual: true }));
       setComparison(cmp);
     } catch (e) {
       setAnalyzeError(e.message || 'Error al comparar');
@@ -137,7 +144,7 @@ export default function ReferenceLearningPanel({ embeddedProjectCommands, embedd
 
   const handleExportReport = useCallback(() => {
     const md = generateReferenceLearningReport({
-      references: listReferences(),
+      references: listReferences({ manual: true }),
       rules,
       comparison,
       projectName: embeddedProjectName || null,
@@ -171,17 +178,23 @@ export default function ReferenceLearningPanel({ embeddedProjectCommands, embedd
           </div>
           <div className="flex items-center gap-2">
             <button
+              onClick={handleManualLoadReferences}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600/20 border border-amber-500/30 text-amber-300 text-xs font-bold hover:bg-amber-600/30 transition-colors"
+            >
+              Analizar referencias
+            </button>
+            <button
               onClick={() => fileInputRef.current?.click()}
               disabled={analyzing}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors disabled:opacity-50"
             >
               <Upload className="w-3.5 h-3.5" />
-              {analyzing ? 'Analizando...' : 'Subir DST/DSB'}
+              {analyzing ? 'Analizando...' : 'Subir DST/DSB/STP'}
             </button>
             <input
               ref={fileInputRef}
               type="file"
-              accept=".dst,.dsb"
+              accept=".dst,.dsb,.stp"
               multiple
               className="hidden"
               onChange={(e) => { handleFiles(e.target.files); e.target.value = ''; }}
@@ -211,6 +224,11 @@ export default function ReferenceLearningPanel({ embeddedProjectCommands, embedd
               </button>
             )}
           </div>
+        </div>
+        <div className="text-[11px] text-amber-300 bg-amber-900/15 border border-amber-500/30 rounded-lg px-3 py-2 mb-2">
+          Reference Learning está en modo manual para evitar lentitud y errores.
+          {isReferenceLearningManualOnly() && <span className="text-slate-400"> Los archivos de referencia no se cargan ni entrenan al arrancar.</span>}
+          {!manualLoaded && <span className="text-slate-400"> Pulsa “Analizar referencias” para cargar la biblioteca manualmente.</span>}
         </div>
         {analyzeError && (
           <div className="text-[11px] text-red-400 bg-red-900/20 border border-red-500/30 rounded-lg px-3 py-2 mb-2">

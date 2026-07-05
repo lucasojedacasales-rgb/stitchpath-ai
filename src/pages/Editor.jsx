@@ -49,6 +49,7 @@ import IntegratedPipelineReportButton from '@/components/referenceLearning/Integ
 import CommandRuntimeForensicsPanel from '@/components/editor/CommandRuntimeForensicsPanel';
 import { applyStitchedTransitionToJumpGuard } from '@/lib/stitchTransitionGuard';
 import { LIGHTWEIGHT_APP_BOOT_V1, logPerf, logSafeBootStatus, perfNow } from '@/lib/safeBoot';
+import { recordVectorizationRun, referenceLearningEnabled } from '@/lib/emergencyStabilization';
 
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
@@ -452,6 +453,8 @@ export default function Editor() {
 
   const startProcessing = async (aiStrategy) => {
     if (!imageUrl) return;
+    recordVectorizationRun(aiStrategy ? 'user_confirmed_ai_vectorization' : 'user_pressed_process', imageUrl, config);
+    const vectorizationStart = perfNow();
     setProcessing(true);
     setProcessingElapsed(0);
     setProcessingError(null);
@@ -484,7 +487,7 @@ export default function Editor() {
       // Si el motor de aprendizaje extrajo perfiles profesionales, se selecciona
       // el mejor para este diseño y se aplica directamente al config (activa
       // Professional Mode + learned* keys). El diff se muestra en pantalla.
-      const auto = autoApplyLearnedProfileForDesign(enrichedRegions);
+      const auto = referenceLearningEnabled ? autoApplyLearnedProfileForDesign(enrichedRegions) : null;
       if (auto?.configPatch) {
         setConfig(c => ({ ...c, ...auto.configPatch }));
         setAutoLearnedDiff({
@@ -515,6 +518,7 @@ export default function Editor() {
       console.error('[startProcessing]', e);
       setProcessingError(e.message || 'Error desconocido al digitalizar');
     } finally {
+      logPerf('vectorization', vectorizationStart);
       setProcessing(false);
       clearInterval(timerRef.current);
     }
