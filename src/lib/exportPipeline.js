@@ -133,7 +133,7 @@ export function buildStitchObjects(regions, config = {}) {
       stitch_type: r.stitch_type || 'fill',
       priority: getRegionPriority(r),
       layerType: r.region_class || r.layerType || '',
-      density: r.density || 0.4,
+      density: r.density || config.learnedFillDensityMm || 0.4,
       angle: r.angle ?? getProfessionalFillAngle(mmPoints),
       points: mmPoints,
       rawRegion: r,
@@ -183,7 +183,7 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
 
     // CE01 safe fill: generate commands directly, bypassing processObjectStitches
     if (obj.stitch_type === 'fill' && obj.ce01SafeFillMode) {
-      const fillCmds = generateCE01SafeFillCommands(obj, { machineSettings: ms, designOffset: [offX, offY] });
+      const fillCmds = generateCE01SafeFillCommands(obj, { machineSettings: ms, designOffset: [offX, offY], fillSpacingMm: obj.density });
       if (fillCmds.length > 0) {
         if (prevColor !== null && obj.color !== prevColor) {
           cmds.push({ type: 'colorChange', x: prevX, y: prevY, color: obj.color, regionId: obj.id });

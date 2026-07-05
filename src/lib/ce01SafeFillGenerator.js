@@ -21,6 +21,8 @@ const MIN_STITCH_MM = 0.35;
 const CONNECT_THRESHOLD = 6.5;
 const TATAMI_PHASES = [0, 0.25, 0.5, 0.75];
 const SPACING_RETRIES = [0.45, 0.4, 0.35];
+const MIN_SPACING_MM = 0.35;
+const MAX_SPACING_MM = 0.8;
 const MIN_INTERVAL_MM = 0.9;
 const MIN_ISLAND_AREA_MM2 = 2.0;       // raised from 1.5 → fewer tiny-island jumps
 const NEEDLE_INSET_MM = 0.3;
@@ -46,7 +48,7 @@ class UnionFind {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function generateCE01SafeFillCommands(obj, options = {}) {
-  const { machineSettings = {}, designOffset = [0, 0] } = options;
+  const { machineSettings = {}, designOffset = [0, 0], fillSpacingMm = null } = options;
   const [offX, offY] = designOffset;
   const polygonMm = obj.points;
   const angleDeg = obj.angle ?? 45;
@@ -66,12 +68,13 @@ export function generateCE01SafeFillCommands(obj, options = {}) {
   egLog(`inset used: ${EDGE_INSET_MM}mm (safePolygon vertices: ${safePolygon.length})`);
 
   // Pre-validate: count outside against original polygon
+  const spacingRetries = _buildSpacingRetries(fillSpacingMm ?? obj.density);
   let bestCmds = [];
   let bestValidation = null;
-  let bestSpacing = SPACING_RETRIES[0];
+  let bestSpacing = spacingRetries[0];
 
-  for (const spacing of SPACING_RETRIES) {
-    const cmds = _generateAtSpacing(polygonMm, safePolygon, spacing, angleDeg, offX, offY, regionId, blockId, color, log);
+  for (const spacing of spacingRetries) {
+    const cmds = _generateAtSpacing(polygonMm, safePolygon, spacing, angleDeg, offX, offY, regionId, blockId, color, log, machineSettings);
     const v = _validate(cmds, polygonMm, offX, offY);
     const density = _maxDensity(cmds, offX, offY);
 
@@ -119,7 +122,8 @@ export function generateCE01SafeFillCommands(obj, options = {}) {
 //  GENERATE AT SPECIFIC SPACING
 // ═══════════════════════════════════════════════════════════════════════════
 
-function _generateAtSpacing(polygon, safePolygon, spacing, angleDeg, offX, offY, regionId, blockId, color, log) {
+function _generateAtSpacing(polygon, safePolygon, spacing, angleDeg, offX, offY, regionId, blockId, color, log, machineSettings = {}) {
+  spacing = _clampSpacing(spacing);
   log(`spacing used: ${spacing}mm`);
 
   // ── Rotation ──
@@ -193,8 +197,28 @@ function _generateAtSpacing(polygon, safePolygon, spacing, angleDeg, offX, offY,
 
   const mkCmd = (type, wx, wy) => ({
     type, x: wx + offX, y: wy + offY,
-    regionId, blockId, stitchType: 'fill', source: 'ce01_safe_fill', color,
+    regionId, blockId, stitchType: 'fill', source: type === 'trim' ? 'safe_trim' : 'ce01_safe_fill', color,
   });
+  const pushValidatedJump = (wx, wy) => {
+    const prev = _lastPositionCommand(commands);
+    if (prev) {
+      const dist = Math.hypot((wx + offX) - prev.x, (wy + offY) - prev.y);
+      const trimThreshold = Number(machineSettings.trimThreshold) || 3.5;
+      const maxJump = Number(machineSettings.maxJumpLength) || 12.1;
+      if (dist > trimThreshold && commands[commands.length - 1]?.type !== 'trim') {
+        commands.push(mkCmd('trim', prev.x - offX, prev.y - offY));
+      }
+      const steps = Math.max(1, Math.ceil(dist / maxJump));
+      for (let s = 1; s <= steps; s++) {
+        const jx = (prev.x - offX) + (wx - (prev.x - offX)) * s / steps;
+        const jy = (prev.y - offY) + (wy - (prev.y - offY)) * s / steps;
+        commands.push(mkCmd('jump', jx, jy));
+      }
+    } else {
+      commands.push(mkCmd('jump', wx, wy));
+    }
+    jumpCount++;
+  };
 
   for (let iIdx = 0; iIdx < islands.length; iIdx++) {
     const island = islands[iIdx];
@@ -207,8 +231,7 @@ function _generateAtSpacing(polygon, safePolygon, spacing, angleDeg, offX, offY,
       // Project to inside if near border
       const proj = _projectInside(wx, wy, polygon, BORDER_PROJ_MM);
       const [fx, fy] = proj || [wx, wy];
-      commands.push(mkCmd('jump', fx, fy));
-      jumpCount++;
+      pushValidatedJump(fx, fy);
     }
 
     for (let rIdx = 0; rIdx < island.intervals.length; rIdx++) {
@@ -232,8 +255,7 @@ function _generateAtSpacing(polygon, safePolygon, spacing, angleDeg, offX, offY,
           // Connection would cross outside → jump instead
           const proj = _projectInside(nx, ny, polygon, BORDER_PROJ_MM);
           const [jx, jy] = proj || [nx, ny];
-          commands.push(mkCmd('jump', jx, jy));
-          jumpCount++;
+          pushValidatedJump(jx, jy);
         }
         // else: safe stitch connection
       }
@@ -277,6 +299,10 @@ function _postProcess(commands, polygon, offX, offY, log) {
     if (cmd.type === 'jump') {
       out.push(cmd);
       prevX = cmd.x; prevY = cmd.y;
+      continue;
+    }
+    if (cmd.type === 'trim') {
+      out.push(cmd);
       continue;
     }
 
@@ -344,6 +370,7 @@ function _validate(commands, polygon, offX, offY) {
   let prevX = null, prevY = null;
   for (const cmd of commands) {
     if (cmd.type === 'jump') { jumps++; prevX = cmd.x; prevY = cmd.y; continue; }
+    if (cmd.type === 'trim') continue;
     stitches++;
     const lx = cmd.x - offX, ly = cmd.y - offY;
     if (!_pointInPolygon(lx, ly, polygon)) {
@@ -536,6 +563,28 @@ function _edgeIntersections(poly, ry) {
     }
   }
   return xs;
+}
+
+function _buildSpacingRetries(base) {
+  const n = Number(base);
+  if (Number.isFinite(n) && n > 0) {
+    const b = _clampSpacing(n);
+    return [b, _clampSpacing(b + 0.08), _clampSpacing(b + 0.16)].filter((v, i, arr) => arr.indexOf(v) === i);
+  }
+  return SPACING_RETRIES.map(_clampSpacing);
+}
+
+function _clampSpacing(v) {
+  const n = Number(v);
+  return Math.max(MIN_SPACING_MM, Math.min(MAX_SPACING_MM, Number.isFinite(n) ? n : 0.45));
+}
+
+function _lastPositionCommand(commands) {
+  for (let i = commands.length - 1; i >= 0; i--) {
+    const c = commands[i];
+    if (c && (c.type === 'stitch' || c.type === 'jump') && Number.isFinite(c.x) && Number.isFinite(c.y)) return c;
+  }
+  return null;
 }
 
 function _placeNeedles(xL, xR, pitch, brickOff, forward) {

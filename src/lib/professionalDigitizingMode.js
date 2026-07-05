@@ -113,6 +113,19 @@ function isDarkColor(c) {
   return (0.299 * r + 0.587 * g + 0.114 * b) < 80;
 }
 
+function safeTrimFrom(prev, current = {}) {
+  const x = Number.isFinite(prev?.x) ? prev.x : (Number.isFinite(current?.x) ? current.x : 0);
+  const y = Number.isFinite(prev?.y) ? prev.y : (Number.isFinite(current?.y) ? current.y : 0);
+  return {
+    type: 'trim',
+    x,
+    y,
+    color: current?.color ?? prev?.color,
+    regionId: current?.regionId ?? prev?.regionId,
+    source: 'safe_trim',
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  FASE 1 — Validar / corregir puntadas visibles antes de exportar
 // ═══════════════════════════════════════════════════════════════════════════
@@ -149,7 +162,7 @@ export function validateVisibleStitchesBeforeExport(commands, regions = [], dark
       report.stitchWithoutDarkMaskSupport += maskSup < 0.5 ? 1 : 0;
       report.stitchWithoutRegionSupport += !regionSup ? 1 : 0;
       // FIX: convert to trim + jump (do not sew the diagonal)
-      out.push({ type: 'trim' });
+      out.push(safeTrimFrom(prev, c));
       out.push({ type: 'jump', x, y, color: c.color, layerType: c.layerType, regionId: c.regionId });
       report.convertedToJump++;
       report.cutsApplied++;
@@ -159,7 +172,7 @@ export function validateVisibleStitchesBeforeExport(commands, regions = [], dark
     // unsupported travel: long stitch of a fill color crossing outside any region
     if (dist > p.maxVisibleStitchMm && !dark && !regionSup) {
       report.unsupportedTravelStitches++;
-      out.push({ type: 'trim' });
+      out.push(safeTrimFrom(prev, c));
       out.push({ type: 'jump', x, y, color: c.color, layerType: c.layerType, regionId: c.regionId });
       report.convertedToJump++;
       prev = { x, y };
@@ -221,19 +234,25 @@ export function repairVisibleDiagonalStitches(commands = [], regions = [], darkS
   const out = [];
   let removed = 0, converted = 0, longest = 0;
   const sourceIdx = [];
+  let prev = null;
   for (let i = 0; i < commands.length; i++) {
     const c = commands[i];
     const off = offenderByIdx.get(i);
-    if (!off) { out.push(c); continue; }
+    if (!off) {
+      out.push(c);
+      if (c.type === 'stitch' || c.type === 'jump') prev = { x: c.x, y: c.y, color: c.color, regionId: c.regionId };
+      continue;
+    }
     removed++; converted++;
     longest = Math.max(longest, off.lengthMm);
     sourceIdx.push(i);
     if (off.reason === 'crossesEmptySpace') {
       out.push({ type: 'jump', x: c.x, y: c.y, color: c.color, layerType: c.layerType, regionId: c.regionId, stitchType: c.stitchType, source: c.source });
     } else {
-      out.push({ type: 'trim' });
+      out.push(safeTrimFrom(prev, c));
       out.push({ type: 'jump', x: c.x, y: c.y, color: c.color, layerType: c.layerType, regionId: c.regionId, stitchType: c.stitchType, source: c.source });
     }
+    prev = { x: c.x, y: c.y, color: c.color, regionId: c.regionId };
   }
   const afterDetection = detectVisibleDiagonalStitches(out, [], regions, darkStroke, config);
   return {
@@ -280,44 +299,11 @@ function blockTier(commands, pri) {
   return max;
 }
 export function reorderProfessionalLayers(commands, params = {}) {
-  // contourAfterFill default true: contorno tras relleno (comportamiento profesional).
-  // Si el preset pone false → contorno ANTES del relleno (efecto real en el gate).
-  // detailsLast default true: detalles al final. false → detalles no forzados al final.
-  const contourAfterFill = params.contourAfterFill !== false;
-  const detailsLast = params.detailsLast !== false;
-  const pri = (cmd) => {
-    let base = professionalPriority(cmd);
-    const lt = (cmd.layerType || '').toLowerCase();
-    const isContour = lt.includes('outline') || lt.includes('contour');
-    const isDetail = lt.includes('detail') || lt.includes('facial') || lt.includes('mouth') || lt.includes('eye');
-    if (!contourAfterFill && isContour) base -= 45; // contorno antes del relleno
-    if (!detailsLast && isDetail) base -= 55;       // detalles no al final
-    return base;
-  };
-  // Split into color-blocks (a color change starts a new block)
-  const blocks = [];
-  let cur = [];
-  let curColor = null;
-  for (const c of commands) {
-    if (c.type === 'color_change' || (c.color && c.color !== curColor && cur.length > 0)) {
-      if (cur.length) blocks.push(cur);
-      cur = [];
-    }
-    cur.push(c);
-    if (c.color) curColor = c.color;
-  }
-  if (cur.length) blocks.push(cur);
-  // Stable-sort within each block by priority (underlay → fill → contour → detail)
-  const sortedBlocks = blocks.map(b => b.slice().sort((a, b2) => pri(a) - pri(b2)));
-  // Sort blocks by tier (fills first, contours last), stable
-  const indexed = sortedBlocks.map((b, i) => ({ b, i, tier: blockTier(b, pri) }));
-  indexed.sort((a, b) => a.tier - b.tier || a.i - b.i);
-  const out = [];
-  for (let k = 0; k < indexed.length; k++) {
-    if (k > 0) out.push({ type: 'color_change' });
-    out.push(...indexed[k].b);
-  }
-  return out;
+  // Safety stabilization: generated stitch order is production path data.
+  // Do not sort individual commands or move completed stitch blocks here.
+  // Layer ordering remains an audit/report concern unless a future block-level
+  // transaction can prove it preserves path continuity and color integrity.
+  return (commands || []).map((c) => c?.type === 'colorChange' ? { ...c, type: 'colorChange' } : c);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1406,7 +1392,7 @@ function insertTrimBeforeLongJumps(commands, trimBeforeMm) {
         // solo insertar si el comando anterior no es ya un trim
         const prevCmd = out[out.length - 1];
         if (!prevCmd || prevCmd.type !== 'trim') {
-          out.push({ type: 'trim' });
+          out.push(safeTrimFrom(prev, c));
         }
       }
     }
@@ -1437,7 +1423,7 @@ function countTrimJumpTotal(commands) {
 function countEmptyColorBlocks(commands) {
   let empty = 0, hasStitch = false, hasAny = false;
   for (const c of commands) {
-    if (c.type === 'color_change' || c.type === 'colorChange') {
+    if (c.type === 'colorChange') {
       if (hasAny && !hasStitch) empty++;
       hasStitch = false; hasAny = false; continue;
     }
@@ -1504,14 +1490,14 @@ export function insertTrimBeforeLongJumpsGuarded(commands, trimBeforeMm, options
     let colorNear = false;
     for (let k = Math.max(0, i - 3); k <= Math.min(commands.length - 1, i + 3); k++) {
       const cc = commands[k];
-      if (cc && (cc.type === 'color_change' || cc.type === 'colorChange')) { colorNear = true; break; }
+      if (cc && cc.type === 'colorChange') { colorNear = true; break; }
     }
     if (colorNear) { skip.colorChange++; continue; }
     // microbloque protegido: < 4 comandos entre límites (trim/colorChange)
     let bs = i;
-    while (bs > 0) { const p = commands[bs - 1]; if (!p || p.type === 'trim' || p.type === 'color_change' || p.type === 'colorChange') break; bs--; }
+    while (bs > 0) { const p = commands[bs - 1]; if (!p || p.type === 'trim' || p.type === 'colorChange') break; bs--; }
     let be = i;
-    while (be < commands.length - 1) { const n = commands[be + 1]; if (!n || n.type === 'trim' || n.type === 'color_change' || n.type === 'colorChange') break; be++; }
+    while (be < commands.length - 1) { const n = commands[be + 1]; if (!n || n.type === 'trim' || n.type === 'colorChange') break; be++; }
     if (be - bs + 1 < 4) { skip.microBlock++; continue; }
     accepted.push(cand);
   }
@@ -1528,12 +1514,15 @@ export function insertTrimBeforeLongJumpsGuarded(commands, trimBeforeMm, options
 
   // ── Construir salida insertando trim solo en los seleccionados ───────────
   const out = [];
+  let lastPosition = null;
   for (let i = 0; i < commands.length; i++) {
+    const current = commands[i];
     if (applySet.has(i)) {
       const pc = out[out.length - 1];
-      if (!pc || pc.type !== 'trim') out.push({ type: 'trim' });
+      if (!pc || pc.type !== 'trim') out.push(safeTrimFrom(lastPosition, current));
     }
-    out.push(commands[i]);
+    out.push(current);
+    if (current.type === 'stitch' || current.type === 'jump') lastPosition = { x: current.x, y: current.y, color: current.color, regionId: current.regionId };
   }
 
   const afterMetrics = countTrimJumpTotal(out);
