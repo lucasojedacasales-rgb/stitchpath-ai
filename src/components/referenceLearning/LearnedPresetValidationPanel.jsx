@@ -8,7 +8,7 @@ import { useState, useCallback } from 'react';
 import { FlaskConical, Download, AlertTriangle, CheckCircle2, XCircle, Sparkles } from 'lucide-react';
 import { validateLearnedPresetEffectiveness } from '@/lib/referenceLearning/learnedPresetValidator';
 
-export default function LearnedPresetValidationPanel({ regions, config, darkStroke, machineSettings, designName, onApplyConfig }) {
+export default function LearnedPresetValidationPanel({ regions, config, darkStroke, machineSettings, designName, onApplyConfig, showDownloads = false }) {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -158,97 +158,33 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
           <h3 className="text-sm font-bold text-white">Validar preset aprendido</h3>
           <span className="text-[10px] text-slate-500">regenera · mide · compara</span>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleRun}
-            disabled={running || !regions?.length}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors disabled:opacity-40"
-          >
-            <FlaskConical className="w-3.5 h-3.5" />
-            {running ? 'Validando...' : 'Validar preset'}
-          </button>
-          {result && (
-            <button
-              onClick={handleDownload}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-900/20 border border-emerald-500/30 text-emerald-300 text-xs font-bold hover:bg-emerald-900/30 transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" /> Informe validado
-            </button>
-          )}
-          {result && result.trimGuard && (
-            <button
-              onClick={handleDownloadTrimGuard}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-900/20 border border-cyan-500/30 text-cyan-300 text-xs font-bold hover:bg-cyan-900/30 transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" /> Trim Guard V1
-            </button>
-          )}
-          {result && (
-            <button
-              onClick={handleDownloadAfterTrimGuard}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-900/20 border border-violet-500/30 text-violet-300 text-xs font-bold hover:bg-violet-900/30 transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" /> After Trim Guard
-            </button>
-          )}
-          {result && result.underlayGenerator?.md && (
-            <button
-              onClick={handleDownloadUnderlayReport}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/20 border border-amber-500/30 text-amber-300 text-xs font-bold hover:bg-amber-900/30 transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" /> Underlay V1
-            </button>
-          )}
-          {result && result.underlayIntegratedValidation?.md && (
-            <button
-              onClick={handleDownloadUnderlayIntegrated}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-900/20 border border-orange-500/30 text-orange-300 text-xs font-bold hover:bg-orange-900/30 transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" /> After Underlay V1
-            </button>
-          )}
-          {result && result.visibleSplitter && (
-            <button
-              onClick={handleDownloadSplitterReport}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-fuchsia-900/20 border border-fuchsia-500/30 text-fuchsia-300 text-xs font-bold hover:bg-fuchsia-900/30 transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" /> After Splitter V1_2
-            </button>
-          )}
-          {result && result.visibleSplitter?.md && (
-            <button
-              onClick={handleDownloadSplitterV1_1Report}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-fuchsia-900/20 border border-fuchsia-500/30 text-fuchsia-300 text-xs font-bold hover:bg-fuchsia-900/30 transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" /> Splitter V1_2 Report
-            </button>
-          )}
-          {result && result.visibleSplitterForensics?.report && (
-            <button
-              onClick={handleDownloadSplitterForensics}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/20 border border-amber-500/30 text-amber-300 text-xs font-bold hover:bg-amber-900/30 transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" /> Splitter Forensics
-            </button>
-          )}
-          {result && result.satinOuterContourConverter?.md && (
-            <button
-              onClick={handleDownloadSatinOuterContour}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-900/20 border border-sky-500/30 text-sky-300 text-xs font-bold hover:bg-sky-900/30 transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" /> Satin Converter V1
-            </button>
-          )}
-          {result && result.satinOuterContourConverter?.referenceValidationMd && (
-            <button
-              onClick={handleDownloadAfterSatinOuterContour}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-900/20 border border-blue-500/30 text-blue-300 text-xs font-bold hover:bg-blue-900/30 transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" /> After Satin Outer
-            </button>
-          )}
-        </div>
+        <button
+          onClick={handleRun}
+          disabled={running || !regions?.length}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors disabled:opacity-40"
+        >
+          <FlaskConical className="w-3.5 h-3.5" />
+          {running ? 'Validando...' : 'Validar preset'}
+        </button>
       </div>
+
+      {showDownloads && result && (
+        <div className="mb-3 rounded-lg border border-[#2a2d3a] bg-[#0d0f14] p-2.5">
+          <div className="mb-2 text-[11px] font-bold text-slate-300">Descargas del último resultado</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={handleDownload} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-900/20 border border-emerald-500/30 text-emerald-300 text-xs font-bold hover:bg-emerald-900/30 transition-colors"><Download className="w-3.5 h-3.5" /> Informe validado</button>
+            {result.trimGuard && <button onClick={handleDownloadTrimGuard} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-900/20 border border-cyan-500/30 text-cyan-300 text-xs font-bold hover:bg-cyan-900/30 transition-colors"><Download className="w-3.5 h-3.5" /> Trim Guard V1</button>}
+            <button onClick={handleDownloadAfterTrimGuard} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-900/20 border border-violet-500/30 text-violet-300 text-xs font-bold hover:bg-violet-900/30 transition-colors"><Download className="w-3.5 h-3.5" /> After Trim Guard</button>
+            {result.underlayGenerator?.md && <button onClick={handleDownloadUnderlayReport} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/20 border border-amber-500/30 text-amber-300 text-xs font-bold hover:bg-amber-900/30 transition-colors"><Download className="w-3.5 h-3.5" /> Underlay V1</button>}
+            {result.underlayIntegratedValidation?.md && <button onClick={handleDownloadUnderlayIntegrated} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-900/20 border border-orange-500/30 text-orange-300 text-xs font-bold hover:bg-orange-900/30 transition-colors"><Download className="w-3.5 h-3.5" /> After Underlay V1</button>}
+            {result.visibleSplitter && <button onClick={handleDownloadSplitterReport} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-fuchsia-900/20 border border-fuchsia-500/30 text-fuchsia-300 text-xs font-bold hover:bg-fuchsia-900/30 transition-colors"><Download className="w-3.5 h-3.5" /> After Splitter V1_2</button>}
+            {result.visibleSplitter?.md && <button onClick={handleDownloadSplitterV1_1Report} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-fuchsia-900/20 border border-fuchsia-500/30 text-fuchsia-300 text-xs font-bold hover:bg-fuchsia-900/30 transition-colors"><Download className="w-3.5 h-3.5" /> Splitter V1_2 Report</button>}
+            {result.visibleSplitterForensics?.report && <button onClick={handleDownloadSplitterForensics} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/20 border border-amber-500/30 text-amber-300 text-xs font-bold hover:bg-amber-900/30 transition-colors"><Download className="w-3.5 h-3.5" /> Splitter Forensics</button>}
+            {result.satinOuterContourConverter?.md && <button onClick={handleDownloadSatinOuterContour} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-900/20 border border-sky-500/30 text-sky-300 text-xs font-bold hover:bg-sky-900/30 transition-colors"><Download className="w-3.5 h-3.5" /> Satin Converter V1</button>}
+            {result.satinOuterContourConverter?.referenceValidationMd && <button onClick={handleDownloadAfterSatinOuterContour} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-900/20 border border-blue-500/30 text-blue-300 text-xs font-bold hover:bg-blue-900/30 transition-colors"><Download className="w-3.5 h-3.5" /> After Satin Outer</button>}
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="text-[11px] text-red-400 bg-red-900/20 border border-red-500/30 rounded-lg px-3 py-2 mb-2 flex items-center gap-2">

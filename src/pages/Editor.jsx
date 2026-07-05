@@ -97,6 +97,7 @@ export default function Editor() {
   const [showExport, setShowExport] = useState(false);
   const [activeTab, setActiveTab] = useState('editor');
   const [editorUiMode, setEditorUiMode] = useState('simple');
+  const [showProfessionalReports, setShowProfessionalReports] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [preprocessSettings, setPreprocessSettings] = useState(DEFAULT_PREPROCESS);
   const [preprocessedUrl, setPreprocessedUrl] = useState(null);
@@ -754,7 +755,19 @@ export default function Editor() {
               </div>
             </div>
           ) : activeTab === 'prof' ? (
-            <div className="flex-1 overflow-y-auto p-3 space-y-3">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              <div className="flex items-start justify-between gap-3 rounded-xl border border-[#1e2130] bg-[#11141c] p-4">
+                <div>
+                  <h2 className="text-lg font-bold text-white">Calidad profesional</h2>
+                  <p className="text-xs text-slate-500">Estado técnico del bordado final</p>
+                </div>
+                <button
+                  onClick={() => setShowProfessionalReports((v) => !v)}
+                  className="rounded-lg border border-cyan-500/30 bg-cyan-900/15 px-3 py-1.5 text-xs font-bold text-cyan-300 hover:bg-cyan-900/25 transition-colors"
+                >
+                  {showProfessionalReports ? 'Ocultar informes técnicos' : 'Mostrar informes técnicos'}
+                </button>
+              </div>
               {autoLearnedDiff && (
                 <LearnedConfigDiffPanel
                   diff={autoLearnedDiff.diff}
@@ -763,15 +776,6 @@ export default function Editor() {
                   onDismiss={() => setAutoLearnedDiff(null)}
                 />
               )}
-              <IntegratedPipelineReportButton />
-              <LearnedPresetValidationPanel
-                regions={regions}
-                config={config}
-                darkStroke={darkStroke}
-                machineSettings={editorMachineSettings}
-                designName={project?.name}
-                onApplyConfig={(patch) => setConfig(c => ({ ...c, ...patch }))}
-              />
               <ProfessionalQualityPanel
                 commands={finalEmbroideryCommands.commands}
                 objects={finalEmbroideryCommands.objects}
@@ -782,6 +786,24 @@ export default function Editor() {
                 gate={finalEmbroideryCommands.professionalReport?.gate}
                 onToggleMode={(v) => setConfig(c => ({ ...c, professionalMode: v }))}
               />
+              <LearnedPresetValidationPanel
+                regions={regions}
+                config={config}
+                darkStroke={darkStroke}
+                machineSettings={editorMachineSettings}
+                designName={project?.name}
+                onApplyConfig={(patch) => setConfig(c => ({ ...c, ...patch }))}
+                showDownloads={showProfessionalReports}
+              />
+              {showProfessionalReports && (
+                <div className="rounded-xl border border-[#1e2130] bg-[#11141c] p-3 space-y-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Informes técnicos</h3>
+                    <p className="text-[11px] text-slate-500">Descargas avanzadas del pipeline profesional.</p>
+                  </div>
+                  <IntegratedPipelineReportButton />
+                </div>
+              )}
             </div>
           ) : activeTab === 'learn' ? (
             <div className="flex-1 overflow-y-auto p-4">
