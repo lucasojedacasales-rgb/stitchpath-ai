@@ -299,6 +299,11 @@ function buildMarkdownReport(a) {
   lines.push('');
   lines.push('## 7. Campos finales obligatorios');
   lines.push(`runtimeSnapshotAvailable=${a.runtimeSnapshotAvailable}`);
+  lines.push(`commandSourceUsed=${a.source.commandSourceUsed}`);
+  lines.push(`percentTravelIssue=${a.categories.percentTravelIssue}`);
+  lines.push(`percentFillClippingIssue=${a.categories.percentFillClippingIssue}`);
+  lines.push(`percentContourIssue=${a.categories.percentContourIssue}`);
+  lines.push(`percentLayerOrderIssue=${a.categories.percentLayerOrderIssue}`);
   lines.push(`totalCommands=${a.summary.totalCommands}`);
   lines.push(`totalStitches=${a.summary.totalStitches}`);
   lines.push(`totalJumps=${a.summary.totalJumps}`);
