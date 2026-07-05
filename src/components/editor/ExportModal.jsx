@@ -35,6 +35,7 @@ import { getEffectiveExportCommands } from '@/lib/exportRepair/getEffectiveExpor
 import { validateEmbroideryCompatibility } from '@/lib/embroideryValidation/validationArchitecture';
 import ValidationModeSelector from './ValidationModeSelector';
 import UniversalValidationSummary from './UniversalValidationSummary';
+import UniversalExportAcceptanceTestPanel from './UniversalExportAcceptanceTestPanel';
 
 const FORMATS = ['DSB', 'DST', 'PES', 'JEF', 'EXP'];
 
@@ -620,6 +621,17 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                   else if (cmds && cmds.length && repairAccepted) setRepairedCommands(cmds);
                 }}
               />
+
+              {uiMode === 'lab' && (
+                <UniversalExportAcceptanceTestPanel
+                  commands={editorFinalCommands || pipelineResult.commands}
+                  objects={editorFinalObjects || pipelineResult.objects}
+                  regions={regions}
+                  config={config}
+                  machineSettings={machineSettings}
+                  projectName={project?.name || 'design'}
+                />
+              )}
 
               {/* Auto-cleanup report — stitch cap + jump trim guarantee */}
               {cleanupReport && cleanupReport.length > 0 && (
