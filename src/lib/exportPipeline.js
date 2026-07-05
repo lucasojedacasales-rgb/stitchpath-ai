@@ -32,6 +32,7 @@ import { buildContourObjects, generateContourStitches, contoursPreservedInOptimi
 import { contourRefineGuard, validateContourRefinement } from './contourRefineValidator.js';
 import { auditAndCleanGeometry } from './geometryAudit.js';
 import { validateFinalContourCommandsAgainstDarkMask } from './contourSegmentValidator.js';
+import { applyProfessionalStitchPlannerRepair } from './professionalStitchPlannerRepair.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -89,6 +90,23 @@ function getRegionPriority(r) {
   return 10; // fill default
 }
 
+function getProfessionalFillAngle(points = []) {
+  if (!points || points.length < 3) return 0;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x, y] of points) {
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+  }
+  const width = Math.max(0.01, maxX - minX);
+  const height = Math.max(0.01, maxY - minY);
+  const ratio = width / height;
+  if (ratio > 1.8) return 0;
+  if (ratio > 1.2) return 15;
+  if (ratio < 0.55) return 90;
+  if (ratio < 0.85) return 75;
+  return 30;
+}
+
 export function buildStitchObjects(regions, config = {}) {
   const w = config.width_mm || 100;
   const h = config.height_mm || 100;
@@ -116,7 +134,7 @@ export function buildStitchObjects(regions, config = {}) {
       priority: getRegionPriority(r),
       layerType: r.region_class || r.layerType || '',
       density: r.density || 0.4,
-      angle: r.angle || 45,
+      angle: r.angle ?? getProfessionalFillAngle(mmPoints),
       points: mmPoints,
       rawRegion: r,
       ce01SafeFillMode: ce01Flag,
@@ -1181,6 +1199,17 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   console.log(`[contour-segment-guard] unsupported segments removed: ${contourSegmentReport.removedArtificialBridges}`);
   console.log(`[contour-segment-guard] suspicious diagonal: ${contourSegmentReport.suspiciousBlackDiagonalDetected}`);
 
+  // ── Stage 8: Professional stitch planner repair — transactional ─────────
+  // Eliminates critical visible long stitches without touching segmentation,
+  // validation, export modal, encoders, Reference Learning, or global ordering.
+  const professionalPlannerRepair = applyProfessionalStitchPlannerRepair({
+    commands,
+    regions,
+    config,
+    machineSettings: ms,
+  });
+  commands = professionalPlannerRepair.commands;
+
   const stitchCount = commands.filter(c => c.type === 'stitch').length;
   const jumpCount = commands.filter(c => c.type === 'jump').length;
   const trimCount = commands.filter(c => c.type === 'trim').length;
@@ -1200,7 +1229,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
 
   _lastFinalCommandsMeta = meta;
 
-  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, validation };
+  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, validation };
 }
 
 /**

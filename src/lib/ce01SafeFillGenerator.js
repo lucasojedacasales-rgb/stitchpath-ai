@@ -16,12 +16,12 @@
  *   { type, x, y, regionId, blockId, stitchType: "fill", source: "ce01_safe_fill", color }
  */
 
-const MAX_STITCH_MM = 7.5;
-const MIN_STITCH_MM = 0.8;
-const CONNECT_THRESHOLD = 7.5;
+const MAX_STITCH_MM = 4.0;
+const MIN_STITCH_MM = 0.35;
+const CONNECT_THRESHOLD = 6.5;
 const TATAMI_PHASES = [0, 0.25, 0.5, 0.75];
-const SPACING_RETRIES = [0.7, 0.8, 0.9];
-const MIN_INTERVAL_MM = 1.5;
+const SPACING_RETRIES = [0.45, 0.4, 0.35];
+const MIN_INTERVAL_MM = 0.9;
 const MIN_ISLAND_AREA_MM2 = 2.0;       // raised from 1.5 → fewer tiny-island jumps
 const NEEDLE_INSET_MM = 0.3;
 const EDGE_INSET_MM = 0.25;            // polygon shrink before scanline intersection
@@ -214,8 +214,8 @@ function _generateAtSpacing(polygon, safePolygon, spacing, angleDeg, offX, offY,
     for (let rIdx = 0; rIdx < island.intervals.length; rIdx++) {
       const iv = island.intervals[rIdx];
       const forward = (rIdx % 2) === 0;
-      const brickOff = TATAMI_PHASES[rIdx % 4] * 3.0;
-      let needles = _placeNeedles(iv.xL, iv.xR, 3.0, brickOff, forward);
+      const brickOff = TATAMI_PHASES[rIdx % 4] * MAX_STITCH_MM;
+      let needles = _placeNeedles(iv.xL, iv.xR, MAX_STITCH_MM, brickOff, forward);
       if (needles.length < 1) continue;
 
       // Connect from previous row — segment validation (5-point check)
@@ -352,8 +352,8 @@ function _validate(commands, polygon, offX, offY) {
     }
     if (prevX !== null) {
       const d = Math.hypot(cmd.x - prevX, cmd.y - prevY);
-      if (d > 7.5) longS++;
-      if (d > 0 && d < 0.8) microS++;
+      if (d > MAX_STITCH_MM) longS++;
+      if (d > 0 && d < MIN_STITCH_MM) microS++;
     }
     prevX = cmd.x; prevY = cmd.y;
   }
