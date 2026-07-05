@@ -5,20 +5,30 @@ const SEVERITY_RANK = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
 
 export default function CommandRuntimeForensicsPanel({
   finalCommands = [], finalObjects = [], regions = [], config = {}, darkStroke, machineSettings = {}, exportCommands = null,
+  transitionGuardReport = null, transitionGuardMd = null, commandSourceLabel = 'finalEmbroideryCommands',
 }) {
   const [lastReport, setLastReport] = useState(null);
-  const audit = useMemo(() => runRuntimeForensics({ finalCommands, finalObjects, regions, config, darkStroke, machineSettings, exportCommands }), [finalCommands, finalObjects, regions, config, darkStroke, machineSettings, exportCommands]);
+  const audit = useMemo(() => runRuntimeForensics({ finalCommands, finalObjects, regions, config, darkStroke, machineSettings, exportCommands, commandSourceLabel }), [finalCommands, finalObjects, regions, config, darkStroke, machineSettings, exportCommands, commandSourceLabel]);
 
-  const downloadReport = () => {
-    const md = buildMarkdownReport(audit);
-    setLastReport(audit);
-    const blob = new Blob([md], { type: 'text/markdown' });
+  const downloadBlob = (content, filename) => {
+    const blob = new Blob([content], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'EMBROIDERY_COMMAND_RUNTIME_FORENSICS_V1.md';
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const downloadReport = (filename = 'EMBROIDERY_COMMAND_RUNTIME_FORENSICS_V1.md') => {
+    const md = buildMarkdownReport(audit);
+    setLastReport(audit);
+    downloadBlob(md, filename);
+  };
+
+  const downloadGuardReport = () => {
+    if (!transitionGuardMd) return;
+    downloadBlob(transitionGuardMd, 'STITCHED_TRANSITION_TO_JUMP_GUARD_REPORT_V1.md');
   };
 
   return (
@@ -31,9 +41,19 @@ export default function CommandRuntimeForensicsPanel({
             <div className="text-[11px] text-slate-500">Solo lectura · mide finalEmbroideryCommands · no repara ni cambia regiones.</div>
           </div>
         </div>
-        <button onClick={downloadReport} className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500 transition-colors">
-          <Download className="w-3.5 h-3.5" /> Auditar comandos finales
-        </button>
+        <div className="flex flex-wrap justify-end gap-2">
+          {transitionGuardMd && (
+            <button onClick={downloadGuardReport} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-900/20 px-3 py-1.5 text-xs font-bold text-cyan-200 hover:bg-cyan-900/30 transition-colors">
+              <Download className="w-3.5 h-3.5" /> Reporte guard
+            </button>
+          )}
+          <button onClick={() => downloadReport('EMBROIDERY_COMMAND_RUNTIME_FORENSICS_AFTER_TRANSITION_GUARD_V1.md')} className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-900/20 px-3 py-1.5 text-xs font-bold text-emerald-200 hover:bg-emerald-900/30 transition-colors">
+            <Download className="w-3.5 h-3.5" /> After guard
+          </button>
+          <button onClick={() => downloadReport()} className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500 transition-colors">
+            <Download className="w-3.5 h-3.5" /> Auditar comandos finales
+          </button>
+        </div>
       </div>
 
       <div className="grid gap-2 sm:grid-cols-4">
@@ -42,6 +62,19 @@ export default function CommandRuntimeForensicsPanel({
         <Metric label="Máx visible" value={`${audit.summary.maxVisibleStitchMm.toFixed(2)}mm`} color={audit.summary.maxVisibleStitchMm > 8 ? 'text-red-300' : audit.summary.maxVisibleStitchMm > 4 ? 'text-amber-300' : 'text-emerald-300'} />
         <Metric label="Fix recomendado" value={audit.classification.recommendedFix} color="text-cyan-300" />
       </div>
+
+      {transitionGuardReport && (
+        <div className={`rounded-lg border p-2 ${transitionGuardReport.phaseAccepted ? 'border-emerald-500/25 bg-emerald-900/10' : 'border-amber-500/25 bg-amber-900/10'}`}>
+          <div className="text-[11px] font-bold text-slate-200">STITCHED_TRANSITION_TO_JUMP_GUARD_V1</div>
+          <div className="mt-1 grid gap-1 text-[10px] text-slate-400 sm:grid-cols-4">
+            <span>accepted=<b className={transitionGuardReport.phaseAccepted ? 'text-emerald-300' : 'text-amber-300'}>{String(transitionGuardReport.phaseAccepted)}</b></span>
+            <span>converted=<b className="text-cyan-300">{transitionGuardReport.convertedTransitions}</b></span>
+            <span>severeDrop=<b className="text-violet-300">{transitionGuardReport.severeDropPct}%</b></span>
+            <span>source=<b className="text-emerald-300">{transitionGuardReport.commandsReturnedSource}</b></span>
+          </div>
+          {transitionGuardReport.revertReason && <div className="mt-1 text-[10px] text-amber-300">revertReason={transitionGuardReport.revertReason}</div>}
+        </div>
+      )}
 
       {audit.offenders.length > 0 ? (
         <div className="rounded-lg border border-red-500/25 bg-red-900/10 p-2">
@@ -69,12 +102,12 @@ function Metric({ label, value, color }) {
   return <div className="rounded-lg border border-[#1e2130] bg-[#0d0f14] p-2"><div className="text-[9px] text-slate-500">{label}</div><div className={`mt-1 text-xs font-bold truncate ${color}`}>{String(value)}</div></div>;
 }
 
-function runRuntimeForensics({ finalCommands, finalObjects, regions, config, darkStroke, machineSettings, exportCommands }) {
+function runRuntimeForensics({ finalCommands, finalObjects, regions, config, darkStroke, machineSettings, exportCommands, commandSourceLabel }) {
   const generatedAt = new Date().toISOString();
   const commands = Array.isArray(finalCommands) ? finalCommands : [];
   const exportCmds = Array.isArray(exportCommands) ? exportCommands : null;
   const regionIndex = buildRegionIndex(regions, config);
-  const source = buildSourceStats(commands, exportCmds);
+  const source = buildSourceStats(commands, exportCmds, commandSourceLabel);
   const offenders = [];
   const regionStats = new Map();
   let prevCoord = null;
@@ -149,11 +182,11 @@ function runRuntimeForensics({ finalCommands, finalObjects, regions, config, dar
   };
 }
 
-function buildSourceStats(commands, exportCmds) {
+function buildSourceStats(commands, exportCmds, commandSourceLabel = 'finalEmbroideryCommands') {
   const countType = (arr, t) => arr.filter(c => c.type === t).length;
   const sameExport = exportCmds ? commands.length === exportCmds.length && commands.every((c, i) => shallowCommandEqual(c, exportCmds[i])) : null;
   return {
-    commandSourceUsed: 'finalEmbroideryCommands',
+    commandSourceUsed: commandSourceLabel,
     finalCommandCount: commands.length,
     finalStitchCount: countType(commands, 'stitch'),
     finalJumpCount: countType(commands, 'jump'),

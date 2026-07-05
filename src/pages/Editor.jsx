@@ -47,6 +47,7 @@ import LearnedConfigDiffPanel from '@/components/editor/LearnedConfigDiffPanel';
 import LearnedPresetValidationPanel from '@/components/referenceLearning/LearnedPresetValidationPanel';
 import IntegratedPipelineReportButton from '@/components/referenceLearning/IntegratedPipelineReportButton';
 import CommandRuntimeForensicsPanel from '@/components/editor/CommandRuntimeForensicsPanel';
+import { applyStitchedTransitionToJumpGuard } from '@/lib/stitchTransitionGuard';
 
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
@@ -190,14 +191,18 @@ export default function Editor() {
   const finalEmbroideryCommands = useMemo(() => {
     if (optimizedCommandsOverride) {
       const cmds = optimizedCommandsOverride;
+      const guarded = applyStitchedTransitionToJumpGuard({
+        commands: cmds, objects: [], regions, config: configWithDarkStroke, darkStroke, machineSettings: editorMachineSettings,
+      });
       const meta = {
         source: 'optimized_override',
-        stitchCount: cmds.filter(c => c.type === 'stitch').length,
-        jumpCount: cmds.filter(c => c.type === 'jump').length,
-        trimCount: cmds.filter(c => c.type === 'trim').length,
+        commandSourceUsed: guarded.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1' : 'finalEmbroideryCommands',
+        stitchCount: guarded.commands.filter(c => c.type === 'stitch').length,
+        jumpCount: guarded.commands.filter(c => c.type === 'jump').length,
+        trimCount: guarded.commands.filter(c => c.type === 'trim').length,
       };
       console.log('[commands-state] final commands metrics (override):', meta);
-      return { commands: cmds, objects: [], meta };
+      return { commands: guarded.commands, objects: [], meta, transitionGuardReport: guarded.report, transitionGuardMd: guarded.md };
     }
     // ── Auto-apply learned density / angle / pull-compensation (Professional Mode) ──
     // When the Reference Learning Engine mined these values from the corpus and
@@ -237,19 +242,35 @@ export default function Editor() {
         commands: finalCmds, objects: built.objects, regions,
         config: configWithDarkStroke, darkStroke,
       });
+      const guarded = applyStitchedTransitionToJumpGuard({
+        commands: prof.commands, objects: prof.objects, regions, config: configWithDarkStroke, darkStroke, machineSettings: editorMachineSettings,
+      });
       console.log('[professional] applied pipeline — score:', prof.report?.gate?.professionalScore);
       return {
-        commands: prof.commands, objects: prof.objects, meta: built.meta,
+        commands: guarded.commands, objects: prof.objects,
+        meta: { ...built.meta, commandSourceUsed: guarded.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1' : 'finalEmbroideryCommands' },
         contourSegmentReport: built.contourSegmentReport,
         professionalReport: prof.report,
+        transitionGuardReport: guarded.report,
+        transitionGuardMd: guarded.md,
       };
     }
-    console.log('[commands-state] final commands metrics:', {
-      stitches: finalCmds.filter(c => c.type === 'stitch').length,
-      jumps: finalCmds.filter(c => c.type === 'jump').length,
-      trims: finalCmds.filter(c => c.type === 'trim').length,
+    const guarded = applyStitchedTransitionToJumpGuard({
+      commands: finalCmds, objects: built.objects, regions, config: configWithDarkStroke, darkStroke, machineSettings: editorMachineSettings,
     });
-    return { commands: finalCmds, objects: built.objects, meta: built.meta, contourSegmentReport: built.contourSegmentReport };
+    console.log('[commands-state] final commands metrics:', {
+      stitches: guarded.commands.filter(c => c.type === 'stitch').length,
+      jumps: guarded.commands.filter(c => c.type === 'jump').length,
+      trims: guarded.commands.filter(c => c.type === 'trim').length,
+    });
+    return {
+      commands: guarded.commands,
+      objects: built.objects,
+      meta: { ...built.meta, commandSourceUsed: guarded.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1' : 'finalEmbroideryCommands' },
+      contourSegmentReport: built.contourSegmentReport,
+      transitionGuardReport: guarded.report,
+      transitionGuardMd: guarded.md,
+    };
   }, [regions, configWithDarkStroke, editorMachineSettings, optimizedCommandsOverride, darkStroke]);
 
   // ═══ Unified metrics — single source of truth for all panels ═══
@@ -789,6 +810,9 @@ export default function Editor() {
                 config={config}
                 darkStroke={darkStroke}
                 machineSettings={editorMachineSettings}
+                transitionGuardReport={finalEmbroideryCommands.transitionGuardReport}
+                transitionGuardMd={finalEmbroideryCommands.transitionGuardMd}
+                commandSourceLabel={finalEmbroideryCommands.meta?.commandSourceUsed || 'finalEmbroideryCommands'}
               />
               <RealImageDiagnosticPanel
                 imageUrl={imageUrl}
