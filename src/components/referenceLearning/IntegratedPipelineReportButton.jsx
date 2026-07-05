@@ -2,8 +2,10 @@ import { Download } from 'lucide-react';
 import { INTEGRATED_PIPELINE_REPORT_MD } from '@/components/referenceLearning/integratedPipelineReportContent';
 import { SATIN_PHASE_ORDER_FIX_REPORT_MD } from '@/components/referenceLearning/satinPhaseOrderFixReportContent';
 import { INTEGRATED_PIPELINE_AFTER_SATIN_V2_MD } from '@/components/referenceLearning/integratedPipelineAfterSatinV2Content';
+import { INTEGRATED_PIPELINE_AFTER_SATIN_V2_RUNTIME_MD } from '@/components/referenceLearning/integratedPipelineAfterSatinV2RuntimeContent';
 
 const REPORTS = [
+  { label: 'Runtime V2', filename: 'REFERENCE_INTEGRATED_PIPELINE_AFTER_SATIN_V2_RUNTIME.md', content: INTEGRATED_PIPELINE_AFTER_SATIN_V2_RUNTIME_MD, color: 'emerald' },
   { label: 'Order Fix V1', filename: 'SATIN_PHASE_ORDER_FIX_REPORT_V1.md', content: SATIN_PHASE_ORDER_FIX_REPORT_MD, color: 'violet' },
   { label: 'Integrated V2', filename: 'REFERENCE_INTEGRATED_PIPELINE_AFTER_SATIN_V2.md', content: INTEGRATED_PIPELINE_AFTER_SATIN_V2_MD, color: 'emerald' },
   { label: 'Integrated V1', filename: 'REFERENCE_INTEGRATED_PIPELINE_AFTER_SATIN_V1.md', content: INTEGRATED_PIPELINE_REPORT_MD, color: 'sky' },
@@ -21,7 +23,7 @@ export default function IntegratedPipelineReportButton() {
   };
 
   return (
-    <div className="grid gap-2 sm:grid-cols-3">
+    <div className="grid gap-2 sm:grid-cols-4">
       {REPORTS.map((report) => (
         <button
           key={report.filename}
