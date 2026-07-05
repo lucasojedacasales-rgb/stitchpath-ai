@@ -8,7 +8,7 @@
  *   severity: 'blocking' | 'warning'
  *   reparable: true si el preExportRepairer puede corregirlo
  */
-import { validateCE01 } from '@/lib/ce01Validator';
+import { validateEmbroideryCompatibility } from '@/lib/embroideryValidation/validationArchitecture';
 import { detectVisibleDiagonalStitches } from './visibleDiagonalDetector';
 
 const HOOP_W = 100, HOOP_H = 100;
@@ -43,8 +43,17 @@ export function detectExportErrors(commands, objects = [], regions = [], config 
   const cmds = commands || [];
   const errors = [];
 
-  // ── CE01 validation (source of blocking truth) ──
-  const ce01 = validateCE01(cmds, objects, regions, config, machineSettings);
+  // ── Universal validation architecture (source of blocking truth) ──
+  const architecture = validateEmbroideryCompatibility({
+    commands: cmds,
+    objects,
+    regions,
+    config: { ...config, validationMode: config.validationMode || 'universal' },
+    machineSettings,
+    format: config.format || machineSettings.format || 'DST',
+  });
+  const ce01 = architecture.ce01; // backward compatibility for CE01 reports only
+  const validation = architecture.active;
 
   let stitches = 0, jumps = 0, trims = 0, colorChanges = 0;
   let shortSt = 0, longSt = 0, dups = 0, outOfBounds = 0;
@@ -132,6 +141,9 @@ export function detectExportErrors(commands, objects = [], regions = [], config 
   };
 
   push('invalidCommandSequence', invalidCmds, 'blocking', true, 'Eliminar comandos nulos/inválidos');
+  for (const issue of validation.errors || []) {
+    push(issue.type || 'universalInvalid', 1, 'blocking', false, issue.message || 'Fallo universal de compatibilidad');
+  }
   push('regionOutsideBounds', outOfBounds, 'blocking', true, 'Proyectar coordenadas fuera del bastidor al interior');
   push('emptyBlocks', emptyBlocks, 'blocking', true, 'Eliminar bloques de color vacíos');
   push('tooSmallObjects', tinyObjects, 'warning', true, 'Simplificar objetos diminutos a running o eliminar ruido');
@@ -151,7 +163,7 @@ export function detectExportErrors(commands, objects = [], regions = [], config 
   push('stitchCountHighRisk', stitches > STITCH_HIGH_RISK_THRESHOLD ? stitches - STITCH_HIGH_RISK_THRESHOLD : 0, 'warning', false, 'Revisar rendimiento/memoria en máquina; no reducir automáticamente sin evidencia real de rechazo');
   push('stitchCountWarning', stitches > STITCH_WARNING_THRESHOLD && stitches <= STITCH_HIGH_RISK_THRESHOLD ? stitches - STITCH_WARNING_THRESHOLD : 0, 'warning', false, 'Conteo alto pero no bloqueante para CE01');
 
-  return { errors, ce01, counts: { stitches, jumps, trims, shortSt, longSt, dups, outOfBounds, visibleDiag, totalColors, emptyBlocks, tinyObjects, maxCell, noTieIn, noTieOff, longJumpNoTrim }, visibleDiagDetection: vdDetection };
+  return { errors, ce01, validation, architecture, counts: { stitches, jumps, trims, shortSt, longSt, dups, outOfBounds, visibleDiag, totalColors, emptyBlocks, tinyObjects, maxCell, noTieIn, noTieOff, longJumpNoTrim }, visibleDiagDetection: vdDetection };
 }
 
 export function summarizeErrors(errors) {

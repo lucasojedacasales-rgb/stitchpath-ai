@@ -32,14 +32,17 @@ import ExportTrafficLight from './exportCenter/ExportTrafficLight';
 import LabSection from './exportCenter/LabSection';
 import { detectExportErrors } from '@/lib/exportRepair/exportErrorDetector';
 import { getEffectiveExportCommands } from '@/lib/exportRepair/getEffectiveExportCommands';
+import { validateEmbroideryCompatibility } from '@/lib/embroideryValidation/validationArchitecture';
+import ValidationModeSelector from './ValidationModeSelector';
+import UniversalValidationSummary from './UniversalValidationSummary';
 
 const FORMATS = ['DSB', 'DST', 'PES', 'JEF', 'EXP'];
 
 /**
- * CE01 Production export gate — the ONLY authority for blocking export in
- * production mode. Never consults stabilityScore, adaptiveResult, or
- * geometryWarnings. Blocks only on: empty commands, CE01 INVALID, or
- * encode failure.
+ * Production export gate — uses the active validation mode. CE01 blocks only
+ * when validationMode is explicitly ce01_strict. Never consults stabilityScore,
+ * adaptiveResult, or geometryWarnings. Blocks only on: empty commands,
+ * active validation INVALID, or encode failure.
  */
 function canExportInCE01ProductionMode({ commands, ce01Validation, encodeReady }) {
   if (!commands || commands.length === 0) {
@@ -49,9 +52,9 @@ function canExportInCE01ProductionMode({ commands, ce01Validation, encodeReady }
     return { allowed: false, reason: 'El archivo no se puede codificar' };
   }
   if (ce01Validation?.status === 'INVALID') {
-    return { allowed: false, reason: 'CE01 validator INVALID' };
+    return { allowed: false, reason: `${ce01Validation.validator || 'Validation'} INVALID` };
   }
-  return { allowed: true, reason: 'CE01 Production export allowed' };
+  return { allowed: true, reason: 'Production export allowed' };
 }
 
 export default function ExportModal({ project, config: editorConfig, regions: initialRegions, darkStroke, finalCommands: editorFinalCommands, finalObjects: editorFinalObjects, commandVersion, onClose }) {
@@ -59,7 +62,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   const [regions, setRegions] = useState(initialRegions || []);
   const [cleanupReport, setCleanupReport] = useState(null);
 
-  // Auto-cleanup on mount: cap stitches < 12,000 + guarantee trims on jumps > 3.5mm
+  // Auto-cleanup on mount: no stitch-count reduction under recalibrated limits; guarantee trims on jumps > 3.5mm
   useEffect(() => {
     if (!initialRegions || initialRegions.length === 0) return;
     const { regions: cleaned, applied } = autoCleanupRegions(initialRegions, project?.config || {});
@@ -83,8 +86,9 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   const [repairAccepted, setRepairAccepted] = useState(false);
   const [exportView, setExportView] = useState('final'); // 'final' | 'exportable' | 'compare'
   const [uiMode, setUiMode] = useState('simple'); // 'simple' | 'lab'  — UI_EXPORT_CENTER_CLEANUP_V1
+  const [validationMode, setValidationMode] = useState((editorConfig || project?.config || {}).validationMode || 'universal');
 
-  const config = editorConfig || project?.config || {};
+  const config = { ...(editorConfig || project?.config || {}), validationMode };
   const totalStitches = regions.reduce((s, r) => s + (r.stitch_count || 0), 0);
   const colorsUsed = new Set(regions.map(r => r.color)).size;
   const estimatedMin = Math.ceil(totalStitches / (speed || 800));
@@ -168,17 +172,30 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     return prepareCE01ProductionExport(sourceCommands, regions, config, machineSettings, sourceObjects, format);
   }, [ce01ProductionMode, editorFinalCommands, editorFinalObjects, regions, config, machineSettings, format]);
 
-  // ── CE01 Production gate decision (used by button + handleExport) ──────
-  // Ignores stabilityScore, adaptiveReport, geometryWarnings entirely.
+  const productionValidation = useMemo(() => {
+    if (!ce01ProductionMode) return null;
+    const sourceCommands = editorFinalCommands || pipelineResult.commands;
+    return validateEmbroideryCompatibility({
+      commands: sourceCommands,
+      objects: editorFinalObjects || pipelineResult.objects,
+      regions,
+      config,
+      machineSettings,
+      format,
+    });
+  }, [ce01ProductionMode, editorFinalCommands, editorFinalObjects, pipelineResult.commands, pipelineResult.objects, regions, config, machineSettings, format]);
+
+  // ── Production gate decision (used by button + handleExport) ──────
+  // CE01 only blocks when validationMode === 'ce01_strict'.
   const productionGateDecision = useMemo(() => {
     if (!ce01ProductionMode) return null;
     const sourceCommands = editorFinalCommands || pipelineResult.commands;
     return canExportInCE01ProductionMode({
       commands: sourceCommands,
-      ce01Validation: productionReport?.ce01Report,
+      ce01Validation: productionValidation?.active,
       encodeReady: true,
     });
-  }, [ce01ProductionMode, editorFinalCommands, pipelineResult.commands, productionReport]);
+  }, [ce01ProductionMode, editorFinalCommands, pipelineResult.commands, productionValidation]);
 
   // ── Effective export commands (helper ÚNICO) ──────────────────────────────
   // Prioridad: repairedCommands (V5) → productionReport.commands → editorFinalCommands → pipelineResult.commands
@@ -232,8 +249,10 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     () => techDetection.errors.filter(e => e.severity === 'blocking' && e.count > 0),
     [techDetection]
   );
-  const lightLevel = (techDetection.ce01.status === 'INVALID' || remainingBlocking.length > 0)
-    ? 'red' : (techDetection.ce01.status === 'RISKY' ? 'amber' : 'green');
+  const activeValidation = techDetection.validation || techDetection.architecture?.active;
+  const activeStatus = activeValidation?.status || techDetection.ce01.status;
+  const lightLevel = (activeStatus === 'INVALID' || remainingBlocking.length > 0)
+    ? 'red' : (activeStatus === 'RISKY' || activeStatus === 'WARNING' ? 'amber' : 'green');
 
   // In production mode, stale adaptive/stability states are ignored entirely
   const effectiveAdaptiveReport = ce01ProductionMode ? null : adaptiveReport;
@@ -260,7 +279,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     // ── CE01 Production path: no recalculation, no aggressive optimizers ──
     if (ce01ProductionMode) {
       const sourceCommands = editorFinalCommands || pipelineResult.commands;
-      const ce01Validation = productionReport?.ce01Report;
+      const ce01Validation = productionValidation?.active;
       const gateDecision = canExportInCE01ProductionMode({
         commands: sourceCommands,
         ce01Validation,
@@ -427,9 +446,9 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       return;
     }
 
-    // GATE: block export if CE01 validation returns INVALID
-    if (ce01Report.status === 'INVALID') {
-      setExportError(`Exportación bloqueada por validación CE01: ${ce01Report.blockingIssues.length} problema(s) crítico(s). Revisa el informe CE01.`);
+    // GATE: CE01 only blocks when CE01 strict is explicitly active.
+    if (validationMode === 'ce01_strict' && ce01Report.status === 'INVALID') {
+      setExportError(`Exportación bloqueada por CE01 estricto: ${ce01Report.blockingIssues.length} problema(s) crítico(s).`);
       return;
     }
     setExporting(true);
@@ -558,11 +577,14 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 </span>
               </div>
 
+              <ValidationModeSelector value={validationMode} onChange={setValidationMode} />
+              <UniversalValidationSummary architecture={techDetection.architecture} />
+
               {/* ── UI_EXPORT_CENTER_CLEANUP_V1: traffic light status ── */}
               <ExportTrafficLight
                 level={lightLevel}
-                ce01Status={techDetection.ce01.status}
-                ce01Score={techDetection.ce01.score}
+                ce01Status={activeStatus}
+                ce01Score={activeValidation?.score ?? techDetection.ce01.score}
                 commandSource={effectiveExport.source}
                 visibleDiagonalStitches={techDetection.counts.visibleDiag}
                 emptyBlocks={techDetection.counts.emptyBlocks}
@@ -571,7 +593,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 jumpCount={unifiedMetrics.jumpCount}
                 trimCount={unifiedMetrics.trimCount}
                 colorCount={unifiedMetrics.colorCount}
-                exportAllowed={techDetection.ce01.status !== 'INVALID' && remainingBlocking.length === 0}
+                exportAllowed={activeStatus !== 'INVALID' && remainingBlocking.length === 0}
                 format={ce01ProductionMode ? 'DST' : format}
               />
 
@@ -1020,7 +1042,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 )}
                 <button
                   onClick={handleExport}
-                  disabled={exporting || (ce01ProductionMode ? (!productionGateDecision?.allowed && !(repairAccepted && repairedCommands?.length > 0)) : ((blockingErrors.length > 0 && !wizardResult) || ce01Report.status === 'INVALID'))}
+                  disabled={exporting || (ce01ProductionMode ? (!productionGateDecision?.allowed && !(repairAccepted && repairedCommands?.length > 0)) : ((blockingErrors.length > 0 && !wizardResult) || (validationMode === 'ce01_strict' && ce01Report.status === 'INVALID')))}
                   className={`w-full py-2.5 rounded-lg text-white text-sm font-bold transition-colors flex items-center justify-center gap-2 disabled:cursor-not-allowed ${
                     ce01ProductionMode
                       ? (!productionGateDecision?.allowed && !(repairAccepted && repairedCommands?.length > 0)
@@ -1030,7 +1052,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                           : productionReport?.ce01Report?.status === 'RISKY'
                             ? 'bg-amber-600 hover:bg-amber-500'
                             : 'bg-violet-600 hover:bg-violet-500 disabled:opacity-50')
-                      : ((blockingErrors.length > 0 && !wizardResult) || ce01Report.status === 'INVALID'
+                      : ((blockingErrors.length > 0 && !wizardResult) || (validationMode === 'ce01_strict' && ce01Report.status === 'INVALID')
                         ? 'bg-red-900/40 border border-red-500/30 text-red-300 cursor-not-allowed'
                         : ce01Report.status === 'RISKY'
                           ? 'bg-amber-600 hover:bg-amber-500'

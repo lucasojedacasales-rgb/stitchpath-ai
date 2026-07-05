@@ -64,6 +64,7 @@ const DEFAULT_CONFIG = {
   contourSafeMode: true,
   ce01SafeFillMode: true,
   ce01ProductionMode: true,
+  validationMode: 'universal',
   // ── Rollback safety flags — experimental modules OFF by default ──
   // When false, the stable pipeline is used (contourSafeMode only, no
   // detail preservation / outline generation / centerline extraction).

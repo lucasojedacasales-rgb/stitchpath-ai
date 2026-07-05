@@ -2,8 +2,8 @@
  * ExportTrafficLight.jsx — UI_EXPORT_CENTER_CLEANUP_V1
  * ─────────────────────────────────────────────────────────────────────────────
  * Bloque superior tipo semáforo para el centro de exportación.
- * Verde: exportAllowed true y CE01 no INVALID (SAFE).
- * Amber: RISKY pero exportable.
+ * Verde: exportAllowed true y validación activa VALID/SAFE.
+ * Amber: WARNING/RISKY pero exportable.
  * Rojo: INVALID o bloqueos restantes.
  *
  * Solo lectura: no cambia lógica de exportación.
@@ -32,8 +32,8 @@ export default function ExportTrafficLight({
         <span className="ml-auto text-[10px] text-slate-400">Formato: <b className="text-cyan-400">{format}</b></span>
       </div>
       <div className="grid grid-cols-4 gap-1.5 text-[10px]">
-        <Cell label="CE01 status" value={ce01Status} accent={ce01Status === 'SAFE' ? 'text-emerald-400' : ce01Status === 'RISKY' ? 'text-amber-300' : 'text-red-400'} />
-        <Cell label="CE01 score" value={ce01Score} />
+        <Cell label="validation" value={ce01Status} accent={ce01Status === 'SAFE' || ce01Status === 'VALID' ? 'text-emerald-400' : ce01Status === 'RISKY' || ce01Status === 'WARNING' ? 'text-amber-300' : 'text-red-400'} />
+        <Cell label="score" value={ce01Score} />
         <Cell label="commandSource" value={commandSource} accent="text-cyan-400" />
         <Cell label="exportAllowed" value={exportAllowed ? 'SÍ' : 'NO'} accent={exportAllowed ? 'text-emerald-400' : 'text-red-400'} />
         <Cell label="visibleDiag" value={visibleDiagonalStitches} accent={visibleDiagonalStitches === 0 ? 'text-emerald-400' : 'text-red-400'} />
