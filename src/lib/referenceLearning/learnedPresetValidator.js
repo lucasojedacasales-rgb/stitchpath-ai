@@ -161,6 +161,7 @@ export function validateLearnedPresetEffectiveness({ regions, baseConfig = {}, d
     selection, basePreset, finalPreset, cartoon,
     before, after, verdict, notEffective, integrity, report,
     trimGuard: prof.report?.trimGuard || null,
+    satinOuterContourConverter: prof.report?.satinOuterContourConverter || null,
     visibleSplitter,
     splitterReport,
     visibleSplitterForensics,

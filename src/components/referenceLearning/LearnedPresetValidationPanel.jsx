@@ -106,6 +106,28 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
     URL.revokeObjectURL(url);
   }, [result]);
 
+  const handleDownloadSatinOuterContour = useCallback(() => {
+    if (!result?.satinOuterContourConverter?.md) return;
+    const blob = new Blob([result.satinOuterContourConverter.md], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'SATIN_OUTER_CONTOUR_CONVERTER_REPORT_V1.md';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [result]);
+
+  const handleDownloadAfterSatinOuterContour = useCallback(() => {
+    if (!result?.satinOuterContourConverter?.referenceValidationMd) return;
+    const blob = new Blob([result.satinOuterContourConverter.referenceValidationMd], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'REFERENCE_LEARNING_VALIDATED_REPORT_AFTER_SATIN_OUTER_CONTOUR.md';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [result]);
+
   return (
     <div className="bg-[#161a23] border border-violet-500/30 rounded-xl p-3">
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
@@ -169,6 +191,22 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/20 border border-amber-500/30 text-amber-300 text-xs font-bold hover:bg-amber-900/30 transition-colors"
             >
               <Download className="w-3.5 h-3.5" /> Splitter Forensics
+            </button>
+          )}
+          {result && result.satinOuterContourConverter?.md && (
+            <button
+              onClick={handleDownloadSatinOuterContour}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-900/20 border border-sky-500/30 text-sky-300 text-xs font-bold hover:bg-sky-900/30 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" /> Satin Converter V1
+            </button>
+          )}
+          {result && result.satinOuterContourConverter?.referenceValidationMd && (
+            <button
+              onClick={handleDownloadAfterSatinOuterContour}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-900/20 border border-blue-500/30 text-blue-300 text-xs font-bold hover:bg-blue-900/30 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" /> After Satin Outer
             </button>
           )}
         </div>
