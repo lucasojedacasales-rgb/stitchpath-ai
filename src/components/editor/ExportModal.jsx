@@ -47,17 +47,23 @@ const FORMATS = ['DSB', 'DST', 'PES', 'JEF', 'EXP'];
  * adaptiveResult, or geometryWarnings. Blocks only on: empty commands,
  * active validation INVALID, or encode failure.
  */
-function canExportInCE01ProductionMode({ commands, ce01Validation, encodeReady }) {
+function canExportInCE01ProductionMode({ commands, productionValidation, encodeReady, format }) {
   if (!commands || commands.length === 0) {
-    return { allowed: false, reason: 'No hay comandos de bordado válidos' };
+    return { allowed: false, reason: 'No hay comandos de bordado válidos', blockingCheck: 'COMMANDS_PRESENT' };
   }
   if (!encodeReady) {
-    return { allowed: false, reason: 'El archivo no se puede codificar' };
+    return { allowed: false, reason: 'El archivo no se puede codificar', blockingCheck: 'ENCODER_READY' };
   }
-  if (ce01Validation?.status === 'INVALID') {
-    return { allowed: false, reason: `${ce01Validation.validator || 'Validation'} INVALID` };
+  if (!['DST', 'DSB'].includes(String(format || '').toUpperCase())) {
+    return { allowed: false, reason: 'Formato no habilitado para prueba de máquina', blockingCheck: 'FORMAT_ALLOWED' };
   }
-  return { allowed: true, reason: 'Production export allowed' };
+  if (productionValidation?.universal?.status === 'INVALID') {
+    return { allowed: false, reason: 'Universal INVALID', blockingCheck: 'UNIVERSAL_VALID' };
+  }
+  if (productionValidation?.format?.status === 'INVALID') {
+    return { allowed: false, reason: `${format} INVALID`, blockingCheck: 'FORMAT_VALID' };
+  }
+  return { allowed: true, reason: 'Exportación permitida; warnings no bloqueantes', blockingCheck: 'REAL_EXPORT_GATE' };
 }
 
 export default function ExportModal({ project, config: editorConfig, regions: initialRegions, darkStroke, finalCommands: editorFinalCommands, finalObjects: editorFinalObjects, commandVersion, onClose }) {
@@ -150,9 +156,9 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   // Pipeline: finalCommands → repair (if improves) → sanitize (if improves) → CE01 validate → encode
   const ce01ProductionMode = config.ce01ProductionMode === true;
 
-  // CE01 Production Mode: default to DST — last validated format on Caydo CE01.
+  // CE01 Production Mode: default to DSB for the machine acceptance test; DST remains available.
   useEffect(() => {
-    if (ce01ProductionMode) setFormat('DST');
+    if (ce01ProductionMode) setFormat('DSB');
   }, [ce01ProductionMode]);
 
   // Clear stale adaptive/stability states when opening in production mode —
@@ -194,10 +200,11 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     const sourceCommands = editorFinalCommands || pipelineResult.commands;
     return canExportInCE01ProductionMode({
       commands: sourceCommands,
-      ce01Validation: productionValidation?.active,
+      productionValidation,
       encodeReady: true,
+      format,
     });
-  }, [ce01ProductionMode, editorFinalCommands, pipelineResult.commands, productionValidation]);
+  }, [ce01ProductionMode, editorFinalCommands, pipelineResult.commands, productionValidation, format]);
 
   // ── Effective export commands (helper ÚNICO) ──────────────────────────────
   // Prioridad: repairedCommands (V5) → productionReport.commands → editorFinalCommands → pipelineResult.commands
@@ -249,16 +256,23 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   ), [effectiveExport.commands, editorFinalObjects, pipelineResult.objects, regions, config, machineSettings]);
   const exportBlockingAudit = useMemo(() => analyzeExportBlocking({
     commands: effectiveExport.commands,
-    format: ce01ProductionMode ? 'DST' : format,
-  }), [effectiveExport.commands, ce01ProductionMode, format]);
+    format,
+  }), [effectiveExport.commands, format]);
+  const exportAllowedByRealGate = exportBlockingAudit.exportAllowed && (productionGateDecision?.allowed ?? true);
   const remainingBlocking = useMemo(
-    () => exportBlockingAudit.exportAllowed ? [] : [{ type: exportBlockingAudit.blockingReason, count: 1, severity: 'blocking', reparable: false, proposedAction: exportBlockingAudit.unlockHint }],
-    [exportBlockingAudit]
+    () => exportAllowedByRealGate ? [] : [{ rule: productionGateDecision?.blockingCheck || exportBlockingAudit.blockingCheck, type: productionGateDecision?.reason || exportBlockingAudit.blockingReason, count: 1, severity: 'blocking', reparable: false, message: productionGateDecision?.reason || exportBlockingAudit.unlockHint, proposedAction: exportBlockingAudit.unlockHint }],
+    [exportAllowedByRealGate, exportBlockingAudit, productionGateDecision]
   );
   const activeValidation = techDetection.validation || techDetection.architecture?.active;
   const activeStatus = activeValidation?.status || techDetection.ce01.status;
-  const lightLevel = !exportBlockingAudit.exportAllowed
+  const lightLevel = !exportAllowedByRealGate
     ? 'red' : (activeStatus === 'RISKY' || activeStatus === 'WARNING' || activeStatus === 'INVALID' ? 'amber' : 'green');
+  const hasNonBlockingWarnings = exportAllowedByRealGate && (
+    activeStatus === 'RISKY' || activeStatus === 'WARNING' || activeStatus === 'INVALID' ||
+    ce01Report.status === 'RISKY' || ce01Report.status === 'INVALID' ||
+    techDetection.errors.length > 0 ||
+    (productionValidation?.active?.warnings || []).length > 0
+  );
 
   // In production mode, stale adaptive/stability states are ignored entirely
   const effectiveAdaptiveReport = ce01ProductionMode ? null : adaptiveReport;
@@ -277,8 +291,8 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       setExportError('Las métricas no están sincronizadas. Regenera comandos finales.');
       return;
     }
-    if (!exportBlockingAudit.exportAllowed) {
-      setExportError(`Bloqueo real: ${exportBlockingAudit.blockingReason} · ${exportBlockingAudit.blockingModule} · ${exportBlockingAudit.blockingCheck}. ${exportBlockingAudit.unlockHint}`);
+    if (!exportAllowedByRealGate) {
+      setExportError(`Bloqueo real: ${productionGateDecision?.reason || exportBlockingAudit.blockingReason} · ${exportBlockingAudit.blockingModule} · ${productionGateDecision?.blockingCheck || exportBlockingAudit.blockingCheck}. ${exportBlockingAudit.unlockHint}`);
       return;
     }
 
@@ -289,25 +303,22 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     // ── CE01 Production path: no recalculation, no aggressive optimizers ──
     if (ce01ProductionMode) {
       const sourceCommands = editorFinalCommands || pipelineResult.commands;
-      const ce01Validation = productionValidation?.active;
       const gateDecision = canExportInCE01ProductionMode({
         commands: sourceCommands,
-        ce01Validation,
+        productionValidation,
         encodeReady: true,
+        format,
       });
 
       console.log('[export-gate] ce01ProductionMode:', ce01ProductionMode);
       console.log('[export-gate] adaptive gate active:', !ce01ProductionMode);
       console.log('[export-gate] stabilityScore: ignored (production mode)');
-      console.log('[export-gate] ce01Validation:', ce01Validation?.status);
+      console.log('[export-gate] universalValidation:', productionValidation?.universal?.status);
+      console.log('[export-gate] formatValidation:', productionValidation?.format?.status);
       console.log('[export-gate] final decision:', gateDecision);
 
       if (!gateDecision.allowed) {
-        console.warn('[export-gate] validation warning ignored by emergency hard gate:', gateDecision.reason);
-      }
-      // ── CE01 Production: force DST, block DSB entirely ───────────────────
-      if (format !== 'DST') {
-        setExportError('CE01 Production Mode requiere formato DST. DSB no está permitido.');
+        setExportError(`Bloqueo real: ${gateDecision.reason}`);
         return;
       }
 
@@ -336,9 +347,19 @@ export default function ExportModal({ project, config: editorConfig, regions: in
       setExporting(true);
       setExportError(null);
       try {
-        // ── Direct DST: prefer pre-export repairedCommands (only if repairAccepted),
-        //    then productionReport.commands (CE01 repair+sanitize), fallback raw.
+        // ── Production export: same final command sequence for DST and DSB.
         const exportCommands = effectiveExport.commands;
+        if (format === 'DSB') {
+          const blob = await encodeToFile(exportCommands, editorFinalObjects || pipelineResult.objects, 'DSB', machineSettings, base44);
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${(project?.name || 'design').replace(/[^a-zA-Z0-9_-]/g, '_')}.dsb`;
+          a.click();
+          URL.revokeObjectURL(url);
+          onClose();
+          return;
+        }
         const { bytes, blob, meta } = buildDSTFromCommands(exportCommands, {
           label: project?.name || 'design',
           ce01Strict: true,
@@ -585,11 +606,11 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 jumpCount={unifiedMetrics.jumpCount}
                 trimCount={unifiedMetrics.trimCount}
                 colorCount={unifiedMetrics.colorCount}
-                exportAllowed={exportBlockingAudit.exportAllowed}
-                format={ce01ProductionMode ? 'DST' : format}
+                exportAllowed={exportAllowedByRealGate}
+                format={format}
               />
 
-              <ExportBlockingCausePanel audit={exportBlockingAudit} />
+              <ExportBlockingCausePanel audit={exportAllowedByRealGate ? { ...exportBlockingAudit, exportAllowed: true, blockingReason: 'none', blockingModule: 'none', blockingCheck: 'REAL_EXPORT_GATE', unlockHint: 'No hay bloqueo real. Warnings reparables y score bajo no bloquean.' } : exportBlockingAudit} />
 
               {/* ── Pre-export technical repair (FASE 1-6) ── */}
               <ExportRepairPanel
@@ -608,6 +629,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                     setRepairedCommands(null);
                   }
                 }}
+                exportAllowed={exportAllowedByRealGate}
                 onViewChange={(v, cmds) => {
                   setExportView(v);
                   if (v === 'final') setRepairedCommands(null);
@@ -965,7 +987,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-2 block">Formato de salida</label>
                 {ce01ProductionMode ? (
                   <div className="mb-2 text-[10px] text-emerald-400 bg-emerald-900/15 border border-emerald-500/30 rounded-lg px-2 py-1 font-bold">
-                    Formato CE01: DST — modo producción activo. DSB/PES/JEF/EXP no disponibles.
+                    Formato CE01: DSB recomendado para prueba; DST disponible como alternativa. PES/JEF/EXP no disponibles en esta prueba.
                   </div>
                 ) : (
                   <div className="mb-2 text-[10px] text-cyan-400 bg-cyan-900/15 border border-cyan-500/30 rounded-lg px-2 py-1">
@@ -979,7 +1001,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 )}
                 <div className="grid grid-cols-5 gap-2">
                   {FORMATS.map(f => {
-                    const disabled = ce01ProductionMode && f !== 'DST';
+                    const disabled = ce01ProductionMode && !['DSB', 'DST'].includes(f);
                     return (
                       <button key={f} onClick={() => !disabled && setFormat(f)} disabled={disabled}
                         className={`py-2 rounded-lg border text-xs font-bold transition-all ${
@@ -1047,21 +1069,23 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 )}
                 <button
                   onClick={handleExport}
-                  disabled={exporting || !exportBlockingAudit.exportAllowed}
+                  disabled={exporting || !exportAllowedByRealGate}
                   className={`w-full py-2.5 rounded-lg text-white text-sm font-bold transition-colors flex items-center justify-center gap-2 disabled:cursor-not-allowed ${
-                    !exportBlockingAudit.exportAllowed
+                    !exportAllowedByRealGate
                       ? 'bg-red-900/40 border border-red-500/30 text-red-300 cursor-not-allowed'
-                      : ce01Report.status === 'RISKY'
+                      : hasNonBlockingWarnings
                         ? 'bg-amber-600 hover:bg-amber-500'
                         : 'bg-violet-600 hover:bg-violet-500 disabled:opacity-50'
                   }`}
                 >
-                  {!exportBlockingAudit.exportAllowed ? (
+                  {!exportAllowedByRealGate ? (
                     <><ShieldAlert className="w-4 h-4" /> Exportación bloqueada</>
                   ) : exporting ? (
                     <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>
+                  ) : hasNonBlockingWarnings ? (
+                    <><Download className="w-4 h-4" /> Exportar con advertencias</>
                   ) : ce01ProductionMode ? (
-                    <><Download className="w-4 h-4" /> Exportar DST</>
+                    <><Download className="w-4 h-4" /> Exportar {format}</>
                   ) : wizardResult ? (
                     <><Download className="w-4 h-4" /> Exportar (corregido)</>
                   ) : (

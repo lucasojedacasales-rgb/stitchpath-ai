@@ -138,27 +138,31 @@ function markSafeRegions(regions, config, errorRegions) {
 //  STOP CONDITION EVALUATION
 // ═══════════════════════════════════════════════════════════════════════════
 
+function isHardValidationError(error) {
+  const hardRules = new Set(['R1', 'R2', 'R3', 'R4', 'R8', 'R9', 'R10', 'R12']);
+  const hardTypes = new Set(['emptyCommands', 'invalidCoordinates', 'duplicateEnd', 'commandsAfterEnd', 'invalidCommandSequence', 'impossibleDistance', 'designOutsideDeclaredArea', 'deltaOverflow', 'coordinateOverflow', 'invalidCommand']);
+  return hardRules.has(error?.rule) || hardTypes.has(error?.type);
+}
+
 function evaluateStopConditions(sim, commands, objects, ms, format, score) {
-  const criticalErrors = sim.errors.filter(e => e.severity === 'CRITICAL');
-  const dangerousJumps = sim.errors.filter(e => e.rule === 'JUMP' || e.rule === 'JUMP2');
+  const criticalErrors = sim.errors.filter(e => e.severity === 'CRITICAL' && ['MACRO', 'OPEN'].includes(e.rule));
+  const dangerousJumps = sim.errors.filter(e => false); // jumps are warnings unless format validation fails
   const outOfRange = sim.errors.filter(e => e.rule === 'MACRO');
   const openPaths = sim.errors.filter(e => e.rule === 'OPEN');
 
   const validation = validatePipeline(commands, objects, ms, format);
+  const hardValidationErrors = (validation.errors || []).filter(isHardValidationError);
 
   return {
     noCritical: criticalErrors.length === 0,
     noDangerousJumps: dangerousJumps.length === 0,
     noOutOfRange: outOfRange.length === 0,
     noOpenPaths: openPaths.length === 0,
-    validationOk: validation.passed,
-    stabilityOk: score >= STABILITY_TARGET,
-    _all: criticalErrors.length === 0 &&
-          dangerousJumps.length === 0 &&
-          outOfRange.length === 0 &&
-          openPaths.length === 0 &&
-          validation.passed &&
-          score >= STABILITY_TARGET,
+    validationOk: hardValidationErrors.length === 0,
+    stabilityOk: true,
+    hardValidationErrors,
+    warningValidationErrors: (validation.errors || []).filter(e => !isHardValidationError(e)),
+    _all: criticalErrors.length === 0 && hardValidationErrors.length === 0,
   };
 }
 
@@ -316,23 +320,23 @@ export function runAdaptiveOptimization(regions, config = {}, machineSettings = 
   // ── Final evaluation ─────────────────────────────────────────────────
   const finalStop = evaluateStopConditions(sim, commands, objects, ms, format, currentScore);
   const readyToExport = finalStop._all;
+  const nonBlockingWarnings = [
+    ...sim.errors.filter(e => e.severity !== 'CRITICAL' || !['MACRO', 'OPEN'].includes(e.rule)),
+    ...(finalStop.warningValidationErrors || []),
+  ];
 
-  const status = readyToExport ? 'SAFE'
-    : currentScore >= 70 ? 'RISKY' : 'INVALID';
+  const status = readyToExport
+    ? (nonBlockingWarnings.length > 0 || currentScore < STABILITY_TARGET ? 'WARNING' : 'SAFE')
+    : 'INVALID';
 
-  // Unresolved issues (critical + major remaining)
-  const unresolvedIssues = sim.errors
-    .filter(e => e.severity === 'CRITICAL' || e.severity === 'MAJOR')
-    .map(e => ({ rule: e.rule, severity: e.severity, message: e.message }));
+  // Unresolved issues are now diagnostic warnings unless they match hard blockers.
+  const unresolvedIssues = nonBlockingWarnings
+    .map(e => ({ rule: e.rule || e.type, severity: e.severity || 'WARNING', message: e.message }));
 
-  // Block reasons
+  // Block reasons: only real format/command blockers. Score and reparable warnings never block.
   const blockReasons = [];
-  if (!finalStop.noCritical) blockReasons.push(`${sim.errors.filter(e => e.severity === 'CRITICAL').length} error(es) crítico(s)`);
-  if (!finalStop.stabilityOk) blockReasons.push(`Stability score ${currentScore} < ${STABILITY_TARGET}`);
-  if (!finalStop.validationOk) blockReasons.push('Validación de exportación fallida');
-  if (!finalStop.noDangerousJumps) blockReasons.push(`${sim.errors.filter(e => e.rule === 'JUMP' || e.rule === 'JUMP2').length} salto(s) peligroso(s)`);
-  if (!finalStop.noOutOfRange) blockReasons.push(`${sim.errors.filter(e => e.rule === 'MACRO').length} puntada(s) fuera de rango`);
-  if (!finalStop.noOpenPaths) blockReasons.push(`${sim.errors.filter(e => e.rule === 'OPEN').length} path(s) abierto(s)`);
+  if (!finalStop.noCritical) blockReasons.push(`${sim.errors.filter(e => e.severity === 'CRITICAL' && ['MACRO', 'OPEN'].includes(e.rule)).length} error(es) crítico(s) reales`);
+  if (!finalStop.validationOk) blockReasons.push('Errores reales de validación/formato');
 
   // Modified regions with their fix logs
   const modifiedRegions = [...modifiedRegionIds].map(id => {
@@ -346,7 +350,10 @@ export function runAdaptiveOptimization(regions, config = {}, machineSettings = 
 
   return {
     status,
+    adaptiveStatus: status,
     readyToExport,
+    exportAllowed: readyToExport,
+    warnings: unresolvedIssues,
     initialScore,
     finalScore: currentScore,
     iterations: iterationLog.length,

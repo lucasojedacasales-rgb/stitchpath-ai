@@ -943,9 +943,9 @@ export async function encodeOptimizedToFile(regions, config, format, machineSett
   // regenerate commands. The encoded commands come from buildFinalCommands.
   const result = runAdaptiveOptimization(regions, config, machineSettings, format);
 
-  if (!result.readyToExport) {
+  if (!result.readyToExport && result.status === 'INVALID') {
     const err = new Error(
-      `Exportación bloqueada por motor adaptativo: score ${result.finalScore}/${result.report.targetScore}` +
+      `Exportación bloqueada por errores reales: score ${result.finalScore}/${result.report.targetScore}` +
       (result.report.blockReasons.length ? ` — ${result.report.blockReasons.join('; ')}` : '')
     );
     err.blocked = true;

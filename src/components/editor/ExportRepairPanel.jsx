@@ -14,7 +14,7 @@ import { repairFinalLookCommandsForExport } from '@/lib/exportRepair/repairFinal
 import { detectExportErrors } from '@/lib/exportRepair/exportErrorDetector';
 import { runSafeTieV2Experiment } from '@/lib/exportRepair/runSafeTieV2Experiment';
 
-export default function ExportRepairPanel({ finalCommands, finalObjects, regions, config, machineSettings, darkStroke, uiMode = 'simple', onRepairComplete, onViewChange }) {
+export default function ExportRepairPanel({ finalCommands, finalObjects, regions, config, machineSettings, darkStroke, uiMode = 'simple', exportAllowed = false, onRepairComplete, onViewChange }) {
   const lab = uiMode === 'lab';
   const [view, setView] = useState('final');
   const [repair, setRepair] = useState(null);
@@ -191,9 +191,9 @@ export default function ExportRepairPanel({ finalCommands, finalObjects, regions
       <button
         onClick={handleRepair}
         disabled={running || !finalCommands?.length}
-        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold transition-colors disabled:opacity-40"
+        className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-bold transition-colors disabled:opacity-40 ${exportAllowed ? 'bg-[#0d0f14] border border-[#2a2d3a] text-slate-400 hover:text-slate-200 hover:bg-[#1e2130]' : 'bg-cyan-600 hover:bg-cyan-500 text-white'}`}
       >
-        {running ? <><RotateCcw className="w-4 h-4 animate-spin" /> Reparando...</> : repair ? <><RotateCcw className="w-4 h-4" /> Volver a reparar</> : <><Wrench className="w-4 h-4" /> Reparar y validar</>}
+        {running ? <><RotateCcw className="w-4 h-4 animate-spin" /> Reparando...</> : exportAllowed ? <><Wrench className="w-4 h-4" /> Reparación opcional</> : repair ? <><RotateCcw className="w-4 h-4" /> Volver a reparar</> : <><Wrench className="w-4 h-4" /> Reparar y validar</>}
       </button>
 
       {/* Tabla de fases transaccional */}
