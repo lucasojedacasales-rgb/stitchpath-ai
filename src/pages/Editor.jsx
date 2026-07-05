@@ -48,7 +48,7 @@ import LearnedPresetValidationPanel from '@/components/referenceLearning/Learned
 import IntegratedPipelineReportButton from '@/components/referenceLearning/IntegratedPipelineReportButton';
 import CommandRuntimeForensicsPanel from '@/components/editor/CommandRuntimeForensicsPanel';
 import { applyStitchedTransitionToJumpGuard } from '@/lib/stitchTransitionGuard';
-import { logSafeBootStatus } from '@/lib/safeBoot';
+import { LIGHTWEIGHT_APP_BOOT_V1, logPerf, logSafeBootStatus, perfNow } from '@/lib/safeBoot';
 
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
@@ -118,7 +118,10 @@ export default function Editor() {
   const timerRef = useRef(null);
 
   useEffect(() => {
+    console.log('[PERF] Editor mount start');
     logSafeBootStatus('Editor');
+    const firstPaintStart = perfNow();
+    setTimeout(() => logPerf('Editor first render complete', firstPaintStart), 0);
   }, []);
 
   // ── Dark stroke detection — "dark stroke first" contour system ──
@@ -130,12 +133,20 @@ export default function Editor() {
   useEffect(() => {
     const darkStrokeSourceUrl = originalImageUrl || imageUrl;
     if (!darkStrokeSourceUrl) { setDarkStroke(null); return; }
+    const shouldRunDarkStroke = !LIGHTWEIGHT_APP_BOOT_V1 || processing || showExport || activeTab === 'simulate' || activeTab === 'finallook' || activeTab === 'diagnostic' || activeTab === 'prof' || activeTab === 'learn';
+    if (!shouldRunDarkStroke) {
+      console.log('[PERF] command analysis ms', 0, 'skipped-lightweight-boot');
+      console.log('[BOOT] reference dark-stroke analysis skipped until manual run');
+      if (darkStroke) setDarkStroke(null);
+      return;
+    }
     let cancelled = false;
+    const t0 = perfNow();
     buildStrictDarkStrokeContextFromOriginalImage(darkStrokeSourceUrl, config)
-      .then(ctx => { if (!cancelled) setDarkStroke(ctx); })
+      .then(ctx => { logPerf('command analysis', t0); if (!cancelled) setDarkStroke(ctx); })
       .catch(err => { console.warn('[dark-stroke] strict detection failed:', err); if (!cancelled) setDarkStroke(null); });
     return () => { cancelled = true; };
-  }, [originalImageUrl, imageUrl]);
+  }, [originalImageUrl, imageUrl, activeTab, showExport, processing]);
 
   // Config with dark stroke mask attached — flows through buildFinalCommands
   // to the contour export builder + segment classifier. Not persisted (mask is
@@ -195,6 +206,17 @@ export default function Editor() {
 
   // Single source of truth — computed ONCE, shared with all panels
   const finalEmbroideryCommands = useMemo(() => {
+    const shouldBuildCommands = !LIGHTWEIGHT_APP_BOOT_V1 || optimizedCommandsOverride || processing || showExport || activeTab === 'simulate' || activeTab === 'finallook' || activeTab === 'validate' || activeTab === 'diagnostic' || activeTab === 'prof' || activeTab === 'learn';
+    if (!shouldBuildCommands) {
+      console.log('[PERF] command analysis ms', 0, 'skipped-lightweight-boot');
+      return {
+        commands: [],
+        objects: [],
+        deferred: true,
+        meta: { source: 'lightweight_boot_deferred', commandSourceUsed: 'deferred until manual view/export' },
+      };
+    }
+    const commandAnalysisStart = perfNow();
     if (optimizedCommandsOverride) {
       const cmds = optimizedCommandsOverride;
       const guarded = applyStitchedTransitionToJumpGuard({
@@ -208,6 +230,7 @@ export default function Editor() {
         trimCount: guarded.commands.filter(c => c.type === 'trim').length,
       };
       console.log('[commands-state] final commands metrics (override):', meta);
+      logPerf('command analysis', commandAnalysisStart);
       return { commands: guarded.commands, objects: [], meta, transitionGuardReport: guarded.report, transitionGuardMd: guarded.md };
     }
     // ── Auto-apply learned density / angle / pull-compensation (Professional Mode) ──
@@ -252,6 +275,7 @@ export default function Editor() {
         commands: prof.commands, objects: prof.objects, regions, config: configWithDarkStroke, darkStroke, machineSettings: editorMachineSettings,
       });
       console.log('[professional] applied pipeline — score:', prof.report?.gate?.professionalScore);
+      logPerf('command analysis', commandAnalysisStart);
       return {
         commands: guarded.commands, objects: prof.objects,
         meta: { ...built.meta, commandSourceUsed: guarded.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1' : 'finalEmbroideryCommands' },
@@ -269,6 +293,7 @@ export default function Editor() {
       jumps: guarded.commands.filter(c => c.type === 'jump').length,
       trims: guarded.commands.filter(c => c.type === 'trim').length,
     });
+    logPerf('command analysis', commandAnalysisStart);
     return {
       commands: guarded.commands,
       objects: built.objects,
@@ -277,13 +302,31 @@ export default function Editor() {
       transitionGuardReport: guarded.report,
       transitionGuardMd: guarded.md,
     };
-  }, [regions, configWithDarkStroke, editorMachineSettings, optimizedCommandsOverride, darkStroke]);
+  }, [regions, configWithDarkStroke, editorMachineSettings, optimizedCommandsOverride, darkStroke, activeTab, showExport, processing]);
 
   // ═══ Unified metrics — single source of truth for all panels ═══
   const unifiedMetrics = useMemo(() => {
+    if (finalEmbroideryCommands.deferred) {
+      return {
+        source: 'lightweight_boot_cached_regions',
+        totalCommands: 0,
+        stitchCount: regions.reduce((s, r) => s + (r.stitch_count || 0), 0),
+        jumpCount: 0,
+        trimCount: 0,
+        colorCount: new Set(regions.map((r) => r.color)).size,
+        colorChanges: 0,
+        shortStitches: 0,
+        longStitches: 0,
+        outsideHoop: 0,
+        maxJumpDist: 0,
+        synced: true,
+      };
+    }
+    const t0 = perfNow();
     const m = calculateUnifiedCommandMetrics(
       finalEmbroideryCommands.commands, regions, editorMachineSettings
     );
+    logPerf('universal validator', t0);
     console.log('[command-sync] finalEmbroideryCommands length:', finalEmbroideryCommands.commands.length);
     console.log('[command-sync] simulation source: finalEmbroideryCommands');
     console.log('[command-sync] finalLook source: finalEmbroideryCommands');
@@ -324,6 +367,7 @@ export default function Editor() {
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
 
   const loadProject = async () => {
+    const loadStart = perfNow();
     setLoading(true);
     try {
       const p = await base44.entities.Project.get(id);
@@ -333,6 +377,9 @@ export default function Editor() {
       setImageUrl(p.image_url || null);
       setOriginalImageUrl(p.image_url || null);
       setStep(p.step || 1);
+      logPerf('load config', loadStart);
+      console.log('[PERF] load reference learning ms', 0, 'skipped-lightweight-boot');
+      console.log('[PERF] report generation ms', 0, 'skipped-lightweight-boot');
     } catch (e) {navigate('/');}
     finally {setLoading(false);}
   };
