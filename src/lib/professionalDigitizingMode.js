@@ -544,6 +544,7 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
   if (config.learnedContourAfterFill != null) learnedParams.contourAfterFill = config.learnedContourAfterFill;
   if (config.learnedUseSatinForOuterContours != null) learnedParams.useSatinForOuterContours = config.learnedUseSatinForOuterContours;
   if (config.learnedDetailsLast != null) learnedParams.detailsLast = config.learnedDetailsLast;
+  if (config.learnedUnderlayEnabled != null) learnedParams.underlayEnabled = config.learnedUnderlayEnabled;
   const effectiveConfig = Object.keys(learnedParams).length
     ? { ...config, professionalParams: { ...(config.professionalParams || {}), ...learnedParams } }
     : config;
@@ -558,6 +559,19 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
     contourAfterFill: effectiveConfig.professionalParams?.contourAfterFill,
     detailsLast: effectiveConfig.professionalParams?.detailsLast,
   });
+
+  // ── UNDERLAY_GENERATOR_V1 ────────────────────────────────────────────────
+  // Fase post-generador, transaccional y reversible. Se ejecuta antes de la
+  // reparación de diagonales/travel para que cualquier riesgo introducido quede
+  // cubierto por los guards existentes. No toca motor base ni exportación.
+  let underlayGenerator = null;
+  if (effectiveConfig.professionalMode === true && effectiveConfig.learnedUnderlayEnabled === true) {
+    const underlayRes = generateCenterlineUnderlayGuardedV1(procCommands, {
+      objects, regions: procRegions, config: effectiveConfig, darkStroke,
+    });
+    procCommands = underlayRes.commands;
+    underlayGenerator = underlayRes.report;
+  }
 
   // ── SATIN_PHASE_ORDER_FIX_V1 ─────────────────────────────────────────────
   // SATIN_OUTER_CONTOUR_CONVERTER_V1 se ejecuta después de Trim Guard +
@@ -649,7 +663,7 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
   satinPhaseOrderFix = {
     version: 'SATIN_PHASE_ORDER_FIX_V1',
     oldOrder: ['colorReducer', 'reorderLayers', 'satinOuterContourConverter', 'visibleDiagonalRepair', 'travelSanitize', 'outerSatinToRunning', 'trimGuard', 'visibleSplitter', 'qualityGate'],
-    newOrder: ['colorReducer', 'reorderLayers', 'visibleDiagonalRepair', 'travelSanitize', 'outerSatinToRunning', 'trimGuard', 'visibleSplitter', 'satinOuterContourConverter', 'qualityGate'],
+    newOrder: ['colorReducer', 'reorderLayers', 'underlayGenerator', 'visibleDiagonalRepair', 'travelSanitize', 'outerSatinToRunning', 'trimGuard', 'visibleSplitter', 'satinOuterContourConverter', 'qualityGate'],
     satinMovedAfterTrimGuard: true,
     satinMovedAfterSplitter: true,
     satinRunsBeforeFinalQualityGate: true,
@@ -702,6 +716,43 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
     codeFilesModified: ['src/lib/professionalDigitizingMode.js'],
   };
 
+  const underlaySafeToKeep = !!underlayGenerator &&
+    underlayGenerator.phaseAccepted === true &&
+    underlayGenerator.underlayCountAfter > underlayGenerator.underlayCountBefore &&
+    underlayGenerator.visibleDiagonalStitchesAfter <= underlayGenerator.visibleDiagonalStitchesBefore &&
+    underlayGenerator.emptyBlocksAfter <= underlayGenerator.emptyBlocksBefore &&
+    underlayGenerator.unsupportedLongStitchesAfter <= underlayGenerator.unsupportedLongStitchesBefore &&
+    underlayGenerator.jumpCountAfter <= underlayGenerator.jumpCountBefore + 6 &&
+    underlayGenerator.trimCountAfter <= underlayGenerator.trimCountBefore + 6 &&
+    underlayGenerator.ce01StatusAfter !== 'INVALID' &&
+    underlayGenerator.finalLookExportMismatchAfter === false &&
+    underlayGenerator.professionalScoreAfter >= underlayGenerator.professionalScoreBefore - 3 &&
+    underlayGenerator.stitchCountAfter <= underlayGenerator.stitchCountBefore + underlayGenerator.maxAddedUnderlayStitches;
+
+  const underlayIntegratedValidation = {
+    version: 'REFERENCE_INTEGRATED_PIPELINE_AFTER_UNDERLAY_V1',
+    integratedValidation: true,
+    order: ['buildFinalCommands', 'applyProfessionalPipeline', 'reorderProfessionalLayers', 'UNDERLAY_GENERATOR_V1', 'visibleDiagonalRepair', 'travelSanitize', 'REFERENCE_TRIM_GUARD_V1', 'REFERENCE_VISIBLE_STITCH_SPLITTER_V1_2', 'SATIN_OUTER_CONTOUR_CONVERTER_V1', 'professionalEmbroideryQualityGate'],
+    underlayPhaseApplied: !!underlayGenerator,
+    underlayPhaseAccepted: underlayGenerator?.phaseAccepted === true,
+    trimGuardApplied: !!trimGuard,
+    visibleSplitterStatus: splitterStatusBeforeSatin,
+    satinPhaseApplied: !!satinOuterContourConverter,
+    qualityGateMeasuredFinalReturnedCommands: true,
+    safeToKeepUnderlay: underlaySafeToKeep,
+    underlayReport: underlayGenerator,
+    finalQualityGate: {
+      underlayCount: gate.underlayCount,
+      stitchCount: procCommands.filter((c) => c.type === 'stitch').length,
+      jumpCount: procCommands.filter((c) => c.type === 'jump').length,
+      trimCount: procCommands.filter((c) => c.type === 'trim').length,
+      visibleDiagonalStitches: gate.visibleDiagonalStitches,
+      emptyBlocks: countEmptyColorBlocks(procCommands),
+      professionalScore: gate.professionalScore,
+    },
+  };
+  underlayIntegratedValidation.md = buildUnderlayIntegratedReportMd(underlayIntegratedValidation);
+
   return {
     commands: procCommands,
     objects,
@@ -711,6 +762,8 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
       visible: vis.report,
       repair: repair.report,
       gate,
+      underlayGenerator,
+      underlayIntegratedValidation,
       trimGuard,
       visibleSplitter,
       satinOuterContourConverter,
@@ -1013,6 +1066,329 @@ function buildSatinOuterContourReferenceValidationMd(r) {
   md.push(`- finalLookExportMismatch sigue false: ${r.afterFinalLookExportMismatch === false}`);
   md.push(`- CE01 no INVALID: ${r.afterCE01Status !== 'INVALID'}`);
   md.push(`- professionalScore no baja >3: ${r.afterProfessionalScore >= r.beforeProfessionalScore - 3}`);
+  return md.join('\n');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  UNDERLAY_GENERATOR_V1 — centerline underlay seguro y reversible
+// ═══════════════════════════════════════════════════════════════════════════
+function polygonAreaMm2(points) {
+  if (!Array.isArray(points) || points.length < 3) return 0;
+  let area = 0;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const p = points[i], q = points[j];
+    const x1 = Array.isArray(p) ? p[0] : p.x, y1 = Array.isArray(p) ? p[1] : p.y;
+    const x2 = Array.isArray(q) ? q[0] : q.x, y2 = Array.isArray(q) ? q[1] : q.y;
+    if ([x1, y1, x2, y2].every(Number.isFinite)) area += x2 * y1 - x1 * y2;
+  }
+  return Math.abs(area / 2) * 10000;
+}
+
+function bboxFromRegionOrCommands(region, commands) {
+  const pts = region?.path_points || region?.points || [];
+  const xs = [], ys = [];
+  if (Array.isArray(pts) && pts.length) {
+    for (const p of pts) {
+      const x = Array.isArray(p) ? p[0] * 100 - 50 : p.x;
+      const y = Array.isArray(p) ? p[1] * 100 - 50 : p.y;
+      if (Number.isFinite(x) && Number.isFinite(y)) { xs.push(x); ys.push(y); }
+    }
+  }
+  if (!xs.length) {
+    for (const c of commands || []) {
+      if (c.type === 'stitch' && Number.isFinite(c.x) && Number.isFinite(c.y)) { xs.push(c.x); ys.push(c.y); }
+    }
+  }
+  if (!xs.length) return null;
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const width = maxX - minX, height = maxY - minY;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width < 2 || height < 2) return null;
+  return { minX, maxX, minY, maxY, width, height };
+}
+
+function isUnderlayExcludedText(text) {
+  return /contour|outline|detail|mouth|eye|facial|running|satin|tie/.test(String(text || '').toLowerCase());
+}
+
+function measureUnderlayHealth(commands, objects, regions, config, darkStroke) {
+  const gate = professionalEmbroideryQualityGate(commands, objects || [], regions || [], darkStroke, config || {});
+  const ce01 = validateCE01(commands, objects || [], regions || [], config || {}, {});
+  const cmp = compareFinalLookVsExport(commands, commands);
+  return {
+    underlayCount: gate.underlayCount ?? 0,
+    stitchCount: commands.filter((c) => c.type === 'stitch').length,
+    jumpCount: commands.filter((c) => c.type === 'jump').length,
+    trimCount: commands.filter((c) => c.type === 'trim').length,
+    visibleDiagonalStitches: gate.visibleDiagonalStitches ?? 0,
+    emptyBlocks: countEmptyColorBlocks(commands),
+    unsupportedLongStitches: gate.blocks?.find((b) => b.name === 'unsupportedLongStitches')?.value ?? 0,
+    ce01Status: ce01.status,
+    professionalScore: gate.professionalScore ?? 0,
+    finalLookExportMismatch: cmp.simulationExportMismatch === true,
+  };
+}
+
+function buildCenterlineUnderlayCommands(candidate, params) {
+  const { bbox, firstFill, regionId, color } = candidate;
+  const pad = Math.max(1.5, Math.min(4, Math.min(bbox.width, bbox.height) * 0.12));
+  const safeMinX = bbox.minX + pad, safeMaxX = bbox.maxX - pad;
+  const safeMinY = bbox.minY + pad, safeMaxY = bbox.maxY - pad;
+  if (safeMaxX <= safeMinX || safeMaxY <= safeMinY) return { commands: [], unsafe: true };
+  const firstX = firstFill?.x;
+  const firstY = firstFill?.y;
+  if (!Number.isFinite(firstX) || !Number.isFinite(firstY)) return { commands: [], unsafe: true };
+  const lineStart = Math.max(safeMinX, Math.min(safeMaxX, firstX));
+  const y = Math.max(safeMinY, Math.min(safeMaxY, firstY));
+  const availableRight = safeMaxX - lineStart;
+  const availableLeft = lineStart - safeMinX;
+  const direction = availableRight >= availableLeft ? 1 : -1;
+  const maxForwardStitches = Math.max(2, Math.floor(params.maxUnderlayStitchesPerRegion / 2));
+  const maxLineLength = Math.min(Math.max(availableRight, availableLeft), (maxForwardStitches - 1) * params.underlaySpacingMm);
+  if (!Number.isFinite(maxLineLength) || maxLineLength < params.underlaySpacingMm) return { commands: [], unsafe: true };
+  const lineEnd = direction > 0 ? lineStart + maxLineLength : lineStart - maxLineLength;
+  const steps = Math.min(maxForwardStitches - 1, Math.max(1, Math.ceil(Math.abs(lineEnd - lineStart) / params.underlaySpacingMm)));
+  const points = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = steps === 0 ? 0 : i / steps;
+    points.push({ x: lineStart + (lineEnd - lineStart) * t, y });
+  }
+  for (let i = steps - 1; i >= 0; i--) points.push(points[i]);
+  const out = [];
+  for (const p of points) {
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return { commands: [], unsafe: true };
+    if (p.x < safeMinX || p.x > safeMaxX || p.y < safeMinY || p.y > safeMaxY) return { commands: [], unsafe: true };
+    out.push({
+      type: 'stitch', x: p.x, y: p.y,
+      layerType: 'underlay',
+      source: 'UNDERLAY_GENERATOR_V1',
+      generatedBy: 'UNDERLAY_GENERATOR_V1',
+      underlayType: 'centerline',
+      regionId,
+      color,
+      stitchType: 'underlay',
+      isUnderlay: true,
+    });
+  }
+  return { commands: out, unsafe: false };
+}
+
+export function generateCenterlineUnderlayGuardedV1(commands = [], options = {}) {
+  const { objects, regions = [], config, darkStroke } = options;
+  const params = {
+    maxUnderlayRegions: 4,
+    maxAddedUnderlayStitches: 160,
+    minAreaMm2: 120,
+    minRegionStitchCount: 80,
+    underlaySpacingMm: 3.5,
+    maxUnderlaySegmentMm: 4.0,
+    maxUnderlayStitchesPerRegion: 40,
+    passesPerRegion: 1,
+  };
+  const before = measureUnderlayHealth(commands, objects, regions, config, darkStroke);
+  const skip = { tooSmall: 0, detail: 0, contour: 0, unsafeGeometry: 0, noStableRegion: 0 };
+  if (config?.professionalMode !== true || config?.learnedUnderlayEnabled !== true || before.ce01Status === 'INVALID') {
+    const report = buildUnderlayGeneratorReport({ params, phaseAccepted: false, revertReason: before.ce01Status === 'INVALID' ? 'CE01 INVALID antes de la fase' : 'activation conditions not met', before, after: before, candidatesFound: 0, candidatesAccepted: 0, skip, addedUnderlayStitches: 0, commandsReturnedSource: 'beforeUnderlay' });
+    return { commands, report };
+  }
+
+  const regionById = new Map();
+  for (let i = 0; i < regions.length; i++) {
+    const r = regions[i];
+    regionById.set(r.id || r.regionId || `region_${i}`, r);
+  }
+  const grouped = new Map();
+  for (let i = 0; i < commands.length; i++) {
+    const c = commands[i];
+    if (c.type !== 'stitch' || !c.regionId) continue;
+    if (!grouped.has(c.regionId)) grouped.set(c.regionId, { indexes: [], stitches: [], fillCount: 0, sourceSet: new Set(), stitchTypeSet: new Set(), layerTypeSet: new Set() });
+    const g = grouped.get(c.regionId);
+    g.indexes.push(i); g.stitches.push(c);
+    if (String(c.source || '').toLowerCase() === 'ce01_safe_fill' || String(c.stitchType || '').toLowerCase() === 'fill') g.fillCount++;
+    if (c.source) g.sourceSet.add(c.source);
+    if (c.stitchType) g.stitchTypeSet.add(c.stitchType);
+    if (c.layerType) g.layerTypeSet.add(c.layerType);
+  }
+
+  const candidates = [];
+  for (const [regionId, group] of grouped) {
+    const region = regionById.get(regionId);
+    if (!region) { skip.noStableRegion++; continue; }
+    const text = [...group.sourceSet, ...group.stitchTypeSet, ...group.layerTypeSet, region.stitch_type, region.stitchType, region.layerType, region.source].filter(Boolean).join(' ');
+    if (isUnderlayExcludedText(text)) { String(text).toLowerCase().includes('contour') || String(text).toLowerCase().includes('outline') ? skip.contour++ : skip.detail++; continue; }
+    const hasFillSource = [...group.sourceSet].some((s) => String(s).toLowerCase() === 'ce01_safe_fill') || [...group.stitchTypeSet].some((s) => String(s).toLowerCase() === 'fill');
+    const area = region.area_mm2 || polygonAreaMm2(region.path_points || region.points || []);
+    if (!hasFillSource || group.stitches.length < params.minRegionStitchCount || area < params.minAreaMm2) { skip.tooSmall++; continue; }
+    const bbox = bboxFromRegionOrCommands(region, group.stitches);
+    if (!bbox) { skip.unsafeGeometry++; continue; }
+    candidates.push({ regionId, group, region, area, bbox, firstFill: group.stitches[0], color: group.stitches[0]?.color || region.color || '#000000' });
+  }
+  candidates.sort((a, b) => b.group.stitches.length - a.group.stitches.length);
+
+  const selected = [];
+  let addedUnderlayStitches = 0;
+  for (const cand of candidates) {
+    if (selected.length >= params.maxUnderlayRegions) break;
+    const built = buildCenterlineUnderlayCommands(cand, params);
+    if (built.unsafe || built.commands.length === 0) { skip.unsafeGeometry++; continue; }
+    if (addedUnderlayStitches + built.commands.length > params.maxAddedUnderlayStitches) break;
+    selected.push({ ...cand, underlayCommands: built.commands });
+    addedUnderlayStitches += built.commands.length;
+  }
+
+  const insertByIndex = new Map();
+  for (const cand of selected) insertByIndex.set(cand.group.indexes[0], cand.underlayCommands);
+  const out = [];
+  for (let i = 0; i < commands.length; i++) {
+    out.push(commands[i]);
+    if (insertByIndex.has(i)) out.push(...insertByIndex.get(i));
+  }
+
+  let badCoords = false, underlayOutsideSafeBbox = false;
+  const selectedByRegion = new Map(selected.map((c) => [c.regionId, c.bbox]));
+  for (const c of out) {
+    if ((c.type === 'stitch' || c.type === 'jump') && (!Number.isFinite(c.x) || !Number.isFinite(c.y))) badCoords = true;
+    if (c.isUnderlay) {
+      const bb = selectedByRegion.get(c.regionId);
+      if (!bb || c.x < bb.minX || c.x > bb.maxX || c.y < bb.minY || c.y > bb.maxY) underlayOutsideSafeBbox = true;
+    }
+  }
+
+  const afterExperimental = measureUnderlayHealth(out, objects, regions, config, darkStroke);
+  let revertReason = null;
+  if (afterExperimental.underlayCount <= before.underlayCount) revertReason = 'underlayCount no aumenta';
+  else if (afterExperimental.visibleDiagonalStitches > before.visibleDiagonalStitches) revertReason = 'visibleDiagonalStitches subió';
+  else if (afterExperimental.emptyBlocks > before.emptyBlocks) revertReason = 'emptyBlocks subió';
+  else if (afterExperimental.unsupportedLongStitches > before.unsupportedLongStitches) revertReason = 'unsupportedLongStitches subió';
+  else if (afterExperimental.ce01Status === 'INVALID') revertReason = 'CE01 pasó a INVALID';
+  else if (afterExperimental.finalLookExportMismatch === true) revertReason = 'finalLookExportMismatch pasó a true';
+  else if (afterExperimental.professionalScore < before.professionalScore - 3) revertReason = 'professionalScore bajó más de 3';
+  else if (afterExperimental.stitchCount > before.stitchCount + params.maxAddedUnderlayStitches) revertReason = 'stitchCount excede presupuesto';
+  else if (afterExperimental.jumpCount > before.jumpCount + 6) revertReason = 'jumpCount subió más de 6';
+  else if (afterExperimental.trimCount > before.trimCount + 6) revertReason = 'trimCount subió más de 6';
+  else if (badCoords) revertReason = 'coordenada x/y no numérica';
+  else if (underlayOutsideSafeBbox) revertReason = 'underlay fuera del bbox seguro';
+
+  const phaseAccepted = !revertReason;
+  const after = phaseAccepted ? afterExperimental : before;
+  const report = buildUnderlayGeneratorReport({
+    params,
+    phaseAccepted,
+    revertReason,
+    before,
+    after,
+    candidatesFound: candidates.length,
+    candidatesAccepted: phaseAccepted ? selected.length : 0,
+    skip,
+    addedUnderlayStitches: phaseAccepted ? addedUnderlayStitches : 0,
+    commandsReturnedSource: phaseAccepted ? 'underlayAccepted' : 'beforeUnderlay',
+  });
+  return { commands: phaseAccepted ? out : commands, report };
+}
+
+function buildUnderlayGeneratorReport({ params, phaseAccepted, revertReason, before, after, candidatesFound, candidatesAccepted, skip, addedUnderlayStitches, commandsReturnedSource }) {
+  const report = {
+    version: 'UNDERLAY_GENERATOR_V1',
+    phaseAccepted,
+    revertReason,
+    underlayCountBefore: before.underlayCount,
+    underlayCountAfter: after.underlayCount,
+    candidatesFound,
+    candidatesAccepted,
+    candidatesSkippedTooSmall: skip.tooSmall,
+    candidatesSkippedDetail: skip.detail,
+    candidatesSkippedContour: skip.contour,
+    candidatesSkippedUnsafeGeometry: skip.unsafeGeometry,
+    candidatesSkippedNoStableRegion: skip.noStableRegion,
+    addedUnderlayStitches,
+    stitchCountBefore: before.stitchCount,
+    stitchCountAfter: after.stitchCount,
+    jumpCountBefore: before.jumpCount,
+    jumpCountAfter: after.jumpCount,
+    trimCountBefore: before.trimCount,
+    trimCountAfter: after.trimCount,
+    visibleDiagonalStitchesBefore: before.visibleDiagonalStitches,
+    visibleDiagonalStitchesAfter: after.visibleDiagonalStitches,
+    emptyBlocksBefore: before.emptyBlocks,
+    emptyBlocksAfter: after.emptyBlocks,
+    unsupportedLongStitchesBefore: before.unsupportedLongStitches,
+    unsupportedLongStitchesAfter: after.unsupportedLongStitches,
+    ce01StatusBefore: before.ce01Status,
+    ce01StatusAfter: after.ce01Status,
+    professionalScoreBefore: before.professionalScore,
+    professionalScoreAfter: after.professionalScore,
+    finalLookExportMismatchBefore: before.finalLookExportMismatch,
+    finalLookExportMismatchAfter: after.finalLookExportMismatch,
+    commandsReturnedSource,
+    maxAddedUnderlayStitches: params.maxAddedUnderlayStitches,
+  };
+  report.md = buildUnderlayGeneratorReportMd(report);
+  return report;
+}
+
+function buildUnderlayGeneratorReportMd(r) {
+  const md = [];
+  md.push('# UNDERLAY_GENERATOR_REPORT_V1 — StitchPath AI\n');
+  md.push(`> Generado: ${new Date().toISOString()}`);
+  md.push('> Fase post-generador, centerline-only, transaccional y reversible.\n');
+  md.push('## Veredicto');
+  md.push(`- phaseAccepted: ${r.phaseAccepted}`);
+  if (!r.phaseAccepted) md.push(`- revertReason: ${r.revertReason}`);
+  md.push(`- commandsReturnedSource: ${r.commandsReturnedSource}`);
+  md.push('\n## Candidatos');
+  md.push(`- candidatesFound: ${r.candidatesFound}`);
+  md.push(`- candidatesAccepted: ${r.candidatesAccepted}`);
+  md.push(`- candidatesSkippedTooSmall: ${r.candidatesSkippedTooSmall}`);
+  md.push(`- candidatesSkippedDetail: ${r.candidatesSkippedDetail}`);
+  md.push(`- candidatesSkippedContour: ${r.candidatesSkippedContour}`);
+  md.push(`- candidatesSkippedUnsafeGeometry: ${r.candidatesSkippedUnsafeGeometry}`);
+  md.push(`- candidatesSkippedNoStableRegion: ${r.candidatesSkippedNoStableRegion}`);
+  md.push(`- addedUnderlayStitches: ${r.addedUnderlayStitches}`);
+  md.push('\n## Métricas antes/después');
+  md.push('| Métrica | Antes | Después |');
+  md.push('|---|---:|---:|');
+  md.push(`| underlayCount | ${r.underlayCountBefore} | ${r.underlayCountAfter} |`);
+  md.push(`| stitchCount | ${r.stitchCountBefore} | ${r.stitchCountAfter} |`);
+  md.push(`| jumpCount | ${r.jumpCountBefore} | ${r.jumpCountAfter} |`);
+  md.push(`| trimCount | ${r.trimCountBefore} | ${r.trimCountAfter} |`);
+  md.push(`| visibleDiagonalStitches | ${r.visibleDiagonalStitchesBefore} | ${r.visibleDiagonalStitchesAfter} |`);
+  md.push(`| emptyBlocks | ${r.emptyBlocksBefore} | ${r.emptyBlocksAfter} |`);
+  md.push(`| unsupportedLongStitches | ${r.unsupportedLongStitchesBefore} | ${r.unsupportedLongStitchesAfter} |`);
+  md.push(`| CE01 status | ${r.ce01StatusBefore} | ${r.ce01StatusAfter} |`);
+  md.push(`| professionalScore | ${r.professionalScoreBefore} | ${r.professionalScoreAfter} |`);
+  md.push(`| finalLookExportMismatch | ${r.finalLookExportMismatchBefore} | ${r.finalLookExportMismatchAfter} |`);
+  return md.join('\n');
+}
+
+function buildUnderlayIntegratedReportMd(r) {
+  const u = r.underlayReport || {};
+  const md = [];
+  md.push('# REFERENCE_INTEGRATED_PIPELINE_AFTER_UNDERLAY_V1 — StitchPath AI\n');
+  md.push(`> Generado: ${new Date().toISOString()}`);
+  md.push('> Validación integrada del pipeline completo después de UNDERLAY_GENERATOR_V1.\n');
+  md.push('## Flags');
+  md.push(`- integratedValidation: ${r.integratedValidation}`);
+  md.push(`- underlayPhaseApplied: ${r.underlayPhaseApplied}`);
+  md.push(`- underlayPhaseAccepted: ${r.underlayPhaseAccepted}`);
+  md.push(`- trimGuardApplied: ${r.trimGuardApplied}`);
+  md.push(`- visibleSplitterStatus: ${r.visibleSplitterStatus}`);
+  md.push(`- satinPhaseApplied: ${r.satinPhaseApplied}`);
+  md.push(`- qualityGateMeasuredFinalReturnedCommands: ${r.qualityGateMeasuredFinalReturnedCommands}`);
+  md.push(`- safeToKeepUnderlay: ${r.safeToKeepUnderlay}`);
+  md.push('\n## Orden medido');
+  for (let i = 0; i < r.order.length; i++) md.push(`${i + 1}. ${r.order[i]}`);
+  md.push('\n## Métricas underlay');
+  md.push('| Métrica | Antes | Después |');
+  md.push('|---|---:|---:|');
+  md.push(`| underlayCount | ${u.underlayCountBefore ?? 0} | ${u.underlayCountAfter ?? 0} |`);
+  md.push(`| stitchCount | ${u.stitchCountBefore ?? 0} | ${u.stitchCountAfter ?? 0} |`);
+  md.push(`| jumpCount | ${u.jumpCountBefore ?? 0} | ${u.jumpCountAfter ?? 0} |`);
+  md.push(`| trimCount | ${u.trimCountBefore ?? 0} | ${u.trimCountAfter ?? 0} |`);
+  md.push(`| visibleDiagonalStitches | ${u.visibleDiagonalStitchesBefore ?? 0} | ${u.visibleDiagonalStitchesAfter ?? 0} |`);
+  md.push(`| emptyBlocks | ${u.emptyBlocksBefore ?? 0} | ${u.emptyBlocksAfter ?? 0} |`);
+  md.push(`| unsupportedLongStitches | ${u.unsupportedLongStitchesBefore ?? 0} | ${u.unsupportedLongStitchesAfter ?? 0} |`);
+  md.push(`| CE01 status | ${u.ce01StatusBefore ?? '—'} | ${u.ce01StatusAfter ?? '—'} |`);
+  md.push(`| professionalScore | ${u.professionalScoreBefore ?? 0} | ${u.professionalScoreAfter ?? 0} |`);
+  md.push(`| finalLookExportMismatch | ${u.finalLookExportMismatchBefore ?? false} | ${u.finalLookExportMismatchAfter ?? false} |`);
   return md.join('\n');
 }
 

@@ -125,6 +125,8 @@ export function validateLearnedPresetEffectiveness({ regions, baseConfig = {}, d
 
   // 8. Informe
   const visibleSplitter = prof.report?.visibleSplitter || null;
+  const underlayGenerator = prof.report?.underlayGenerator || null;
+  const underlayIntegratedValidation = prof.report?.underlayIntegratedValidation || null;
   const report = generateReferenceLearningValidatedReport({
     designName: designName || 'Diseño actual',
     selection, basePreset, finalPreset, cartoon,
@@ -161,6 +163,8 @@ export function validateLearnedPresetEffectiveness({ regions, baseConfig = {}, d
     selection, basePreset, finalPreset, cartoon,
     before, after, verdict, notEffective, integrity, report,
     trimGuard: prof.report?.trimGuard || null,
+    underlayGenerator,
+    underlayIntegratedValidation,
     satinOuterContourConverter: prof.report?.satinOuterContourConverter || null,
     visibleSplitter,
     splitterReport,

@@ -84,6 +84,28 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
     URL.revokeObjectURL(url);
   }, [result]);
 
+  const handleDownloadUnderlayReport = useCallback(() => {
+    if (!result?.underlayGenerator?.md) return;
+    const blob = new Blob([result.underlayGenerator.md], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'UNDERLAY_GENERATOR_REPORT_V1.md';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [result]);
+
+  const handleDownloadUnderlayIntegrated = useCallback(() => {
+    if (!result?.underlayIntegratedValidation?.md) return;
+    const blob = new Blob([result.underlayIntegratedValidation.md], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'REFERENCE_INTEGRATED_PIPELINE_AFTER_UNDERLAY_V1.md';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [result]);
+
   const handleDownloadSplitterV1_1Report = useCallback(() => {
     if (!result?.visibleSplitter?.md) return;
     const blob = new Blob([result.visibleSplitter.md], { type: 'text/markdown' });
@@ -169,6 +191,22 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
               <Download className="w-3.5 h-3.5" /> After Trim Guard
             </button>
           )}
+          {result && result.underlayGenerator?.md && (
+            <button
+              onClick={handleDownloadUnderlayReport}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-900/20 border border-amber-500/30 text-amber-300 text-xs font-bold hover:bg-amber-900/30 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" /> Underlay V1
+            </button>
+          )}
+          {result && result.underlayIntegratedValidation?.md && (
+            <button
+              onClick={handleDownloadUnderlayIntegrated}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-900/20 border border-orange-500/30 text-orange-300 text-xs font-bold hover:bg-orange-900/30 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" /> After Underlay V1
+            </button>
+          )}
           {result && result.visibleSplitter && (
             <button
               onClick={handleDownloadSplitterReport}
@@ -234,7 +272,7 @@ export default function LearnedPresetValidationPanel({ regions, config, darkStro
 }
 
 function LearnedValidationResult({ result }) {
-  const { selection, cartoon, before, after, verdict, notEffective, integrity, basePreset, finalPreset, trimGuard, visibleSplitter } = result;
+  const { selection, cartoon, before, after, verdict, notEffective, integrity, basePreset, finalPreset, trimGuard, underlayGenerator, visibleSplitter } = result;
   const vColor = verdict.verdict === 'IMPROVED' ? 'text-emerald-400' : verdict.verdict === 'WORSENED' ? 'text-red-400' : 'text-amber-400';
   const vIcon = verdict.verdict === 'IMPROVED' ? CheckCircle2 : verdict.verdict === 'WORSENED' ? XCircle : AlertTriangle;
   const VIcon = vIcon;
@@ -273,6 +311,39 @@ function LearnedValidationResult({ result }) {
           </div>
         )}
       </div>
+
+      {/* UNDERLAY_GENERATOR_V1 — resumen */}
+      {underlayGenerator && (
+        <div className={`rounded-lg p-2.5 border ${underlayGenerator.phaseAccepted ? 'bg-amber-900/10 border-amber-500/30' : 'bg-slate-900/20 border-slate-600/30'}`}>
+          <div className="flex items-center gap-2 mb-1">
+            <span className={`text-sm font-bold ${underlayGenerator.phaseAccepted ? 'text-amber-300' : 'text-slate-400'}`}>
+              UNDERLAY_GENERATOR_V1 {underlayGenerator.phaseAccepted ? 'aplicado' : 'revertido'}
+            </span>
+            <span className="text-[10px] text-slate-500">source={underlayGenerator.commandsReturnedSource}</span>
+          </div>
+          <div className="grid grid-cols-4 gap-1 text-[10px]">
+            <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
+              <span className="text-slate-500">underlay</span>
+              <span className="text-slate-300 ml-1">{underlayGenerator.underlayCountBefore}→<b className="text-amber-300">{underlayGenerator.underlayCountAfter}</b></span>
+            </div>
+            <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
+              <span className="text-slate-500">candidates</span>
+              <span className="text-amber-300 font-bold ml-1">{underlayGenerator.candidatesAccepted}/{underlayGenerator.candidatesFound}</span>
+            </div>
+            <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
+              <span className="text-slate-500">added</span>
+              <span className="text-amber-300 font-bold ml-1">{underlayGenerator.addedUnderlayStitches}</span>
+            </div>
+            <div className="bg-[#0d0f14] rounded px-1.5 py-1 border border-[#1e2130]">
+              <span className="text-slate-500">CE01</span>
+              <span className={`font-bold ml-1 ${underlayGenerator.ce01StatusAfter === 'SAFE' ? 'text-emerald-400' : underlayGenerator.ce01StatusAfter === 'RISKY' ? 'text-amber-300' : 'text-red-400'}`}>{underlayGenerator.ce01StatusAfter}</span>
+            </div>
+          </div>
+          {!underlayGenerator.phaseAccepted && underlayGenerator.revertReason && (
+            <div className="text-[10px] text-amber-300 mt-1.5">Revertido: {underlayGenerator.revertReason}</div>
+          )}
+        </div>
+      )}
 
       {/* Trim Guard V1 — resumen */}
       {trimGuard && (
