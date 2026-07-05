@@ -1,6 +1,7 @@
 import { buildDSTFromCommands } from './dstDirectExport';
 import { decodeDSTRecord } from './dstEncoder';
 import { decodeDSBRecord } from './dsbEncoder';
+import { normalizeBackendFileResponse } from './exportResponseNormalizer';
 
 const HEADER_SIZE = 512;
 const RECORD_SIZE = 3;
@@ -72,15 +73,9 @@ async function buildAndAuditDSB(commands, objects, safeName, machineSettings, ba
     });
     const data = response?.data;
     const backendResponseShape = Array.isArray(data) ? 'array' : data && typeof data === 'object' ? `object:${Object.keys(data).join(',')}` : typeof data;
-    const fileBase64 = data?.file_base64;
-    if (!fileBase64 || typeof fileBase64 !== 'string') {
-      const failed = failedAudit('DSB', `${safeName}.dsb`, new Error('backend did not return file_base64'));
-      failed.backendResponseShape = backendResponseShape;
-      failed.backendReturnedJsonInsteadOfFile = true;
-      return failed;
-    }
-    const bytes = base64ToBytes(fileBase64);
-    const blob = new Blob([bytes], { type: data?.mimeType || 'application/octet-stream' });
+    const normalized = await normalizeBackendFileResponse(data, { status: response?.status });
+    const bytes = normalized.bytes;
+    const blob = normalized.blob;
     const byteInfo = await inspectBytes({
       bytes,
       blob,
@@ -88,7 +83,7 @@ async function buildAndAuditDSB(commands, objects, safeName, machineSettings, ba
       fileName: data?.filename || `${safeName}.dsb`,
       backendResponseShape,
       backendReturnedFormat: data?.filename?.split('.').pop()?.toUpperCase() || 'DSB',
-      base64LengthOverride: fileBase64.length,
+      base64LengthOverride: normalized.diagnostics?.base64Length || null,
     });
     return {
       requestedFormat: 'DSB',
@@ -107,6 +102,10 @@ async function buildAndAuditDSB(commands, objects, safeName, machineSettings, ba
 }
 
 function failedAudit(format, fileName, error) {
+  const backendData = error?.response?.data;
+  const realError = backendData?.error || backendData?.message || error?.message || String(error);
+  const details = backendData?.details ? ` details=${JSON.stringify(backendData.details)}` : '';
+  const message = `${realError}${details}`;
   return {
     requestedFormat: format,
     fileName,
@@ -119,12 +118,14 @@ function failedAudit(format, fileName, error) {
     last64BytesHex: '',
     downloadFileName: fileName,
     downloadExtension: fileName.split('.').pop(),
-    backendResponseShape: 'error',
+    backendResponseShape: backendData ? `error:${Object.keys(backendData).join(',')}` : 'error',
     backendReturnedFormat: null,
-    backendErrorIfAny: error?.message || String(error),
+    backendErrorIfAny: message,
+    backendStatus: error?.response?.status || null,
+    backendDetails: backendData?.details || null,
     encoderUsed: format === 'DST' ? 'frontend buildDSTFromCommands / dstEncoder' : 'backend exportEmbroideryFile encodeDSB',
     bytes: new Uint8Array(),
-    parse: format === 'DST' ? emptyDSTParse([error?.message || String(error)]) : emptyDSBParse([error?.message || String(error)]),
+    parse: format === 'DST' ? emptyDSTParse([message]) : emptyDSBParse([message]),
   };
 }
 
@@ -198,7 +199,7 @@ export function parseDST(bytes) {
   if (Number.isFinite(headerST) && recordCount && Math.abs(headerST - recordCount) > 1) errors.push(`headerSTMismatch:${headerST}_vs_${recordCount}`);
   if (Number.isFinite(headerCO) && headerCO !== colorChanges) errors.push(`headerCOMismatch:${headerCO}_vs_${colorChanges}`);
 
-  const binaryFileValid = headerValid && recordLengthValid && endPresent && !looksLikeJsonOrError(bytes) && !looksLikeHtml(bytes) && !looksLikeUndecodedBase64(bytes);
+  const binaryFileValid = bytes.length > 0 && headerValid && recordLengthValid && endPresent && errors.length === 0;
   return {
     format: 'DST',
     binaryFileValid,
@@ -321,9 +322,9 @@ function compareInternalToParsed(internal, dstParse, dsbParse) {
     commandCountMismatch: Math.abs((parsed?.parsedCommands || 0) - internal.finalCommandsTotal) > Math.max(5, internal.finalCommandsTotal * 0.05),
     stitchCountMismatch: Math.abs((parsed?.parsedStitches || 0) - internal.finalCommandsStitches) > Math.max(5, internal.finalCommandsStitches * 0.05),
     colorCountMismatch: (parsed?.parsedColorChanges || 0) !== internal.finalCommandsColorChanges,
-    endMissing: !dstParse?.endPresent || !dsbParse?.endPresent,
-    corruptedHeader: !dstParse?.headerValid || !dsbParse?.headerValid,
-    invalidRecordLength: !dstParse?.recordLengthValid || !dsbParse?.recordLengthValid,
+    endMissing: !parsed?.endPresent,
+    corruptedHeader: !parsed?.headerValid,
+    invalidRecordLength: !parsed?.recordLengthValid,
     unsupportedFormat: false,
     wrongExtension: false,
     backendReturnedWrongFormat: dsbParse?.dsbActuallyDstRenamed || false,
@@ -491,13 +492,6 @@ function looksLikeUndecodedBase64(bytes) {
 
 function extension(fileName) {
   return String(fileName || '').split('.').pop()?.toLowerCase() || '';
-}
-
-function base64ToBytes(value) {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
 }
 
 function sanitizeFileName(name) {

@@ -1,12 +1,14 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 Deno.serve(async (req) => {
+  let exportDebugContext = {};
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { stitchPaths, commands: preFlattened, format = 'DST', machineSettings = {} } = await req.json();
+    const fmt = String(format || 'DST').toUpperCase();
 
     // Accept either `commands` (pre-flattened by the export pipeline) or
     // `stitchPaths` (legacy). Prefer `commands` since they're already validated.
@@ -43,6 +45,10 @@ Deno.serve(async (req) => {
 
     // ── Validation ─────────────────────────────────────────────────────────
     const warnings = validateStitches(stitches, ms);
+    const normalized = normalizeCommandsForFormat(stitches, fmt);
+    stitches = normalized.commands;
+    warnings.push(...normalized.warnings);
+    exportDebugContext = { ...normalized.diagnostics, format: fmt };
 
     // ── Build stitchPaths fallback from commands (for PES/JEF color order) ──
     let pathsForEncoding = stitchPaths;
@@ -65,7 +71,6 @@ Deno.serve(async (req) => {
 
     // ── Encode ─────────────────────────────────────────────────────────────
     let fileBuffer, mimeType, ext;
-    const fmt = format.toUpperCase();
 
     if (fmt === 'DST') {
       fileBuffer = encodeDST(stitches, ms);
@@ -120,8 +125,19 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    console.error('Export error:', error);
-    return Response.json({ error: error.message }, { status: 500 });
+    const details = error?.details || exportDebugContext || {};
+    const status = error?.status || 500;
+    console.error('Export error:', {
+      message: error?.message,
+      stack: error?.stack,
+      ...details,
+    });
+    return Response.json({
+      error: error?.message || 'Export failed',
+      message: error?.message || 'Export failed',
+      stack: error?.stack,
+      details,
+    }, { status });
   }
 });
 
@@ -217,7 +233,9 @@ function validateStitches(stitches, ms) {
   let outOfHoop = 0;
 
   for (const s of stitches) {
-    if (Math.abs(s.x) > hw / 2 || Math.abs(s.y) > hh / 2) outOfHoop++;
+    if ((s.type === 'stitch' || s.type === 'jump' || s.type === 'trim') && Number.isFinite(s.x) && Number.isFinite(s.y)) {
+      if (Math.abs(s.x) > hw / 2 || Math.abs(s.y) > hh / 2) outOfHoop++;
+    }
   }
   if (outOfHoop > 0) warnings.push(`${outOfHoop} stitches outside hoop (${hw}x${hh}mm)`);
 
@@ -230,6 +248,104 @@ function validateStitches(stitches, ms) {
   if (isolated > 0) warnings.push(`${isolated} potentially isolated stitch islands detected`);
 
   return warnings;
+}
+
+function normalizeCommandsForFormat(commands, fmt) {
+  const warnings = [];
+  const normalized = [];
+  const diagnostics = buildCommandDiagnostics(commands || []);
+  const allowed = new Set(['stitch', 'jump', 'trim', 'colorChange', 'end']);
+  let lastX = 0;
+  let lastY = 0;
+  let lastColor = '#000000';
+
+  for (let index = 0; index < (commands || []).length; index++) {
+    const c = commands[index];
+    if (!c || !allowed.has(c.type)) {
+      throwExportError('unsupportedCommandType', fmt, commands, index, c);
+    }
+
+    if (c.type === 'stitch' || c.type === 'jump') {
+      if (!Number.isFinite(c.x) || !Number.isFinite(c.y)) throwExportError('invalidCoordinate', fmt, commands, index, c);
+      lastX = c.x;
+      lastY = c.y;
+      lastColor = c.color || lastColor;
+      normalized.push(c);
+      continue;
+    }
+
+    if (c.type === 'trim') {
+      if (fmt === 'DSB') {
+        if (Number.isFinite(c.x) && Number.isFinite(c.y)) {
+          lastX = c.x;
+          lastY = c.y;
+        }
+        warnings.push('DSB: trim convertido a no-op compatible; DSB no codifica trim explícito');
+        continue;
+      }
+      normalized.push({ ...c, x: Number.isFinite(c.x) ? c.x : lastX, y: Number.isFinite(c.y) ? c.y : lastY, color: c.color || lastColor });
+      continue;
+    }
+
+    if (c.type === 'colorChange') {
+      normalized.push({ ...c, x: Number.isFinite(c.x) ? c.x : lastX, y: Number.isFinite(c.y) ? c.y : lastY, color: c.color || lastColor });
+      continue;
+    }
+
+    if (c.type === 'end') {
+      normalized.push({ ...c, x: Number.isFinite(c.x) ? c.x : lastX, y: Number.isFinite(c.y) ? c.y : lastY, color: null });
+    }
+  }
+
+  if (normalized.length === 0 || normalized[normalized.length - 1].type !== 'end') {
+    normalized.push({ type: 'end', x: lastX, y: lastY, color: null });
+    warnings.push('END añadido por backend');
+  }
+
+  return { commands: normalized, warnings, diagnostics };
+}
+
+function buildCommandDiagnostics(commands) {
+  const diagnostics = {
+    commandCount: commands.length,
+    stitchCount: 0,
+    jumpCount: 0,
+    trimCount: 0,
+    colorChangeCount: 0,
+    firstInvalidCommand: null,
+    unsupportedCommandType: null,
+    invalidCoordinate: null,
+    unsupportedTrim: false,
+    unsupportedColorChange: false,
+    maxDeltaExceeded: false,
+    missingHeader: false,
+    missingEnd: !commands.some(c => c?.type === 'end'),
+  };
+  for (let index = 0; index < commands.length; index++) {
+    const c = commands[index];
+    if (c?.type === 'stitch') diagnostics.stitchCount++;
+    else if (c?.type === 'jump') diagnostics.jumpCount++;
+    else if (c?.type === 'trim') diagnostics.trimCount++;
+    else if (c?.type === 'colorChange') diagnostics.colorChangeCount++;
+    if (!diagnostics.firstInvalidCommand && (!c || !c.type)) diagnostics.firstInvalidCommand = { index, command: c };
+    if (!diagnostics.invalidCoordinate && c && ['stitch', 'jump'].includes(c.type) && (!Number.isFinite(c.x) || !Number.isFinite(c.y))) {
+      diagnostics.invalidCoordinate = { index, command: c };
+      diagnostics.firstInvalidCommand = diagnostics.firstInvalidCommand || { index, command: c };
+    }
+  }
+  return diagnostics;
+}
+
+function throwExportError(reason, fmt, commands, index, command) {
+  const details = buildCommandDiagnostics(commands || []);
+  details.format = fmt;
+  details.firstInvalidCommand = { index, command };
+  if (reason === 'unsupportedCommandType') details.unsupportedCommandType = command?.type || 'missing';
+  if (reason === 'invalidCoordinate') details.invalidCoordinate = { index, command };
+  const error = new Error(`${reason}: ${command?.type || 'missing'} at command ${index}`);
+  error.status = 400;
+  error.details = details;
+  throw error;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -660,6 +776,7 @@ function encodeDSB(stitches, ms) {
     const sign = rounded >= 0 ? '+' : '-';
     return sign + String(Math.abs(rounded)).padStart(5, '0');
   };
+  const formatExtent = (v) => String(Math.max(0, Math.round(v * 10))).padStart(5, '0');
 
   // ── Build header (512 bytes, CR line breaks, 0x1A after PD) ─────────────
   const header = new Uint8Array(512).fill(0x20);
@@ -672,10 +789,10 @@ function encodeDSB(stitches, ms) {
   writeStr(`LA:${'StitchPath'.padEnd(16, ' ').slice(0, 16)}`);
   writeStr(`ST:${String(stitchCount).padStart(7, '0')}`);
   writeStr(`CO:${String(colorCount).padStart(3, '0')}`);
-  writeStr(`+X:${String(Math.round(maxX * 10)).padStart(5, '0')}`);
-  writeStr(`-X:${String(Math.round(-minX * 10)).padStart(5, '0')}`);
-  writeStr(`+Y:${String(Math.round(maxY * 10)).padStart(5, '0')}`);
-  writeStr(`-Y:${String(Math.round(-minY * 10)).padStart(5, '0')}`);
+  writeStr(`+X:${formatExtent(maxX)}`);
+  writeStr(`-X:${formatExtent(-minX)}`);
+  writeStr(`+Y:${formatExtent(maxY)}`);
+  writeStr(`-Y:${formatExtent(-minY)}`);
   writeStr(`AX:${formatCoord(finalX)}`);
   writeStr(`AY:${formatCoord(finalY)}`);
   writeStr('MX:+00000');

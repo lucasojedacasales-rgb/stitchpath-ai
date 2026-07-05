@@ -27,6 +27,7 @@ import CE01ProductionPanel from './CE01ProductionPanel';
 import BinaryInspectorPanel from './BinaryInspectorPanel';
 import CE01FormatTestPanel from './CE01FormatTestPanel';
 import RawDarkStrokeTestPanel from './RawDarkStrokeTestPanel';
+import BinaryMinimalTestPanel from './BinaryMinimalTestPanel';
 import ExportRepairPanel from './ExportRepairPanel';
 import ExportTrafficLight from './exportCenter/ExportTrafficLight';
 import LabSection from './exportCenter/LabSection';
@@ -947,6 +948,8 @@ export default function ExportModal({ project, config: editorConfig, regions: in
               {/* Forensics y tests de formato — Laboratorio */}
               {uiMode === 'lab' && (
                 <LabSection title="Forensics y tests de formato" icon={FileText}>
+                <BinaryMinimalTestPanel machineSettings={machineSettings} />
+
                 <BinaryInspectorPanel
                   commands={pipelineResult.commands}
                   objects={pipelineResult.objects}

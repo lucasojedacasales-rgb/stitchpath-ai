@@ -33,6 +33,7 @@ import { contourRefineGuard, validateContourRefinement } from './contourRefineVa
 import { auditAndCleanGeometry } from './geometryAudit.js';
 import { validateFinalContourCommandsAgainstDarkMask } from './contourSegmentValidator.js';
 import { applyProfessionalStitchPlannerRepair } from './professionalStitchPlannerRepair.js';
+import { normalizeBackendFileResponse } from './exportResponseNormalizer.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -1019,54 +1020,21 @@ export async function encodeToFile(commands, objects, format, machineSettings, b
       machineSettings: cleanMachineSettings,
     });
   } catch (e) {
-    // Extract the real error message from the Axios error response
-    const backendError = e?.response?.data?.error;
+    const backendData = e?.response?.data;
+    const backendError = backendData?.error || backendData?.message;
+    const details = backendData?.details ? ` · details=${JSON.stringify(backendData.details).slice(0, 800)}` : '';
     const status = e?.response?.status;
     throw new Error(
       backendError
-        ? `Backend (${status}): ${backendError}`
+        ? `Backend (${status}): ${backendError}${details}`
         : e?.message || 'Error de conexión con el backend'
     );
   }
 
-  if (!res || !res.data) throw new Error('Backend no devolvió datos');
+  if (!res || res.data == null) throw new Error('Backend no devolvió datos');
 
-  // Extract base64 string from various possible response shapes
-  const data = res.data;
-  if (data instanceof Blob) return data;
-  if (data instanceof ArrayBuffer) return new Blob([data], { type: 'application/octet-stream' });
-  if (data instanceof Uint8Array) return new Blob([data], { type: 'application/octet-stream' });
-
-  // Find the base64 string — could be in an object, or data itself could be a JSON string
-  let b64 = null;
-  if (typeof data === 'string') {
-    // Could be raw base64 or a JSON string — try JSON.parse first
-    try {
-      const parsed = JSON.parse(data);
-      b64 = parsed?.file_base64 || null;
-    } catch {
-      b64 = data; // Not JSON — assume it's raw base64
-    }
-  } else if (data && typeof data === 'object' && data.file_base64) {
-    b64 = data.file_base64;
-  }
-
-  if (!b64 || typeof b64 !== 'string') {
-    throw new Error('Formato de respuesta del backend no reconocido: ' + typeof data);
-  }
-
-  // Decode base64 → Blob. Use fetch(data:) as primary method — it's the browser's
-  // native base64 decoder, handles any length, and avoids atob's Latin1 limitation.
-  try {
-    const blob = await fetch(`data:application/octet-stream;base64,${b64}`).then(r => r.blob());
-    return blob;
-  } catch {
-    // Fallback: atob (may fail on very large or non-Latin1 strings)
-    const byteStr = atob(b64);
-    const bytes = new Uint8Array(byteStr.length);
-    for (let i = 0; i < byteStr.length; i++) bytes[i] = byteStr.charCodeAt(i);
-    return new Blob([bytes], { type: 'application/octet-stream' });
-  }
+  const normalized = await normalizeBackendFileResponse(res.data, { status: res.status });
+  return normalized.blob;
 }
 
 /**
