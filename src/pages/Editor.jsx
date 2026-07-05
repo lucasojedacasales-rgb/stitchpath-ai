@@ -48,7 +48,6 @@ import LearnedPresetValidationPanel from '@/components/referenceLearning/Learned
 import IntegratedPipelineReportButton from '@/components/referenceLearning/IntegratedPipelineReportButton';
 import CommandRuntimeForensicsPanel from '@/components/editor/CommandRuntimeForensicsPanel';
 import { applyStitchedTransitionToJumpGuard } from '@/lib/stitchTransitionGuard';
-import { applyMixedStitchBudgetReduction } from '@/lib/stitchBudgetReducer';
 
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
@@ -195,18 +194,15 @@ export default function Editor() {
       const guarded = applyStitchedTransitionToJumpGuard({
         commands: cmds, objects: [], regions, config: configWithDarkStroke, darkStroke, machineSettings: editorMachineSettings,
       });
-      const budget = applyMixedStitchBudgetReduction({
-        commands: guarded.commands, objects: [], regions, config: configWithDarkStroke, darkStroke, machineSettings: editorMachineSettings,
-      });
       const meta = {
         source: 'optimized_override',
-        commandSourceUsed: budget.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1 + MIXED_STITCH_BUDGET_REDUCTION_V1' : (guarded.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1' : 'finalEmbroideryCommands'),
-        stitchCount: budget.commands.filter(c => c.type === 'stitch').length,
-        jumpCount: budget.commands.filter(c => c.type === 'jump').length,
-        trimCount: budget.commands.filter(c => c.type === 'trim').length,
+        commandSourceUsed: guarded.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1' : 'finalEmbroideryCommands',
+        stitchCount: guarded.commands.filter(c => c.type === 'stitch').length,
+        jumpCount: guarded.commands.filter(c => c.type === 'jump').length,
+        trimCount: guarded.commands.filter(c => c.type === 'trim').length,
       };
       console.log('[commands-state] final commands metrics (override):', meta);
-      return { commands: budget.commands, objects: [], meta, transitionGuardReport: guarded.report, transitionGuardMd: guarded.md, budgetReductionReport: budget.report, budgetReductionMd: budget.md, budgetReductionRuntimeMd: budget.runtimeMd };
+      return { commands: guarded.commands, objects: [], meta, transitionGuardReport: guarded.report, transitionGuardMd: guarded.md };
     }
     // ── Auto-apply learned density / angle / pull-compensation (Professional Mode) ──
     // When the Reference Learning Engine mined these values from the corpus and
@@ -249,43 +245,31 @@ export default function Editor() {
       const guarded = applyStitchedTransitionToJumpGuard({
         commands: prof.commands, objects: prof.objects, regions, config: configWithDarkStroke, darkStroke, machineSettings: editorMachineSettings,
       });
-      const budget = applyMixedStitchBudgetReduction({
-        commands: guarded.commands, objects: prof.objects, regions, config: configWithDarkStroke, darkStroke, machineSettings: editorMachineSettings,
-      });
       console.log('[professional] applied pipeline — score:', prof.report?.gate?.professionalScore);
       return {
-        commands: budget.commands, objects: prof.objects,
-        meta: { ...built.meta, commandSourceUsed: budget.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1 + MIXED_STITCH_BUDGET_REDUCTION_V1' : (guarded.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1' : 'finalEmbroideryCommands') },
+        commands: guarded.commands, objects: prof.objects,
+        meta: { ...built.meta, commandSourceUsed: guarded.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1' : 'finalEmbroideryCommands' },
         contourSegmentReport: built.contourSegmentReport,
         professionalReport: prof.report,
         transitionGuardReport: guarded.report,
         transitionGuardMd: guarded.md,
-        budgetReductionReport: budget.report,
-        budgetReductionMd: budget.md,
-        budgetReductionRuntimeMd: budget.runtimeMd,
       };
     }
     const guarded = applyStitchedTransitionToJumpGuard({
       commands: finalCmds, objects: built.objects, regions, config: configWithDarkStroke, darkStroke, machineSettings: editorMachineSettings,
     });
-    const budget = applyMixedStitchBudgetReduction({
-      commands: guarded.commands, objects: built.objects, regions, config: configWithDarkStroke, darkStroke, machineSettings: editorMachineSettings,
-    });
     console.log('[commands-state] final commands metrics:', {
-      stitches: budget.commands.filter(c => c.type === 'stitch').length,
-      jumps: budget.commands.filter(c => c.type === 'jump').length,
-      trims: budget.commands.filter(c => c.type === 'trim').length,
+      stitches: guarded.commands.filter(c => c.type === 'stitch').length,
+      jumps: guarded.commands.filter(c => c.type === 'jump').length,
+      trims: guarded.commands.filter(c => c.type === 'trim').length,
     });
     return {
-      commands: budget.commands,
+      commands: guarded.commands,
       objects: built.objects,
-      meta: { ...built.meta, commandSourceUsed: budget.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1 + MIXED_STITCH_BUDGET_REDUCTION_V1' : (guarded.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1' : 'finalEmbroideryCommands') },
+      meta: { ...built.meta, commandSourceUsed: guarded.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1' : 'finalEmbroideryCommands' },
       contourSegmentReport: built.contourSegmentReport,
       transitionGuardReport: guarded.report,
       transitionGuardMd: guarded.md,
-      budgetReductionReport: budget.report,
-      budgetReductionMd: budget.md,
-      budgetReductionRuntimeMd: budget.runtimeMd,
     };
   }, [regions, configWithDarkStroke, editorMachineSettings, optimizedCommandsOverride, darkStroke]);
 
@@ -828,9 +812,6 @@ export default function Editor() {
                 machineSettings={editorMachineSettings}
                 transitionGuardReport={finalEmbroideryCommands.transitionGuardReport}
                 transitionGuardMd={finalEmbroideryCommands.transitionGuardMd}
-                budgetReductionReport={finalEmbroideryCommands.budgetReductionReport}
-                budgetReductionMd={finalEmbroideryCommands.budgetReductionMd}
-                budgetReductionRuntimeMd={finalEmbroideryCommands.budgetReductionRuntimeMd}
                 commandSourceLabel={finalEmbroideryCommands.meta?.commandSourceUsed || 'finalEmbroideryCommands'}
               />
               <RealImageDiagnosticPanel

@@ -3,10 +3,9 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Runs two guarantees before export:
  *
- *   1. STITCH CAP (< 12,000)
- *      If total stitches exceed 12,000, scales fill density up (wider row spacing)
- *      proportionally until the count drops below the cap. Satin/run stitches are
- *      preserved (they're already minimal). Fill density is clamped to 0.65mm max.
+ *   1. STITCH WARNING CAP (< 35,000)
+ *      Recalibrated for CE01: 12,000 was too conservative; a Wilcom file accepted
+ *      by the CE01 shows ~33,845 stitches. No density reduction is triggered below 35,000.
  *
  *   2. JUMP ELIMINATION (> 3.5mm → trim)
  *      Delegates to the export pipeline's R13 rule + industrial object ordering
@@ -18,7 +17,8 @@
  *   // then pass `regions` to runExportPipeline(...)
  */
 
-const STITCH_CAP = 12000;
+// El límite anterior de 12000 era demasiado conservador. Se recalibra porque una muestra Wilcom funcional aceptada por CE01 contiene ~33845 puntadas.
+const STITCH_CAP = 35000;
 
 import { computeStitchCount } from './stitchCount.js';
 

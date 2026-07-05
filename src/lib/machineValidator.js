@@ -28,7 +28,9 @@ const THRESHOLDS = {
   maxStitchLength: 12.1,        // mm
   scoreSafe: 80,
   scoreRisky: 40,
-  maxStitches: 12000,
+  // El límite anterior de 12000 era demasiado conservador. Se recalibra porque una muestra Wilcom funcional aceptada por CE01 contiene ~33845 puntadas.
+  maxStitches: 35000,
+  highRiskStitches: 50000,
   hoopW: 100,
   hoopH: 100,
   maxTotalJumpsSafe: 250,       // aligned with ce01Validator (RISKY when >250)
@@ -232,13 +234,21 @@ function checkDensity(regions, commands, w, h) {
     });
   }
 
-  if (totalStitches > THRESHOLDS.maxStitches) {
+  if (totalStitches > THRESHOLDS.highRiskStitches) {
     issues.push({
       severity: 'MAJOR',
       category: 'DENSITY',
       rule: 'D4',
-      message: `${totalStitches} puntadas — excede límite recomendado (${THRESHOLDS.maxStitches}).`,
-      recommendation: 'Reducir colores o simplificar regiones.',
+      message: `${totalStitches} puntadas — riesgo alto de tiempo/memoria; no es INVALID automático sin evidencia real de rechazo CE01.`,
+      recommendation: 'Verificar rendimiento en máquina antes de producción larga.',
+    });
+  } else if (totalStitches > THRESHOLDS.maxStitches) {
+    issues.push({
+      severity: 'MINOR',
+      category: 'DENSITY',
+      rule: 'D4',
+      message: `${totalStitches} puntadas — conteo alto pero aceptable como no bloqueante para CE01 recalibrada.`,
+      recommendation: 'Revisar tiempo de costura; no reducir densidad automáticamente.',
     });
   }
 

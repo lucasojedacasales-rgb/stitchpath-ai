@@ -5,9 +5,7 @@ const SEVERITY_RANK = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
 
 export default function CommandRuntimeForensicsPanel({
   finalCommands = [], finalObjects = [], regions = [], config = {}, darkStroke, machineSettings = {}, exportCommands = null,
-  transitionGuardReport = null, transitionGuardMd = null,
-  budgetReductionReport = null, budgetReductionMd = null, budgetReductionRuntimeMd = null,
-  commandSourceLabel = 'finalEmbroideryCommands',
+  transitionGuardReport = null, transitionGuardMd = null, commandSourceLabel = 'finalEmbroideryCommands',
 }) {
   const [lastReport, setLastReport] = useState(null);
   const audit = useMemo(() => runRuntimeForensics({ finalCommands, finalObjects, regions, config, darkStroke, machineSettings, exportCommands, commandSourceLabel }), [finalCommands, finalObjects, regions, config, darkStroke, machineSettings, exportCommands, commandSourceLabel]);
@@ -33,16 +31,6 @@ export default function CommandRuntimeForensicsPanel({
     downloadBlob(transitionGuardMd, 'STITCHED_TRANSITION_TO_JUMP_GUARD_REPORT_V1.md');
   };
 
-  const downloadBudgetReductionReport = () => {
-    if (!budgetReductionMd) return;
-    downloadBlob(budgetReductionMd, 'MIXED_STITCH_BUDGET_REDUCTION_REPORT_V1.md');
-  };
-
-  const downloadBudgetRuntimeReport = () => {
-    if (!budgetReductionRuntimeMd) return;
-    downloadBlob(budgetReductionRuntimeMd, 'CE01_STITCH_BUDGET_RUNTIME_AFTER_REDUCTION_V1.md');
-  };
-
   return (
     <div className="rounded-xl border border-amber-500/30 bg-amber-900/10 p-3 space-y-3">
       <div className="flex items-start justify-between gap-3">
@@ -57,16 +45,6 @@ export default function CommandRuntimeForensicsPanel({
           {transitionGuardMd && (
             <button onClick={downloadGuardReport} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-900/20 px-3 py-1.5 text-xs font-bold text-cyan-200 hover:bg-cyan-900/30 transition-colors">
               <Download className="w-3.5 h-3.5" /> Reporte guard
-            </button>
-          )}
-          {budgetReductionMd && (
-            <button onClick={downloadBudgetReductionReport} className="flex items-center gap-1.5 rounded-lg border border-violet-500/30 bg-violet-900/20 px-3 py-1.5 text-xs font-bold text-violet-200 hover:bg-violet-900/30 transition-colors">
-              <Download className="w-3.5 h-3.5" /> Budget report
-            </button>
-          )}
-          {budgetReductionRuntimeMd && (
-            <button onClick={downloadBudgetRuntimeReport} className="flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-900/20 px-3 py-1.5 text-xs font-bold text-blue-200 hover:bg-blue-900/30 transition-colors">
-              <Download className="w-3.5 h-3.5" /> Runtime after
             </button>
           )}
           <button onClick={() => downloadReport('EMBROIDERY_COMMAND_RUNTIME_FORENSICS_AFTER_TRANSITION_GUARD_V1.md')} className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-900/20 px-3 py-1.5 text-xs font-bold text-emerald-200 hover:bg-emerald-900/30 transition-colors">
@@ -98,18 +76,6 @@ export default function CommandRuntimeForensicsPanel({
         </div>
       )}
 
-      {budgetReductionReport && (
-        <div className={`rounded-lg border p-2 ${budgetReductionReport.phaseAccepted ? 'border-emerald-500/25 bg-emerald-900/10' : 'border-amber-500/25 bg-amber-900/10'}`}>
-          <div className="text-[11px] font-bold text-slate-200">MIXED_STITCH_BUDGET_REDUCTION_V1</div>
-          <div className="mt-1 grid gap-1 text-[10px] text-slate-400 sm:grid-cols-4">
-            <span>accepted=<b className={budgetReductionReport.phaseAccepted ? 'text-emerald-300' : 'text-amber-300'}>{String(budgetReductionReport.phaseAccepted)}</b></span>
-            <span>stitches=<b className="text-violet-300">{budgetReductionReport.before?.totalStitches}→{budgetReductionReport.after?.totalStitches}</b></span>
-            <span>removed=<b className="text-cyan-300">{budgetReductionReport.stitchesRemoved}</b></span>
-            <span>source=<b className="text-emerald-300">{budgetReductionReport.commandsReturnedSource}</b></span>
-          </div>
-          {budgetReductionReport.revertReason && <div className="mt-1 text-[10px] text-amber-300">revertReason={budgetReductionReport.revertReason}</div>}
-        </div>
-      )}
 
       {audit.offenders.length > 0 ? (
         <div className="rounded-lg border border-red-500/25 bg-red-900/10 p-2">

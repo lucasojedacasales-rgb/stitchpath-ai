@@ -27,7 +27,8 @@ import { safeAddTieInTieOffV2 } from './safeAddTieInTieOffV2';
 import { detectMissingTieByRealBlocks } from './detectMissingTieByRealBlocks';
 import { generateMissingTieDetectorAudit } from './missingTieDetectorAuditReport';
 
-const MAX_STITCHES = 12000;
+// Recalibrado: 12000 era demasiado conservador; Wilcom funcional aceptado por CE01 muestra ~33845 puntadas.
+const MAX_STITCHES = 35000;
 
 function measureMetrics(commands, objects, regions, config, ms) {
   const det = detectExportErrors(commands, objects, regions, config, ms);

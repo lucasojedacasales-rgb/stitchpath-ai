@@ -27,7 +27,8 @@ import { validateCE01 } from '@/lib/ce01Validator';
 import { removeDuplicateStitches } from './preExportRepairer';
 import { generatePolishReport } from './exportPolishReport';
 
-const MAX_STITCHES = 12000;
+// Recalibrado: 12000 era demasiado conservador; Wilcom funcional aceptado por CE01 muestra ~33845 puntadas.
+const MAX_STITCHES = 35000;
 const SHORT_MERGE_MM = 0.6;
 const TIE_SPACING_MM = 1.0;   // >= 0.8 (no shortStitch) y < 1.5 (tie detectado por CE01)
 const MIN_TIE_BLOCK = 4;      // bloques de 4-7 stitches sin tie

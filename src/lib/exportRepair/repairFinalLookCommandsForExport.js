@@ -27,7 +27,8 @@ import { polishRepairedCommands } from './exportPolish';
 import { polishTravelAfterV5 } from './travelPolish';
 import { generateEmptyBlockForensics } from './emptyBlockForensics';
 
-const MAX_STITCHES = 12000;
+// Recalibrado: 12000 era demasiado conservador; Wilcom funcional aceptado por CE01 muestra ~33845 puntadas.
+const MAX_STITCHES = 35000;
 
 // Fases que eliminan errores BLOQUEANTES — prioridad sobre ce01Score.
 const BLOCKING_FIX_PHASES = new Set([

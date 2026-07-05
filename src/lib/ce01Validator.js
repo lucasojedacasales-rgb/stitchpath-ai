@@ -7,13 +7,13 @@
  * a structured report. Does NOT modify regions, commands, or visual state.
  *
  * CE01 constraints:
- *   - Max stitches: 12,000
+ *   - Stitch count is non-blocking up to 35,000; >35,000 is warning/risky, >50,000 high risk.
  *   - Hoop: 100×100mm
  *   - Trim threshold: 3.5mm
  *   - Home-machine stitch range: 0.8mm – 8.0mm (warnings outside)
  *
  * 15 checks:
- *   1.  Total stitch count vs 12,000 cap
+ *   1.  Total stitch count risk only: <=35,000 non-blocking; >35,000 warning; >50,000 high risk
  *   2.  Jump count
  *   3.  Jumps > 3.5mm without preceding trim
  *   4.  Stitches < 0.8mm (too short / dense)
@@ -32,7 +32,9 @@
 
 // ─── CE01 Machine Specs ──────────────────────────────────────────────────────
 
-const CE01_MAX_STITCHES   = 12000;
+// El límite anterior de 12000 era demasiado conservador. Se recalibra porque una muestra Wilcom funcional aceptada por CE01 contiene ~33845 puntadas.
+const CE01_STITCH_WARNING_THRESHOLD = 35000;
+const CE01_STITCH_HIGH_RISK_THRESHOLD = 50000;
 const CE01_HOOP_W         = 100;   // mm
 const CE01_HOOP_H         = 100;   // mm
 const CE01_TRIM_THRESHOLD = 3.5;   // mm
@@ -154,12 +156,20 @@ export function validateCE01(commands, objects = [], regions = [], config = {}, 
   }
 
   // ── 1. Total stitch count ─────────────────────────────────────────────────
-  if (stitches > CE01_MAX_STITCHES) {
-    blockingIssues.push({
+  // Recalibrado: 12,000 puntadas NO bloquea CE01. Wilcom funcional aceptado por CE01 muestra ~33,845 puntadas.
+  // El conteo total solo genera riesgo; INVALID requiere evidencia real de archivo imposible/corrupto o rechazo de máquina.
+  if (stitches > CE01_STITCH_HIGH_RISK_THRESHOLD) {
+    warnings.push({
       check: 1,
-      message: `${stitches.toLocaleString()} puntadas exceden el límite CE01 (${CE01_MAX_STITCHES.toLocaleString()}).`,
+      message: `${stitches.toLocaleString()} puntadas — riesgo alto de tiempo/memoria, pero no se bloquea automáticamente sin evidencia real de rechazo CE01.`,
     });
-    score -= 30;
+    score -= 18;
+  } else if (stitches > CE01_STITCH_WARNING_THRESHOLD) {
+    warnings.push({
+      check: 1,
+      message: `${stitches.toLocaleString()} puntadas — por encima de ${CE01_STITCH_WARNING_THRESHOLD.toLocaleString()}, revisar rendimiento; no bloqueante para CE01.`,
+    });
+    score -= 8;
   }
 
   // ── 2. Jump count ──────────────────────────────────────────────────────────

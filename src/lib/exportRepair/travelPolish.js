@@ -30,7 +30,8 @@ import { validateCE01 } from '@/lib/ce01Validator';
 import { generateTravelPolishForensics } from './travelPolishForensics';
 import { generateTravelPolishReport } from './travelPolishReport';
 
-const MAX_STITCHES = 12000;
+// Recalibrado: 12000 era demasiado conservador; Wilcom funcional aceptado por CE01 muestra ~33845 puntadas.
+const MAX_STITCHES = 35000;
 const TRIM_THRESHOLD = 3.5;   // mm — no eliminar trim antes de jump largo
 const NEARBY_MM = 2.0;        // mm — umbral para agrupar bloques del mismo color
 const MAX_SCORE_DROP = 3;     // puntos — tope de caída de ce01Score
