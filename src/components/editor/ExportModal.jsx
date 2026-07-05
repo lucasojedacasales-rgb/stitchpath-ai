@@ -38,6 +38,7 @@ import UniversalValidationSummary from './UniversalValidationSummary';
 import UniversalExportAcceptanceTestPanel from './UniversalExportAcceptanceTestPanel';
 import ExportBlockingCausePanel from './ExportBlockingCausePanel';
 import { analyzeExportBlocking } from '@/lib/exportBlockingAudit';
+import { runExportedFileBinaryRoundtripForensics } from '@/lib/exportedFileBinaryRoundtripForensics';
 
 const FORMATS = ['DSB', 'DST', 'PES', 'JEF', 'EXP'];
 
@@ -94,6 +95,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   const [repairAccepted, setRepairAccepted] = useState(false);
   const [exportView, setExportView] = useState('final'); // 'final' | 'exportable' | 'compare'
   const [uiMode, setUiMode] = useState('simple'); // 'simple' | 'lab'  — UI_EXPORT_CENTER_CLEANUP_V1
+  const [binaryAuditRunning, setBinaryAuditRunning] = useState(false);
   const [validationMode, setValidationMode] = useState((editorConfig || project?.config || {}).validationMode || 'universal');
 
   const config = { ...(editorConfig || project?.config || {}), validationMode };
@@ -276,6 +278,31 @@ export default function ExportModal({ project, config: editorConfig, regions: in
 
   // In production mode, stale adaptive/stability states are ignored entirely
   const effectiveAdaptiveReport = ce01ProductionMode ? null : adaptiveReport;
+
+  const handleBinaryAudit = async () => {
+    setBinaryAuditRunning(true);
+    setExportError(null);
+    try {
+      const { markdown } = await runExportedFileBinaryRoundtripForensics({
+        commands: effectiveExport.commands,
+        objects: editorFinalObjects || pipelineResult.objects,
+        projectName: project?.name || 'design',
+        machineSettings,
+        base44Client: base44,
+      });
+      const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'EXPORTED_FILE_BINARY_ROUNDTRIP_FORENSICS_V1.md';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setExportError(e.message || 'No se pudo auditar el archivo exportado');
+    } finally {
+      setBinaryAuditRunning(false);
+    }
+  };
 
   const handleExport = async () => {
     // ── Pre-export sync validation ──────────────────────────────────────────
@@ -611,6 +638,15 @@ export default function ExportModal({ project, config: editorConfig, regions: in
               />
 
               <ExportBlockingCausePanel audit={exportAllowedByRealGate ? { ...exportBlockingAudit, exportAllowed: true, blockingReason: 'none', blockingModule: 'none', blockingCheck: 'REAL_EXPORT_GATE', unlockHint: 'No hay bloqueo real. Warnings reparables y score bajo no bloquean.' } : exportBlockingAudit} />
+
+              <button
+                onClick={handleBinaryAudit}
+                disabled={binaryAuditRunning || !effectiveExport.commands?.length}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-[#0d0f14] border border-amber-500/30 text-amber-300 text-xs font-bold hover:bg-amber-900/20 transition-colors disabled:opacity-40"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                {binaryAuditRunning ? 'Auditando archivo exportado...' : 'Auditar archivo exportado'}
+              </button>
 
               {/* ── Pre-export technical repair (FASE 1-6) ── */}
               <ExportRepairPanel
