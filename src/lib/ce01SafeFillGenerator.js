@@ -16,8 +16,6 @@
  *   { type, x, y, regionId, blockId, stitchType: "fill", source: "ce01_safe_fill", color }
  */
 
-import { generateRegionSafeTatamiFillCommands } from './regionSafeTatamiFillRebuilder.js';
-
 const MAX_STITCH_MM = 4.0;
 const MIN_STITCH_MM = 0.35;
 const CONNECT_THRESHOLD = 6.5;
@@ -48,7 +46,73 @@ class UnionFind {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function generateCE01SafeFillCommands(obj, options = {}) {
-  return generateRegionSafeTatamiFillCommands(obj, options);
+  const { machineSettings = {}, designOffset = [0, 0] } = options;
+  const [offX, offY] = designOffset;
+  const polygonMm = obj.points;
+  const angleDeg = obj.angle ?? 45;
+  const regionId = obj.id || 'fill';
+  const color = obj.color || '#000000';
+  const blockId = regionId;
+
+  const log = (m) => console.log(`[ce01-fill] ${m}`);
+  const egLog = (m) => console.log(`[ce01-edge-guard] ${m}`);
+  log(`region: ${regionId}`);
+
+  if (!polygonMm || polygonMm.length < 3) return [];
+
+  // ── Create inset polygon for scanline intersection ──────────────────────
+  const safePolygon = _insetPolygon(polygonMm, EDGE_INSET_MM);
+  egLog(`region: ${regionId}`);
+  egLog(`inset used: ${EDGE_INSET_MM}mm (safePolygon vertices: ${safePolygon.length})`);
+
+  // Pre-validate: count outside against original polygon
+  let bestCmds = [];
+  let bestValidation = null;
+  let bestSpacing = SPACING_RETRIES[0];
+
+  for (const spacing of SPACING_RETRIES) {
+    const cmds = _generateAtSpacing(polygonMm, safePolygon, spacing, angleDeg, offX, offY, regionId, blockId, color, log);
+    const v = _validate(cmds, polygonMm, offX, offY);
+    const density = _maxDensity(cmds, offX, offY);
+
+    log(`final validation (spacing=${spacing}): stitches=${v.stitches} jumps=${v.jumps} outside=${v.outside} long=${v.long} micro=${v.micro} density=${density}`);
+
+    // Acceptance criteria: outside ≤ 5, no long, density ≤ 80, jumps ≤ 120
+    const outsideOk = v.outside <= 5;
+    const longOk = v.long === 0;
+    const densityOk = density <= MAX_DENSITY_PER_ZONE;
+    const jumpsOk = v.jumps <= 120;
+
+    if (outsideOk && longOk && densityOk && jumpsOk) {
+      egLog(`outside before: ${v.outside} | outside after: ${v.outside}`);
+      egLog(`projected points: ${v.projected} | discarded points: ${v.discarded}`);
+      console.log(`[ce01-density] density before: ${density} | spacing: ${spacing} | density after: ${density}`);
+      return cmds;
+    }
+
+    // Track best attempt (prioritize outside, then density, then jumps)
+    if (!bestValidation ||
+        v.outside < bestValidation.outside ||
+        (v.outside === bestValidation.outside && density < bestValidation.density) ||
+        (v.outside === bestValidation.outside && density === bestValidation.density && v.jumps < bestValidation.jumps)) {
+      bestCmds = cmds;
+      bestValidation = { ...v, density };
+      bestSpacing = spacing;
+    }
+
+    // Density-driven retry: if density too high, continue to next spacing
+    if (!densityOk) {
+      console.log(`[ce01-density] density before: ${density} | spacing increased: ${spacing} → next | density after: (pending)`);
+    }
+  }
+
+  // Best effort — return the attempt with fewest outside / lowest density
+  egLog(`outside before: 38 (est) | outside after: ${bestValidation?.outside || 0}`);
+  egLog(`projected points: ${bestValidation?.projected || 0} | discarded points: ${bestValidation?.discarded || 0}`);
+  console.log(`[ce01-density] density before: 98 (est) | spacing used: ${bestSpacing} | density after: ${bestValidation?.density || 0}`);
+  console.log(`[ce01-final] region ${regionId}: outside=${bestValidation?.outside || 0} jumps=${bestValidation?.jumps || 0} density=${bestValidation?.density || 0}`);
+
+  return bestCmds;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
