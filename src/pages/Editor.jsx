@@ -97,6 +97,9 @@ export default function Editor() {
   const [showExport, setShowExport] = useState(false);
   const [activeTab, setActiveTab] = useState('editor');
   const [editorUiMode, setEditorUiMode] = useState('simple');
+  const [focusMode, setFocusMode] = useState(false);
+  const [cleanConfigOpen, setCleanConfigOpen] = useState(false);
+  const [showMoreTabs, setShowMoreTabs] = useState(false);
   const [showProfessionalReports, setShowProfessionalReports] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [preprocessSettings, setPreprocessSettings] = useState(DEFAULT_PREPROCESS);
@@ -494,26 +497,36 @@ export default function Editor() {
   const totalStitches = useMemo(() => regions.reduce((s, r) => s + (r.stitch_count || 0), 0), [regions]);
   const colorsUsed = useMemo(() => new Set(regions.map((r) => r.color)).size, [regions]);
   const isLabMode = editorUiMode === 'lab';
+  const isCleanMode = editorUiMode === 'simple';
   const simpleTabs = [
     { id: 'editor',    label: 'Editor' },
     { id: 'mask',      label: '✂ Máscara' },
     { id: 'simulate',  label: '▶ Simular' },
     { id: 'finallook', label: '🎨 Final' },
   ];
-  const labTabs = [
-    ...simpleTabs,
-    { id: 'planner',   label: '✦ Planner' },
-    { id: 'travel',    label: '⚡ Travel' },
-    { id: 'validate',  label: '✓ Validar' },
-    { id: 'details',   label: '🔍 Detalles' },
-    { id: 'diagnostic', label: '🔬 Diagnóstico' },
-    { id: 'prof',       label: '★ Profesional' },
-    { id: 'learn',      label: '✨ Aprendizaje' },
+  const labPrimaryTabs = [
+    { id: 'editor',    label: 'Editor' },
+    { id: 'simulate',  label: 'Simular' },
+    { id: 'finallook', label: 'Final' },
   ];
-  const visibleTabs = isLabMode ? labTabs : simpleTabs;
+  const labMoreTabs = [
+    { id: 'mask',       label: 'Máscara' },
+    { id: 'planner',    label: 'Planner' },
+    { id: 'travel',     label: 'Travel' },
+    { id: 'validate',   label: 'Validar' },
+    { id: 'details',    label: 'Detalles' },
+    { id: 'diagnostic', label: 'Diagnóstico' },
+    { id: 'prof',       label: 'Profesional' },
+    { id: 'learn',      label: 'Aprendizaje' },
+  ];
+  const visibleTabs = isLabMode ? labPrimaryTabs : simpleTabs;
+  const activeInMore = labMoreTabs.some((tab) => tab.id === activeTab);
   useEffect(() => {
     if (!isLabMode && !simpleTabs.some((tab) => tab.id === activeTab)) setActiveTab('editor');
   }, [isLabMode, activeTab]);
+  useEffect(() => {
+    if (isCleanMode && (activeTab === 'finallook' || activeTab === 'simulate')) setCleanConfigOpen(false);
+  }, [isCleanMode, activeTab]);
 
   const handleRegenerateCommands = useCallback(() => {
     console.log('[command-sync] regenerate: clearing override, rebuilding from regions');
@@ -557,6 +570,12 @@ export default function Editor() {
               Herramientas técnicas
             </button>
           </div>
+          <button
+            onClick={() => focusMode ? setFocusMode(false) : (setFocusMode(true), setActiveTab('finallook'))}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${focusMode ? 'bg-emerald-600 text-white' : 'bg-[#161a23] border border-[#2a2d3a] text-slate-400 hover:text-white hover:bg-[#1e2130]'}`}
+          >
+            {focusMode ? 'Salir de enfoque' : 'Modo enfoque'}
+          </button>
           <AIProgressIndicator active={processing} elapsed={processingElapsed} />
           <div className="flex items-center gap-1.5">
             <NavButton onClick={() => setShowExport(true)} icon={Download} label="Exportar" accent />
@@ -564,26 +583,56 @@ export default function Editor() {
             <NavButton onClick={() => saveProject()} icon={Save} label={saving ? '...' : 'Guardar'} />
           </div>
         </div>
-        <div className="flex items-center justify-between px-4 py-1.5 border-t border-[#1a1d27]">
-          <div className="flex items-center gap-1">
-            {visibleTabs.map(({ id, label }) =>
-              <button key={id} onClick={() => setActiveTab(id)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
-                {label}
-              </button>
-            )}
+        {!focusMode && (
+          <div className="flex items-center justify-between px-4 py-1.5 border-t border-[#1a1d27]">
+            <div className="flex items-center gap-1 relative">
+              {visibleTabs.map(({ id, label }) =>
+                <button key={id} onClick={() => { setActiveTab(id); setShowMoreTabs(false); }} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
+                  {label}
+                </button>
+              )}
+              {isLabMode && (
+                <>
+                  <button onClick={() => setShowExport(true)} className="px-3 py-1 rounded text-xs font-medium text-slate-500 hover:text-slate-300 transition-colors">Exportar</button>
+                  <button onClick={() => setShowMoreTabs((v) => !v)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeInMore ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>Más...</button>
+                  {showMoreTabs && (
+                    <div className="absolute top-8 left-56 z-30 w-44 rounded-xl border border-[#2a2d3a] bg-[#11141c] p-2 shadow-2xl">
+                      {labMoreTabs.map(({ id, label }) => (
+                        <button key={id} onClick={() => { setActiveTab(id); setShowMoreTabs(false); }} className={`block w-full rounded-lg px-3 py-2 text-left text-xs transition-colors ${activeTab === id ? 'bg-violet-900/30 text-violet-200' : 'text-slate-400 hover:bg-[#1e2130] hover:text-white'}`}>{label}</button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            <div className="flex items-center gap-4 text-[11px]">
+              <span className="text-slate-600">Puntadas <span className="text-violet-400 font-bold">{unifiedMetrics.stitchCount.toLocaleString()}</span></span>
+              <span className="text-slate-600">Colores <span className="text-cyan-400 font-bold">{colorsUsed}</span></span>
+              <span className="text-slate-600">Tamaño <span className="text-emerald-400 font-bold">{config.width_mm}×{config.height_mm}mm</span></span>
+            </div>
           </div>
-          <div className="flex items-center gap-4 text-[11px]">
-            <span className="text-slate-600">Puntadas <span className="text-violet-400 font-bold">{unifiedMetrics.stitchCount.toLocaleString()}</span></span>
-            <span className="text-slate-600">Colores <span className="text-cyan-400 font-bold">{colorsUsed}</span></span>
-            <span className="text-slate-600">Tamaño <span className="text-emerald-400 font-bold">{config.width_mm}×{config.height_mm}mm</span></span>
-          </div>
-        </div>
+        )}
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        <div className="w-64 flex-shrink-0 border-r border-[#1e2130] overflow-y-auto space-y-4 p-4">
-          <ConfigPanel config={config} onChange={setConfig} regions={regions} selectedRegionIds={selectedRegionId ? [selectedRegionId] : []} onRegionsUpdate={handleRegionsUpdate} />
-          {isLabMode && (
+        {!focusMode && isCleanMode && (
+          cleanConfigOpen ? (
+            <div className="w-64 flex-shrink-0 border-r border-[#1e2130] overflow-y-auto space-y-4 p-4">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-bold text-slate-300">Configuración</div>
+                <button onClick={() => setCleanConfigOpen(false)} className="text-xs text-slate-500 hover:text-white">Cerrar</button>
+              </div>
+              <ConfigPanel config={config} onChange={setConfig} regions={regions} selectedRegionIds={selectedRegionId ? [selectedRegionId] : []} onRegionsUpdate={handleRegionsUpdate} />
+            </div>
+          ) : (
+            <div className="w-12 flex-shrink-0 border-r border-[#1e2130] bg-[#0a0c12] p-2">
+              <button onClick={() => setCleanConfigOpen(true)} className="h-full w-full rounded-lg border border-[#2a2d3a] text-[10px] font-bold text-slate-500 hover:text-white hover:bg-[#161a23] [writing-mode:vertical-rl] rotate-180">Configuración</button>
+            </div>
+          )
+        )}
+        {!focusMode && isLabMode && (
+          <div className="w-64 flex-shrink-0 border-r border-[#1e2130] overflow-y-auto space-y-4 p-4">
+            <ConfigPanel config={config} onChange={setConfig} regions={regions} selectedRegionIds={selectedRegionId ? [selectedRegionId] : []} onRegionsUpdate={handleRegionsUpdate} />
             <div className="space-y-4 border-t border-[#1e2130] pt-4">
               <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Avanzado · Laboratorio</div>
               <AestheticPreservationPanel config={config} onChange={setConfig} />
@@ -591,11 +640,11 @@ export default function Editor() {
               <PreprocessingPanel settings={preprocessSettings} onChange={setPreprocessSettings} />
               <NeedlePathPanel regions={regions} pathMetrics={pathMetrics} config={config} />
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         <div className="flex-1 flex flex-col overflow-hidden">
-          {activeTab !== 'mask' && activeTab !== 'planner' && activeTab !== 'travel' && activeTab !== 'simulate' && activeTab !== 'finallook' && activeTab !== 'details' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
+          {isLabMode && !focusMode && activeTab !== 'mask' && activeTab !== 'planner' && activeTab !== 'travel' && activeTab !== 'simulate' && activeTab !== 'finallook' && activeTab !== 'details' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
             <SliderControl label="Imagen" value={imageOpacity} onChange={setImageOpacity} color="text-amber-400" />
             <SliderControl label="Puntadas" value={stitchOpacity} onChange={setStitchOpacity} color="text-violet-400" />
             <div className="flex items-center gap-2 ml-auto">
@@ -635,16 +684,18 @@ export default function Editor() {
                   onRegionsRepaired={handleRegionsUpdate}
                 />
               </div>
-              <div className="w-72 flex-shrink-0 border-l border-[#1e2130] overflow-y-auto p-3 bg-[#0a0c12]">
-                <SimulationReportPanel
-                  regions={regions}
-                  config={config}
-                  machineSettings={editorMachineSettings}
-                  finalCommands={finalEmbroideryCommands.commands}
-                  finalObjects={finalEmbroideryCommands.objects}
-                  onRegionsRepaired={handleRegionsUpdate}
-                />
-              </div>
+              {isLabMode && !focusMode && (
+                <div className="w-72 flex-shrink-0 border-l border-[#1e2130] overflow-y-auto p-3 bg-[#0a0c12]">
+                  <SimulationReportPanel
+                    regions={regions}
+                    config={config}
+                    machineSettings={editorMachineSettings}
+                    finalCommands={finalEmbroideryCommands.commands}
+                    finalObjects={finalEmbroideryCommands.objects}
+                    onRegionsRepaired={handleRegionsUpdate}
+                  />
+                </div>
+              )}
             </div>
           ) : activeTab === 'finallook' ? (
             <div className="flex-1 flex overflow-hidden">
@@ -867,7 +918,7 @@ export default function Editor() {
           </div>
           }
 
-          {isLabMode && imageUrl && regions.length > 0 && pathMetrics?.metrics && !processing &&
+          {isLabMode && !focusMode && imageUrl && regions.length > 0 && pathMetrics?.metrics && !processing &&
           <div className="border-t border-[#1a1d27] p-2.5 flex items-center gap-4 bg-[#0a0c12] text-[11px]">
              <div className="flex-1 text-slate-400">
                Recorrido: <span className="text-cyan-400 font-bold">{pathMetrics.metrics.totalJumps} saltos</span>
@@ -878,7 +929,7 @@ export default function Editor() {
            </div>
           }
 
-          {isLabMode && imageUrl && regions.length > 0 && !processing &&
+          {isLabMode && !focusMode && imageUrl && regions.length > 0 && !processing &&
           <div className="border-t border-[#1a1d27] px-3 py-1.5 flex items-center gap-3 bg-[#0a0c12] text-[10px]">
              <span className="text-cyan-300 font-bold">Debug de sincronización de comandos</span>
              <span className="text-slate-700">·</span>
@@ -929,25 +980,27 @@ export default function Editor() {
           }
         </div>
 
-        <div className="w-64 flex-shrink-0 border-l border-[#1e2130] overflow-hidden flex flex-col">
-          {/* Right panel tab switcher */}
-          {selectedRegionId ? (() => {
-            const selRegion = regions.find(r => r.id === selectedRegionId);
-            return (
-              <RightPanelTabs
-                region={selRegion}
-                regions={regions}
-                config={config}
-                onUpdate={handleRegionsUpdate}
-                onSelect={setSelectedRegionId}
-              />
-            );
-          })() : (
-            <div className="flex-1 overflow-hidden min-h-0">
-              <RegionsPanel regions={regions} selectedId={selectedRegionId} onSelect={setSelectedRegionId} onUpdate={handleRegionsUpdate} config={config} />
-            </div>
-          )}
-        </div>
+        {isLabMode && !focusMode && (
+          <div className="w-64 flex-shrink-0 border-l border-[#1e2130] overflow-hidden flex flex-col">
+            {/* Right panel tab switcher */}
+            {selectedRegionId ? (() => {
+              const selRegion = regions.find(r => r.id === selectedRegionId);
+              return (
+                <RightPanelTabs
+                  region={selRegion}
+                  regions={regions}
+                  config={config}
+                  onUpdate={handleRegionsUpdate}
+                  onSelect={setSelectedRegionId}
+                />
+              );
+            })() : (
+              <div className="flex-1 overflow-hidden min-h-0">
+                <RegionsPanel regions={regions} selectedId={selectedRegionId} onSelect={setSelectedRegionId} onUpdate={handleRegionsUpdate} config={config} />
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {showExport && <ExportModal project={project} config={configWithDarkStroke} regions={regions} darkStroke={darkStroke} finalCommands={finalEmbroideryCommands.commands} finalObjects={finalEmbroideryCommands.objects} commandVersion={commandVersion} onClose={() => setShowExport(false)} />}
