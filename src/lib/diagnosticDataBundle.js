@@ -40,11 +40,9 @@ export async function exportDiagnosticDataBundle({
   files.push(textFile('PROMPT_CONTEXT_SUMMARY.md', buildPromptSummary({ commands, regions, binaryAudit })));
   files.push(jsonFile('ORIGINAL_INPUT.json', imageInfo.summary));
 
-  for (const file of files) {
-    downloadBlob(file.blob, file.name);
-    await wait(120);
-  }
-  return { success: true, fileCount: files.length, requiredFilesPresent: true };
+  const zipBlob = await buildZipBlob(files);
+  downloadBlob(zipBlob, 'DIAGNOSTIC_DATA_BUNDLE.zip');
+  return { success: true, fileCount: files.length, requiredFilesPresent: true, zip: true };
 }
 
 async function readImageInfo(url) {
@@ -313,8 +311,68 @@ function hashBytes(bytes) { let h = 2166136261; for (const b of bytes || []) { h
 function hex(bytes) { return [...bytes].map(b => b.toString(16).padStart(2, '0')).join(' '); }
 function inferFormat(url) { return String(url).split('?')[0].split('.').pop() || 'unknown'; }
 function readImageDimensions(blob) { return new Promise(resolve => { const img = new Image(); const url = URL.createObjectURL(blob); img.onload = () => { URL.revokeObjectURL(url); resolve({ width: img.naturalWidth, height: img.naturalHeight }); }; img.onerror = () => { URL.revokeObjectURL(url); resolve({ width: null, height: null }); }; img.src = url; }); }
+async function buildZipBlob(files) {
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+  for (const file of files) {
+    const data = new Uint8Array(await file.blob.arrayBuffer());
+    const nameBytes = new TextEncoder().encode(file.name);
+    const crc = crc32(data);
+    const local = new Uint8Array(30 + nameBytes.length);
+    const lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true);
+    lv.setUint16(4, 20, true);
+    lv.setUint16(6, 0, true);
+    lv.setUint16(8, 0, true);
+    lv.setUint16(10, 0, true);
+    lv.setUint16(12, 0, true);
+    lv.setUint32(14, crc, true);
+    lv.setUint32(18, data.length, true);
+    lv.setUint32(22, data.length, true);
+    lv.setUint16(26, nameBytes.length, true);
+    local.set(nameBytes, 30);
+    localParts.push(local, data);
+
+    const central = new Uint8Array(46 + nameBytes.length);
+    const cv = new DataView(central.buffer);
+    cv.setUint32(0, 0x02014b50, true);
+    cv.setUint16(4, 20, true);
+    cv.setUint16(6, 20, true);
+    cv.setUint16(8, 0, true);
+    cv.setUint16(10, 0, true);
+    cv.setUint16(12, 0, true);
+    cv.setUint16(14, 0, true);
+    cv.setUint32(16, crc, true);
+    cv.setUint32(20, data.length, true);
+    cv.setUint32(24, data.length, true);
+    cv.setUint16(28, nameBytes.length, true);
+    cv.setUint32(42, offset, true);
+    central.set(nameBytes, 46);
+    centralParts.push(central);
+    offset += local.length + data.length;
+  }
+  const centralSize = centralParts.reduce((s, p) => s + p.length, 0);
+  const end = new Uint8Array(22);
+  const ev = new DataView(end.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, files.length, true);
+  ev.setUint16(10, files.length, true);
+  ev.setUint32(12, centralSize, true);
+  ev.setUint32(16, offset, true);
+  return new Blob([...localParts, ...centralParts, end], { type: 'application/zip' });
+}
+
+function crc32(bytes) {
+  let crc = -1;
+  for (let i = 0; i < bytes.length; i++) {
+    crc ^= bytes[i];
+    for (let j = 0; j < 8; j++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ -1) >>> 0;
+}
+
 function textFile(name, text) { return { name, blob: new Blob([text], { type: 'text/markdown;charset=utf-8' }) }; }
 function jsonFile(name, data) { return { name, blob: new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' }) }; }
 function downloadBlob(blob, name) { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 function safeName(name) { return String(name || 'diagnostic').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 48); }
-function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
