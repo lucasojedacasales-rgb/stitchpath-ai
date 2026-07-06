@@ -24,7 +24,7 @@ export async function exportDiagnosticDataBundle({
   const imageInfo = await readImageInfo(sourceImageUrl);
   const files = [];
 
-  if (imageInfo.blob) files.push({ name: `${baseName}_ORIGINAL_INPUT.${imageInfo.extension}`, blob: imageInfo.blob });
+  if (imageInfo.blob) files.push({ name: `ORIGINAL_INPUT.${imageInfo.extension}`, blob: imageInfo.blob });
   files.push(jsonFile('SEGMENTATION_SNAPSHOT.json', buildSegmentationSnapshot(regions)));
   files.push(textFile('LAYER_ORDER_ANALYSIS.md', buildLayerOrderAnalysis({ regions, objects, commands })));
   files.push(textFile('COLOR_SEQUENCE_ANALYSIS.md', buildColorSequenceAnalysis({ regions, commands })));
@@ -41,7 +41,7 @@ export async function exportDiagnosticDataBundle({
   files.push(jsonFile('ORIGINAL_INPUT.json', imageInfo.summary));
 
   for (const file of files) {
-    downloadBlob(file.blob, `${baseName}_${file.name}`);
+    downloadBlob(file.blob, file.name);
     await wait(120);
   }
   return { success: true, fileCount: files.length, requiredFilesPresent: true };
