@@ -34,6 +34,7 @@ import { auditAndCleanGeometry } from './geometryAudit.js';
 import { validateFinalContourCommandsAgainstDarkMask } from './contourSegmentValidator.js';
 import { applyProfessionalStitchPlannerRepair } from './professionalStitchPlannerRepair.js';
 import { normalizeBackendFileResponse } from './exportResponseNormalizer.js';
+import { prepareProfessionalLayerObjects } from './professionalLayerKnockout.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -111,7 +112,7 @@ function getProfessionalFillAngle(points = []) {
 export function buildStitchObjects(regions, config = {}) {
   const w = config.width_mm || 100;
   const h = config.height_mm || 100;
-  const objects = [];
+  let objects = [];
   const ce01Flag = config.ce01SafeFillMode !== false;
   console.log(`[ce01-safe-fill-wire] ce01SafeFillMode: ${ce01Flag}`);
   console.log(`[ce01-safe-fill-wire] config received by planner: ${JSON.stringify({ width_mm: w, height_mm: h, mode: config.mode, ce01SafeFillMode: ce01Flag })}`);
@@ -146,8 +147,14 @@ export function buildStitchObjects(regions, config = {}) {
   const { objects: contourObjs } = buildContourObjects(regions, config);
   objects.push(...contourObjs);
 
-  // Sort by priority (fills=10 → micro_fill=20 → details=70 → inner=80 → outer=90)
-  objects.sort((a, b) => (a.priority || 5) - (b.priority || 5));
+  // PROFESSIONAL_LAYER_KNOCKOUT_AND_COLOR_SEQUENCE_V1
+  // Applies layer roles, base-fill knockout zones, black-outline final pass, and color-aware ordering.
+  const professionalLayer = prepareProfessionalLayerObjects(objects);
+  objects = professionalLayer.objects;
+  console.log('[professional-layer-knockout]', professionalLayer.report);
+
+  // Sort by professional layer/color order; optimizeObjectOrder keeps nearest-neighbor inside each layer.
+  objects.sort((a, b) => (a.priority || 5) - (b.priority || 5) || String(a.color || '').localeCompare(String(b.color || '')) || ((a._originalOrder || 0) - (b._originalOrder || 0)));
   return objects;
 }
 

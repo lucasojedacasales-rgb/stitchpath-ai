@@ -17,6 +17,7 @@
 
 import { detectVisibleDiagonalStitches } from '@/lib/exportRepair/visibleDiagonalDetector';
 import { validateCE01 } from '@/lib/ce01Validator';
+import { auditProfessionalColorSequence } from '@/lib/professionalLayerKnockout';
 
 export const PROFESSIONAL_PARAMS = {
   minStitchMm: 0.7,
@@ -635,6 +636,9 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
     ? { ...config, professionalParams: { ...(config.professionalParams || {}), ...learnedParams } }
     : config;
 
+  // FASE 2 — separar color real vs cambio de hilo / bloque de color
+  const colorSequenceBefore = auditProfessionalColorSequence(commands);
+
   // FASE 5 — reducción de colores primero (afecta colores de commands)
   const colorRes = professionalColorReducer(regions, commands, effectiveConfig);
   let procCommands = colorRes.reducedCommands;
@@ -724,6 +728,7 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
   }
 
   // FASE 6 — quality gate (sobre comandos reparados + SATIN si fue aceptado)
+  const colorSequenceAfter = auditProfessionalColorSequence(procCommands);
   const gate = professionalEmbroideryQualityGate(procCommands, objects, procRegions, darkStroke, effectiveConfig);
   gate.colorCountBefore = colorRes.report.originalColorCount;
   gate.colorCountAfter = colorRes.report.reducedColorCount;
@@ -845,6 +850,7 @@ export function applyProfessionalPipeline({ commands, objects, regions, config, 
     regions: procRegions,
     report: {
       color: colorRes.report,
+      colorSequence: { before: colorSequenceBefore, after: colorSequenceAfter },
       visible: vis.report,
       repair: repair.report,
       gate,

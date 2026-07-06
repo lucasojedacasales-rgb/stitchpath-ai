@@ -50,6 +50,7 @@ class UnionFind {
 export function generateCE01SafeFillCommands(obj, options = {}) {
   const { machineSettings = {}, designOffset = [0, 0], fillSpacingMm = null } = options;
   const [offX, offY] = designOffset;
+  const knockoutZones = (obj.knockoutZones || []).filter(z => Array.isArray(z) && z.length >= 3);
   const polygonMm = obj.points;
   const angleDeg = obj.angle ?? 45;
   const regionId = obj.id || 'fill';
@@ -74,8 +75,8 @@ export function generateCE01SafeFillCommands(obj, options = {}) {
   let bestSpacing = spacingRetries[0];
 
   for (const spacing of spacingRetries) {
-    const cmds = _generateAtSpacing(polygonMm, safePolygon, spacing, angleDeg, offX, offY, regionId, blockId, color, log, machineSettings);
-    const v = _validate(cmds, polygonMm, offX, offY);
+    const cmds = _generateAtSpacing(polygonMm, safePolygon, knockoutZones, spacing, angleDeg, offX, offY, regionId, blockId, color, log, machineSettings);
+    const v = _validate(cmds, polygonMm, knockoutZones, offX, offY);
     const density = _maxDensity(cmds, offX, offY);
 
     log(`final validation (spacing=${spacing}): stitches=${v.stitches} jumps=${v.jumps} outside=${v.outside} long=${v.long} micro=${v.micro} density=${density}`);
@@ -122,7 +123,7 @@ export function generateCE01SafeFillCommands(obj, options = {}) {
 //  GENERATE AT SPECIFIC SPACING
 // ═══════════════════════════════════════════════════════════════════════════
 
-function _generateAtSpacing(polygon, safePolygon, spacing, angleDeg, offX, offY, regionId, blockId, color, log, machineSettings = {}) {
+function _generateAtSpacing(polygon, safePolygon, knockoutZones, spacing, angleDeg, offX, offY, regionId, blockId, color, log, machineSettings = {}) {
   spacing = _clampSpacing(spacing);
   log(`spacing used: ${spacing}mm`);
 
@@ -135,6 +136,7 @@ function _generateAtSpacing(polygon, safePolygon, spacing, angleDeg, offX, offY,
 
   // Use safePolygon (inset) for scanline intersections
   const rp = safePolygon.map(([x, y]) => toF(x, y));
+  const rotatedKnockouts = (knockoutZones || []).map(zone => zone.map(([x, y]) => toF(x, y)));
   const minY = Math.min(...rp.map(p => p[1]));
   const maxY = Math.max(...rp.map(p => p[1]));
   const minX = Math.min(...rp.map(p => p[0]));
@@ -148,11 +150,12 @@ function _generateAtSpacing(polygon, safePolygon, spacing, angleDeg, offX, offY,
     const xs = _edgeIntersections(rp, ry);
     if (xs.length < 2) { rowIdx++; continue; }
     xs.sort((a, b) => a - b);
-    const intervals = [];
+    let intervals = [];
     for (let i = 0; i + 1 < xs.length; i += 2) {
       if (xs[i + 1] - xs[i] < MIN_INTERVAL_MM) continue;
       intervals.push({ xL: xs[i], xR: xs[i + 1], y: ry, rowIdx });
     }
+    if (rotatedKnockouts.length > 0) intervals = _subtractKnockoutIntervals(intervals, rotatedKnockouts, ry);
     if (intervals.length === 0) { rowIdx++; continue; }
     scanlines.push({ y: ry, rowIdx, intervals });
     rowIdx++;
@@ -251,7 +254,7 @@ function _generateAtSpacing(polygon, safePolygon, spacing, angleDeg, offX, offY,
         if (connDist < MIN_STITCH_MM) {
           needles = needles.slice(1);
           if (needles.length === 0) continue;
-        } else if (connDist > CONNECT_THRESHOLD || !_segmentInsideTolerant(prevX, prevY, nx, ny, polygon)) {
+        } else if (connDist > CONNECT_THRESHOLD || !_segmentInsideTolerant(prevX, prevY, nx, ny, polygon, knockoutZones)) {
           // Connection would cross outside → jump instead
           const proj = _projectInside(nx, ny, polygon, BORDER_PROJ_MM);
           const [jx, jy] = proj || [nx, ny];
@@ -265,12 +268,12 @@ function _generateAtSpacing(polygon, safePolygon, spacing, angleDeg, offX, offY,
         const [wx, wy] = toW(needles[i], iv.y);
         // Project near-border points inside
         const proj = _projectInside(wx, wy, polygon, BORDER_PROJ_MM);
-        if (proj) {
+        if (proj && !_pointInAnyPolygon(proj[0], proj[1], knockoutZones)) {
           commands.push(mkCmd('stitch', proj[0], proj[1]));
-        } else if (_pointInPolygon(wx, wy, polygon)) {
+        } else if (_pointInFillArea(wx, wy, polygon, knockoutZones)) {
           commands.push(mkCmd('stitch', wx, wy));
         }
-        // else: outside and can't project → skip
+        // else: outside or inside knockout → skip
       }
     }
   }
@@ -279,7 +282,7 @@ function _generateAtSpacing(polygon, safePolygon, spacing, angleDeg, offX, offY,
   log(`jumps generated: ${jumpCount}`);
 
   // ── 6. Post-process: split long, merge micro, validate ──
-  const processed = _postProcess(commands, polygon, offX, offY, log);
+  const processed = _postProcess(commands, polygon, knockoutZones, offX, offY, log);
 
   return processed;
 }
@@ -288,7 +291,7 @@ function _generateAtSpacing(polygon, safePolygon, spacing, angleDeg, offX, offY,
 //  POST-PROCESS (split long, merge micro, project/validate inside)
 // ═══════════════════════════════════════════════════════════════════════════
 
-function _postProcess(commands, polygon, offX, offY, log) {
+function _postProcess(commands, polygon, knockoutZones, offX, offY, log) {
   const out = [];
   let splitCount = 0, mergeCount = 0, rejectedCount = 0, projectedCount = 0;
   let prevX = null, prevY = null;
@@ -308,9 +311,13 @@ function _postProcess(commands, polygon, offX, offY, log) {
 
     // Check inside — project if near border
     let fx = localX, fy = localY;
-    if (!_pointInPolygon(fx, fy, polygon)) {
+    if (!_pointInFillArea(fx, fy, polygon, knockoutZones)) {
+      if (_pointInAnyPolygon(fx, fy, knockoutZones)) {
+        rejectedCount++;
+        continue;
+      }
       const proj = _projectInside(fx, fy, polygon, BORDER_PROJ_MM);
-      if (proj) {
+      if (proj && !_pointInAnyPolygon(proj[0], proj[1], knockoutZones)) {
         fx = proj[0]; fy = proj[1];
         projectedCount++;
         cmd.x = fx + offX; cmd.y = fy + offY;
@@ -335,11 +342,11 @@ function _postProcess(commands, polygon, offX, offY, log) {
           const mx = prevX + (cmd.x - prevX) * s / steps;
           const my = prevY + (cmd.y - prevY) * s / steps;
           const mlx = mx - offX, mly = my - offY;
-          if (_pointInPolygon(mlx, mly, polygon)) {
+          if (_pointInFillArea(mlx, mly, polygon, knockoutZones)) {
             out.push({ ...cmd, x: mx, y: my });
-          } else {
+          } else if (!_pointInAnyPolygon(mlx, mly, knockoutZones)) {
             const proj = _projectInside(mlx, mly, polygon, BORDER_PROJ_MM);
-            if (proj) {
+            if (proj && !_pointInAnyPolygon(proj[0], proj[1], knockoutZones)) {
               out.push({ ...cmd, x: proj[0] + offX, y: proj[1] + offY });
             }
           }
@@ -364,7 +371,7 @@ function _postProcess(commands, polygon, offX, offY, log) {
 //  VALIDATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-function _validate(commands, polygon, offX, offY) {
+function _validate(commands, polygon, knockoutZones, offX, offY) {
   let stitches = 0, jumps = 0, outside = 0, longS = 0, microS = 0;
   let projected = 0, discarded = 0;
   let prevX = null, prevY = null;
@@ -373,8 +380,8 @@ function _validate(commands, polygon, offX, offY) {
     if (cmd.type === 'trim') continue;
     stitches++;
     const lx = cmd.x - offX, ly = cmd.y - offY;
-    if (!_pointInPolygon(lx, ly, polygon)) {
-      // Check if it was projected (near border) — still count as borderline
+    if (!_pointInFillArea(lx, ly, polygon, knockoutZones)) {
+      // Check if it was projected (near border) or inside a knockout — still count as outside fill area
       outside++;
     }
     if (prevX !== null) {
@@ -481,12 +488,13 @@ function _segmentInside(x1, y1, x2, y2, poly) {
 }
 
 /** Tolerant segment-inside check — allows points near the border (within toleranceMm) */
-function _segmentInsideTolerant(x1, y1, x2, y2, poly, toleranceMm = BORDER_PROJ_MM) {
+function _segmentInsideTolerant(x1, y1, x2, y2, poly, knockoutZones = [], toleranceMm = BORDER_PROJ_MM) {
   for (let t = 0; t <= 1.0001; t += 0.2) {
     const px = x1 + (x2 - x1) * t;
     const py = y1 + (y2 - y1) * t;
-    if (_pointInPolygon(px, py, poly)) continue;
-    if (_projectInside(px, py, poly, toleranceMm)) continue;
+    if (_pointInFillArea(px, py, poly, knockoutZones)) continue;
+    const projected = _projectInside(px, py, poly, toleranceMm);
+    if (projected && !_pointInAnyPolygon(projected[0], projected[1], knockoutZones)) continue;
     return false;
   }
   return true;
@@ -563,6 +571,38 @@ function _edgeIntersections(poly, ry) {
     }
   }
   return xs;
+}
+
+function _subtractKnockoutIntervals(intervals, rotatedKnockouts, ry) {
+  let result = intervals;
+  for (const hole of rotatedKnockouts) {
+    const xs = _edgeIntersections(hole, ry).sort((a, b) => a - b);
+    if (xs.length < 2) continue;
+    const holeIntervals = [];
+    for (let i = 0; i + 1 < xs.length; i += 2) holeIntervals.push({ xL: xs[i], xR: xs[i + 1] });
+    for (const h of holeIntervals) {
+      const next = [];
+      for (const iv of result) {
+        if (h.xR <= iv.xL || h.xL >= iv.xR) {
+          next.push(iv);
+          continue;
+        }
+        if (h.xL - iv.xL >= MIN_INTERVAL_MM) next.push({ ...iv, xR: h.xL });
+        if (iv.xR - h.xR >= MIN_INTERVAL_MM) next.push({ ...iv, xL: h.xR });
+      }
+      result = next;
+      if (result.length === 0) break;
+    }
+  }
+  return result;
+}
+
+function _pointInAnyPolygon(x, y, polygons = []) {
+  return (polygons || []).some(poly => Array.isArray(poly) && poly.length >= 3 && _pointInPolygon(x, y, poly));
+}
+
+function _pointInFillArea(x, y, polygon, knockoutZones = []) {
+  return _pointInPolygon(x, y, polygon) && !_pointInAnyPolygon(x, y, knockoutZones);
 }
 
 function _buildSpacingRetries(base) {
