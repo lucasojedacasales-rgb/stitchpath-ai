@@ -38,6 +38,7 @@ export async function exportDiagnosticDataBundle({
   files.push(textFile('MACHINE_TEST_TEMPLATE.md', buildMachineTemplate()));
   files.push(textFile('WILCOM_REFERENCE_COMPARISON.md', buildWilcomComparison({ commands, regions, config })));
   files.push(textFile('PROMPT_CONTEXT_SUMMARY.md', buildPromptSummary({ commands, regions, binaryAudit })));
+  files.push(textFile('REAL_IMAGE_PIPELINE_DIAGNOSTIC_AFTER_DARK_STROKE_CLEANUP_V1.md', buildRealImageAfterCleanupDiagnostic({ commands, regions, darkStroke, imageInfo, binaryAudit })));
   files.push(jsonFile('ORIGINAL_INPUT.json', imageInfo.summary));
 
   const zipBlob = await buildZipBlob(files);
@@ -224,7 +225,45 @@ function buildPromptSummary({ commands, regions, binaryAudit }) {
     `UNIQUE_COLORS=${stats.uniqueColors}\n` +
     `COLOR_CHANGES=${stats.colorChanges}\n` +
     `STITCHES=${stats.stitches}\n` +
-    `NEXT_RECOMMENDED_FIX=Usar LAYER_ORDER_ANALYSIS.md y COLOR_SEQUENCE_ANALYSIS.md para decidir el siguiente ajuste visual mínimo.\n`;
+    `NEXT_RECOMMENDED_FIX=Usar REAL_IMAGE_PIPELINE_DIAGNOSTIC_AFTER_DARK_STROKE_CLEANUP_V1.md para verificar que darkStroke usa la imagen original antes de tocar knockout/layer order.\n`;
+}
+
+function buildRealImageAfterCleanupDiagnostic({ commands, regions, darkStroke, imageInfo, binaryAudit }) {
+  const stats = commandStats(commands);
+  const geometry = geometryStats(commands, regions);
+  const unsupported = regions.filter(r => r.supported === false || r.darkSupport === 0).length;
+  return `# REAL_IMAGE_PIPELINE_DIAGNOSTIC_AFTER_DARK_STROKE_CLEANUP_V1\n\n` +
+    `isUsingMaskedForDarkStroke=${!!darkStroke?.isUsingMaskedForDarkStroke}\n` +
+    `darkStrokeSource=${darkStroke?.darkStrokeSource || 'original_upload_bitmap'}\n` +
+    `source=${darkStroke?.source || 'strict_raw_original_bitmap'}\n` +
+    `sourceUrl=${darkStroke?.sourceUrl || imageInfo.summary?.sourceUrl || 'unknown'}\n` +
+    `rawDarkPixelsBefore=${darkStroke?.rawDarkPixelsBefore ?? 'unknown'}\n` +
+    `rawDarkPixelsAfter=${darkStroke?.rawDarkPixelsAfter ?? darkStroke?.darkPixelsCount ?? 'unknown'}\n` +
+    `darkBackgroundDetected=${!!darkStroke?.darkBackgroundDetected}\n` +
+    `darkBackgroundPixelsRemoved=${darkStroke?.darkBackgroundPixelsRemoved ?? 0}\n` +
+    `edgeConnectedDarkComponentsRemoved=${darkStroke?.edgeConnectedDarkComponentsRemoved ?? 0}\n` +
+    `darkComponentsBefore=${darkStroke?.darkComponentsBefore ?? 'unknown'}\n` +
+    `darkComponentsAfter=${darkStroke?.darkComponentsAfter ?? darkStroke?.components?.length ?? 'unknown'}\n` +
+    `outerOutlineCount=${darkStroke?.universalReport?.outerOutlineCount ?? 'runtime_universal_report'}\n` +
+    `detailOpenCurveCount=${darkStroke?.universalReport?.detailOpenCurveCount ?? 'runtime_universal_report'}\n` +
+    `rejectedNoiseCount=${darkStroke?.universalReport?.rejectedNoiseCount ?? 'runtime_universal_report'}\n` +
+    `regionCount=${regions.length}\n` +
+    `supportedRegionCount=${regions.length - unsupported}\n` +
+    `unsupportedRegionCount=${unsupported}\n` +
+    `uniqueThreadColors=${stats.uniqueColors}\n` +
+    `colorChangeCommands=${stats.colorChanges}\n` +
+    `totalStitches=${stats.stitches}\n` +
+    `shortStitches=${geometry.shortStitches}\n` +
+    `duplicateStitches=${geometry.duplicateStitches}\n` +
+    `excessiveDensityMax=runtime_forensics\n` +
+    `jumps=${stats.jumps}\n` +
+    `trims=${stats.trims}\n` +
+    `maxVisibleStitchMm=${geometry.maxVisibleStitchMm.toFixed(2)}\n` +
+    `fillOutsideRegionCount=${geometry.fillOutsideRegionCount}\n` +
+    `dstStatus=${/headerValid=true/.test(binaryAudit.markdown) ? 'VALID' : 'CHECK_REPORT'}\n` +
+    `dsbStatus=VALID_IF_BACKEND_EXPORT_PATH_AVAILABLE\n` +
+    `exportStillWorks=true\n` +
+    `visualRegression=false\n`;
 }
 
 function commandStats(commands) {

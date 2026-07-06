@@ -377,12 +377,17 @@ export function buildUniversalDarkContoursFromContext(darkStroke, config = {}) {
 
     // Eliminate long straight segments: densify supported gaps along the real
     // dark line, cut unsupported gaps. Never bridge with an artificial diagonal.
-    const chains = [];
+    let chains = [];
     for (const chain of rawChains) {
       const { chains: sc, split, densified } = splitOrDensifyUnsafeSegments(chain, mask, W, H);
       unsafeSegmentsSplit += split;
       unsafeSegmentsDensified += densified;
       chains.push(...sc);
+    }
+    if (cls === 'outer_outline' && chains.length > 12) {
+      const kept = chains.sort((a, b) => pathLengthPx(b) - pathLengthPx(a)).slice(0, 12);
+      counts.rejected_noise += chains.length - kept.length;
+      chains = kept;
     }
 
     for (const chain of chains) {

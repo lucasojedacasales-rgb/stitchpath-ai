@@ -51,6 +51,7 @@ import { applyStitchedTransitionToJumpGuard } from '@/lib/stitchTransitionGuard'
 import { LIGHTWEIGHT_APP_BOOT_V1, logPerf, logSafeBootStatus, perfNow } from '@/lib/safeBoot';
 import { recordVectorizationRun, referenceLearningEnabled } from '@/lib/emergencyStabilization';
 import { exportDiagnosticDataBundle } from '@/lib/diagnosticDataBundle';
+import { cleanCartoonSegmentationRegions } from '@/lib/cartoonSegmentationCleanup';
 
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
@@ -58,6 +59,12 @@ import { useDecisionEngine } from '@/hooks/useDecisionEngine.js';
 import { DecisionPanel } from '@/components/DecisionPanel.jsx';
 const AI_ENABLED = true; // Cambiar a false para desactivar
 // ═══════════════════════════════════════════
+
+function resolveOriginalDarkStrokeUrl({ originalImageUrl, config, project, imageUrl }) {
+  const candidate = originalImageUrl || config?.originalUploadUrl || project?.thumbnail_url || null;
+  if (candidate) return candidate;
+  return /_masked/i.test(imageUrl || '') ? null : imageUrl;
+}
 
 const DEFAULT_CONFIG = {
   fabric_type: 'Algodón', width_mm: 100, height_mm: 100, color_count: 6,
@@ -135,8 +142,8 @@ export default function Editor() {
   // darkStroke must use the ORIGINAL uploaded bitmap, not the *_masked.png that
   // vectorization may use afterwards. Falls back to imageUrl if no original kept.
   useEffect(() => {
-    const darkStrokeSourceUrl = originalImageUrl || imageUrl;
-    if (!darkStrokeSourceUrl) { setDarkStroke(null); return; }
+    const darkStrokeSourceUrl = resolveOriginalDarkStrokeUrl({ originalImageUrl, config, project, imageUrl });
+    if (!darkStrokeSourceUrl) { console.warn('[dark-mask-source] original upload missing; refusing *_masked.png for darkStroke'); setDarkStroke(null); return; }
     const shouldRunDarkStroke = !LIGHTWEIGHT_APP_BOOT_V1 || processing || showExport || activeTab === 'simulate' || activeTab === 'finallook' || activeTab === 'diagnostic' || activeTab === 'prof' || activeTab === 'learn';
     if (!shouldRunDarkStroke) {
       console.log('[PERF] command analysis ms', 0, 'skipped-lightweight-boot');
@@ -150,7 +157,7 @@ export default function Editor() {
       .then(ctx => { logPerf('command analysis', t0); if (!cancelled) setDarkStroke(ctx); })
       .catch(err => { console.warn('[dark-stroke] strict detection failed:', err); if (!cancelled) setDarkStroke(null); });
     return () => { cancelled = true; };
-  }, [originalImageUrl, imageUrl, activeTab, showExport, processing]);
+  }, [originalImageUrl, imageUrl, config.originalUploadUrl, project?.thumbnail_url, activeTab, showExport, processing]);
 
   // Config with dark stroke mask attached — flows through buildFinalCommands
   // to the contour export builder + segment classifier. Not persisted (mask is
@@ -378,10 +385,11 @@ export default function Editor() {
     try {
       const p = await base44.entities.Project.get(id);
       setProject(p);
-      setConfig({ ...DEFAULT_CONFIG, ...(p.config || {}) });
+      const loadedConfig = { ...DEFAULT_CONFIG, ...(p.config || {}) };
+      setConfig(loadedConfig);
       setRegions(p.regions || []);
       setImageUrl(p.image_url || null);
-      setOriginalImageUrl(p.image_url || null);
+      setOriginalImageUrl(loadedConfig.originalUploadUrl || p.thumbnail_url || p.image_url || null);
       setStep(p.step || 1);
       logPerf('load config', loadStart);
       console.log('[PERF] load reference learning ms', 0, 'skipped-lightweight-boot');
@@ -440,10 +448,13 @@ export default function Editor() {
     setOriginalImageUrl(null);
     try {
       const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      const nextConfig = { ...configRef.current, originalUploadUrl: file_url };
+      configRef.current = nextConfig;
+      setConfig(nextConfig);
       setImageUrl(file_url);
       setOriginalImageUrl(file_url);
       setStep(2);
-      await base44.entities.Project.update(id, { image_url: file_url, step: 2, status: 'draft', regions: [], total_stitches: 0, color_count: 0 });
+      await base44.entities.Project.update(id, { image_url: file_url, thumbnail_url: file_url, config: nextConfig, step: 2, status: 'draft', regions: [], total_stitches: 0, color_count: 0 });
 
       if (AI_ENABLED) {
         setShowDecisionPanel(true);
@@ -470,7 +481,9 @@ export default function Editor() {
       });
 
       const rawRegions = ctx.regions || [];
-      const enrichedRegions = filterValidVisualRegions(rawRegions);
+      const cleanup = cleanCartoonSegmentationRegions(rawRegions, configRef.current);
+      console.log('[cartoon-cleanup]', cleanup.report);
+      const enrichedRegions = filterValidVisualRegions(cleanup.regions);
       if (enrichedRegions.length === 0) throw new Error('No valid regions generated after pipeline');
 
       const totalCalculatedStitches = enrichedRegions.reduce((s, r) => s + (r.stitch_count || 0), 0);
@@ -947,7 +960,7 @@ export default function Editor() {
                 finalObjects={finalEmbroideryCommands.objects}
                 machineSettings={editorMachineSettings}
                 originalImageUrl={originalImageUrl}
-                darkStrokeSourceUrl={originalImageUrl || imageUrl}
+                darkStrokeSourceUrl={resolveOriginalDarkStrokeUrl({ originalImageUrl, config, project, imageUrl })}
                 contourSegmentReport={finalEmbroideryCommands.contourSegmentReport}
               />
               <div className="rounded-xl border border-amber-500/30 bg-amber-900/10 p-3">
