@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Save, Download, Zap, ChevronRight, ArrowLeft, ShieldCheck, RefreshCw, Sparkles } from 'lucide-react';
+import { Save, Download, Zap, ChevronRight, ArrowLeft, ShieldCheck, RefreshCw, Sparkles, FileText } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import StepPipeline from '@/components/editor/StepPipeline';
 import AIProgressIndicator from '@/components/editor/AIProgressIndicator';
@@ -50,6 +50,7 @@ import CommandRuntimeForensicsPanel from '@/components/editor/CommandRuntimeFore
 import { applyStitchedTransitionToJumpGuard } from '@/lib/stitchTransitionGuard';
 import { LIGHTWEIGHT_APP_BOOT_V1, logPerf, logSafeBootStatus, perfNow } from '@/lib/safeBoot';
 import { recordVectorizationRun, referenceLearningEnabled } from '@/lib/emergencyStabilization';
+import { exportDiagnosticDataBundle } from '@/lib/diagnosticDataBundle';
 
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
@@ -107,6 +108,8 @@ export default function Editor() {
   const [showMoreTabs, setShowMoreTabs] = useState(false);
   const [showProfessionalReports, setShowProfessionalReports] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [diagnosticExporting, setDiagnosticExporting] = useState(false);
+  const [pendingDiagnosticExport, setPendingDiagnosticExport] = useState(false);
   const [preprocessSettings, setPreprocessSettings] = useState(DEFAULT_PREPROCESS);
   const [preprocessedUrl, setPreprocessedUrl] = useState(null);
   const [pathMetrics, setPathMetrics] = useState(null);
@@ -636,6 +639,36 @@ export default function Editor() {
     }
   }, [project?.id]);
 
+  const handleExportDiagnosticBundle = useCallback(async () => {
+    if (!finalEmbroideryCommands.commands?.length) {
+      setPendingDiagnosticExport(true);
+      setActiveTab('simulate');
+      return;
+    }
+    setDiagnosticExporting(true);
+    try {
+      await exportDiagnosticDataBundle({
+        project,
+        originalImageUrl,
+        imageUrl,
+        regions,
+        config,
+        finalEmbroideryCommands,
+        machineSettings: editorMachineSettings,
+        darkStroke,
+      });
+    } finally {
+      setDiagnosticExporting(false);
+    }
+  }, [project, originalImageUrl, imageUrl, regions, config, finalEmbroideryCommands, editorMachineSettings, darkStroke]);
+
+  useEffect(() => {
+    if (pendingDiagnosticExport && finalEmbroideryCommands.commands?.length && !diagnosticExporting) {
+      setPendingDiagnosticExport(false);
+      handleExportDiagnosticBundle();
+    }
+  }, [pendingDiagnosticExport, finalEmbroideryCommands.commands?.length, diagnosticExporting, handleExportDiagnosticBundle]);
+
   if (loading) return <div className="min-h-screen bg-[#0d0f14] flex items-center justify-center"><div className="w-8 h-8 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" /></div>;
 
   return (
@@ -740,6 +773,14 @@ export default function Editor() {
             <ConfigPanel config={config} onChange={setConfig} regions={regions} selectedRegionIds={selectedRegionId ? [selectedRegionId] : []} onRegionsUpdate={handleRegionsUpdate} />
             <div className="space-y-4 border-t border-[#1e2130] pt-4">
               <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Avanzado · Laboratorio</div>
+              <button
+                onClick={handleExportDiagnosticBundle}
+                disabled={diagnosticExporting || pendingDiagnosticExport}
+                className="w-full flex items-center justify-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-900/15 px-3 py-2 text-xs font-bold text-cyan-300 hover:bg-cyan-900/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                {diagnosticExporting ? 'Generando paquete...' : pendingDiagnosticExport ? 'Preparando comandos...' : 'Exportar paquete diagnóstico'}
+              </button>
               <AestheticPreservationPanel config={config} onChange={setConfig} />
               <QualityAnalysisPanel projectId={project?.id} onAnalysisComplete={(analysis) => console.log('Quality:', analysis)} />
               <PreprocessingPanel settings={preprocessSettings} onChange={setPreprocessSettings} />
