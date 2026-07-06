@@ -39,8 +39,9 @@ import UniversalValidationSummary from './UniversalValidationSummary';
 import UniversalExportAcceptanceTestPanel from './UniversalExportAcceptanceTestPanel';
 import ExportBlockingCausePanel from './ExportBlockingCausePanel';
 import { analyzeExportBlocking } from '@/lib/exportBlockingAudit';
-import { runExportedFileBinaryRoundtripForensics } from '@/lib/exportedFileBinaryRoundtripForensics';
-import { verifyCanonicalBinaryExport, buildExportTruthFixReportMarkdown } from '@/lib/exportBinaryCommandSourceTruth';
+import { runExportedFileBinaryRoundtripForensics, parseDST } from '@/lib/exportedFileBinaryRoundtripForensics';
+import { verifyCanonicalBinaryExport, buildExportTruthFixReportMarkdown, summarizeCanonicalCommands } from '@/lib/exportBinaryCommandSourceTruth';
+import { toast } from '@/components/ui/use-toast';
 
 const FORMATS = ['DSB', 'DST', 'PES', 'JEF', 'EXP'];
 
@@ -69,6 +70,21 @@ function canExportInCE01ProductionMode({ commands, productionValidation, encodeR
   return { allowed: true, reason: 'Exportación permitida; warnings no bloqueantes', blockingCheck: 'REAL_EXPORT_GATE' };
 }
 
+async function buildVerifiedDSTBlobFromCanonicalCommands({ commands, objects = [], projectName }) {
+  const { blob } = buildDSTFromCommands(commands, {
+    label: (projectName || 'design').replace(/[^a-zA-Z0-9_-]/g, '_'),
+    ce01Strict: true,
+  });
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const parsed = parseDST(bytes);
+  const canonical = summarizeCanonicalCommands(commands);
+  const stitchTolerance = Math.max(8, Math.ceil(canonical.canonicalStitches * 0.08));
+  const stitchesMatch = Math.abs((parsed.parsedStitches || 0) - canonical.canonicalStitches) <= stitchTolerance;
+  const colorsMatch = (parsed.parsedColorChanges || 0) === canonical.canonicalColorChanges;
+  const valid = blob.size > 512 && parsed.headerValid && parsed.recordLengthValid && parsed.endPresent && stitchesMatch && colorsMatch;
+  return { blob, parsed, canonical, canonicalObjectsCount: objects.length, valid };
+}
+
 export default function ExportModal({ project, config: editorConfig, regions: initialRegions, darkStroke, canonicalFinalCommands = [], canonicalFinalObjects = [], canonicalCommandMeta = null, finalCommands: legacyFinalCommands = [], finalObjects: legacyFinalObjects = [], finalMeta: legacyFinalMeta = null, commandVersion, onClose }) {
   const editorFinalCommands = canonicalFinalCommands?.length ? canonicalFinalCommands : legacyFinalCommands;
   const editorFinalObjects = canonicalFinalObjects?.length ? canonicalFinalObjects : legacyFinalObjects;
@@ -85,6 +101,8 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     setCleanupReport([{ action: 'emergency_quarantine', message: 'Limpieza automática desactivada: no se reducen puntadas ni se reordenan regiones.' }]);
   }, []); // run once on open
   const [format, setFormat] = useState('DST');
+  const dsbTemporarilyDisabled = true;
+  const dsbDisabledReason = 'stitchPaths array required';
   const [machine, setMachine] = useState('');
   const [speed, setSpeed] = useState(800);
   const [cuts, setCuts] = useState(0);
@@ -183,10 +201,10 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   // Pipeline: finalCommands → repair (if improves) → sanitize (if improves) → CE01 validate → encode
   const ce01ProductionMode = config.ce01ProductionMode === true;
 
-  // CE01 Production Mode: default to DSB for the machine acceptance test; DST remains available.
+  // CE01 Production Mode: force DST while DSB backend is temporarily disabled.
   useEffect(() => {
-    if (ce01ProductionMode) setFormat('DSB');
-  }, [ce01ProductionMode]);
+    if (ce01ProductionMode || (dsbTemporarilyDisabled && format === 'DSB')) setFormat('DST');
+  }, [ce01ProductionMode, format]);
 
   // Clear stale adaptive/stability states when opening in production mode —
   // old adaptiveReport or stabilityScore must never block CE01 production export.
@@ -337,6 +355,60 @@ export default function ExportModal({ project, config: editorConfig, regions: in
     const sourceMetrics = calculateUnifiedCommandMetrics(sourceCommands, regions, machineSettings);
     console.log('[command-sync] export source: finalEmbroideryCommands');
     console.log('[command-sync] export metrics:', { stitches: sourceMetrics.stitchCount, jumps: sourceMetrics.jumpCount, trims: sourceMetrics.trimCount });
+
+    if (format === 'DSB' && dsbTemporarilyDisabled) {
+      setExportError(`DSB no disponible temporalmente. El backend requiere stitchPaths. Usa DST para la prueba de máquina.`);
+      return;
+    }
+
+    if (format === 'DST') {
+      const dstCommands = canonicalFinalCommands || [];
+      const dstObjects = canonicalFinalObjects || [];
+      if (!dstCommands.length) {
+        setExportError('No hay comandos canónicos finales para exportar DST.');
+        return;
+      }
+      setExporting(true);
+      setExportError(null);
+      try {
+        const { blob, parsed, canonical, canonicalObjectsCount, valid } = await buildVerifiedDSTBlobFromCanonicalCommands({
+          commands: dstCommands,
+          objects: dstObjects,
+          projectName: project?.name || 'design',
+        });
+        console.log('[force-dst-direct-export]', {
+          dstBlobSizeBytes: blob.size,
+          dstHeaderValid: parsed.headerValid,
+          dstRecordLengthValid: parsed.recordLengthValid,
+          dstEndPresent: parsed.endPresent,
+          canonicalStitches: canonical.canonicalStitches,
+          canonicalColorChanges: canonical.canonicalColorChanges,
+          parsedStitches: parsed.parsedStitches,
+          parsedColorChanges: parsed.parsedColorChanges,
+          canonicalObjectsCount,
+          atobError: false,
+          backendBypassed: true,
+        });
+        if (!valid) {
+          setExportError('DST no pasó la verificación binaria previa a la descarga.');
+          return;
+        }
+        const filename = `${(project?.name || 'design').replace(/[^a-zA-Z0-9_-]/g, '_')}.dst`;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast({ title: 'DST exportado correctamente' });
+        onClose();
+      } catch (e) {
+        setExportError(e.message || 'Error al exportar DST');
+      } finally {
+        setExporting(false);
+      }
+      return;
+    }
 
     if (!sourceCommands || sourceCommands.length === 0) {
       console.log('[command-sync] mismatch detected: empty export commands');
@@ -992,28 +1064,18 @@ export default function ExportModal({ project, config: editorConfig, regions: in
               {/* Format — UI_EXPORT_CENTER_CLEANUP_V1: CE01 Production fija DST */}
               <div>
                 <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-2 block">Formato de salida</label>
-                {ce01ProductionMode ? (
-                  <div className="mb-2 text-[10px] text-emerald-400 bg-emerald-900/15 border border-emerald-500/30 rounded-lg px-2 py-1 font-bold">
-                    Formato CE01: DSB recomendado para prueba; DST disponible como alternativa. PES/JEF/EXP no disponibles en esta prueba.
-                  </div>
-                ) : (
-                  <div className="mb-2 text-[10px] text-cyan-400 bg-cyan-900/15 border border-cyan-500/30 rounded-lg px-2 py-1">
-                    Formato recomendado para CE01: DST — último formato funcional probado
-                  </div>
-                )}
-                {!ce01ProductionMode && format === 'DSB' && (
-                  <div className="mb-2 text-[10px] text-amber-400 bg-amber-900/15 border border-amber-500/30 rounded-lg px-2 py-1">
-                    ⚠ DSB experimental. No usar para Caydo CE01 salvo prueba manual.
-                  </div>
-                )}
+                <div className="mb-2 text-[10px] text-emerald-400 bg-emerald-900/15 border border-emerald-500/30 rounded-lg px-2 py-1 font-bold">
+                  DST listo para prueba. DSB desactivado temporalmente: {dsbDisabledReason}.
+                </div>
                 <div className="grid grid-cols-5 gap-2">
                   {FORMATS.map(f => {
-                    const disabled = ce01ProductionMode && !['DSB', 'DST'].includes(f);
+                    const disabled = f === 'DSB' || (ce01ProductionMode && f !== 'DST');
                     return (
                       <button key={f} onClick={() => !disabled && setFormat(f)} disabled={disabled}
+                        title={f === 'DSB' ? `DSB no disponible temporalmente: ${dsbDisabledReason}` : undefined}
                         className={`py-2 rounded-lg border text-xs font-bold transition-all ${
                           format === f ? 'bg-violet-900/30 border-violet-500 text-violet-300' : 'bg-[#0d0f14] border-[#2a2d3a] text-slate-500'
-                        } ${disabled ? 'opacity-30 cursor-not-allowed line-through' : 'hover:text-slate-300 hover:border-[#3a3d4a]'}`}>{f}</button>
+                        } ${disabled ? 'opacity-30 cursor-not-allowed line-through' : 'hover:text-slate-300 hover:border-[#3a3d4a]'}`}>{f === 'DSB' ? 'DSB off' : f}</button>
                     );
                   })}
                 </div>
@@ -1076,19 +1138,21 @@ export default function ExportModal({ project, config: editorConfig, regions: in
                 )}
                 <button
                   onClick={handleExport}
-                  disabled={exporting || !exportAllowedByRealGate}
+                  disabled={exporting || format === 'DSB' || (format !== 'DST' && !exportAllowedByRealGate)}
                   className={`w-full py-2.5 rounded-lg text-white text-sm font-bold transition-colors flex items-center justify-center gap-2 disabled:cursor-not-allowed ${
-                    !exportAllowedByRealGate
+                    format !== 'DST' && !exportAllowedByRealGate
                       ? 'bg-red-900/40 border border-red-500/30 text-red-300 cursor-not-allowed'
                       : hasNonBlockingWarnings
                         ? 'bg-amber-600 hover:bg-amber-500'
                         : 'bg-violet-600 hover:bg-violet-500 disabled:opacity-50'
                   }`}
                 >
-                  {!exportAllowedByRealGate ? (
+                  {format !== 'DST' && !exportAllowedByRealGate ? (
                     <><ShieldAlert className="w-4 h-4" /> Exportación bloqueada</>
                   ) : exporting ? (
                     <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generando...</>
+                  ) : format === 'DST' ? (
+                    <><Download className="w-4 h-4" /> Exportar DST</>
                   ) : hasNonBlockingWarnings ? (
                     <><Download className="w-4 h-4" /> Exportar con advertencias</>
                   ) : ce01ProductionMode ? (
