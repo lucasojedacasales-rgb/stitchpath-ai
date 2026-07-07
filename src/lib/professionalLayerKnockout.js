@@ -112,7 +112,7 @@ function normalizeBlackOutlineObject(obj) {
   };
 }
 
-export function prepareProfessionalLayerObjects(objects = []) {
+export function prepareProfessionalLayerObjects(objects = [], options = {}) {
   const prepared = (objects || []).map((obj, index) => {
     const role = classifyObject(obj);
     const pts = obj.points || [];
@@ -128,17 +128,19 @@ export function prepareProfessionalLayerObjects(objects = []) {
     };
   }).map(normalizeBlackOutlineObject);
 
-  for (const lower of prepared) {
-    const zones = [];
-    for (const upper of prepared) {
+  if (options.applyKnockouts === true) {
+    for (const lower of prepared) {
+      const zones = [];
+      for (const upper of prepared) {
       if (shouldKnockout(lower, upper) && (upper.areaMm2 || 0) > 0.8) {
         zones.push({ id: upper.id, role: upper.role, color: upper.color, points: upper.points });
       }
     }
-    if (zones.length) {
-      lower.knockoutZones = zones.map(z => z.points);
-      lower.knockoutZoneMeta = zones.map(({ id, role, color }) => ({ id, role, color }));
-      lower.hasProfessionalKnockout = true;
+      if (zones.length) {
+        lower.knockoutZones = zones.map(z => z.points);
+        lower.knockoutZoneMeta = zones.map(({ id, role, color }) => ({ id, role, color }));
+        lower.hasProfessionalKnockout = true;
+      }
     }
   }
 
