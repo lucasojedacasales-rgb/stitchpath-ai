@@ -1,3 +1,5 @@
+import { resolveSafeFillDensityProfile } from './safeFillDensityProfiles.js';
+
 /**
  * ce01SafeFillGenerator.js — Direct command generation for CE01-safe fill
  * ─────────────────────────────────────────────────────────────────────────────
@@ -16,12 +18,13 @@
  *   { type, x, y, regionId, blockId, stitchType: "fill", source: "ce01_safe_fill", color }
  */
 
-const MAX_STITCH_MM = 4.0;
+const MAX_STITCH_MM = 3.0;
+const DEFAULT_NEEDLE_PITCH_MM = 2.4;
 const MIN_STITCH_MM = 0.35;
 const CONNECT_THRESHOLD = 6.5;
 const TATAMI_PHASES = [0, 0.25, 0.5, 0.75];
-const SPACING_RETRIES = [0.45, 0.4, 0.35];
-const MIN_SPACING_MM = 0.35;
+const SPACING_RETRIES = [0.24, 0.28, 0.32];
+const MIN_SPACING_MM = 0.12;
 const MAX_SPACING_MM = 0.8;
 const MIN_INTERVAL_MM = 0.9;
 const MIN_ISLAND_AREA_MM2 = 2.0;       // raised from 1.5 → fewer tiny-island jumps
@@ -30,6 +33,10 @@ const EDGE_INSET_MM = 0.25;            // polygon shrink before scanline interse
 const BORDER_PROJ_MM = 0.25;           // project points within this distance of edge
 const MAX_DENSITY_PER_ZONE = 80;
 const DENSITY_CELL_MM = 5;
+let _lastCE01DensityCalibrationReport = {
+  ce01DensityCalibrationAppliedCount: 0,
+  calibratedRegionIds: [],
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  UNION-FIND
@@ -43,12 +50,55 @@ class UnionFind {
     else { this.p[rb]=ra; this.r[ra]++; } }
 }
 
+function _roundMm(v) {
+  return Number.isFinite(v) ? Number(v.toFixed(4)) : v;
+}
+
+function _clampValue(v, min, max) {
+  const n = Number(v);
+  return Math.max(min, Math.min(max, Number.isFinite(n) ? n : min));
+}
+
+function _recordCE01DensityCalibration(regionId, calibration) {
+  if (!calibration?.calibrationApplied || !regionId) return;
+  if (!_lastCE01DensityCalibrationReport.calibratedRegionIds.includes(regionId)) {
+    _lastCE01DensityCalibrationReport.calibratedRegionIds.push(regionId);
+    _lastCE01DensityCalibrationReport.ce01DensityCalibrationAppliedCount =
+      _lastCE01DensityCalibrationReport.calibratedRegionIds.length;
+  }
+}
+
+function _buildCE01DensityCalibrationCommandMeta(calibration, regionId, spacing, needlePitch) {
+  const applied = calibration?.calibrationApplied === true;
+  return {
+    ce01DensityCalibrationAppliedCount: applied ? 1 : 0,
+    calibratedRegionIds: applied ? [regionId] : [],
+    safeFillDensityProfileId: calibration?.profileId ?? null,
+    safeFillDensityMode: calibration?.densityMode ?? null,
+    rowSpacingMm: _roundMm(spacing),
+    needlePitchMm: _roundMm(needlePitch),
+    maxVisibleStitchMm: calibration?.maxVisibleStitchMm ?? null,
+    estimatedTargetDensity: calibration?.estimatedTargetDensity ?? null,
+    requestedFillSpacingMm: calibration?.requestedFillSpacingMm ?? null,
+    effectiveFillSpacingMm: _roundMm(spacing),
+    effectiveNeedlePitchMm: _roundMm(needlePitch),
+    spacingClampApplied: calibration?.spacingClampApplied === true,
+    estimatedStitchIncreaseFactor: calibration?.estimatedStitchIncreaseFactor ?? 1,
+  };
+}
+
+function _resolveNeedlePitch(machineSettings = {}, calibration = null) {
+  const machineMax = Number(machineSettings.maxStitchLength) || MAX_STITCH_MM;
+  const profileMax = Number(calibration?.maxVisibleStitchMm) || MAX_STITCH_MM;
+  return _clampValue(Math.min(calibration?.needlePitchMm || DEFAULT_NEEDLE_PITCH_MM, machineMax, profileMax, MAX_STITCH_MM), 2.0, MAX_STITCH_MM);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  MAIN ENTRY
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function generateCE01SafeFillCommands(obj, options = {}) {
-  const { machineSettings = {}, designOffset = [0, 0], fillSpacingMm = null } = options;
+  const { machineSettings = {}, designOffset = [0, 0], fillSpacingMm = null, config = {} } = options;
   const [offX, offY] = designOffset;
   const knockoutZones = (obj.knockoutZones || []).filter(z => Array.isArray(z) && z.length >= 3);
   const polygonMm = obj.points;
@@ -62,6 +112,24 @@ export function generateCE01SafeFillCommands(obj, options = {}) {
   log(`region: ${regionId}`);
 
   if (!polygonMm || polygonMm.length < 3) return [];
+  const calibration = resolveSafeFillDensityProfile(
+    machineSettings,
+    { ce01SafeFillMode: true, ...config },
+    { ...obj, fillSpacingMm: fillSpacingMm ?? obj.density }
+  );
+  _recordCE01DensityCalibration(regionId, calibration);
+  console.log('[ce01-density-calibration]', {
+    regionId,
+    profileId: calibration.profileId,
+    densityMode: calibration.densityMode,
+    requestedFillSpacingMm: calibration.requestedFillSpacingMm,
+    rowSpacingMm: calibration.rowSpacingMm,
+    needlePitchMm: calibration.needlePitchMm,
+    maxVisibleStitchMm: calibration.maxVisibleStitchMm,
+    estimatedTargetDensity: calibration.estimatedTargetDensity,
+    spacingClampApplied: calibration.spacingClampApplied,
+    estimatedStitchIncreaseFactor: calibration.estimatedStitchIncreaseFactor,
+  });
 
   // ── Create inset polygon for scanline intersection ──────────────────────
   const safePolygon = _insetPolygon(polygonMm, EDGE_INSET_MM);
@@ -69,13 +137,13 @@ export function generateCE01SafeFillCommands(obj, options = {}) {
   egLog(`inset used: ${EDGE_INSET_MM}mm (safePolygon vertices: ${safePolygon.length})`);
 
   // Pre-validate: count outside against original polygon
-  const spacingRetries = _buildSpacingRetries(fillSpacingMm ?? obj.density);
+  const spacingRetries = _buildSpacingRetries(calibration.rowSpacingMm, calibration);
   let bestCmds = [];
   let bestValidation = null;
   let bestSpacing = spacingRetries[0];
 
   for (const spacing of spacingRetries) {
-    const cmds = _generateAtSpacing(polygonMm, safePolygon, knockoutZones, spacing, angleDeg, offX, offY, regionId, blockId, color, log, machineSettings);
+    const cmds = _generateAtSpacing(polygonMm, safePolygon, knockoutZones, spacing, angleDeg, offX, offY, regionId, blockId, color, log, machineSettings, calibration);
     const v = _validate(cmds, polygonMm, knockoutZones, offX, offY);
     const density = _maxDensity(cmds, offX, offY);
 
@@ -90,7 +158,7 @@ export function generateCE01SafeFillCommands(obj, options = {}) {
     if (outsideOk && longOk && densityOk && jumpsOk) {
       egLog(`outside before: ${v.outside} | outside after: ${v.outside}`);
       egLog(`projected points: ${v.projected} | discarded points: ${v.discarded}`);
-      console.log(`[ce01-density] density before: ${density} | spacing: ${spacing} | density after: ${density}`);
+      console.log(`[ce01-density] density before: ${density} | spacing: ${spacing} | pitch: ${calibration.needlePitchMm} | density after: ${density}`);
       return cmds;
     }
 
@@ -113,19 +181,28 @@ export function generateCE01SafeFillCommands(obj, options = {}) {
   // Best effort — return the attempt with fewest outside / lowest density
   egLog(`outside before: 38 (est) | outside after: ${bestValidation?.outside || 0}`);
   egLog(`projected points: ${bestValidation?.projected || 0} | discarded points: ${bestValidation?.discarded || 0}`);
-  console.log(`[ce01-density] density before: 98 (est) | spacing used: ${bestSpacing} | density after: ${bestValidation?.density || 0}`);
+  console.log(`[ce01-density] density before: 98 (est) | spacing used: ${bestSpacing} | pitch: ${calibration.needlePitchMm} | density after: ${bestValidation?.density || 0}`);
   console.log(`[ce01-final] region ${regionId}: outside=${bestValidation?.outside || 0} jumps=${bestValidation?.jumps || 0} density=${bestValidation?.density || 0}`);
 
   return bestCmds;
+}
+
+export function getCE01DensityCalibrationReport() {
+  return {
+    ce01DensityCalibrationAppliedCount: _lastCE01DensityCalibrationReport.ce01DensityCalibrationAppliedCount,
+    calibratedRegionIds: [..._lastCE01DensityCalibrationReport.calibratedRegionIds],
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  GENERATE AT SPECIFIC SPACING
 // ═══════════════════════════════════════════════════════════════════════════
 
-function _generateAtSpacing(polygon, safePolygon, knockoutZones, spacing, angleDeg, offX, offY, regionId, blockId, color, log, machineSettings = {}) {
+function _generateAtSpacing(polygon, safePolygon, knockoutZones, spacing, angleDeg, offX, offY, regionId, blockId, color, log, machineSettings = {}, calibration = null) {
   spacing = _clampSpacing(spacing);
+  const needlePitch = _resolveNeedlePitch(machineSettings, calibration);
   log(`spacing used: ${spacing}mm`);
+  log(`needle pitch used: ${needlePitch}mm`);
 
   // ── Rotation ──
   const rad = (angleDeg * Math.PI) / 180;
@@ -198,9 +275,11 @@ function _generateAtSpacing(polygon, safePolygon, knockoutZones, spacing, angleD
   const commands = [];
   let jumpCount = 0;
 
+  const calibrationMeta = _buildCE01DensityCalibrationCommandMeta(calibration, regionId, spacing, needlePitch);
   const mkCmd = (type, wx, wy) => ({
     type, x: wx + offX, y: wy + offY,
     regionId, blockId, stitchType: 'fill', source: type === 'trim' ? 'safe_trim' : 'ce01_safe_fill', color,
+    ...calibrationMeta,
   });
   const pushValidatedJump = (wx, wy) => {
     const prev = _lastPositionCommand(commands);
@@ -240,8 +319,8 @@ function _generateAtSpacing(polygon, safePolygon, knockoutZones, spacing, angleD
     for (let rIdx = 0; rIdx < island.intervals.length; rIdx++) {
       const iv = island.intervals[rIdx];
       const forward = (rIdx % 2) === 0;
-      const brickOff = TATAMI_PHASES[rIdx % 4] * MAX_STITCH_MM;
-      let needles = _placeNeedles(iv.xL, iv.xR, MAX_STITCH_MM, brickOff, forward);
+      const brickOff = TATAMI_PHASES[rIdx % 4] * needlePitch;
+      let needles = _placeNeedles(iv.xL, iv.xR, needlePitch, brickOff, forward);
       if (needles.length < 1) continue;
 
       // Connect from previous row — segment validation (5-point check)
@@ -605,18 +684,20 @@ function _pointInFillArea(x, y, polygon, knockoutZones = []) {
   return _pointInPolygon(x, y, polygon) && !_pointInAnyPolygon(x, y, knockoutZones);
 }
 
-function _buildSpacingRetries(base) {
+function _buildSpacingRetries(base, calibration = null) {
   const n = Number(base);
   if (Number.isFinite(n) && n > 0) {
     const b = _clampSpacing(n);
-    return [b, _clampSpacing(b + 0.08), _clampSpacing(b + 0.16)].filter((v, i, arr) => arr.indexOf(v) === i);
+    const step = b < 0.22 ? 0.03 : 0.05;
+    const max = calibration?.areaBand === 'small' ? 0.45 : Math.min(MAX_SPACING_MM, b + step * 2);
+    return [b, _clampSpacing(b + step, max), _clampSpacing(b + step * 2, max)].filter((v, i, arr) => arr.indexOf(v) === i);
   }
   return SPACING_RETRIES.map(_clampSpacing);
 }
 
-function _clampSpacing(v) {
+function _clampSpacing(v, max = MAX_SPACING_MM) {
   const n = Number(v);
-  return Math.max(MIN_SPACING_MM, Math.min(MAX_SPACING_MM, Number.isFinite(n) ? n : 0.45));
+  return Math.max(MIN_SPACING_MM, Math.min(max, Number.isFinite(n) ? n : 0.24));
 }
 
 function _lastPositionCommand(commands) {
