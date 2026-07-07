@@ -53,6 +53,74 @@ export const DEFAULT_MACHINE = {
   minStitchLength: 0.3,     // mm — below this = degenerate
 };
 
+function pointInPolygonMm(x, y, polygon = []) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i][0], yi = polygon[i][1];
+    const xj = polygon[j][0], yj = polygon[j][1];
+    const intersects = ((yi > y) !== (yj > y)) &&
+      (x < ((xj - xi) * (y - yi)) / ((yj - yi) || 1e-9) + xi);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function buildConservativeFallbackFillCommands(obj, machine = DEFAULT_MACHINE) {
+  const points = Array.isArray(obj?.points) ? obj.points : [];
+  if (obj?.rawRegion?.visible === false || obj?.stitch_type !== 'fill' || points.length < 3) return [];
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x, y] of points) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
+    minX = Math.min(minX, x); minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+  }
+  if (maxX - minX < 0.8 || maxY - minY < 0.8) return [];
+
+  const spacing = Math.max(0.7, Math.min(1.2, Number(obj.density) || 0.9));
+  const stitchStep = Math.max(1.0, Math.min(2.5, machine.maxStitchLength / 5));
+  const inset = 0.35;
+  const commands = [];
+  let serpentine = false;
+  let prev = null;
+
+  for (let y = minY + inset; y <= maxY - inset; y += spacing) {
+    const intersections = [];
+    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+      const [x1, y1] = points[j];
+      const [x2, y2] = points[i];
+      if ((y1 > y) === (y2 > y)) continue;
+      const x = x1 + ((y - y1) * (x2 - x1)) / ((y2 - y1) || 1e-9);
+      if (Number.isFinite(x)) intersections.push(x);
+    }
+    intersections.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < intersections.length; k += 2) {
+      let startX = intersections[k] + inset;
+      let endX = intersections[k + 1] - inset;
+      if (endX <= startX) continue;
+      const span = [];
+      const steps = Math.max(1, Math.ceil((endX - startX) / stitchStep));
+      for (let s = 0; s <= steps; s++) {
+        const x = startX + ((endX - startX) * s) / steps;
+        if (pointInPolygonMm(x, y, points)) span.push([x, y]);
+      }
+      if (span.length < 2) continue;
+      if (serpentine) span.reverse();
+      const first = span[0];
+      if (prev && Math.hypot(first[0] - prev[0], first[1] - prev[1]) > machine.maxStitchLength) {
+        commands.push({ type: 'jump', x: first[0], y: first[1], color: obj.color, regionId: obj.id, source: 'ce01_zero_output_fallback_fill' });
+      }
+      for (const [x, yy] of span) {
+        commands.push({ type: 'stitch', x, y: yy, color: obj.color, regionId: obj.id, stitchType: 'fill', source: 'ce01_zero_output_fallback_fill', layerType: obj.layerType });
+      }
+      prev = span[span.length - 1];
+      serpentine = !serpentine;
+    }
+  }
+
+  return commands.filter((command) => Number.isFinite(command.x) && Number.isFinite(command.y));
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  STAGE 1: REGIONS → STITCH OBJECTS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -191,7 +259,13 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
 
     // CE01 safe fill: generate commands directly, bypassing processObjectStitches
     if (obj.stitch_type === 'fill' && obj.ce01SafeFillMode) {
-      const fillCmds = generateCE01SafeFillCommands(obj, { machineSettings: ms, designOffset: [offX, offY], fillSpacingMm: obj.density });
+      let fillCmds = generateCE01SafeFillCommands(obj, { machineSettings: ms, designOffset: [offX, offY], fillSpacingMm: obj.density });
+      if (fillCmds.length === 0) {
+        fillCmds = buildConservativeFallbackFillCommands(obj, ms);
+        if (fillCmds.length > 0) {
+          console.warn(`[ce01-safe-fill-wire] zero-output fallback fill recovered ${fillCmds.filter(c => c.type === 'stitch').length} stitches for ${obj.id}`);
+        }
+      }
       if (fillCmds.length > 0) {
         if (prevColor !== null && obj.color !== prevColor) {
           cmds.push({ type: 'colorChange', x: prevX, y: prevY, color: obj.color, regionId: obj.id });
