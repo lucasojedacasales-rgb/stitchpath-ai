@@ -1,0 +1,25 @@
+CHECKPOINT_QUALITY_PHASE_2_LAYER_KNOCKOUT_AND_THREAD_ORDER_STABLE
+
+Status: stable
+phaseAccepted=true
+
+Applied:
+- logical layer classification
+- base/secondary/white/detail/black/outer outline order
+- closed-region knockout metadata
+- safe color grouping inside visual layer constraints
+- runtime before/after composition audit
+
+Preserved:
+- export DST/DSB
+- encoders
+- ExportModal
+- universal validation
+- V5.1
+- performance/cache/lazy loading
+- Reference Learning
+- .stp files
+- export engine
+- GitHub audit work
+
+Build validation: passed
