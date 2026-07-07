@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Download, Search, AlertTriangle, CheckCircle2 } from 'lucide-react';
-import { runRegionToCommandCoverageAudit } from '@/lib/audits/regionToCommandCoverageAudit';
+import { buildRegionToCommandCoverageAuditMarkdown, runRegionToCommandCoverageAudit } from '@/lib/audits/regionToCommandCoverageAudit.js';
 
 const SEVERITY_RANK = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
 
@@ -27,21 +27,25 @@ export default function CommandRuntimeForensicsPanel({
     downloadBlob(md, filename);
   };
 
-  const downloadGuardReport = () => {
-    if (!transitionGuardMd) return;
-    downloadBlob(transitionGuardMd, 'STITCHED_TRANSITION_TO_JUMP_GUARD_REPORT_V1.md');
-  };
-
   const downloadRegionCoverageReport = () => {
-    const coverageAudit = runRegionToCommandCoverageAudit({
+    const regionCoverageAudit = runRegionToCommandCoverageAudit({
       finalCommands,
       finalObjects,
       regions,
       config,
+      darkStroke,
+      machineSettings,
+      exportCommands,
       commandSourceLabel,
     });
-    setLastReport(coverageAudit);
-    downloadBlob(coverageAudit.markdown, 'REGION_TO_COMMAND_COVERAGE_AUDIT_V1.md');
+    const md = buildRegionToCommandCoverageAuditMarkdown(regionCoverageAudit);
+    setLastReport(regionCoverageAudit);
+    downloadBlob(md, 'QUALITY_PHASE_2B_REGION_TO_FINAL_COMMAND_COVERAGE_AUDIT_REPORT_V1.md');
+  };
+
+  const downloadGuardReport = () => {
+    if (!transitionGuardMd) return;
+    downloadBlob(transitionGuardMd, 'STITCHED_TRANSITION_TO_JUMP_GUARD_REPORT_V1.md');
   };
 
   return (
