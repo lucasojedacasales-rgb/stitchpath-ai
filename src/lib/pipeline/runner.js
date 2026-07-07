@@ -17,7 +17,6 @@ import { runSemanticSegmentation }   from './stages/semanticSegmentationStage.js
 import { runVectorEngine }           from './stages/vectorEngineStage.js';
 import { runRegionBuilder }          from './stages/regionBuilderStage.js';
 import { cleanCartoonSegmentationRegions } from '../cartoonSegmentationCleanup.js';
-import { applyQualityPhase2LayerComposition } from '../qualityPhase2LayerComposition.js';
 import { runStitchPlanner }          from './stages/stitchPlannerStage.js';
 import { runStitchOptimizer }        from './stages/stitchOptimizerStage.js';
 
@@ -31,7 +30,6 @@ const CLIENT_STAGES = [
   { id: 'vector_engine',         fn: runVectorEngine,         weight: 65 }, // backend call
   { id: 'region_builder',        fn: runRegionBuilder,        weight: 82 },
   { id: 'quality_phase_1_input_segmentation_cleanup', fn: runQualityPhase1InputSegmentationCleanup, weight: 87 },
-  { id: 'quality_phase_2_layer_knockout_and_thread_order', fn: runQualityPhase2LayerComposition, weight: 90 },
   { id: 'stitch_planner',        fn: runStitchPlanner,        weight: 92 },
   { id: 'stitch_optimizer',      fn: runStitchOptimizer,      weight: 100 },
 ];
@@ -58,13 +56,6 @@ async function runQualityPhase1InputSegmentationCleanup(ctx) {
   });
   ctx.regions = regions;
   ctx.qualityPhase1Report = report;
-}
-
-async function runQualityPhase2LayerComposition(ctx) {
-  if (!ctx.regions || ctx.regions.length === 0) return;
-  const { regions, report } = applyQualityPhase2LayerComposition(ctx.regions, { config: ctx.config });
-  ctx.regions = regions;
-  ctx.qualityPhase2Report = report;
 }
 
 export async function runPipeline(imageUrl, config, opts = {}) {
