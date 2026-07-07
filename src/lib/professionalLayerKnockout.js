@@ -113,6 +113,7 @@ function normalizeBlackOutlineObject(obj) {
 }
 
 export function prepareProfessionalLayerObjects(objects = [], options = {}) {
+  const applyKnockouts = options.applyKnockouts === true;
   const prepared = (objects || []).map((obj, index) => {
     const role = classifyObject(obj);
     const pts = obj.points || [];
@@ -128,7 +129,7 @@ export function prepareProfessionalLayerObjects(objects = [], options = {}) {
     };
   }).map(normalizeBlackOutlineObject);
 
-  if (options.applyKnockouts === true) {
+  if (applyKnockouts) {
     for (const lower of prepared) {
       const zones = [];
       for (const upper of prepared) {
@@ -152,6 +153,7 @@ export function prepareProfessionalLayerObjects(objects = [], options = {}) {
 
   const report = {
     version: 'PROFESSIONAL_LAYER_KNOCKOUT_AND_COLOR_SEQUENCE_V1',
+    applyKnockouts,
     objectCount: prepared.length,
     baseFillCount: prepared.filter(o => o.role === 'base_fill').length,
     foregroundFillCount: prepared.filter(o => o.role === 'foreground_fill').length,
