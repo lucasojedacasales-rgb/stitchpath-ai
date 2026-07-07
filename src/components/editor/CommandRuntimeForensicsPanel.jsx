@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Download, Search, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { runRegionToCommandCoverageAudit } from '@/lib/audits/regionToCommandCoverageAudit';
 
 const SEVERITY_RANK = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
 
@@ -31,6 +32,18 @@ export default function CommandRuntimeForensicsPanel({
     downloadBlob(transitionGuardMd, 'STITCHED_TRANSITION_TO_JUMP_GUARD_REPORT_V1.md');
   };
 
+  const downloadRegionCoverageReport = () => {
+    const coverageAudit = runRegionToCommandCoverageAudit({
+      finalCommands,
+      finalObjects,
+      regions,
+      config,
+      commandSourceLabel,
+    });
+    setLastReport(coverageAudit);
+    downloadBlob(coverageAudit.markdown, 'REGION_TO_COMMAND_COVERAGE_AUDIT_V1.md');
+  };
+
   return (
     <div className="rounded-xl border border-amber-500/30 bg-amber-900/10 p-3 space-y-3">
       <div className="flex items-start justify-between gap-3">
@@ -49,6 +62,9 @@ export default function CommandRuntimeForensicsPanel({
           )}
           <button onClick={() => downloadReport('EMBROIDERY_COMMAND_RUNTIME_FORENSICS_AFTER_TRANSITION_GUARD_V1.md')} className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-900/20 px-3 py-1.5 text-xs font-bold text-emerald-200 hover:bg-emerald-900/30 transition-colors">
             <Download className="w-3.5 h-3.5" /> After guard
+          </button>
+          <button onClick={downloadRegionCoverageReport} className="flex items-center gap-1.5 rounded-lg border border-violet-500/30 bg-violet-900/20 px-3 py-1.5 text-xs font-bold text-violet-200 hover:bg-violet-900/30 transition-colors">
+            <Download className="w-3.5 h-3.5" /> Cobertura regiones
           </button>
           <button onClick={() => downloadReport()} className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500 transition-colors">
             <Download className="w-3.5 h-3.5" /> Auditar comandos finales
