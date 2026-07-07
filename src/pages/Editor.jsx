@@ -61,9 +61,21 @@ const AI_ENABLED = true; // Cambiar a false para desactivar
 // ═══════════════════════════════════════════
 
 function resolveOriginalDarkStrokeUrl({ originalImageUrl, config, project, imageUrl }) {
-  const candidate = originalImageUrl || config?.originalUploadUrl || project?.thumbnail_url || null;
-  if (candidate) return candidate;
-  return /_masked/i.test(imageUrl || '') ? null : imageUrl;
+  const candidates = [originalImageUrl, config?.originalUploadUrl, project?.thumbnail_url, imageUrl].filter(Boolean);
+  return candidates.find((url) => !/_masked/i.test(url)) || null;
+}
+
+function buildInputSegmentationAudit({ originalImageUrl, config, project, imageUrl, darkStroke }) {
+  const darkStrokeSourceUrl = resolveOriginalDarkStrokeUrl({ originalImageUrl, config, project, imageUrl });
+  const maskedImageUrl = /_masked/i.test(imageUrl || '') ? imageUrl : null;
+  return {
+    originalUploadUrl: config?.originalUploadUrl || project?.thumbnail_url || originalImageUrl || null,
+    imageUrl: imageUrl || null,
+    processedImageUrl: null,
+    maskedImageUrl,
+    darkStrokeSourceUrl,
+    isUsingMaskedForDarkStroke: !!(darkStrokeSourceUrl && /_masked/i.test(darkStrokeSourceUrl)),
+  };
 }
 
 const DEFAULT_CONFIG = {
@@ -181,6 +193,8 @@ export default function Editor() {
   // vectorization may use afterwards. Falls back to imageUrl if no original kept.
   useEffect(() => {
     const darkStrokeSourceUrl = resolveOriginalDarkStrokeUrl({ originalImageUrl, config, project, imageUrl });
+    const sourceAudit = buildInputSegmentationAudit({ originalImageUrl, config, project, imageUrl, darkStroke });
+    console.log('[quality-phase-1-input-audit]', sourceAudit);
     if (!darkStrokeSourceUrl) { console.warn('[dark-mask-source] original upload missing; refusing *_masked.png for darkStroke'); return; }
     const key = stableHash({ url: darkStrokeSourceUrl, width_mm: config.width_mm, height_mm: config.height_mm, color_count: config.color_count });
     if (darkStrokeCacheRef.current.key === key) {
@@ -495,13 +509,16 @@ export default function Editor() {
     setStep(2);
 
     try {
+      const inputAudit = buildInputSegmentationAudit({ originalImageUrl, config, project, imageUrl, darkStroke });
       const ctx = await runPipeline(imageUrl, config, {
-        initialCtx: aiStrategy ? { aiStrategy } : {},
+        initialCtx: { ...(aiStrategy ? { aiStrategy } : {}), darkStroke, inputAudit },
       });
 
       const rawRegions = ctx.regions || [];
-      const cleanup = cleanCartoonSegmentationRegions(rawRegions, configRef.current);
-      console.log('[cartoon-cleanup]', cleanup.report);
+      const cleanup = ctx.qualityPhase1Report
+        ? { regions: rawRegions, report: ctx.qualityPhase1Report }
+        : cleanCartoonSegmentationRegions(rawRegions, { ...configRef.current, darkStroke, inputAudit });
+      console.log('[quality-phase-1-cleanup]', cleanup.report);
       const enrichedRegions = filterValidVisualRegions(cleanup.regions);
       if (enrichedRegions.length === 0) throw new Error('No valid regions generated after pipeline');
 
