@@ -53,74 +53,6 @@ export const DEFAULT_MACHINE = {
   minStitchLength: 0.3,     // mm — below this = degenerate
 };
 
-function pointInPolygonMm(x, y, polygon = []) {
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const xi = polygon[i][0], yi = polygon[i][1];
-    const xj = polygon[j][0], yj = polygon[j][1];
-    const intersects = ((yi > y) !== (yj > y)) &&
-      (x < ((xj - xi) * (y - yi)) / ((yj - yi) || 1e-9) + xi);
-    if (intersects) inside = !inside;
-  }
-  return inside;
-}
-
-function buildConservativeFallbackFillCommands(obj, machine = DEFAULT_MACHINE) {
-  const points = Array.isArray(obj?.points) ? obj.points : [];
-  if (obj?.rawRegion?.visible === false || obj?.stitch_type !== 'fill' || points.length < 3) return [];
-
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const [x, y] of points) {
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return [];
-    minX = Math.min(minX, x); minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
-  }
-  if (maxX - minX < 0.8 || maxY - minY < 0.8) return [];
-
-  const spacing = Math.max(0.7, Math.min(1.2, Number(obj.density) || 0.9));
-  const stitchStep = Math.max(1.0, Math.min(2.5, machine.maxStitchLength / 5));
-  const inset = 0.35;
-  const commands = [];
-  let serpentine = false;
-  let prev = null;
-
-  for (let y = minY + inset; y <= maxY - inset; y += spacing) {
-    const intersections = [];
-    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
-      const [x1, y1] = points[j];
-      const [x2, y2] = points[i];
-      if ((y1 > y) === (y2 > y)) continue;
-      const x = x1 + ((y - y1) * (x2 - x1)) / ((y2 - y1) || 1e-9);
-      if (Number.isFinite(x)) intersections.push(x);
-    }
-    intersections.sort((a, b) => a - b);
-    for (let k = 0; k + 1 < intersections.length; k += 2) {
-      let startX = intersections[k] + inset;
-      let endX = intersections[k + 1] - inset;
-      if (endX <= startX) continue;
-      const span = [];
-      const steps = Math.max(1, Math.ceil((endX - startX) / stitchStep));
-      for (let s = 0; s <= steps; s++) {
-        const x = startX + ((endX - startX) * s) / steps;
-        if (pointInPolygonMm(x, y, points)) span.push([x, y]);
-      }
-      if (span.length < 2) continue;
-      if (serpentine) span.reverse();
-      const first = span[0];
-      if (prev && Math.hypot(first[0] - prev[0], first[1] - prev[1]) > machine.maxStitchLength) {
-        commands.push({ type: 'jump', x: first[0], y: first[1], color: obj.color, regionId: obj.id, source: 'ce01_zero_output_fallback_fill' });
-      }
-      for (const [x, yy] of span) {
-        commands.push({ type: 'stitch', x, y: yy, color: obj.color, regionId: obj.id, stitchType: 'fill', source: 'ce01_zero_output_fallback_fill', layerType: obj.layerType });
-      }
-      prev = span[span.length - 1];
-      serpentine = !serpentine;
-    }
-  }
-
-  return commands.filter((command) => Number.isFinite(command.x) && Number.isFinite(command.y));
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 //  STAGE 1: REGIONS → STITCH OBJECTS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -175,6 +107,166 @@ function getProfessionalFillAngle(points = []) {
   if (ratio < 0.55) return 90;
   if (ratio < 0.85) return 75;
   return 30;
+}
+
+const CE01_ZERO_FILL_FALLBACK_SOURCE = 'ce01_zero_output_fallback_fill';
+const CE01_ZERO_FILL_FALLBACK_MAX_STITCH_MM = 3;
+const CE01_ZERO_FILL_FALLBACK_SPACING_MM = 0.85;
+const CE01_ZERO_FILL_FALLBACK_EDGE_INSET_MM = 0.12;
+let _lastCE01ZeroFillRecoveryReport = {
+  ce01ZeroFillRecoveredCount: 0,
+  recoveredRegionIds: [],
+  fallbackFillUsedCount: 0,
+  fallbackFillUsedRegionIds: [],
+};
+
+function createCE01ZeroFillRecoveryReport() {
+  return {
+    ce01ZeroFillRecoveredCount: 0,
+    recoveredRegionIds: [],
+    fallbackFillUsedCount: 0,
+    fallbackFillUsedRegionIds: [],
+  };
+}
+
+function countStitchCommands(commands = []) {
+  return (commands || []).filter(c => c?.type === 'stitch').length;
+}
+
+function isFinitePoint(p) {
+  return Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]);
+}
+
+function uniqueFinitePointCount(points = []) {
+  const unique = new Set();
+  for (const p of points || []) {
+    if (isFinitePoint(p)) unique.add(`${p[0].toFixed(3)},${p[1].toFixed(3)}`);
+  }
+  return unique.size;
+}
+
+function canUseCE01ZeroFillFallback(obj) {
+  const raw = obj?.rawRegion || {};
+  if (!obj || obj.stitch_type !== 'fill' || raw.visible === false) return false;
+  if (raw.skipFill || raw.skipExport || raw.hiddenByLayer || raw.disabledByComposition) return false;
+  const pathPoints = raw.path_points || [];
+  return Array.isArray(pathPoints) && pathPoints.length >= 3 &&
+    Array.isArray(obj.points) && obj.points.length >= 3 &&
+    uniqueFinitePointCount(obj.points) >= 3;
+}
+
+function edgeIntersectionsAtY(points, y) {
+  const xs = [];
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    if (!isFinitePoint(a) || !isFinitePoint(b)) continue;
+    const [x1, y1] = a;
+    const [x2, y2] = b;
+    if (Math.abs(y2 - y1) < 1e-9) continue;
+    const minY = Math.min(y1, y2);
+    const maxY = Math.max(y1, y2);
+    if (y < minY || y >= maxY) continue;
+    xs.push(x1 + ((y - y1) * (x2 - x1)) / (y2 - y1));
+  }
+  return xs.filter(Number.isFinite).sort((a, b) => a - b);
+}
+
+function buildFallbackNeedlesForInterval(xL, xR, y, forward, maxStep) {
+  const span = xR - xL;
+  if (span <= 0) return [];
+  if (span < 0.35) return [[(xL + xR) / 2, y]];
+  const steps = Math.max(1, Math.ceil(span / maxStep));
+  const points = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const x = forward ? xL + span * t : xR - span * t;
+    points.push([x, y]);
+  }
+  return points;
+}
+
+function generateCE01ZeroOutputFallbackFillCommands(obj, options = {}) {
+  if (!canUseCE01ZeroFillFallback(obj)) return [];
+  const { machineSettings = {}, designOffset = [0, 0], fillSpacingMm = null } = options;
+  const [offX, offY] = designOffset;
+  const points = (obj.points || []).filter(isFinitePoint);
+  const xs = points.map(p => p[0]);
+  const ys = points.map(p => p[1]);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const rawSpacing = Number(fillSpacingMm);
+  const spacing = Math.max(CE01_ZERO_FILL_FALLBACK_SPACING_MM, Number.isFinite(rawSpacing) ? rawSpacing : CE01_ZERO_FILL_FALLBACK_SPACING_MM);
+  const maxVisibleStitch = Math.min(
+    CE01_ZERO_FILL_FALLBACK_MAX_STITCH_MM,
+    Number(machineSettings.maxStitchLength) || CE01_ZERO_FILL_FALLBACK_MAX_STITCH_MM
+  );
+  const maxJump = Number(machineSettings.maxJumpLength) || DEFAULT_MACHINE.maxJumpLength;
+  const trimThreshold = Number(machineSettings.trimThreshold) || DEFAULT_MACHINE.trimThreshold;
+  const regionId = obj.id || 'fill';
+  const color = obj.color || '#000000';
+  const commands = [];
+
+  if (!Number.isFinite(Math.min(...xs)) || !Number.isFinite(minY) || maxY - minY <= 0) return [];
+
+  const mkCmd = (type, x, y) => ({
+    type,
+    x: x + offX,
+    y: y + offY,
+    color,
+    regionId,
+    objectId: regionId,
+    blockId: regionId,
+    stitchType: 'fill',
+    source: CE01_ZERO_FILL_FALLBACK_SOURCE,
+    layerType: obj.layerType,
+  });
+  const lastPosition = () => [...commands].reverse().find(c => c.type === 'stitch' || c.type === 'jump' || c.type === 'trim');
+  const pushJumpTo = (x, y) => {
+    const prev = lastPosition();
+    if (!prev) {
+      commands.push(mkCmd('jump', x, y));
+      return;
+    }
+    const px = prev.x - offX;
+    const py = prev.y - offY;
+    const dist = Math.hypot(x - px, y - py);
+    if (dist <= 0.05) return;
+    if (dist > trimThreshold && commands[commands.length - 1]?.type !== 'trim') {
+      commands.push(mkCmd('trim', px, py));
+    }
+    const steps = Math.max(1, Math.ceil(dist / maxJump));
+    for (let s = 1; s <= steps; s++) {
+      commands.push(mkCmd('jump', px + (x - px) * s / steps, py + (y - py) * s / steps));
+    }
+  };
+
+  let rowIndex = 0;
+  for (let y = minY + spacing * 0.5; y < maxY; y += spacing) {
+    const rowXs = edgeIntersectionsAtY(points, y);
+    if (rowXs.length < 2) {
+      rowIndex++;
+      continue;
+    }
+    for (let i = 0; i + 1 < rowXs.length; i += 2) {
+      let xL = rowXs[i] + CE01_ZERO_FILL_FALLBACK_EDGE_INSET_MM;
+      let xR = rowXs[i + 1] - CE01_ZERO_FILL_FALLBACK_EDGE_INSET_MM;
+      if (xR <= xL) {
+        const mid = (rowXs[i] + rowXs[i + 1]) / 2;
+        xL = mid;
+        xR = mid;
+      }
+      const needles = buildFallbackNeedlesForInterval(xL, xR, y, rowIndex % 2 === 0, maxVisibleStitch);
+      if (needles.length === 0) continue;
+      pushJumpTo(needles[0][0], needles[0][1]);
+      for (const [nx, ny] of needles) {
+        if (Number.isFinite(nx) && Number.isFinite(ny)) commands.push(mkCmd('stitch', nx, ny));
+      }
+    }
+    rowIndex++;
+  }
+
+  return countStitchCommands(commands) > 0 ? commands : [];
 }
 
 export function buildStitchObjects(regions, config = {}) {
@@ -253,6 +345,7 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
   console.log(`[ce01-safe-fill-wire] fill regions routed to CE01 generator: ${fillRouted}`);
   console.log(`[ce01-safe-fill-wire] contour regions routed to running: ${contourRouted}`);
   console.log(`[ce01-safe-fill-wire] old fill generator bypassed: ${fillRouted}`);
+  const ce01ZeroFillRecoveryReport = createCE01ZeroFillRecoveryReport();
 
   for (const obj of ordered) {
     if (!obj.points || obj.points.length === 0) continue;
@@ -260,13 +353,21 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
     // CE01 safe fill: generate commands directly, bypassing processObjectStitches
     if (obj.stitch_type === 'fill' && obj.ce01SafeFillMode) {
       let fillCmds = generateCE01SafeFillCommands(obj, { machineSettings: ms, designOffset: [offX, offY], fillSpacingMm: obj.density });
-      if (fillCmds.length === 0) {
-        fillCmds = buildConservativeFallbackFillCommands(obj, ms);
-        if (fillCmds.length > 0) {
-          console.warn(`[ce01-safe-fill-wire] zero-output fallback fill recovered ${fillCmds.filter(c => c.type === 'stitch').length} stitches for ${obj.id}`);
+      let fillStitchCount = countStitchCommands(fillCmds);
+      if (fillStitchCount === 0 && canUseCE01ZeroFillFallback(obj)) {
+        const fallbackCmds = generateCE01ZeroOutputFallbackFillCommands(obj, { machineSettings: ms, designOffset: [offX, offY], fillSpacingMm: obj.density });
+        const fallbackStitchCount = countStitchCommands(fallbackCmds);
+        if (fallbackStitchCount > 0) {
+          fillCmds = fallbackCmds;
+          fillStitchCount = fallbackStitchCount;
+          ce01ZeroFillRecoveryReport.ce01ZeroFillRecoveredCount++;
+          ce01ZeroFillRecoveryReport.recoveredRegionIds.push(obj.id);
+          ce01ZeroFillRecoveryReport.fallbackFillUsedCount++;
+          ce01ZeroFillRecoveryReport.fallbackFillUsedRegionIds.push(obj.id);
+          console.warn(`[ce01-zero-fill-recovery] fallback fill used for ${obj.id}: ${fallbackStitchCount} stitches`);
         }
       }
-      if (fillCmds.length > 0) {
+      if (fillStitchCount > 0) {
         if (prevColor !== null && obj.color !== prevColor) {
           cmds.push({ type: 'colorChange', x: prevX, y: prevY, color: obj.color, regionId: obj.id });
         }
@@ -284,7 +385,7 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
           prevX = fc.x; prevY = fc.y;
         }
         cmds.push(...fillCmds);
-        const last = fillCmds[fillCmds.length - 1];
+        const last = [...fillCmds].reverse().find(c => c.type === 'stitch' || c.type === 'jump') || fillCmds[fillCmds.length - 1];
         prevX = last.x; prevY = last.y;
         firstCmd = false;
       }
@@ -383,6 +484,10 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
   }
   console.log('[ce01-safe-fill-wire] commands regenerated:', cmds.length);
   console.log('[ce01-safe-fill-wire] command sources:', sourceStats);
+  if (ce01ZeroFillRecoveryReport.fallbackFillUsedCount > 0) {
+    console.warn('[ce01-zero-fill-recovery]', ce01ZeroFillRecoveryReport);
+  }
+  _lastCE01ZeroFillRecoveryReport = ce01ZeroFillRecoveryReport;
   if (sourceStats.clipped_fill_optimized > 0 && fillRouted > 0) {
     console.warn('[ce01-safe-fill-wire] WARNING: old fill generator still active — clipped_fill_optimized:', sourceStats.clipped_fill_optimized);
   }
@@ -974,12 +1079,20 @@ export function runExportPipeline(regions, config, machineSettings, format) {
     // Re-validate after fix
     validation = validatePipeline(commands, fixed.fixedObjects, ms, format);
   }
+  const ce01ZeroFillRecoveryReport = _lastCE01ZeroFillRecoveryReport || createCE01ZeroFillRecoveryReport();
 
   return {
     stages: {
       regions: { count: regions.length, visible: regions.filter(r => r.visible !== false).length },
       objects: { count: objects.length, sample: objects.slice(0, 3).map(o => ({ id: o.id, color: o.color, points: o.points.length })) },
-      commands: { count: commands.length, stats: validation.stats },
+      commands: {
+        count: commands.length,
+        stats: validation.stats,
+        ce01ZeroFillRecoveredCount: ce01ZeroFillRecoveryReport.ce01ZeroFillRecoveredCount,
+        recoveredRegionIds: [...ce01ZeroFillRecoveryReport.recoveredRegionIds],
+        fallbackFillUsedCount: ce01ZeroFillRecoveryReport.fallbackFillUsedCount,
+        fallbackFillUsedRegionIds: [...ce01ZeroFillRecoveryReport.fallbackFillUsedRegionIds],
+      },
       validation,
       fixReport,
     },
@@ -1274,6 +1387,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   const jumpCount = commands.filter(c => c.type === 'jump').length;
   const trimCount = commands.filter(c => c.type === 'trim').length;
   const colorCount = commands.filter(c => c.type === 'colorChange').length + 1;
+  const ce01ZeroFillRecoveryReport = _lastCE01ZeroFillRecoveryReport || createCE01ZeroFillRecoveryReport();
 
   const meta = {
     source: 'ce01_safe_pipeline',
@@ -1285,6 +1399,10 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     sanitized: true,
     validatorVersion: 'ce01-v2',
     generatorVersion: 'ce01-safe-fill-v1',
+    ce01ZeroFillRecoveredCount: ce01ZeroFillRecoveryReport.ce01ZeroFillRecoveredCount,
+    recoveredRegionIds: [...ce01ZeroFillRecoveryReport.recoveredRegionIds],
+    fallbackFillUsedCount: ce01ZeroFillRecoveryReport.fallbackFillUsedCount,
+    fallbackFillUsedRegionIds: [...ce01ZeroFillRecoveryReport.fallbackFillUsedRegionIds],
   };
 
   _lastFinalCommandsMeta = meta;
