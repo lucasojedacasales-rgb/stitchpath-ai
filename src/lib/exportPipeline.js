@@ -119,6 +119,17 @@ let _lastCE01ZeroFillRecoveryReport = {
   fallbackFillUsedCount: 0,
   fallbackFillUsedRegionIds: [],
 };
+let _lastSameColorNearestNeighborOrderingReport = {
+  sameColorNearestNeighborOrderingApplied: false,
+  orderedColorGroupCount: 0,
+  reorderedObjectCount: 0,
+  estimatedTravelBeforeOrderingMm: 0,
+  estimatedTravelAfterOrderingMm: 0,
+  estimatedTravelReductionMm: 0,
+  estimatedTravelReductionPercent: 0,
+  longestObjectToObjectTravelBeforeMm: 0,
+  longestObjectToObjectTravelAfterMm: 0,
+};
 
 function createCE01ZeroFillRecoveryReport() {
   return {
@@ -131,6 +142,216 @@ function createCE01ZeroFillRecoveryReport() {
 
 function countStitchCommands(commands = []) {
   return (commands || []).filter(c => c?.type === 'stitch').length;
+}
+
+function createSameColorOrderingReport() {
+  return {
+    sameColorNearestNeighborOrderingApplied: false,
+    orderedColorGroupCount: 0,
+    reorderedObjectCount: 0,
+    estimatedTravelBeforeOrderingMm: 0,
+    estimatedTravelAfterOrderingMm: 0,
+    estimatedTravelReductionMm: 0,
+    estimatedTravelReductionPercent: 0,
+    longestObjectToObjectTravelBeforeMm: 0,
+    longestObjectToObjectTravelAfterMm: 0,
+  };
+}
+
+function roundMetric(value) {
+  return Number.isFinite(value) ? Number(value.toFixed(3)) : 0;
+}
+
+function objectBounds(obj) {
+  const points = (obj?.points || []).filter(isFinitePoint);
+  if (points.length === 0) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x, y] of points) {
+    minX = Math.min(minX, x); minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+  }
+  return {
+    minX, minY, maxX, maxY,
+    center: [(minX + maxX) / 2, (minY + maxY) / 2],
+  };
+}
+
+function objectCenter(obj) {
+  return objectBounds(obj)?.center || null;
+}
+
+function objectStart(obj) {
+  const point = (obj?.points || []).find(isFinitePoint);
+  return point ? [point[0], point[1]] : objectCenter(obj);
+}
+
+function objectEnd(obj) {
+  const points = obj?.points || [];
+  for (let i = points.length - 1; i >= 0; i--) {
+    if (isFinitePoint(points[i])) return [points[i][0], points[i][1]];
+  }
+  return objectCenter(obj);
+}
+
+function objectTravelDistance(from, obj) {
+  const to = objectCenter(obj) || objectStart(obj);
+  if (!from || !to) return 0;
+  return Math.hypot(to[0] - from[0], to[1] - from[1]);
+}
+
+function estimateObjectTravel(objects, start = [0, 0]) {
+  let cursor = start;
+  let total = 0;
+  let longest = 0;
+  for (const obj of objects || []) {
+    const distance = objectTravelDistance(cursor, obj);
+    total += distance;
+    longest = Math.max(longest, distance);
+    cursor = objectEnd(obj) || cursor;
+  }
+  return { total, longest };
+}
+
+function sameColorSourceKey(obj) {
+  const raw = obj?.rawRegion || {};
+  return String(
+    raw.parentRegionId ||
+    raw.sourceRegionId ||
+    raw.parentId ||
+    raw.parentGroupId ||
+    raw.regionId ||
+    raw.id ||
+    obj?.sourceRegionId ||
+    obj?.parentRegionId ||
+    obj?.id ||
+    obj?.name ||
+    ''
+  );
+}
+
+function isContourObject(obj) {
+  const text = `${obj?.stitch_type || ''} ${obj?.layerType || ''} ${obj?.name || ''} ${obj?.id || ''}`.toLowerCase();
+  return obj?.isContour === true ||
+    text.includes('contour') ||
+    text.includes('outline') ||
+    text.includes('running_stitch');
+}
+
+function sameColorUnitSort(a, b) {
+  const aContour = a.items.some(isContourObject);
+  const bContour = b.items.some(isContourObject);
+  if (aContour !== bContour && a.sourceKey === b.sourceKey) return aContour ? 1 : -1;
+  return a.originalIndex - b.originalIndex;
+}
+
+function buildSameColorUnits(group) {
+  const units = [];
+  const bySource = new Map();
+  for (const obj of group) {
+    const sourceKey = sameColorSourceKey(obj);
+    const key = sourceKey || `obj:${obj.id || units.length}`;
+    if (!bySource.has(key)) {
+      const unit = { sourceKey: key, items: [], originalIndex: units.length };
+      bySource.set(key, unit);
+      units.push(unit);
+    }
+    bySource.get(key).items.push(obj);
+  }
+
+  for (const unit of units) {
+    unit.items = [...unit.items].sort((a, b) => {
+      const aContour = isContourObject(a);
+      const bContour = isContourObject(b);
+      if (aContour !== bContour) return aContour ? 1 : -1;
+      return (a._originalOrder || 0) - (b._originalOrder || 0);
+    });
+    unit.center = objectCenter(unit.items[0]);
+    unit.end = objectEnd(unit.items[unit.items.length - 1]) || unit.center;
+  }
+
+  return units.sort(sameColorUnitSort);
+}
+
+function orderUnitsNearestNeighbor(units, start) {
+  const remaining = [...units];
+  const ordered = [];
+  let cursor = start || [0, 0];
+  while (remaining.length > 0) {
+    let bestIndex = 0;
+    let bestDistance = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const candidate = remaining[i];
+      const point = candidate.center || objectCenter(candidate.items[0]);
+      const distance = point ? Math.hypot(point[0] - cursor[0], point[1] - cursor[1]) : Infinity;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = i;
+      }
+    }
+    const next = remaining.splice(bestIndex, 1)[0];
+    ordered.push(next);
+    cursor = next.end || next.center || cursor;
+  }
+  return ordered;
+}
+
+function applySameColorNearestNeighborOrdering(objects) {
+  const report = createSameColorOrderingReport();
+  if (!Array.isArray(objects) || objects.length <= 1) {
+    _lastSameColorNearestNeighborOrderingReport = report;
+    return { objects: objects || [], report };
+  }
+
+  const before = estimateObjectTravel(objects);
+  const colorGroups = new Map();
+  const colorOrder = [];
+  for (const obj of objects) {
+    const color = String(obj?.color || '#000000').toLowerCase();
+    if (!colorGroups.has(color)) {
+      colorGroups.set(color, []);
+      colorOrder.push(color);
+    }
+    colorGroups.get(color).push(obj);
+  }
+
+  const ordered = [];
+  let cursor = [0, 0];
+  let orderedColorGroupCount = 0;
+  for (const color of colorOrder) {
+    const group = colorGroups.get(color) || [];
+    if (group.length <= 1) {
+      ordered.push(...group);
+      cursor = objectEnd(group[group.length - 1]) || cursor;
+      continue;
+    }
+
+    const units = buildSameColorUnits(group);
+    const orderedUnits = orderUnitsNearestNeighbor(units, cursor);
+    const orderedGroup = orderedUnits.flatMap(unit => unit.items);
+    ordered.push(...orderedGroup);
+    cursor = objectEnd(orderedGroup[orderedGroup.length - 1]) || cursor;
+    orderedColorGroupCount++;
+  }
+
+  const after = estimateObjectTravel(ordered);
+  let reorderedObjectCount = 0;
+  for (let i = 0; i < objects.length; i++) {
+    if ((objects[i]?.id || i) !== (ordered[i]?.id || i)) reorderedObjectCount++;
+  }
+  const reduction = before.total - after.total;
+
+  report.sameColorNearestNeighborOrderingApplied = orderedColorGroupCount > 0;
+  report.orderedColorGroupCount = orderedColorGroupCount;
+  report.reorderedObjectCount = reorderedObjectCount;
+  report.estimatedTravelBeforeOrderingMm = roundMetric(before.total);
+  report.estimatedTravelAfterOrderingMm = roundMetric(after.total);
+  report.estimatedTravelReductionMm = roundMetric(reduction);
+  report.estimatedTravelReductionPercent = before.total > 0 ? roundMetric((reduction / before.total) * 100) : 0;
+  report.longestObjectToObjectTravelBeforeMm = roundMetric(before.longest);
+  report.longestObjectToObjectTravelAfterMm = roundMetric(after.longest);
+
+  _lastSameColorNearestNeighborOrderingReport = report;
+  return { objects: ordered, report };
 }
 
 function isFinitePoint(p) {
@@ -337,8 +558,11 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
   let prevX = 0, prevY = 0;
   let firstCmd = true;
 
-  // Industrial: optimize object order — color grouping + nearest-neighbor
-  const ordered = optimizeObjectOrder(objects);
+  // Industrial: optimize object order, then make each same-color block spatially local.
+  const industrialOrdered = optimizeObjectOrder(objects);
+  const sameColorOrdering = applySameColorNearestNeighborOrdering(industrialOrdered);
+  const ordered = sameColorOrdering.objects;
+  console.log('[same-color-nearest-neighbor-ordering]', sameColorOrdering.report);
   const fillRouted = ordered.filter(o => o.stitch_type === 'fill' && o.ce01SafeFillMode).length;
   const contourRouted = ordered.filter(o => o.stitch_type === 'contour' || o.stitch_type === 'running_stitch').length;
   console.log(`[ce01-safe-fill-wire] regions input: ${ordered.length}`);
@@ -1080,6 +1304,7 @@ export function runExportPipeline(regions, config, machineSettings, format) {
     validation = validatePipeline(commands, fixed.fixedObjects, ms, format);
   }
   const ce01ZeroFillRecoveryReport = _lastCE01ZeroFillRecoveryReport || createCE01ZeroFillRecoveryReport();
+  const sameColorOrderingReport = _lastSameColorNearestNeighborOrderingReport || createSameColorOrderingReport();
 
   return {
     stages: {
@@ -1092,6 +1317,15 @@ export function runExportPipeline(regions, config, machineSettings, format) {
         recoveredRegionIds: [...ce01ZeroFillRecoveryReport.recoveredRegionIds],
         fallbackFillUsedCount: ce01ZeroFillRecoveryReport.fallbackFillUsedCount,
         fallbackFillUsedRegionIds: [...ce01ZeroFillRecoveryReport.fallbackFillUsedRegionIds],
+        sameColorNearestNeighborOrderingApplied: sameColorOrderingReport.sameColorNearestNeighborOrderingApplied,
+        orderedColorGroupCount: sameColorOrderingReport.orderedColorGroupCount,
+        reorderedObjectCount: sameColorOrderingReport.reorderedObjectCount,
+        estimatedTravelBeforeOrderingMm: sameColorOrderingReport.estimatedTravelBeforeOrderingMm,
+        estimatedTravelAfterOrderingMm: sameColorOrderingReport.estimatedTravelAfterOrderingMm,
+        estimatedTravelReductionMm: sameColorOrderingReport.estimatedTravelReductionMm,
+        estimatedTravelReductionPercent: sameColorOrderingReport.estimatedTravelReductionPercent,
+        longestObjectToObjectTravelBeforeMm: sameColorOrderingReport.longestObjectToObjectTravelBeforeMm,
+        longestObjectToObjectTravelAfterMm: sameColorOrderingReport.longestObjectToObjectTravelAfterMm,
       },
       validation,
       fixReport,
@@ -1388,6 +1622,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   const trimCount = commands.filter(c => c.type === 'trim').length;
   const colorCount = commands.filter(c => c.type === 'colorChange').length + 1;
   const ce01ZeroFillRecoveryReport = _lastCE01ZeroFillRecoveryReport || createCE01ZeroFillRecoveryReport();
+  const sameColorOrderingReport = _lastSameColorNearestNeighborOrderingReport || createSameColorOrderingReport();
 
   const meta = {
     source: 'ce01_safe_pipeline',
@@ -1403,11 +1638,20 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     recoveredRegionIds: [...ce01ZeroFillRecoveryReport.recoveredRegionIds],
     fallbackFillUsedCount: ce01ZeroFillRecoveryReport.fallbackFillUsedCount,
     fallbackFillUsedRegionIds: [...ce01ZeroFillRecoveryReport.fallbackFillUsedRegionIds],
+    sameColorNearestNeighborOrderingApplied: sameColorOrderingReport.sameColorNearestNeighborOrderingApplied,
+    orderedColorGroupCount: sameColorOrderingReport.orderedColorGroupCount,
+    reorderedObjectCount: sameColorOrderingReport.reorderedObjectCount,
+    estimatedTravelBeforeOrderingMm: sameColorOrderingReport.estimatedTravelBeforeOrderingMm,
+    estimatedTravelAfterOrderingMm: sameColorOrderingReport.estimatedTravelAfterOrderingMm,
+    estimatedTravelReductionMm: sameColorOrderingReport.estimatedTravelReductionMm,
+    estimatedTravelReductionPercent: sameColorOrderingReport.estimatedTravelReductionPercent,
+    longestObjectToObjectTravelBeforeMm: sameColorOrderingReport.longestObjectToObjectTravelBeforeMm,
+    longestObjectToObjectTravelAfterMm: sameColorOrderingReport.longestObjectToObjectTravelAfterMm,
   };
 
   _lastFinalCommandsMeta = meta;
 
-  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, validation };
+  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, sameColorOrderingReport, validation };
 }
 
 /**
