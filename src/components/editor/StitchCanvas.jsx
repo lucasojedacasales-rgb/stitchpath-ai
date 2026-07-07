@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { ZoomIn, ZoomOut, Maximize2, Download, Layers, AlignJustify } from 'lucide-react';
 import { generateTatamiFill } from '@/lib/tatamiFill';
 import { drawRunning, drawSatinContour, drawSatinFill, drawOutline } from '@/lib/contourRenderer';
@@ -151,8 +151,17 @@ export default function StitchCanvas({
   // Toggle: 'fill' = show full tatami fills | 'outline' = contours only
   const [viewMode, setViewMode]       = useState('fill');
   const imageRef     = useRef(null);
+  const mouseMoveRaf = useRef(null);
+  const pendingMouseEvent = useRef(null);
   // Cache: Map<regionId, {stitches, drawW, drawH, angleDeg, densityMm}>
   const stitchCache  = useRef(new Map());
+  const regionSignature = useMemo(() => JSON.stringify((regions || []).map(r => ({ id: r.id, density: r.density, angle: r.angle, stitch_length_mm: r.stitch_length_mm, path_points: r.path_points }))), [regions]);
+  const regionBounds = useMemo(() => (regions || []).map(region => {
+    const pts = region.path_points || [];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of pts) { minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]); minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]); }
+    return { region, minX, maxX, minY, maxY };
+  }), [regionSignature]);
 
   useEffect(() => {
     const obs = new ResizeObserver(() => resizeAll());
@@ -183,10 +192,10 @@ export default function StitchCanvas({
 
   useEffect(() => { drawImageLayer(); }, [zoom, offset, imageOpacity]);
   useEffect(() => {
-    // Invalidate fill cache when regions change (new params, new regions)
     stitchCache.current.clear();
     drawStitchLayer();
-  }, [regions, zoom, offset, stitchOpacity, showFill, showContour, viewMode]);
+  }, [regionSignature]);
+  useEffect(() => { drawStitchLayer(); }, [zoom, offset, stitchOpacity, showFill, showContour, viewMode]);
   useEffect(() => { drawOverlayLayer(); }, [selectedRegionId, hoveredRegion, zoom, offset, regions]);
 
   // ── LAYER 1: Image ──────────────────────────────────────────────────────────
@@ -220,6 +229,7 @@ export default function StitchCanvas({
 
   // ── LAYER 2: Stitches ───────────────────────────────────────────────────────
   const drawStitchLayer = useCallback(() => {
+    const drawStart = performance.now();
     const canvas = stitchCanvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -335,12 +345,10 @@ export default function StitchCanvas({
       }
     }
 
-    console.log(`[canvas-fix] standalone contour objects: ${contourRegions.length}`);
-    console.log(`[canvas-fix] skipped fill.contour fallback: ${hasStandaloneContours}`);
-    console.log(`[canvas-fix] fill regions rendered: ${fillRegions.length}`);
-    console.log(`[canvas-fix] contour regions rendered: ${contourRegions.length}`);
     ctx.restore();
     drawZoomBadge(ctx, W, H, zoom);
+    console.log('[PERF] stitchCanvasDrawMs', Math.round(performance.now() - drawStart));
+    console.log('[PERF] stitchCanvasTatamiCacheHitRate', `${Math.round((stitchCache.current.size / Math.max(1, fillRegions.length)) * 100)}%`);
   }, [regions, zoom, offset, stitchOpacity, showFill, showContour, viewMode]);
 
   // ── LAYER 3: Selection / hover overlay ─────────────────────────────────────
@@ -423,7 +431,13 @@ export default function StitchCanvas({
     if (isDragging && dragStart) {
       setOffset({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
     }
-    updateTooltip(e);
+    pendingMouseEvent.current = e;
+    if (!mouseMoveRaf.current) {
+      mouseMoveRaf.current = requestAnimationFrame(() => {
+        mouseMoveRaf.current = null;
+        if (pendingMouseEvent.current) updateTooltip(pendingMouseEvent.current);
+      });
+    }
   };
 
   const handleMouseUp = () => { setIsDragging(false); setDragStart(null); };
@@ -439,14 +453,10 @@ export default function StitchCanvas({
     const ny = ((my - offset.y - H / 2) / zoom) / drawH + 0.5;
 
     let found = null;
-    for (const region of regions) {
+    for (const b of regionBounds) {
+      const region = b.region;
       if (region.visible === false || !region.path_points) continue;
-      const pts = region.path_points;
-      const minX = Math.min(...pts.map(p => p[0]));
-      const maxX = Math.max(...pts.map(p => p[0]));
-      const minY = Math.min(...pts.map(p => p[1]));
-      const maxY = Math.max(...pts.map(p => p[1]));
-      if (nx >= minX && nx <= maxX && ny >= minY && ny <= maxY) { found = region; break; }
+      if (nx >= b.minX && nx <= b.maxX && ny >= b.minY && ny <= b.maxY) { found = region; break; }
     }
     setHoveredRegion(found?.id || null);
     setTooltip(found ? { region: found, x: e.clientX - rect.left, y: e.clientY - rect.top } : null);

@@ -87,6 +87,39 @@ const DEFAULT_CONFIG = {
   professionalMode: false,
 };
 
+function stableHash(value) {
+  return JSON.stringify(value, Object.keys(value || {}).sort());
+}
+
+function pickMotorConfig(config = {}) {
+  const keys = [
+    'fabric_type', 'width_mm', 'height_mm', 'color_count', 'mode', 'remove_bg', 'tension_comp',
+    'fill_angle', 'tatami_density', 'vector_engine', 'useVectorFusion', 'contourSafeMode',
+    'ce01SafeFillMode', 'ce01ProductionMode', 'validationMode', 'professionalMode',
+    'learnedFillDensityMm', 'learnedFillAngleDeg', 'learnedNeighborAngleVariationDeg',
+  ];
+  return keys.reduce((out, key) => { if (config[key] !== undefined) out[key] = config[key]; return out; }, {});
+}
+
+function regionsCommandHash(regions = []) {
+  return JSON.stringify((regions || []).map(r => ({
+    id: r.id, color: r.color, visible: r.visible, type: r.type, stitch_type: r.stitch_type,
+    layerType: r.layerType || r.region_class, density: r.density, angle: r.angle,
+    stitch_length_mm: r.stitch_length_mm, path_points: r.path_points,
+  })));
+}
+
+function commandSequenceHash(commands = []) {
+  if (!commands.length) return 'empty';
+  const first = commands[0] || {};
+  const last = commands[commands.length - 1] || {};
+  return `${commands.length}:${first.type}:${first.x}:${first.y}:${last.type}:${last.x}:${last.y}`;
+}
+
+function perfLog(label, start) {
+  console.log(`[PERF] ${label}Ms`, Math.round(perfNow() - start));
+}
+
 export default function Editor() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -114,6 +147,7 @@ export default function Editor() {
   const [cleanConfigOpen, setCleanConfigOpen] = useState(false);
   const [showMoreTabs, setShowMoreTabs] = useState(false);
   const [showProfessionalReports, setShowProfessionalReports] = useState(false);
+  const [openLabTools, setOpenLabTools] = useState({});
   const [uploadingImage, setUploadingImage] = useState(false);
   const [diagnosticExporting, setDiagnosticExporting] = useState(false);
   const [pendingDiagnosticExport, setPendingDiagnosticExport] = useState(false);
@@ -127,12 +161,16 @@ export default function Editor() {
   const [outlineReport, setOutlineReport] = useState(null);
   const [darkStroke, setDarkStroke] = useState(null);
   const timerRef = useRef(null);
+  const finalCommandCacheRef = useRef({ key: null, value: null });
+  const darkStrokeCacheRef = useRef({ key: null, value: null });
+  const unifiedMetricsCacheRef = useRef({ key: null, value: null });
+  const lastCommandHashRef = useRef('empty');
+  const tabSwitchStartRef = useRef(null);
 
   useEffect(() => {
-    console.log('[PERF] Editor mount start');
-    logSafeBootStatus('Editor');
     const firstPaintStart = perfNow();
-    setTimeout(() => logPerf('Editor first render complete', firstPaintStart), 0);
+    logSafeBootStatus('Editor');
+    setTimeout(() => perfLog('editorFirstPaint', firstPaintStart), 0);
   }, []);
 
   // ── Dark stroke detection — "dark stroke first" contour system ──
@@ -143,26 +181,33 @@ export default function Editor() {
   // vectorization may use afterwards. Falls back to imageUrl if no original kept.
   useEffect(() => {
     const darkStrokeSourceUrl = resolveOriginalDarkStrokeUrl({ originalImageUrl, config, project, imageUrl });
-    if (!darkStrokeSourceUrl) { console.warn('[dark-mask-source] original upload missing; refusing *_masked.png for darkStroke'); setDarkStroke(null); return; }
-    const shouldRunDarkStroke = !LIGHTWEIGHT_APP_BOOT_V1 || processing || showExport || activeTab === 'simulate' || activeTab === 'finallook' || activeTab === 'diagnostic' || activeTab === 'prof' || activeTab === 'learn';
-    if (!shouldRunDarkStroke) {
-      console.log('[PERF] command analysis ms', 0, 'skipped-lightweight-boot');
-      console.log('[BOOT] reference dark-stroke analysis skipped until manual run');
-      if (darkStroke) setDarkStroke(null);
+    if (!darkStrokeSourceUrl) { console.warn('[dark-mask-source] original upload missing; refusing *_masked.png for darkStroke'); return; }
+    const key = stableHash({ url: darkStrokeSourceUrl, width_mm: config.width_mm, height_mm: config.height_mm, color_count: config.color_count });
+    if (darkStrokeCacheRef.current.key === key) {
+      if (darkStroke !== darkStrokeCacheRef.current.value) setDarkStroke(darkStrokeCacheRef.current.value);
       return;
     }
     let cancelled = false;
     const t0 = perfNow();
-    buildStrictDarkStrokeContextFromOriginalImage(darkStrokeSourceUrl, config)
-      .then(ctx => { logPerf('command analysis', t0); if (!cancelled) setDarkStroke(ctx); })
-      .catch(err => { console.warn('[dark-stroke] strict detection failed:', err); if (!cancelled) setDarkStroke(null); });
+    buildStrictDarkStrokeContextFromOriginalImage(darkStrokeSourceUrl, pickMotorConfig(config))
+      .then(ctx => {
+        perfLog('darkStroke', t0);
+        if (cancelled) return;
+        darkStrokeCacheRef.current = { key, value: ctx };
+        setDarkStroke(ctx);
+      })
+      .catch(err => { console.warn('[dark-stroke] strict detection failed:', err); });
     return () => { cancelled = true; };
-  }, [originalImageUrl, imageUrl, config.originalUploadUrl, project?.thumbnail_url, activeTab, showExport, processing]);
+  }, [originalImageUrl, imageUrl, config.originalUploadUrl, project?.thumbnail_url, config.width_mm, config.height_mm, config.color_count]);
+
+  const motorConfig = useMemo(() => pickMotorConfig(config), [config]);
+  const motorConfigHash = useMemo(() => stableHash(motorConfig), [motorConfig]);
+  const darkStrokeVersion = useMemo(() => darkStroke ? (darkStroke.version || darkStroke.imageHash || darkStroke.maskHash || darkStrokeCacheRef.current.key || 'darkStrokeReady') : 'none', [darkStroke]);
 
   // Config with dark stroke mask attached — flows through buildFinalCommands
   // to the contour export builder + segment classifier. Not persisted (mask is
   // a Uint8Array); saveProject uses the base configRef.
-  const configWithDarkStroke = useMemo(() => ({ ...config, darkStroke }), [config, darkStroke]);
+  const configWithDarkStroke = useMemo(() => ({ ...motorConfig, darkStroke }), [motorConfig, darkStroke]);
 
   const maskCanvasRef = useRef(null);
   const [maskTool, setMaskTool] = useState('brush');
@@ -216,20 +261,25 @@ export default function Editor() {
   }), [config.width_mm, config.height_mm]);
 
   const activeTabNeedsCommands = activeTab === 'simulate' || activeTab === 'finallook' || activeTab === 'validate' || activeTab === 'diagnostic' || activeTab === 'prof' || activeTab === 'learn';
-  const needsFinalCommandBuild = !LIGHTWEIGHT_APP_BOOT_V1 || !!optimizedCommandsOverride || processing || showExport || activeTabNeedsCommands;
+  const needsFinalCommandBuild = !LIGHTWEIGHT_APP_BOOT_V1 || !!optimizedCommandsOverride || processing || showExport || activeTabNeedsCommands || !!finalCommandCacheRef.current.value;
+  const regionsVersion = useMemo(() => regionsCommandHash(regions), [regions]);
+  const optimizedOverrideVersion = useMemo(() => commandSequenceHash(optimizedCommandsOverride || []), [optimizedCommandsOverride]);
 
-  // Single source of truth — computed ONCE, shared with all panels
+  // Single source of truth — cached by real motor inputs, not by UI tabs/panels.
   const finalEmbroideryCommands = useMemo(() => {
+    const cacheKey = stableHash({ regionsVersion, motorConfigHash, darkStrokeVersion, professionalMode: !!motorConfig.professionalMode, optimizedOverrideVersion });
+    if (finalCommandCacheRef.current.key === cacheKey && finalCommandCacheRef.current.value) {
+      return finalCommandCacheRef.current.value;
+    }
     if (!needsFinalCommandBuild) {
-      console.log('[PERF] command analysis ms', 0, 'skipped-lightweight-boot');
-      return {
-        commands: [],
-        objects: [],
-        deferred: true,
-        meta: { source: 'lightweight_boot_deferred', commandSourceUsed: 'deferred until manual view/export' },
+      return finalCommandCacheRef.current.value || {
+        commands: [], objects: [], deferred: true,
+        meta: { source: 'lightweight_boot_deferred', commandSourceUsed: 'deferred until manual view/export', commandVersion: 'deferred' },
       };
     }
+
     const commandAnalysisStart = perfNow();
+    let result;
     if (optimizedCommandsOverride) {
       const cmds = optimizedCommandsOverride;
       const guarded = applyStitchedTransitionToJumpGuard({
@@ -242,122 +292,90 @@ export default function Editor() {
         jumpCount: guarded.commands.filter(c => c.type === 'jump').length,
         trimCount: guarded.commands.filter(c => c.type === 'trim').length,
       };
-      console.log('[commands-state] final commands metrics (override):', meta);
-      logPerf('command analysis', commandAnalysisStart);
-      return { commands: guarded.commands, objects: [], meta, transitionGuardReport: guarded.report, transitionGuardMd: guarded.md };
-    }
-    // ── Auto-apply learned density / angle / pull-compensation (Professional Mode) ──
-    // When the Reference Learning Engine mined these values from the corpus and
-    // the user applied a learned preset, project them onto the generation regions
-    // so the motor uses them automatically in every future generation. Gated by
-    // professionalMode — absent keys / regression suite → behavior unchanged.
-    let genRegions = regions;
-    if (configWithDarkStroke.professionalMode) {
-      const ld = configWithDarkStroke.learnedFillDensityMm;
-      const la = configWithDarkStroke.learnedFillAngleDeg;
-      const variation = configWithDarkStroke.learnedNeighborAngleVariationDeg;
-      if (ld != null || la != null) {
-        // Alternar el ángulo de relleno entre regiones fill vecinas usando la
-        // variación aprendida del corpus (evita costuras paralelas acumuladas).
-        let fillIdx = 0;
-        genRegions = regions.map(r => {
-          const isFill = r.stitch_type === 'fill' || !r.stitch_type;
-          let angle = la != null ? la : (r.angle ?? 45);
-          if (isFill && variation != null && la != null) {
-            angle = la + (fillIdx % 2 === 1 ? variation : 0);
-            fillIdx++;
-          }
-          return {
-            ...r,
-            density: ld != null ? ld : (r.density ?? 0.4),
-            angle,
-          };
+      result = { commands: guarded.commands, objects: [], meta, transitionGuardReport: guarded.report, transitionGuardMd: guarded.md };
+    } else {
+      let genRegions = regions;
+      if (configWithDarkStroke.professionalMode) {
+        const ld = configWithDarkStroke.learnedFillDensityMm;
+        const la = configWithDarkStroke.learnedFillAngleDeg;
+        const variation = configWithDarkStroke.learnedNeighborAngleVariationDeg;
+        if (ld != null || la != null) {
+          let fillIdx = 0;
+          genRegions = regions.map(r => {
+            const isFill = r.stitch_type === 'fill' || !r.stitch_type;
+            let angle = la != null ? la : (r.angle ?? 45);
+            if (isFill && variation != null && la != null) {
+              angle = la + (fillIdx % 2 === 1 ? variation : 0);
+              fillIdx++;
+            }
+            return { ...r, density: ld != null ? ld : (r.density ?? 0.4), angle };
+          });
+        }
+      }
+      const built = buildFinalCommands(genRegions, configWithDarkStroke, editorMachineSettings);
+      if (configWithDarkStroke.professionalMode) {
+        const prof = applyProfessionalPipeline({ commands: built.commands, objects: built.objects, regions, config: configWithDarkStroke, darkStroke });
+        const guarded = applyStitchedTransitionToJumpGuard({
+          commands: prof.commands, objects: prof.objects, regions, config: configWithDarkStroke, darkStroke, machineSettings: editorMachineSettings,
         });
+        result = {
+          commands: guarded.commands,
+          objects: prof.objects,
+          meta: { ...built.meta, commandSourceUsed: guarded.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1' : 'finalEmbroideryCommands' },
+          contourSegmentReport: built.contourSegmentReport,
+          professionalReport: prof.report,
+          transitionGuardReport: guarded.report,
+          transitionGuardMd: guarded.md,
+        };
+      } else {
+        const guarded = applyStitchedTransitionToJumpGuard({
+          commands: built.commands, objects: built.objects, regions, config: configWithDarkStroke, darkStroke, machineSettings: editorMachineSettings,
+        });
+        result = {
+          commands: guarded.commands,
+          objects: built.objects,
+          meta: { ...built.meta, commandSourceUsed: guarded.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1' : 'finalEmbroideryCommands' },
+          contourSegmentReport: built.contourSegmentReport,
+          transitionGuardReport: guarded.report,
+          transitionGuardMd: guarded.md,
+        };
       }
     }
-    const built = buildFinalCommands(genRegions, configWithDarkStroke, editorMachineSettings);
-    const finalCmds = built.commands;
-    // Professional mode post-processes the SAME command list used by Final Look
-    // AND export, so both stay in sync (FASE 7).
-    if (configWithDarkStroke.professionalMode) {
-      const prof = applyProfessionalPipeline({
-        commands: finalCmds, objects: built.objects, regions,
-        config: configWithDarkStroke, darkStroke,
-      });
-      const guarded = applyStitchedTransitionToJumpGuard({
-        commands: prof.commands, objects: prof.objects, regions, config: configWithDarkStroke, darkStroke, machineSettings: editorMachineSettings,
-      });
-      console.log('[professional] applied pipeline — score:', prof.report?.gate?.professionalScore);
-      logPerf('command analysis', commandAnalysisStart);
-      return {
-        commands: guarded.commands, objects: prof.objects,
-        meta: { ...built.meta, commandSourceUsed: guarded.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1' : 'finalEmbroideryCommands' },
-        contourSegmentReport: built.contourSegmentReport,
-        professionalReport: prof.report,
-        transitionGuardReport: guarded.report,
-        transitionGuardMd: guarded.md,
-      };
-    }
-    const guarded = applyStitchedTransitionToJumpGuard({
-      commands: finalCmds, objects: built.objects, regions, config: configWithDarkStroke, darkStroke, machineSettings: editorMachineSettings,
-    });
-    console.log('[commands-state] final commands metrics:', {
-      stitches: guarded.commands.filter(c => c.type === 'stitch').length,
-      jumps: guarded.commands.filter(c => c.type === 'jump').length,
-      trims: guarded.commands.filter(c => c.type === 'trim').length,
-    });
-    logPerf('command analysis', commandAnalysisStart);
-    return {
-      commands: guarded.commands,
-      objects: built.objects,
-      meta: { ...built.meta, commandSourceUsed: guarded.report.phaseAccepted ? 'finalEmbroideryCommands + STITCHED_TRANSITION_TO_JUMP_GUARD_V1' : 'finalEmbroideryCommands' },
-      contourSegmentReport: built.contourSegmentReport,
-      transitionGuardReport: guarded.report,
-      transitionGuardMd: guarded.md,
-    };
-  }, [regions, configWithDarkStroke, editorMachineSettings, optimizedCommandsOverride, darkStroke, needsFinalCommandBuild]);
+    const commandHash = commandSequenceHash(result.commands);
+    result = { ...result, meta: { ...(result.meta || {}), commandVersion: commandHash } };
+    finalCommandCacheRef.current = { key: cacheKey, value: result };
+    perfLog('finalCommandBuild', commandAnalysisStart);
+    return result;
+  }, [regionsVersion, motorConfigHash, darkStrokeVersion, optimizedOverrideVersion, needsFinalCommandBuild, motorConfig.professionalMode, regions, configWithDarkStroke, editorMachineSettings, optimizedCommandsOverride, darkStroke]);
+
+  const commandVersionReal = finalEmbroideryCommands.meta?.commandVersion || commandSequenceHash(finalEmbroideryCommands.commands || []);
 
   // ═══ Unified metrics — single source of truth for all panels ═══
   const unifiedMetrics = useMemo(() => {
     if (finalEmbroideryCommands.deferred) {
       return {
-        source: 'lightweight_boot_cached_regions',
-        totalCommands: 0,
+        source: 'lightweight_boot_cached_regions', totalCommands: 0,
         stitchCount: regions.reduce((s, r) => s + (r.stitch_count || 0), 0),
-        jumpCount: 0,
-        trimCount: 0,
-        colorCount: new Set(regions.map((r) => r.color)).size,
-        colorChanges: 0,
-        shortStitches: 0,
-        longStitches: 0,
-        outsideHoop: 0,
-        maxJumpDist: 0,
-        synced: true,
+        jumpCount: 0, trimCount: 0, colorCount: new Set(regions.map((r) => r.color)).size,
+        colorChanges: 0, shortStitches: 0, longStitches: 0, outsideHoop: 0, maxJumpDist: 0, synced: true,
       };
     }
+    const metricsKey = stableHash({ commandVersionReal, regionsVersion, machineSettingsHash: stableHash(editorMachineSettings) });
+    if (unifiedMetricsCacheRef.current.key === metricsKey) return unifiedMetricsCacheRef.current.value;
     const t0 = perfNow();
-    const m = calculateUnifiedCommandMetrics(
-      finalEmbroideryCommands.commands, regions, editorMachineSettings
-    );
-    logPerf('universal validator', t0);
-    console.log('[command-sync] finalEmbroideryCommands length:', finalEmbroideryCommands.commands.length);
-    console.log('[command-sync] simulation source: finalEmbroideryCommands');
-    console.log('[command-sync] finalLook source: finalEmbroideryCommands');
-    console.log('[command-sync] validation source: finalEmbroideryCommands');
-    console.log('[command-sync] export source: finalEmbroideryCommands');
-    console.log('[command-sync] simulation metrics:', { stitches: m.stitchCount, jumps: m.jumpCount, trims: m.trimCount });
-    console.log('[command-sync] panels synced: YES');
+    const m = calculateUnifiedCommandMetrics(finalEmbroideryCommands.commands, regions, editorMachineSettings);
+    unifiedMetricsCacheRef.current = { key: metricsKey, value: m };
+    perfLog('unifiedMetrics', t0);
     return m;
-  }, [finalEmbroideryCommands, regions, editorMachineSettings]);
+  }, [finalEmbroideryCommands, commandVersionReal, regionsVersion, regions, editorMachineSettings]);
 
-  // ── Command versioning — bumps whenever finalEmbroideryCommands changes ──
-  const [commandVersion, setCommandVersion] = useState(() => Date.now());
+  // ── Command versioning — bumps only when the command sequence changes ──
+  const [commandVersion, setCommandVersion] = useState('empty');
   useEffect(() => {
-    const v = Date.now();
-    setCommandVersion(v);
-    console.log('[metrics-sync] commandVersion:', v);
-    console.log('[metrics-sync] bottom metrics:', { stitches: unifiedMetrics.stitchCount, jumps: unifiedMetrics.jumpCount, trims: unifiedMetrics.trimCount, colors: unifiedMetrics.colorCount });
-  }, [finalEmbroideryCommands]);
+    if (lastCommandHashRef.current === commandVersionReal) return;
+    lastCommandHashRef.current = commandVersionReal;
+    setCommandVersion(commandVersionReal);
+  }, [commandVersionReal]);
 
   const handleOptimizationApplied = useCallback((commands) => {
     setOptimizedCommandsOverride(commands);
@@ -389,7 +407,8 @@ export default function Editor() {
       setConfig(loadedConfig);
       setRegions(p.regions || []);
       setImageUrl(p.image_url || null);
-      setOriginalImageUrl(loadedConfig.originalUploadUrl || p.thumbnail_url || p.image_url || null);
+      const restoredOriginal = loadedConfig.originalUploadUrl || p.thumbnail_url || (/_masked/i.test(p.image_url || '') ? null : p.image_url) || null;
+      setOriginalImageUrl(restoredOriginal);
       setStep(p.step || 1);
       logPerf('load config', loadStart);
       console.log('[PERF] load reference learning ms', 0, 'skipped-lightweight-boot');
@@ -618,6 +637,16 @@ export default function Editor() {
   ];
   const visibleTabs = isLabMode ? labPrimaryTabs : simpleTabs;
   const activeInMore = labMoreTabs.some((tab) => tab.id === activeTab);
+  const switchEditorTab = useCallback((tab) => {
+    tabSwitchStartRef.current = perfNow();
+    setActiveTab(tab);
+  }, []);
+  useEffect(() => {
+    if (!tabSwitchStartRef.current) return;
+    if (activeTab === 'simulate') perfLog('switchToSimulate', tabSwitchStartRef.current);
+    if (activeTab === 'finallook') perfLog('switchToFinalLook', tabSwitchStartRef.current);
+    tabSwitchStartRef.current = null;
+  }, [activeTab]);
   useEffect(() => {
     if (!isLabMode && !simpleTabs.some((tab) => tab.id === activeTab)) setActiveTab('editor');
   }, [isLabMode, activeTab]);
@@ -725,7 +754,7 @@ export default function Editor() {
           <div className="flex items-center justify-between px-4 py-1.5 border-t border-[#1a1d27]">
             <div className="flex items-center gap-1 relative">
               {visibleTabs.map(({ id, label }) =>
-                <button key={id} onClick={() => { setActiveTab(id); setShowMoreTabs(false); }} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
+                <button key={id} onClick={() => { switchEditorTab(id); setShowMoreTabs(false); }} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
                   {label}
                 </button>
               )}
@@ -736,7 +765,7 @@ export default function Editor() {
                   {showMoreTabs && (
                     <div className="absolute top-8 left-56 z-30 w-44 rounded-xl border border-[#2a2d3a] bg-[#11141c] p-2 shadow-2xl">
                       {labMoreTabs.map(({ id, label }) => (
-                        <button key={id} onClick={() => { setActiveTab(id); setShowMoreTabs(false); }} className={`block w-full rounded-lg px-3 py-2 text-left text-xs transition-colors ${activeTab === id ? 'bg-violet-900/30 text-violet-200' : 'text-slate-400 hover:bg-[#1e2130] hover:text-white'}`}>{label}</button>
+                        <button key={id} onClick={() => { switchEditorTab(id); setShowMoreTabs(false); }} className={`block w-full rounded-lg px-3 py-2 text-left text-xs transition-colors ${activeTab === id ? 'bg-violet-900/30 text-violet-200' : 'text-slate-400 hover:bg-[#1e2130] hover:text-white'}`}>{label}</button>
                       ))}
                     </div>
                   )}
@@ -794,10 +823,18 @@ export default function Editor() {
                 <FileText className="w-3.5 h-3.5" />
                 {diagnosticExporting ? 'Generando paquete...' : pendingDiagnosticExport ? 'Preparando comandos...' : 'Exportar paquete diagnóstico'}
               </button>
-              <AestheticPreservationPanel config={config} onChange={setConfig} />
-              <QualityAnalysisPanel projectId={project?.id} onAnalysisComplete={(analysis) => console.log('Quality:', analysis)} />
-              <PreprocessingPanel settings={preprocessSettings} onChange={setPreprocessSettings} />
-              <NeedlePathPanel regions={regions} pathMetrics={pathMetrics} config={config} />
+              <LazyLabTool title="Preservación estética" open={!!openLabTools.aesthetic} onToggle={() => setOpenLabTools(v => ({ ...v, aesthetic: !v.aesthetic }))}>
+                <AestheticPreservationPanel config={config} onChange={setConfig} />
+              </LazyLabTool>
+              <LazyLabTool title="Análisis de calidad" open={!!openLabTools.quality} onToggle={() => setOpenLabTools(v => ({ ...v, quality: !v.quality }))}>
+                <QualityAnalysisPanel projectId={project?.id} onAnalysisComplete={(analysis) => console.log('Quality:', analysis)} />
+              </LazyLabTool>
+              <LazyLabTool title="Preprocesamiento" open={!!openLabTools.preprocessing} onToggle={() => setOpenLabTools(v => ({ ...v, preprocessing: !v.preprocessing }))}>
+                <PreprocessingPanel settings={preprocessSettings} onChange={setPreprocessSettings} />
+              </LazyLabTool>
+              <LazyLabTool title="Needle path" open={!!openLabTools.needlePath} onToggle={() => setOpenLabTools(v => ({ ...v, needlePath: !v.needlePath }))}>
+                <NeedlePathPanel regions={regions} pathMetrics={pathMetrics} config={config} />
+              </LazyLabTool>
             </div>
           </div>
         )}
@@ -833,15 +870,10 @@ export default function Editor() {
                 <MachineSimulator
                   regions={regions}
                   config={config}
-                  machineSettings={{
-                    maxStitchLength: 12.1,
-                    maxJumpLength: 12.1,
-                    hoopSize: [config.width_mm || 100, config.height_mm || 100],
-                    designOffset: [0, 0],
-                    trimThreshold: 3.5,
-                  }}
+                  machineSettings={editorMachineSettings}
                   finalCommands={finalEmbroideryCommands.commands}
                   finalObjects={finalEmbroideryCommands.objects}
+                  commandVersion={commandVersion}
                   commandSourceLabel="finalEmbroideryCommands"
                 />
               </div>
@@ -1189,6 +1221,18 @@ function ProjectNameInput({ name, onSave }) {
 
 function NavButton({ onClick, icon: Icon, label, accent, disabled }) {
   return <button onClick={onClick} disabled={disabled} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${accent ? 'bg-violet-600 hover:bg-violet-500 text-white' : 'bg-[#161a23] border border-[#2a2d3a] text-slate-400 hover:text-white hover:bg-[#1e2130]'}`}><Icon className="w-3.5 h-3.5" /> {label}</button>;
+}
+
+function LazyLabTool({ title, open, onToggle, children }) {
+  return (
+    <div className="rounded-lg border border-[#1e2130] bg-[#0a0c12] overflow-hidden">
+      <button onClick={onToggle} className="w-full flex items-center justify-between px-3 py-2 text-left text-xs font-bold text-slate-300 hover:bg-[#161a23] transition-colors">
+        <span>{title}</span>
+        <span className="text-slate-600">{open ? '−' : '+'}</span>
+      </button>
+      {open && <div className="p-3 border-t border-[#1e2130]">{children}</div>}
+    </div>
+  );
 }
 
 function SliderControl({ label, value, onChange, color }) {

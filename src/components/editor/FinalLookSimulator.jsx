@@ -47,6 +47,8 @@ export default function FinalLookSimulator({ regions, config, machineSettings, d
     return { minX, maxX, minY, maxY };
   }, [commands, w, h]);
 
+  const objectById = useMemo(() => new Map(objects.map(o => [o.id, o])), [objects]);
+
   // Build lookup for detail info
   const detailMap = useMemo(() => {
     const map = new Map();
@@ -100,75 +102,52 @@ export default function FinalLookSimulator({ regions, config, machineSettings, d
     let isCurrentOutline = false;
     let isCurrentDetail = false;
 
-    // Render stitch by stitch with thread thickness
-    for (let i = 0; i < commands.length; i++) {
-      const c = commands[i];
-      if (c.type === 'colorChange') {
-        currentColor = c.color || currentColor;
-        continue;
-      }
-      if (c.type === 'end' || c.type === 'trim') continue;
+    const renderStart = performance.now();
+    let cancelled = false;
+    let i = 0;
+    const chunkSize = commands.length > 10000 ? 900 : commands.length;
 
-      if (c.type === 'jump') {
-        // Don't draw jumps in final look
-        continue;
-      }
-
-      if (c.type === 'stitch' && i > 0) {
-        const prev = commands[i - 1];
-        if (prev.type !== 'stitch' && prev.type !== 'jump') continue;
-
-        const [px, py] = toPx(prev.x, prev.y);
-        const [cx, cy] = toPx(c.x, c.y);
-        const segLenMm = Math.hypot(c.x - prev.x, c.y - prev.y) / scale;
-
-        // Check if this region is an outline or detail
-        const regionId = c.regionId;
-        const region = objects.find(o => o.id === regionId);
-        const detail = detailMap.get(regionId);
-        const isOutline = region?.stitch_type === 'running_stitch' || region?.stitch_type === 'contour';
-        const isDetailRun = detail?.preserved && (detail?.class === 'detail_run' || detail?.class === 'decorative_detail');
-
-        // Defensive: never draw a long contour/detail stitch — it's an artificial
-        // bridge (real stitches are sub-divided ≤3.5mm). Travel must never render.
-        if (segLenMm > 6 && (isOutline || isDetailRun)) continue;
-
-        // Filter: show outlines only
-        if (showOutlinesOnly && !isOutline && !isDetailRun) continue;
-        // Filter: hide preserved details
-        if (!showPreservedDetails && isDetailRun) continue;
-
-        // Determine render color
-        let renderColor = c.color || currentColor;
-        let renderWidth = threadPx;
-
-        if (isOutline) {
-          renderWidth = threadPx * 1.3; // outlines slightly thicker
-        } else if (isDetailRun) {
-          renderWidth = threadPx * 1.2;
-          renderColor = c.color || '#1a1a1a';
-        } else if (isCurrentFillType(region, 'fill')) {
-          renderWidth = threadPx * 0.9; // fills slightly thinner
+    const drawCommandChunk = () => {
+      const end = Math.min(commands.length, i + chunkSize);
+      for (; i < end; i++) {
+        const c = commands[i];
+        if (c.type === 'colorChange') { currentColor = c.color || currentColor; continue; }
+        if (c.type === 'end' || c.type === 'trim' || c.type === 'jump') continue;
+        if (c.type === 'stitch' && i > 0) {
+          const prev = commands[i - 1];
+          if (prev.type !== 'stitch' && prev.type !== 'jump') continue;
+          const [px, py] = toPx(prev.x, prev.y);
+          const [cx, cy] = toPx(c.x, c.y);
+          const segLenMm = Math.hypot(c.x - prev.x, c.y - prev.y) / scale;
+          const regionId = c.regionId;
+          const region = objectById.get(regionId);
+          const detail = detailMap.get(regionId);
+          const isOutline = region?.stitch_type === 'running_stitch' || region?.stitch_type === 'contour';
+          const isDetailRun = detail?.preserved && (detail?.class === 'detail_run' || detail?.class === 'decorative_detail');
+          if (segLenMm > 6 && (isOutline || isDetailRun)) continue;
+          if (showOutlinesOnly && !isOutline && !isDetailRun) continue;
+          if (!showPreservedDetails && isDetailRun) continue;
+          let renderColor = c.color || currentColor;
+          let renderWidth = threadPx;
+          if (isOutline) renderWidth = threadPx * 1.3;
+          else if (isDetailRun) { renderWidth = threadPx * 1.2; renderColor = c.color || '#1a1a1a'; }
+          else if (isCurrentFillType(region, 'fill')) renderWidth = threadPx * 0.9;
+          if (highlightDiscarded && detail && !detail.preserved && detail.score > 0) { renderColor = '#ef4444'; renderWidth = threadPx * 1.5; }
+          ctx.strokeStyle = renderColor;
+          ctx.lineWidth = renderWidth;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(px, py);
+          ctx.lineTo(cx, cy);
+          ctx.stroke();
         }
-
-        // Highlight discarded details in red
-        if (highlightDiscarded && detail && !detail.preserved && detail.score > 0) {
-          renderColor = '#ef4444';
-          renderWidth = threadPx * 1.5;
-        }
-
-        ctx.strokeStyle = renderColor;
-        ctx.lineWidth = renderWidth;
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(px, py);
-        ctx.lineTo(cx, cy);
-        ctx.stroke();
       }
-    }
-
-    console.log('[simulation-final-look] rendered commands:', commands.length);
-  }, [commands, objects, projection, showOutlinesOnly, showPreservedDetails, highlightDiscarded, threadThickness, w, h]);
+      if (!cancelled && i < commands.length) requestAnimationFrame(drawCommandChunk);
+      else if (!cancelled) console.log('[PERF] finalLookRenderMs', Math.round(performance.now() - renderStart));
+    };
+    drawCommandChunk();
+    return () => { cancelled = true; };
+  }, [commands, objectById, detailMap, projection, showOutlinesOnly, showPreservedDetails, highlightDiscarded, threadThickness, w, h]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">

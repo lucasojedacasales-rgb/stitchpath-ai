@@ -28,31 +28,36 @@ const TYPE_META = {
  * realistic thread rendering. Supports normal mode (clean) and debug mode
  * (jumps, path, warnings, block indices).
  */
-export default function MachineSimulator({ regions, config, machineSettings, finalCommands, finalObjects, commandSourceLabel = 'simulationFallback' }) {
+export default function MachineSimulator({ regions, config, machineSettings, finalCommands, finalObjects, commandVersion = 'empty', commandSourceLabel = 'simulationFallback' }) {
   const canvasRef = useRef(null);
   const animRef = useRef(null);
+  const renderReportRef = useRef(null);
 
   const ms = { ...DEFAULT_MACHINE, ...machineSettings };
   const w = config.width_mm || 100;
   const h = config.height_mm || 100;
 
   // ── Build command sequence + analysis + simulation blocks (memoized) ──────
-  const { commands, analysis, simData, commandSourceUsed, simulationMatchesFinalCommands, finalCommandCount } = useMemo(() => {
+  const { commands, analysis, simData, prefixStats, commandSourceUsed, simulationMatchesFinalCommands, finalCommandCount } = useMemo(() => {
+    const t0 = performance.now();
     const hasFinalCommands = Array.isArray(finalCommands) && finalCommands.length > 0;
     const objs = hasFinalCommands ? (finalObjects || []) : buildStitchObjects(regions, config);
     const cmds = hasFinalCommands ? finalCommands : flattenToCommands(objs, ms);
     const source = hasFinalCommands ? commandSourceLabel : 'buildStitchObjectsFallback';
     const sim = analyzeSimulation(cmds, objs, ms);
     const blocks = buildSimulationBlocks(cmds, regions, { width_mm: w, height_mm: h });
+    const prefix = buildPrefixStats(cmds);
+    console.log('[PERF] machineSimulatorAnalysisMs', Math.round(performance.now() - t0));
     return {
       commands: cmds,
       analysis: sim,
       simData: blocks,
+      prefixStats: prefix,
       commandSourceUsed: source,
       simulationMatchesFinalCommands: hasFinalCommands,
       finalCommandCount: hasFinalCommands ? finalCommands.length : 0,
     };
-  }, [regions, config, finalCommands, finalObjects, commandSourceLabel, ms.maxStitchLength, ms.maxJumpLength, ms.trimThreshold, ms.designOffset, w, h]);
+  }, [commandVersion]);
 
   // ── Projection bounds ─────────────────────────────────────────────────────
   const projection = useMemo(() => {
@@ -74,7 +79,7 @@ export default function MachineSimulator({ regions, config, machineSettings, fin
   const [simSettings, setSimSettings] = useState(DEFAULT_SIMULATION_SETTINGS);
   const [renderReport, setRenderReport] = useState(null);
 
-  useEffect(() => { setCurrentIndex(0); setIsPlaying(false); }, [commands]);
+  useEffect(() => { setCurrentIndex(0); setIsPlaying(false); }, [commandVersion]);
 
   // ── Playback loop ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -130,12 +135,19 @@ export default function MachineSimulator({ regions, config, machineSettings, fin
     }
 
     // ── Main simulation render ──────────────────────────────────────────────
+    const drawStart = performance.now();
     const heatMap = simSettings.showDensityHeatmap ? analysis.heatMap : null;
+    const fastPreview = commands.length > 10000 && isPlaying && speed >= 15;
+    const effectiveIndex = fastPreview ? Math.min(commands.length - 1, Math.floor(currentIndex / 4) * 4) : currentIndex;
     const report = renderSimulationOverlay(
-      ctx, simData, currentIndex, simSettings,
+      ctx, simData, effectiveIndex, simSettings,
       { toX, toY, scale }, heatMap
     );
-    setRenderReport(report);
+    const prevBlock = renderReportRef.current?.currentBlock?.blockId;
+    const nextBlock = report?.currentBlock?.blockId;
+    renderReportRef.current = report;
+    if (prevBlock !== nextBlock || !isPlaying) setRenderReport(report);
+    if (!isPlaying) console.log('[PERF] machineSimulatorDrawMs', Math.round(performance.now() - drawStart));
 
     // ── Needle at current position ──────────────────────────────────────────
     const curCmd = commands[currentIndex];
@@ -161,7 +173,7 @@ export default function MachineSimulator({ regions, config, machineSettings, fin
       ctx.moveTo(nx, ny - 9); ctx.lineTo(nx, ny + 9);
       ctx.stroke();
     }
-  }, [commands, currentIndex, projection, simData, simSettings, analysis, w, h, showHoop]);
+  }, [commands, currentIndex, projection, simData, simSettings, analysis, w, h, showHoop, isPlaying, speed]);
 
   useEffect(() => { draw(); }, [draw]);
 
@@ -171,18 +183,8 @@ export default function MachineSimulator({ regions, config, machineSettings, fin
   const curBlock = renderReport?.currentBlock;
   const progress = commands.length > 1 ? Math.round((currentIndex / (commands.length - 1)) * 100) : 0;
 
-  // Live stats up to currentIndex
-  const liveStats = useMemo(() => {
-    let stitches = 0, jumps = 0, trims = 0, colorChanges = 0;
-    for (let i = 0; i <= currentIndex && i < commands.length; i++) {
-      const c = commands[i];
-      if (c.type === 'stitch') stitches++;
-      if (c.type === 'jump') jumps++;
-      if (c.type === 'trim') trims++;
-      if (c.type === 'colorChange') colorChanges++;
-    }
-    return { stitches, jumps, trims, colorChanges };
-  }, [commands, currentIndex]);
+  // Live stats from precomputed prefix array — O(1) per frame
+  const liveStats = prefixStats[Math.min(currentIndex, prefixStats.length - 1)] || { stitches: 0, jumps: 0, trims: 0, colorChanges: 0 };
 
   const handlePlay = () => { if (currentIndex >= commands.length - 1) setCurrentIndex(0); setIsPlaying(true); };
   const handleStepFwd = () => { setIsPlaying(false); setCurrentIndex((i) => Math.min(i + 1, commands.length - 1)); };
@@ -365,6 +367,19 @@ export default function MachineSimulator({ regions, config, machineSettings, fin
       </div>
     </div>
   );
+}
+
+function buildPrefixStats(commands = []) {
+  const prefix = [];
+  let stitches = 0, jumps = 0, trims = 0, colorChanges = 0;
+  for (const c of commands) {
+    if (c.type === 'stitch') stitches++;
+    if (c.type === 'jump') jumps++;
+    if (c.type === 'trim') trims++;
+    if (c.type === 'colorChange') colorChanges++;
+    prefix.push({ stitches, jumps, trims, colorChanges });
+  }
+  return prefix.length ? prefix : [{ stitches: 0, jumps: 0, trims: 0, colorChanges: 0 }];
 }
 
 function SimToggle({ active, onClick, icon: Icon, label }) {
