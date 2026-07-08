@@ -35,7 +35,6 @@ import { validateFinalContourCommandsAgainstDarkMask } from './contourSegmentVal
 import { applyProfessionalStitchPlannerRepair } from './professionalStitchPlannerRepair.js';
 import { normalizeBackendFileResponse } from './exportResponseNormalizer.js';
 import { prepareProfessionalLayerObjects } from './professionalLayerKnockout.js';
-import { applyGoldenMasterTravelReduction } from './goldenMasterWilcomAlignment.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -156,6 +155,23 @@ function createSameColorOrderingReport() {
     estimatedTravelReductionPercent: 0,
     longestObjectToObjectTravelBeforeMm: 0,
     longestObjectToObjectTravelAfterMm: 0,
+  };
+}
+
+function createGoldenMasterTravelReductionReport() {
+  return {
+    goldenMasterTravelReductionApplied: false,
+    goldenMasterModeRequiresExplicitFlag: true,
+    orderedColorGroupCount: 0,
+    reorderedObjectCount: 0,
+    estimatedTravelBeforeMm: 0,
+    estimatedTravelAfterMm: 0,
+    estimatedTravelReductionMm: 0,
+    estimatedTravelReductionPercent: 0,
+    longObjectTravelsOver10mmBefore: 0,
+    longObjectTravelsOver10mmAfter: 0,
+    contourFillPairingApplied: false,
+    routeOptimizationStrategy: 'disabled',
   };
 }
 
@@ -353,6 +369,364 @@ function applySameColorNearestNeighborOrdering(objects) {
 
   _lastSameColorNearestNeighborOrderingReport = report;
   return { objects: ordered, report };
+}
+
+function commandHasPoint(command) {
+  return (command?.type === 'stitch' || command?.type === 'jump') &&
+    Number.isFinite(command.x) &&
+    Number.isFinite(command.y);
+}
+
+function commandPoint(command) {
+  return commandHasPoint(command) ? [command.x, command.y] : null;
+}
+
+function commandRouteKey(command) {
+  return String(
+    command?.regionId ||
+    command?.objectId ||
+    command?.blockId ||
+    command?.sourceObjectId ||
+    ''
+  );
+}
+
+function commandColor(command, fallback = '#000000') {
+  return command?.color || fallback || '#000000';
+}
+
+function buildObjectRouteIndex(objects = []) {
+  const index = new Map();
+  for (const obj of objects || []) {
+    if (!obj?.id) continue;
+    index.set(String(obj.id), {
+      id: obj.id,
+      sourceKey: sameColorSourceKey(obj),
+      isContour: isContourObject(obj),
+      isFill: obj.stitch_type === 'fill',
+    });
+  }
+  return index;
+}
+
+function finalizeRouteBlock(block, objectIndex) {
+  if (!block) return null;
+  const firstStitchIndex = block.commands.findIndex(command => command?.type === 'stitch' && Number.isFinite(command.x) && Number.isFinite(command.y));
+  const firstNeedleIndex = block.commands.findIndex(commandHasPoint);
+  const entryIndex = firstStitchIndex >= 0 ? firstStitchIndex : firstNeedleIndex;
+  if (entryIndex < 0) return null;
+
+  const sewCommands = block.commands.slice(entryIndex);
+  const entry = commandPoint(sewCommands[0]);
+  let exit = entry;
+  for (let i = sewCommands.length - 1; i >= 0; i--) {
+    const point = commandPoint(sewCommands[i]);
+    if (point) {
+      exit = point;
+      break;
+    }
+  }
+  if (!entry || !exit) return null;
+
+  const objectMeta = objectIndex.get(block.regionKey) || {};
+  const text = `${block.regionKey} ${block.commands.map(c => `${c?.stitchType || ''} ${c?.layerType || ''} ${c?.source || ''}`).join(' ')}`.toLowerCase();
+  const isContour = objectMeta.isContour === true || /contour|outline|running_stitch|satin/.test(text);
+  const isFill = objectMeta.isFill === true || /fill|ce01_safe_fill|tatami/.test(text);
+
+  return {
+    ...block,
+    commands: sewCommands,
+    entry,
+    exit,
+    color: block.color || commandColor(sewCommands.find(commandHasPoint)),
+    sourceKey: objectMeta.sourceKey || block.regionKey,
+    isContour,
+    isFill,
+  };
+}
+
+function splitRouteBlocks(commands = [], objectIndex = new Map()) {
+  const blocks = [];
+  let current = null;
+  let miscIndex = 0;
+
+  const pushCurrent = () => {
+    const block = finalizeRouteBlock(current, objectIndex);
+    if (block) blocks.push(block);
+    current = null;
+  };
+
+  for (const command of commands || []) {
+    if (!command || command.type === 'colorChange' || command.type === 'end') continue;
+    const key = commandRouteKey(command) || current?.regionKey || `misc:${miscIndex}`;
+    const startsNewRegion = current && key !== current.regionKey && command.type !== 'trim';
+    const startsNewTrimLead = current && key !== current.regionKey && command.type === 'trim';
+    if (!current || startsNewRegion || startsNewTrimLead) {
+      pushCurrent();
+      current = {
+        regionKey: key || `misc:${miscIndex++}`,
+        commands: [],
+        originalIndex: blocks.length,
+        color: commandColor(command),
+      };
+    }
+    current.commands.push(command);
+    if (!key) miscIndex++;
+  }
+  pushCurrent();
+
+  return blocks;
+}
+
+function splitColorRouteGroups(commands = []) {
+  const groups = [];
+  let current = { colorChange: null, commands: [] };
+  let endCommand = null;
+
+  for (const command of commands || []) {
+    if (command?.type === 'end') {
+      endCommand = command;
+      continue;
+    }
+    if (command?.type === 'colorChange') {
+      if (current.colorChange || current.commands.length > 0) groups.push(current);
+      current = { colorChange: command, commands: [] };
+      continue;
+    }
+    current.commands.push(command);
+  }
+  if (current.colorChange || current.commands.length > 0) groups.push(current);
+
+  return { groups, endCommand };
+}
+
+function estimateRouteBlockTravel(blocks = [], start = [0, 0]) {
+  let cursor = start;
+  let total = 0;
+  let longOver10 = 0;
+  for (const block of blocks || []) {
+    if (!block?.entry) continue;
+    const distance = Math.hypot(block.entry[0] - cursor[0], block.entry[1] - cursor[1]);
+    total += distance;
+    if (distance > 10) longOver10++;
+    cursor = block.exit || cursor;
+  }
+  return { total, longOver10, end: cursor };
+}
+
+function countContourFillPairs(blocks = []) {
+  let count = 0;
+  for (let i = 1; i < blocks.length; i++) {
+    const prev = blocks[i - 1];
+    const curr = blocks[i];
+    if (!prev?.sourceKey || prev.sourceKey !== curr?.sourceKey) continue;
+    if ((prev.isFill && curr.isContour) || (prev.isContour && curr.isFill)) count++;
+  }
+  return count;
+}
+
+function orderRouteBlocksNearestEntry(blocks = [], start = [0, 0]) {
+  const remaining = [...blocks];
+  const ordered = [];
+  let cursor = start;
+  let previous = null;
+
+  while (remaining.length > 0) {
+    let bestIndex = 0;
+    let bestScore = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const candidate = remaining[i];
+      const distance = candidate.entry
+        ? Math.hypot(candidate.entry[0] - cursor[0], candidate.entry[1] - cursor[1])
+        : Infinity;
+      const sameSourcePair = previous?.sourceKey &&
+        previous.sourceKey === candidate.sourceKey &&
+        ((previous.isFill && candidate.isContour) || (previous.isContour && candidate.isFill));
+      const score = sameSourcePair ? distance * 0.4 : distance;
+      if (score < bestScore || (score === bestScore && candidate.originalIndex < remaining[bestIndex].originalIndex)) {
+        bestScore = score;
+        bestIndex = i;
+      }
+    }
+    const next = remaining.splice(bestIndex, 1)[0];
+    ordered.push(next);
+    cursor = next.exit || cursor;
+    previous = next;
+  }
+
+  return ordered;
+}
+
+function appendGoldenConnector(output, cursor, target, template, machineSettings = {}) {
+  if (!cursor || !target) return cursor || target || [0, 0];
+  const distance = Math.hypot(target[0] - cursor[0], target[1] - cursor[1]);
+  if (distance <= 0.5) return cursor;
+
+  const trimThreshold = Number(machineSettings.trimThreshold) || DEFAULT_MACHINE.trimThreshold;
+  const maxJumpSegmentMm = Math.min(Number(machineSettings.maxJumpLength) || DEFAULT_MACHINE.maxJumpLength, 9.8);
+  const last = output[output.length - 1];
+  if (distance > trimThreshold && last?.type !== 'trim' && last?.type !== 'colorChange') {
+    output.push({
+      type: 'trim',
+      x: cursor[0],
+      y: cursor[1],
+      color: template.color,
+      regionId: template.regionId,
+      source: 'golden_master_travel_reduction',
+      generatedBy: 'GOLDEN_MASTER_TRAVEL_REDUCTION_V1',
+    });
+  }
+
+  const steps = Math.max(1, Math.ceil(distance / maxJumpSegmentMm));
+  for (let step = 1; step <= steps; step++) {
+    output.push({
+      type: 'jump',
+      x: cursor[0] + (target[0] - cursor[0]) * step / steps,
+      y: cursor[1] + (target[1] - cursor[1]) * step / steps,
+      color: template.color,
+      regionId: template.regionId,
+      source: 'golden_master_travel_reduction',
+      generatedBy: 'GOLDEN_MASTER_TRAVEL_REDUCTION_V1',
+    });
+  }
+  return target;
+}
+
+function countCommandType(commands = [], type) {
+  return (commands || []).filter(command => command?.type === type).length;
+}
+
+function lastNeedlePoint(commands = [], fallback = [0, 0]) {
+  for (let i = commands.length - 1; i >= 0; i--) {
+    const point = commandPoint(commands[i]);
+    if (point) return point;
+  }
+  return fallback;
+}
+
+function isGoldenMasterTravelReductionEnabled(config = {}, machineSettings = {}) {
+  const profileId = config.goldenMasterProfileId || machineSettings.goldenMasterProfileId;
+  return config.goldenMasterWilcomAlignment === true && profileId === 'yoshi_wilcom_reference';
+}
+
+function applyGoldenMasterTravelReduction(commands = [], objects = [], machineSettings = {}, config = {}) {
+  const report = createGoldenMasterTravelReductionReport();
+  if (!isGoldenMasterTravelReductionEnabled(config, machineSettings) || !Array.isArray(commands) || commands.length <= 2) {
+    return { commands, report };
+  }
+
+  const objectIndex = buildObjectRouteIndex(objects);
+  const { groups, endCommand } = splitColorRouteGroups(commands);
+  if (groups.length === 0) return { commands, report };
+
+  const output = [];
+  let cursor = [0, 0];
+  let orderedColorGroupCount = 0;
+  let reorderedObjectCount = 0;
+  let estimatedTravelBeforeMm = 0;
+  let estimatedTravelAfterMm = 0;
+  let longObjectTravelsOver10mmBefore = 0;
+  let longObjectTravelsOver10mmAfter = 0;
+  let contourFillPairCountBefore = 0;
+  let contourFillPairCountAfter = 0;
+
+  for (const group of groups) {
+    const blocks = splitRouteBlocks(group.commands, objectIndex);
+    if (group.colorChange) {
+      output.push({ ...group.colorChange, x: cursor[0], y: cursor[1] });
+    }
+    if (blocks.length === 0) {
+      output.push(...group.commands);
+      cursor = lastNeedlePoint(group.commands, cursor);
+      continue;
+    }
+
+    if (blocks.length === 1) {
+      const before = estimateRouteBlockTravel(blocks, cursor);
+      estimatedTravelBeforeMm += before.total;
+      estimatedTravelAfterMm += before.total;
+      longObjectTravelsOver10mmBefore += before.longOver10;
+      longObjectTravelsOver10mmAfter += before.longOver10;
+      const block = blocks[0];
+      cursor = appendGoldenConnector(output, cursor, block.entry, {
+        color: block.color,
+        regionId: block.regionKey,
+      }, machineSettings);
+      output.push(...block.commands);
+      cursor = block.exit || lastNeedlePoint(block.commands, cursor);
+      continue;
+    }
+
+    const before = estimateRouteBlockTravel(blocks, cursor);
+    const orderedBlocks = orderRouteBlocksNearestEntry(blocks, cursor);
+    const after = estimateRouteBlockTravel(orderedBlocks, cursor);
+    const beforePairs = countContourFillPairs(blocks);
+    const afterPairs = countContourFillPairs(orderedBlocks);
+    contourFillPairCountBefore += beforePairs;
+    contourFillPairCountAfter += afterPairs;
+    estimatedTravelBeforeMm += before.total;
+    estimatedTravelAfterMm += after.total;
+    longObjectTravelsOver10mmBefore += before.longOver10;
+    longObjectTravelsOver10mmAfter += after.longOver10;
+    orderedColorGroupCount++;
+
+    const beforeOrder = blocks.map(block => block.regionKey).join('|');
+    const afterOrder = orderedBlocks.map(block => block.regionKey).join('|');
+    if (beforeOrder !== afterOrder) {
+      reorderedObjectCount += orderedBlocks.length;
+    }
+
+    for (const block of orderedBlocks) {
+      cursor = appendGoldenConnector(output, cursor, block.entry, {
+        color: block.color,
+        regionId: block.regionKey,
+      }, machineSettings);
+      output.push(...block.commands);
+      cursor = block.exit || lastNeedlePoint(block.commands, cursor);
+    }
+  }
+
+  const finalEnd = endCommand
+    ? { ...endCommand, x: cursor[0], y: cursor[1] }
+    : { type: 'end', x: cursor[0], y: cursor[1], color: null };
+  output.push(finalEnd);
+
+  const stitchCountPreserved = countCommandType(output, 'stitch') === countCommandType(commands, 'stitch');
+  const colorChangePreserved = countCommandType(output, 'colorChange') === countCommandType(commands, 'colorChange');
+  const reduction = estimatedTravelBeforeMm - estimatedTravelAfterMm;
+  if (!stitchCountPreserved || !colorChangePreserved || reduction < -0.001) {
+    return {
+      commands,
+      report: {
+        ...report,
+        routeOptimizationStrategy: 'entry_distance_same_color_blocks_discarded',
+        estimatedTravelBeforeMm: roundMetric(estimatedTravelBeforeMm),
+        estimatedTravelAfterMm: roundMetric(estimatedTravelAfterMm),
+        estimatedTravelReductionMm: roundMetric(reduction),
+        estimatedTravelReductionPercent: estimatedTravelBeforeMm > 0 ? roundMetric((reduction / estimatedTravelBeforeMm) * 100) : 0,
+        longObjectTravelsOver10mmBefore,
+        longObjectTravelsOver10mmAfter,
+      },
+    };
+  }
+
+  return {
+    commands: output,
+    report: {
+      goldenMasterTravelReductionApplied: orderedColorGroupCount > 0,
+      goldenMasterModeRequiresExplicitFlag: true,
+      orderedColorGroupCount,
+      reorderedObjectCount,
+      estimatedTravelBeforeMm: roundMetric(estimatedTravelBeforeMm),
+      estimatedTravelAfterMm: roundMetric(estimatedTravelAfterMm),
+      estimatedTravelReductionMm: roundMetric(reduction),
+      estimatedTravelReductionPercent: estimatedTravelBeforeMm > 0 ? roundMetric((reduction / estimatedTravelBeforeMm) * 100) : 0,
+      longObjectTravelsOver10mmBefore,
+      longObjectTravelsOver10mmAfter,
+      contourFillPairingApplied: contourFillPairCountAfter > contourFillPairCountBefore,
+      routeOptimizationStrategy: 'entry_distance_same_color_command_blocks',
+    },
+  };
 }
 
 function isFinitePoint(p) {
@@ -1622,16 +1996,22 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   // Applies only when goldenMasterWilcomAlignment=true and the Yoshi Wilcom
   // reference profile is explicitly selected. Normal exports are returned
   // unchanged; original regions/path_points are never mutated.
-  const goldenMasterTravelReduction = applyGoldenMasterTravelReduction(commands, {
-    config,
-    machineSettings: ms,
-  });
+  const goldenMasterTravelReduction = applyGoldenMasterTravelReduction(
+    commands,
+    objects,
+    ms,
+    config
+  );
   commands = goldenMasterTravelReduction.commands;
 
   const stitchCount = commands.filter(c => c.type === 'stitch').length;
   const jumpCount = commands.filter(c => c.type === 'jump').length;
   const trimCount = commands.filter(c => c.type === 'trim').length;
-  const colorCount = commands.filter(c => c.type === 'colorChange').length + 1;
+  const colorBlockCount = commands.filter(c => c.type === 'colorChange').length + 1;
+  const uniqueColorCount = new Set(commands
+    .filter(c => c.color && (c.type === 'stitch' || c.type === 'jump'))
+    .map(c => String(c.color).toLowerCase())).size;
+  const colorCount = colorBlockCount;
   const ce01ZeroFillRecoveryReport = _lastCE01ZeroFillRecoveryReport || createCE01ZeroFillRecoveryReport();
   const sameColorOrderingReport = _lastSameColorNearestNeighborOrderingReport || createSameColorOrderingReport();
 
@@ -1642,6 +2022,8 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     jumpCount,
     trimCount,
     colorCount,
+    colorBlockCount,
+    uniqueColorCount,
     sanitized: true,
     validatorVersion: 'ce01-v2',
     generatorVersion: 'ce01-safe-fill-v1',
@@ -1658,8 +2040,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     estimatedTravelReductionPercent: sameColorOrderingReport.estimatedTravelReductionPercent,
     longestObjectToObjectTravelBeforeMm: sameColorOrderingReport.longestObjectToObjectTravelBeforeMm,
     longestObjectToObjectTravelAfterMm: sameColorOrderingReport.longestObjectToObjectTravelAfterMm,
-    goldenMasterTravelReductionApplied: goldenMasterTravelReduction.report.goldenMasterTravelReductionApplied,
-    goldenMasterModeRequiresExplicitFlag: goldenMasterTravelReduction.report.goldenMasterModeRequiresExplicitFlag,
+    ...goldenMasterTravelReduction.report,
     goldenMasterTravelReductionReport: goldenMasterTravelReduction.report,
   };
 

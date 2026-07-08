@@ -28,6 +28,16 @@ function cloneCommand(command) {
   return command ? { ...command } : command;
 }
 
+function countCommandType(commands = [], type) {
+  return (commands || []).filter(command => command?.type === type).length;
+}
+
+function countUniqueCommandColors(commands = []) {
+  return new Set((commands || [])
+    .filter(command => command?.color && (command.type === 'stitch' || command.type === 'jump'))
+    .map(command => String(command.color).toLowerCase())).size;
+}
+
 function countJumpMetrics(commands = []) {
   let previous = { x: 0, y: 0 };
   let jumpsOver10mm = 0;
@@ -116,10 +126,13 @@ function splitLongJumpCommands(commands = [], maxJumpMm = GOLDEN_MASTER_MAX_JUMP
 }
 
 export function applyGoldenMasterTravelReduction(commands = [], options = {}) {
-  const { config = {}, machineSettings = {} } = options;
+  const { config = {}, machineSettings = {}, colorCount = null, colorBlockCount = null, uniqueColorCount = null } = options;
   const profileId = getGoldenMasterProfileId(config, machineSettings);
   const enabled = isGoldenMasterWilcomAlignmentEnabled(config, machineSettings);
   const before = countJumpMetrics(commands);
+  const actualColorBlockCount = Number.isFinite(colorBlockCount) ? colorBlockCount : countCommandType(commands, 'colorChange') + 1;
+  const actualUniqueColorCount = Number.isFinite(uniqueColorCount) ? uniqueColorCount : countUniqueCommandColors(commands);
+  const actualColorCount = Number.isFinite(colorCount) ? colorCount : actualColorBlockCount;
 
   if (!enabled) {
     return {
@@ -130,6 +143,9 @@ export function applyGoldenMasterTravelReduction(commands = [], options = {}) {
         goldenMasterProfileId: profileId,
         before,
         after: before,
+        colorCount: actualColorCount,
+        colorBlockCount: actualColorBlockCount,
+        uniqueColorCount: actualUniqueColorCount,
         reason: 'goldenMasterWilcomAlignment=true with yoshi_wilcom_reference profile is required',
       },
     };
@@ -148,6 +164,9 @@ export function applyGoldenMasterTravelReduction(commands = [], options = {}) {
       maxJumpMm: GOLDEN_MASTER_MAX_JUMP_MM,
       before,
       after,
+      colorCount: actualColorCount,
+      colorBlockCount: actualColorBlockCount,
+      uniqueColorCount: actualUniqueColorCount,
       jumpsOver10mmReducedBy: before.jumpsOver10mm - after.jumpsOver10mm,
       jumpTravelDistanceReducedMm: roundMetric(before.jumpTravelDistanceMm - after.jumpTravelDistanceMm),
     },
