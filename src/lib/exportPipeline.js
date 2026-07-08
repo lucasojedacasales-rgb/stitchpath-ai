@@ -35,6 +35,7 @@ import { validateFinalContourCommandsAgainstDarkMask } from './contourSegmentVal
 import { applyProfessionalStitchPlannerRepair } from './professionalStitchPlannerRepair.js';
 import { normalizeBackendFileResponse } from './exportResponseNormalizer.js';
 import { prepareProfessionalLayerObjects } from './professionalLayerKnockout.js';
+import { applyGoldenMasterTravelReduction } from './goldenMasterWilcomAlignment.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -1617,6 +1618,16 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   });
   commands = professionalPlannerRepair.commands;
 
+  // ── Stage 9: GOLDEN_MASTER_TRAVEL_REDUCTION_V1 — opt-in only ─────────────
+  // Applies only when goldenMasterWilcomAlignment=true and the Yoshi Wilcom
+  // reference profile is explicitly selected. Normal exports are returned
+  // unchanged; original regions/path_points are never mutated.
+  const goldenMasterTravelReduction = applyGoldenMasterTravelReduction(commands, {
+    config,
+    machineSettings: ms,
+  });
+  commands = goldenMasterTravelReduction.commands;
+
   const stitchCount = commands.filter(c => c.type === 'stitch').length;
   const jumpCount = commands.filter(c => c.type === 'jump').length;
   const trimCount = commands.filter(c => c.type === 'trim').length;
@@ -1647,11 +1658,14 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     estimatedTravelReductionPercent: sameColorOrderingReport.estimatedTravelReductionPercent,
     longestObjectToObjectTravelBeforeMm: sameColorOrderingReport.longestObjectToObjectTravelBeforeMm,
     longestObjectToObjectTravelAfterMm: sameColorOrderingReport.longestObjectToObjectTravelAfterMm,
+    goldenMasterTravelReductionApplied: goldenMasterTravelReduction.report.goldenMasterTravelReductionApplied,
+    goldenMasterModeRequiresExplicitFlag: goldenMasterTravelReduction.report.goldenMasterModeRequiresExplicitFlag,
+    goldenMasterTravelReductionReport: goldenMasterTravelReduction.report,
   };
 
   _lastFinalCommandsMeta = meta;
 
-  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, sameColorOrderingReport, validation };
+  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, goldenMasterTravelReductionReport: goldenMasterTravelReduction.report, sameColorOrderingReport, validation };
 }
 
 /**
