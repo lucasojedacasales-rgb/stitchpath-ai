@@ -161,7 +161,6 @@ function createSameColorOrderingReport() {
 function createGoldenMasterTravelReductionReport() {
   return {
     goldenMasterTravelReductionApplied: false,
-    goldenMasterModeRequiresExplicitFlag: true,
     orderedColorGroupCount: 0,
     reorderedObjectCount: 0,
     estimatedTravelBeforeMm: 0,
@@ -609,9 +608,9 @@ function isGoldenMasterTravelReductionEnabled(config = {}, machineSettings = {})
   return config.goldenMasterWilcomAlignment === true && profileId === 'yoshi_wilcom_reference';
 }
 
-function applyGoldenMasterTravelReduction(commands = [], objects = [], machineSettings = {}, config = {}) {
+function applyGoldenMasterTravelReduction(commands = [], objects = [], machineSettings = {}, profile = null) {
   const report = createGoldenMasterTravelReductionReport();
-  if (!isGoldenMasterTravelReductionEnabled(config, machineSettings) || !Array.isArray(commands) || commands.length <= 2) {
+  if (!profile?.goldenMasterWilcomAlignmentApplied || !Array.isArray(commands) || commands.length <= 2) {
     return { commands, report };
   }
 
@@ -714,7 +713,6 @@ function applyGoldenMasterTravelReduction(commands = [], objects = [], machineSe
     commands: output,
     report: {
       goldenMasterTravelReductionApplied: orderedColorGroupCount > 0,
-      goldenMasterModeRequiresExplicitFlag: true,
       orderedColorGroupCount,
       reorderedObjectCount,
       estimatedTravelBeforeMm: roundMetric(estimatedTravelBeforeMm),
@@ -1996,11 +1994,14 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   // Applies only when goldenMasterWilcomAlignment=true and the Yoshi Wilcom
   // reference profile is explicitly selected. Normal exports are returned
   // unchanged; original regions/path_points are never mutated.
+  const goldenMasterProfile = isGoldenMasterTravelReductionEnabled(config, ms)
+    ? { goldenMasterWilcomAlignmentApplied: true }
+    : null;
   const goldenMasterTravelReduction = applyGoldenMasterTravelReduction(
     commands,
     objects,
     ms,
-    config
+    goldenMasterProfile
   );
   commands = goldenMasterTravelReduction.commands;
 
@@ -2040,7 +2041,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     estimatedTravelReductionPercent: sameColorOrderingReport.estimatedTravelReductionPercent,
     longestObjectToObjectTravelBeforeMm: sameColorOrderingReport.longestObjectToObjectTravelBeforeMm,
     longestObjectToObjectTravelAfterMm: sameColorOrderingReport.longestObjectToObjectTravelAfterMm,
-    ...goldenMasterTravelReduction.report,
+    ...(goldenMasterProfile ? goldenMasterTravelReduction.report : createGoldenMasterTravelReductionReport()),
     goldenMasterTravelReductionReport: goldenMasterTravelReduction.report,
   };
 
