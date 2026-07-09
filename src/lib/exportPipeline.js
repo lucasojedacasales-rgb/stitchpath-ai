@@ -35,6 +35,11 @@ import { validateFinalContourCommandsAgainstDarkMask } from './contourSegmentVal
 import { applyProfessionalStitchPlannerRepair } from './professionalStitchPlannerRepair.js';
 import { normalizeBackendFileResponse } from './exportResponseNormalizer.js';
 import { prepareProfessionalLayerObjects } from './professionalLayerKnockout.js';
+import {
+  applyCartoonEmbroideryStructureToObjects,
+  createCartoonEmbroideryStructureReport,
+  prepareCartoonEmbroideryStructureRegions,
+} from './cartoonEmbroideryStructureMode.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -130,6 +135,7 @@ let _lastSameColorNearestNeighborOrderingReport = {
   longestObjectToObjectTravelBeforeMm: 0,
   longestObjectToObjectTravelAfterMm: 0,
 };
+let _lastCartoonEmbroideryStructureReport = createCartoonEmbroideryStructureReport();
 
 function createCE01ZeroFillRecoveryReport() {
   return {
@@ -866,12 +872,15 @@ function generateCE01ZeroOutputFallbackFillCommands(obj, options = {}) {
 export function buildStitchObjects(regions, config = {}) {
   const w = config.width_mm || 100;
   const h = config.height_mm || 100;
+  const cartoonStructureRegions = prepareCartoonEmbroideryStructureRegions(regions, config);
+  const sourceRegions = cartoonStructureRegions.regions;
+  _lastCartoonEmbroideryStructureReport = cartoonStructureRegions.report;
   let objects = [];
   const ce01Flag = config.ce01SafeFillMode !== false;
   console.log(`[ce01-safe-fill-wire] ce01SafeFillMode: ${ce01Flag}`);
   console.log(`[ce01-safe-fill-wire] config received by planner: ${JSON.stringify({ width_mm: w, height_mm: h, mode: config.mode, ce01SafeFillMode: ce01Flag })}`);
 
-  for (const r of regions) {
+  for (const r of sourceRegions) {
     if (r.visible === false) continue;
     const pts = r.path_points || [];
     if (pts.length < 2) continue;
@@ -898,7 +907,7 @@ export function buildStitchObjects(regions, config = {}) {
   }
 
   // ── Generate contour objects (always for export — real stitches, not visual) ──
-  const { objects: contourObjs } = buildContourObjects(regions, config);
+  const { objects: contourObjs } = buildContourObjects(sourceRegions, config);
   objects.push(...contourObjs);
 
   // PROFESSIONAL_LAYER_KNOCKOUT_AND_COLOR_SEQUENCE_V1
@@ -906,6 +915,17 @@ export function buildStitchObjects(regions, config = {}) {
   const professionalLayer = prepareProfessionalLayerObjects(objects);
   objects = professionalLayer.objects;
   console.log('[professional-layer-knockout]', professionalLayer.report);
+
+  const cartoonStructureObjects = applyCartoonEmbroideryStructureToObjects(
+    objects,
+    config,
+    _lastCartoonEmbroideryStructureReport
+  );
+  objects = cartoonStructureObjects.objects;
+  _lastCartoonEmbroideryStructureReport = cartoonStructureObjects.report;
+  if (_lastCartoonEmbroideryStructureReport.cartoonStructureModeApplied) {
+    console.log('[cartoon-embroidery-structure]', _lastCartoonEmbroideryStructureReport);
+  }
 
   // Sort by professional layer/color order; optimizeObjectOrder keeps nearest-neighbor inside each layer.
   objects.sort((a, b) => (a.priority || 5) - (b.priority || 5) || String(a.color || '').localeCompare(String(b.color || '')) || ((a._originalOrder || 0) - (b._originalOrder || 0)));
@@ -2015,6 +2035,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   const colorCount = colorBlockCount;
   const ce01ZeroFillRecoveryReport = _lastCE01ZeroFillRecoveryReport || createCE01ZeroFillRecoveryReport();
   const sameColorOrderingReport = _lastSameColorNearestNeighborOrderingReport || createSameColorOrderingReport();
+  const cartoonStructureReport = _lastCartoonEmbroideryStructureReport || createCartoonEmbroideryStructureReport();
 
   const meta = {
     source: 'ce01_safe_pipeline',
@@ -2041,13 +2062,14 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     estimatedTravelReductionPercent: sameColorOrderingReport.estimatedTravelReductionPercent,
     longestObjectToObjectTravelBeforeMm: sameColorOrderingReport.longestObjectToObjectTravelBeforeMm,
     longestObjectToObjectTravelAfterMm: sameColorOrderingReport.longestObjectToObjectTravelAfterMm,
+    ...cartoonStructureReport,
     ...(goldenMasterProfile ? goldenMasterTravelReduction.report : createGoldenMasterTravelReductionReport()),
     goldenMasterTravelReductionReport: goldenMasterTravelReduction.report,
   };
 
   _lastFinalCommandsMeta = meta;
 
-  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, goldenMasterTravelReductionReport: goldenMasterTravelReduction.report, sameColorOrderingReport, validation };
+  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, goldenMasterTravelReductionReport: goldenMasterTravelReduction.report, sameColorOrderingReport, cartoonStructureReport, validation };
 }
 
 /**
