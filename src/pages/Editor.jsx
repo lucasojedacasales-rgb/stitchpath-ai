@@ -12,14 +12,12 @@ import QualityAnalysisPanel from '@/components/editor/QualityAnalysisPanel.jsx';
 import StitchPlannerPanel from '@/components/editor/StitchPlannerPanel.jsx';
 import IntelligencePanel from '@/components/editor/IntelligencePanel.jsx';
 import TravelOptimizerPanel from '@/components/editor/TravelOptimizerPanel.jsx';
-import EmbroideryPreview from '@/components/editor/EmbroideryPreview.jsx';
 import ExportModal from '@/components/editor/ExportModal';
 import MachineValidatorPanel from '@/components/editor/MachineValidatorPanel';
 import StabilityOptimizerPanel from '@/components/editor/StabilityOptimizerPanel';
 import TravelPathOptimizerPanel from '@/components/editor/TravelPathOptimizerPanel';
 import TrimOptimizerPanel from '@/components/editor/TrimOptimizerPanel';
 import ContourRefinePanel from '@/components/editor/ContourRefinePanel';
-import SewingSimulator from '@/components/editor/SewingSimulator';
 import MachineSimulator from '@/components/editor/MachineSimulator';
 import SimulationReportPanel from '@/components/editor/SimulationReportPanel';
 import FinalLookSimulator from '@/components/editor/FinalLookSimulator.jsx';
@@ -30,8 +28,7 @@ import MaskToolbar from '@/components/editor/MaskToolbar';
 import MaskCanvas from '@/components/editor/MaskCanvas';
 import NeedlePathPanel from '@/components/editor/NeedlePathPanel';
 import { runPipeline } from '@/lib/pipeline/runner';
-import { enrichAllRegions } from '@/lib/regionBuilder.js';
-import { getModeStrategy } from '@/lib/digitizeModes.js';
+import { resolveEffectiveEmbroideryProfile } from '@/lib/embroideryEngineProfiles.js';
 import { filterValidVisualRegions } from '@/lib/visualRegionGuard';
 import { buildFinalCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
 import { calculateUnifiedCommandMetrics } from '@/lib/unifiedCommandMetrics';
@@ -215,13 +212,23 @@ export default function Editor() {
   }, [originalImageUrl, imageUrl, config.originalUploadUrl, project?.thumbnail_url, config.width_mm, config.height_mm, config.color_count]);
 
   const motorConfig = useMemo(() => pickMotorConfig(config), [config]);
-  const motorConfigHash = useMemo(() => stableHash(motorConfig), [motorConfig]);
+  const effectiveProfile = useMemo(() => resolveEffectiveEmbroideryProfile(
+    motorConfig,
+    preprocessSettings,
+    { hoopSize: [config.width_mm || 100, config.height_mm || 100] }
+  ), [motorConfig, preprocessSettings, config.width_mm, config.height_mm]);
+  const effectiveMotorConfig = useMemo(() => ({
+    ...motorConfig,
+    ...effectiveProfile.pipelineConfig,
+    effectiveProfile,
+  }), [motorConfig, effectiveProfile]);
+  const motorConfigHash = useMemo(() => stableHash(effectiveMotorConfig), [effectiveMotorConfig]);
   const darkStrokeVersion = useMemo(() => darkStroke ? (darkStroke.version || darkStroke.imageHash || darkStroke.maskHash || darkStrokeCacheRef.current.key || 'darkStrokeReady') : 'none', [darkStroke]);
 
   // Config with dark stroke mask attached — flows through buildFinalCommands
   // to the contour export builder + segment classifier. Not persisted (mask is
   // a Uint8Array); saveProject uses the base configRef.
-  const configWithDarkStroke = useMemo(() => ({ ...motorConfig, darkStroke }), [motorConfig, darkStroke]);
+  const configWithDarkStroke = useMemo(() => ({ ...effectiveMotorConfig, darkStroke }), [effectiveMotorConfig, darkStroke]);
 
   const maskCanvasRef = useRef(null);
   const [maskTool, setMaskTool] = useState('brush');
@@ -509,15 +516,21 @@ export default function Editor() {
     setStep(2);
 
     try {
-      const inputAudit = buildInputSegmentationAudit({ originalImageUrl, config, project, imageUrl, darkStroke });
-      const ctx = await runPipeline(imageUrl, config, {
-        initialCtx: { ...(aiStrategy ? { aiStrategy } : {}), darkStroke, inputAudit },
+      const processingProfile = resolveEffectiveEmbroideryProfile(configRef.current, preprocessSettings, editorMachineSettings);
+      const processingConfig = {
+        ...configRef.current,
+        ...processingProfile.pipelineConfig,
+        effectiveProfile: processingProfile,
+      };
+      const inputAudit = buildInputSegmentationAudit({ originalImageUrl, config: processingConfig, project, imageUrl, darkStroke });
+      const ctx = await runPipeline(imageUrl, processingConfig, {
+        initialCtx: { ...(aiStrategy ? { aiStrategy } : {}), darkStroke, inputAudit, effectiveProfile: processingProfile },
       });
 
       const rawRegions = ctx.regions || [];
       const cleanup = ctx.qualityPhase1Report
         ? { regions: rawRegions, report: ctx.qualityPhase1Report }
-        : cleanCartoonSegmentationRegions(rawRegions, { ...configRef.current, darkStroke, inputAudit });
+        : cleanCartoonSegmentationRegions(rawRegions, { ...processingConfig, darkStroke, inputAudit });
       console.log('[quality-phase-1-cleanup]', cleanup.report);
       const enrichedRegions = filterValidVisualRegions(cleanup.regions);
       if (enrichedRegions.length === 0) throw new Error('No valid regions generated after pipeline');
@@ -552,7 +565,7 @@ export default function Editor() {
         setAutoLearnedDiff(null);
       }
 
-      const label = aiStrategy ? 'Vectorización IA' : `Vectorización ${config.mode}`;
+      const label = aiStrategy ? 'Vectorización IA' : `Vectorización ${processingProfile.effectiveMode}`;
       const desc  = `${enrichedRegions.length} regiones generadas${aiStrategy ? ' (optimizado por IA)' : ''}`;
 
       await Promise.all([
@@ -563,7 +576,7 @@ export default function Editor() {
         }),
         base44.entities.VersionHistory.create({
           project_id: id, label, description: desc,
-          snapshot: { regions: enrichedRegions, config }, step: 3,
+          snapshot: { regions: enrichedRegions, config: processingConfig }, step: 3,
         }),
       ]);
     } catch (e) {
@@ -993,7 +1006,7 @@ export default function Editor() {
                 finalCommands={finalEmbroideryCommands.commands}
                 finalObjects={finalEmbroideryCommands.objects}
                 regions={regions}
-                config={config}
+                config={configWithDarkStroke}
                 darkStroke={darkStroke}
                 machineSettings={editorMachineSettings}
                 transitionGuardReport={finalEmbroideryCommands.transitionGuardReport}

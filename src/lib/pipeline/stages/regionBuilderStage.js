@@ -32,10 +32,11 @@ export async function runRegionBuilder(ctx) {
     }
   }
 
-  const strategy = getModeStrategy(ctx.config.mode || 'hybrid');
+  const effectiveProfile = ctx.effectiveProfile || ctx.config?.effectiveProfile || null;
+  const strategy = getModeStrategy(effectiveProfile?.effectiveBaseEngine || ctx.config.mode || 'hybrid');
   // Fast mode skips the Adaptive Engine to keep processing time low.
   // All other modes use it for geometry-driven parameter resolution.
-  ctx._useAdaptiveEngine = strategy.stitchStrategy?.useAdaptiveEngine !== false;
+  ctx._useAdaptiveEngine = (effectiveProfile?.effectiveStitchStrategy || strategy.stitchStrategy)?.useAdaptiveEngine !== false;
 
   const { width_mm = 100, height_mm = 100, fabric_type = 'Algodón' } = ctx.config;
 

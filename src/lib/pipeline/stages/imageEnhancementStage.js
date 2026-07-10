@@ -9,8 +9,9 @@ import { getModeStrategy } from '../../digitizeModes.js';
 import { base44 } from '@/api/base44Client';
 
 export async function runImageEnhancement(ctx) {
-  const strategy = getModeStrategy(ctx.config.mode || 'hybrid');
-  const settings = strategy.preprocess || {};
+  const effectiveProfile = ctx.effectiveProfile || ctx.config?.effectiveProfile || null;
+  const strategy = getModeStrategy(effectiveProfile?.effectiveBaseEngine || ctx.config.mode || 'hybrid');
+  const settings = effectiveProfile?.effectivePreprocessSettings || strategy.preprocess || {};
 
   if (!settings.enabled) {
     ctx.enhanced = {

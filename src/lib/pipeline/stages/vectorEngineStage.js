@@ -26,7 +26,8 @@ import {
 import { runVectorizationFusion } from '../../vectorizationFusionEngine.js';
 
 export async function runVectorEngine(ctx) {
-  const strategy = getModeStrategy(ctx.config.mode || 'hybrid');
+  const effectiveProfile = ctx.effectiveProfile || ctx.config?.effectiveProfile || null;
+  const strategy = getModeStrategy(effectiveProfile?.effectiveBaseEngine || ctx.config.mode || 'hybrid');
   const bp       = strategy.backend;
   const cfg      = ctx.config;
   const aiStrategy = ctx.aiStrategy || null;
@@ -110,21 +111,28 @@ export async function runVectorEngine(ctx) {
     mode:             bp.mode,
     width_mm:         cfg.width_mm  || 100,
     height_mm:        cfg.height_mm || 100,
-    color_count:      aiStrategy ? aiStrategy.recommendedParams?.maxColors : bp.color_count || cfg.color_count || 8,
+    color_count:      aiStrategy ? aiStrategy.recommendedParams?.maxColors : effectiveProfile?.effectiveColorCount || bp.color_count || cfg.color_count || 8,
     remove_bg:        cfg.remove_bg || false,
-    use_ia_vision:    aiStrategy ? true : bp.use_ia_vision,
-    use_full_bg:      bp.use_full_bg,
+    use_ia_vision:    aiStrategy ? true : effectiveProfile?.effectiveUseIaVision ?? bp.use_ia_vision,
+    use_full_bg:      effectiveProfile?.effectiveUseFullBackground ?? bp.use_full_bg,
     image_analysis:   ctx.analysis  || null,
     traced_contours:  ctx.contours  || null,
     semantic_objects: semanticSummary,
     content_type:     ctx.analysis?.contentType || null,
-    vector_engine:    bp.vector_engine,
+    vector_engine:    effectiveProfile?.effectiveVectorEngine || bp.vector_engine,
     tatami_density:   aiStrategy
       ? (aiStrategy.stitchType === 'satin' ? 0.6 : aiStrategy.stitchType === 'running' ? 0.2 : 0.4)
-      : bp.tatami_density || cfg.tatami_density || 0.4,
-    fill_angle:       cfg.fill_angle ?? null,
+      : effectiveProfile?.effectiveTatamiDensity ?? bp.tatami_density ?? cfg.tatami_density ?? 0.4,
+    fill_angle:       effectiveProfile?.effectiveFillAngle ?? cfg.fill_angle ?? null,
     max_regions:      bp.max_regions || 150,
-    stitch_strategy:  strategy.stitchStrategy,
+    stitch_strategy:  effectiveProfile?.effectiveStitchStrategy || strategy.stitchStrategy,
+    effective_profile: effectiveProfile ? {
+      profileResolverApplied: true,
+      effectiveMode: effectiveProfile.effectiveMode,
+      effectiveBaseEngine: effectiveProfile.effectiveBaseEngine,
+      effectiveVectorEngine: effectiveProfile.effectiveVectorEngine,
+      effectiveUseFullBackground: effectiveProfile.effectiveUseFullBackground,
+    } : null,
   };
 
   let rawRegions = [];

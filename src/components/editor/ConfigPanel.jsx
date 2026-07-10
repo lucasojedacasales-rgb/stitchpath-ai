@@ -96,7 +96,7 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
       ];
       const { plan, stats } = generateProcessingPlan(mockRegions);
       setIntelligentPlan({ plan, stats });
-      onChange({ ...cfg, mode: 'intelligent', intelligent_plan: plan, ai_optimized: true });
+      onChange({ ...cfg, mode: 'intelligent', intelligent_plan: plan, intelligentPlanConsumed: false, use_ia_vision: true, ai_optimized: true });
     } finally {
       setIsPlanning(false);
     }
@@ -400,7 +400,7 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
                   )}
 
                   <button
-                    onClick={() => onChange({ ...cfg, mode: 'intelligent', intelligent_applied: true, vector_engine: 'hybrid' })}
+                    onClick={() => onChange({ ...cfg, mode: 'intelligent', intelligent_applied: true, intelligentPlanConsumed: false, vector_engine: 'hybrid', use_ia_vision: true })}
                     className="w-full py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-colors"
                   >
                     Aplicar plan inteligente

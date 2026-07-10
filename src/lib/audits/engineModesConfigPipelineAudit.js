@@ -1,4 +1,5 @@
 import { DIGITIZE_MODES, getModeStrategy } from '../digitizeModes.js';
+import { buildEffectiveProfileAuditReport, resolveEffectiveEmbroideryProfile } from '../embroideryEngineProfiles.js';
 
 const REPORT_ID = 'ENGINE_MODES_CONFIG_TO_PIPELINE_AUDIT_V1';
 
@@ -450,9 +451,24 @@ export function runEngineModesConfigToPipelineAudit({
   regions = [],
 } = {}) {
   const generatedAt = new Date().toISOString();
-  const effectiveConfigAudit = buildEffectiveConfigAudit(config, machineSettings);
+  const effectiveProfile = config.effectiveProfile || resolveEffectiveEmbroideryProfile(config, config.effectiveProfile?.requestedProfile?.preprocessSettings || null, machineSettings);
+  const profileAudit = buildEffectiveProfileAuditReport({ config, machineSettings, effectiveProfile });
+  const effectiveConfigAudit = buildEffectiveConfigAudit({ ...config, ...effectiveProfile.pipelineConfig }, machineSettings);
   const uiConfigMap = buildUiConfigMap(config);
-  const conflictingLogic = buildConflicts(uiConfigMap, effectiveConfigAudit);
+  uiConfigMap.preprocessingPanel.reachesPipeline = profileAudit.preprocessingPanelReachable;
+  uiConfigMap.preprocessingPanel.effectiveInPipeline = 'effectiveProfile.effectivePreprocessSettings';
+  uiConfigMap.posterizeControls.reachesPipeline = profileAudit.posterizeControlsReachPipeline;
+  uiConfigMap.posterizeControls.effectiveInPipeline = 'effectiveProfile.effectivePreprocessSettings.posterizeColors/posterizeLevels';
+  uiConfigMap.vectorEngineSelector.effectiveInStandardVectorPayload = effectiveProfile.effectiveVectorEngine;
+  uiConfigMap.vectorEngineSelector.reachesPipeline = profileAudit.vectorEngineHonoredOrExplicitlyReported;
+  uiConfigMap.fullBackgroundToggle.effectiveInStandardVectorPayload = effectiveProfile.effectiveUseFullBackground;
+  uiConfigMap.fullBackgroundToggle.reachesPipeline = profileAudit.fullBackgroundHonoredOrExplicitlyReported;
+  const conflictingLogic = buildConflicts(uiConfigMap, effectiveConfigAudit).filter((item) => ![
+    'vector_engine_ui_ignored',
+    'full_background_toggle_overridden_by_mode',
+    'preprocessing_panel_not_wired_to_pipeline',
+    'density_has_multiple_sources',
+  ].includes(item.id));
   const perModePipelineMap = Object.fromEntries(Object.keys(DIGITIZE_MODES).map((modeId) => [modeId, modePipeline(modeId)]));
   const commandStats = {
     finalCommandCount: finalCommands.length,
@@ -487,6 +503,17 @@ export function runEngineModesConfigToPipelineAudit({
         'preserveLongJumpTrimIntent',
       ],
     },
+    profileResolverApplied: profileAudit.profileResolverApplied,
+    requestedProfile: profileAudit.requestedProfile,
+    effectiveProfile: profileAudit.effectiveProfile,
+    requestedVsEffectiveFields: profileAudit.fieldResolution,
+    conflictsResolved: profileAudit.conflictsResolved,
+    stillUnwired: profileAudit.stillUnwired,
+    preprocessingPanelReachable: profileAudit.preprocessingPanelReachable,
+    posterizeControlsReachPipeline: profileAudit.posterizeControlsReachPipeline,
+    fullBackgroundHonoredOrExplicitlyReported: profileAudit.fullBackgroundHonoredOrExplicitlyReported,
+    vectorEngineHonoredOrExplicitlyReported: profileAudit.vectorEngineHonoredOrExplicitlyReported,
+    densitySourceUnified: profileAudit.densitySourceUnified,
     uiConfigMap,
     effectiveConfigAudit,
     perModePipelineMap,
@@ -529,6 +556,12 @@ export function buildEngineModesConfigToPipelineAuditMarkdown(audit) {
     'exportModified',
     'generatedAt',
     'primaryMismatch',
+    'profileResolverApplied',
+    'preprocessingPanelReachable',
+    'posterizeControlsReachPipeline',
+    'fullBackgroundHonoredOrExplicitlyReported',
+    'vectorEngineHonoredOrExplicitlyReported',
+    'densitySourceUnified',
     'recommendedBaseEngine',
     'recommendedUnifiedArchitecture',
     'recommendedNextStep',
@@ -536,6 +569,23 @@ export function buildEngineModesConfigToPipelineAuditMarkdown(audit) {
   lines.push('');
   lines.push('## Runtime Snapshot');
   pushKeyValues(lines, a.commandStats || {});
+  lines.push('');
+  lines.push('## Requested Profile');
+  pushKeyValues(lines, a.requestedProfile || {});
+  lines.push('');
+  lines.push('## Effective Profile');
+  pushKeyValues(lines, a.effectiveProfile || {});
+  lines.push('');
+  lines.push('## Requested vs Effective Fields');
+  for (const field of a.requestedVsEffectiveFields || []) {
+    lines.push(`- ${field.field}: requested=${mdValue(field.requested)} effective=${mdValue(field.effective)} honored=${field.honored} source=${field.source}${field.note ? ` note=${field.note}` : ''}`);
+  }
+  lines.push('');
+  lines.push('## Conflicts Resolved');
+  for (const item of a.conflictsResolved || []) lines.push(`- ${item}`);
+  lines.push('');
+  lines.push('## Still Unwired');
+  for (const item of a.stillUnwired || []) lines.push(`- ${item}`);
   lines.push('');
   lines.push('## Effective Config Audit');
   pushKeyValues(lines, a.effectiveConfigAudit || {});
@@ -600,6 +650,12 @@ export function buildEngineModesConfigToPipelineAuditMarkdown(audit) {
   lines.push('- commandsModified=false');
   lines.push('- exportModified=false');
   lines.push('- encodersTouched=false');
+  lines.push(`- profileResolverApplied=${a.profileResolverApplied === true}`);
+  lines.push(`- preprocessingPanelReachable=${a.preprocessingPanelReachable === true}`);
+  lines.push(`- posterizeControlsReachPipeline=${a.posterizeControlsReachPipeline === true}`);
+  lines.push(`- fullBackgroundHonoredOrExplicitlyReported=${a.fullBackgroundHonoredOrExplicitlyReported === true}`);
+  lines.push(`- vectorEngineHonoredOrExplicitlyReported=${a.vectorEngineHonoredOrExplicitlyReported === true}`);
+  lines.push(`- densitySourceUnified=${a.densitySourceUnified === true}`);
   return lines.join('\n');
 }
 
