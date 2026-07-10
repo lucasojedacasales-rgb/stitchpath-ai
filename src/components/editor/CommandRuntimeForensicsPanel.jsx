@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Download, Search, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { buildRegionToCommandCoverageAuditMarkdown, runRegionToCommandCoverageAudit } from '@/lib/audits/regionToCommandCoverageAudit.js';
+import { buildEngineModesConfigPipelineAuditMarkdown, runEngineModesConfigPipelineAudit } from '@/lib/audits/engineModesConfigPipelineAudit.js';
 
 const SEVERITY_RANK = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
 
@@ -43,6 +44,20 @@ export default function CommandRuntimeForensicsPanel({
     downloadBlob(md, 'QUALITY_PHASE_2B_REGION_TO_FINAL_COMMAND_COVERAGE_AUDIT_REPORT_V1.md');
   };
 
+  const downloadEngineModesConfigPipelineReport = () => {
+    const engineModesAudit = runEngineModesConfigPipelineAudit({
+      finalCommands,
+      finalObjects,
+      regions,
+      config,
+      machineSettings,
+      commandSourceLabel,
+    });
+    const md = buildEngineModesConfigPipelineAuditMarkdown(engineModesAudit);
+    setLastReport(engineModesAudit);
+    downloadBlob(md, 'ENGINE_MODES_CONFIG_TO_PIPELINE_AUDIT_V1.md');
+  };
+
   const downloadGuardReport = () => {
     if (!transitionGuardMd) return;
     downloadBlob(transitionGuardMd, 'STITCHED_TRANSITION_TO_JUMP_GUARD_REPORT_V1.md');
@@ -69,6 +84,9 @@ export default function CommandRuntimeForensicsPanel({
           </button>
           <button onClick={downloadRegionCoverageReport} className="flex items-center gap-1.5 rounded-lg border border-violet-500/30 bg-violet-900/20 px-3 py-1.5 text-xs font-bold text-violet-200 hover:bg-violet-900/30 transition-colors">
             <Download className="w-3.5 h-3.5" /> Cobertura regiones
+          </button>
+          <button onClick={downloadEngineModesConfigPipelineReport} className="flex items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-900/20 px-3 py-1.5 text-xs font-bold text-sky-200 hover:bg-sky-900/30 transition-colors">
+            <Download className="w-3.5 h-3.5" /> Modos config
           </button>
           <button onClick={() => downloadReport()} className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500 transition-colors">
             <Download className="w-3.5 h-3.5" /> Auditar comandos finales
