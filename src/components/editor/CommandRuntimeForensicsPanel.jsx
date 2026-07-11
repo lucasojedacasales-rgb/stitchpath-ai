@@ -3,6 +3,7 @@ import { Download, Search, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { buildRegionToCommandCoverageAuditMarkdown, runRegionToCommandCoverageAudit } from '@/lib/audits/regionToCommandCoverageAudit.js';
 import { buildEngineModesConfigToPipelineAuditMarkdown, runEngineModesConfigToPipelineAudit } from '@/lib/audits/engineModesConfigPipelineAudit.js';
 import { buildPreviewToExportParityAuditMarkdown, runPreviewToExportParityAudit } from '@/lib/audits/previewToExportParityAudit.js';
+import { buildEngineProfileBenchmarkMarkdown, runEngineProfileBenchmark } from '@/lib/audits/engineProfileBenchmark.js';
 import { buildUniversalAutoDigitizerProMarkdown, createUniversalAutoDigitizerProReport } from '@/lib/universalAutoDigitizerPro.js';
 
 const SEVERITY_RANK = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
@@ -82,6 +83,13 @@ export default function CommandRuntimeForensicsPanel({
     downloadBlob(md, 'UNIVERSAL_AUTO_DIGITIZER_PRO_REPORT_V1.md');
   };
 
+  const downloadEngineProfileBenchmarkReport = () => {
+    const benchmark = runEngineProfileBenchmark({ regions, config, machineSettings, finalCommands });
+    const md = buildEngineProfileBenchmarkMarkdown(benchmark);
+    setLastReport(benchmark);
+    downloadBlob(md, 'ENGINE_PROFILE_BENCHMARK_V1.md');
+  };
+
   const downloadGuardReport = () => {
     if (!transitionGuardMd) return;
     downloadBlob(transitionGuardMd, 'STITCHED_TRANSITION_TO_JUMP_GUARD_REPORT_V1.md');
@@ -111,6 +119,9 @@ export default function CommandRuntimeForensicsPanel({
           </button>
           <button onClick={downloadEngineModesConfigReport} className="flex items-center gap-1.5 rounded-lg border border-slate-500/30 bg-slate-900/20 px-3 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-900/30 transition-colors">
             <Download className="w-3.5 h-3.5" /> Modos/config
+          </button>
+          <button onClick={downloadEngineProfileBenchmarkReport} className="flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-900/20 px-3 py-1.5 text-xs font-bold text-blue-200 hover:bg-blue-900/30 transition-colors">
+            <Download className="w-3.5 h-3.5" /> Benchmark motores
           </button>
           <button onClick={downloadPreviewExportParityReport} className="flex items-center gap-1.5 rounded-lg border border-orange-500/30 bg-orange-900/20 px-3 py-1.5 text-xs font-bold text-orange-200 hover:bg-orange-900/30 transition-colors">
             <Download className="w-3.5 h-3.5" /> Paridad preview/export
