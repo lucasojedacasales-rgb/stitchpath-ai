@@ -5,7 +5,7 @@ import { buildEngineModesConfigToPipelineAuditMarkdown, runEngineModesConfigToPi
 import { buildPreviewToExportParityAuditMarkdown, runPreviewToExportParityAudit } from '@/lib/audits/previewToExportParityAudit.js';
 import { buildEngineProfileBenchmarkMarkdown, runEngineProfileBenchmark } from '@/lib/audits/engineProfileBenchmark.js';
 import { buildUnifiedStandardProProfileMarkdown, createUnifiedStandardProProfileReport } from '@/lib/audits/unifiedStandardProProfileReport.js';
-import { buildTravelAndMicroDetailCleanupMarkdown } from '@/lib/travelAndMicroDetailCleanup.js';
+import { buildTravelAndMicroDetailCleanupMarkdown, createTravelAndMicroDetailCleanupReport } from '@/lib/travelAndMicroDetailCleanup.js';
 import { buildUniversalAutoDigitizerProMarkdown, createUniversalAutoDigitizerProReport } from '@/lib/universalAutoDigitizerPro.js';
 
 const SEVERITY_RANK = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
@@ -98,10 +98,23 @@ export default function CommandRuntimeForensicsPanel({
   };
 
   const downloadTravelAndMicroDetailCleanupReport = () => {
-    const report = commandMeta?.travelAndMicroDetailCleanupReport || null;
+    const report = commandMeta?.travelAndMicroDetailCleanupReport || createTravelAndMicroDetailCleanupReport({
+      travelCleanupApplied: commandMeta?.travelCleanupApplied === true,
+      sameColorBlocksMerged: commandMeta?.sameColorBlocksMerged || 0,
+      microFragmentsSuppressed: commandMeta?.microFragmentsSuppressed || 0,
+      microFragmentsMerged: commandMeta?.microFragmentsMerged || 0,
+      trimsInsertedForTravel: commandMeta?.trimsInsertedForTravel || 0,
+      jumpCountBefore: commandMeta?.jumpCountBefore || 0,
+      jumpCountAfter: commandMeta?.jumpCountAfter || 0,
+      jumpsOver10mmBefore: commandMeta?.jumpsOver10mmBefore || 0,
+      jumpsOver10mmAfter: commandMeta?.jumpsOver10mmAfter || 0,
+      totalJumpTravelMmBefore: commandMeta?.totalJumpTravelMmBefore || 0,
+      totalJumpTravelMmAfter: commandMeta?.totalJumpTravelMmAfter || 0,
+      estimatedTravelReductionPercent: commandMeta?.estimatedTravelReductionPercent || 0,
+    });
     const md = buildTravelAndMicroDetailCleanupMarkdown(report);
-    setLastReport(report || { generatedAt: new Date().toISOString() });
-    downloadBlob(md, 'TRAVEL_AND_MICRO_DETAIL_CLEANUP_V1.md');
+    setLastReport(report);
+    downloadBlob(md, 'TRAVEL_AND_MICRO_DETAIL_CLEANUP_REPORT_V1.md');
   };
 
   const downloadEngineProfileBenchmarkReport = async () => {

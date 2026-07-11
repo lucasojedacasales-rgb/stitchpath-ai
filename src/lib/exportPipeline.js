@@ -44,7 +44,11 @@ import {
   applyUniversalAutoDigitizerPro,
   createUniversalAutoDigitizerProReport,
 } from './universalAutoDigitizerPro.js';
-import { applyTravelAndMicroDetailCleanup } from './travelAndMicroDetailCleanup.js';
+import {
+  applyTravelAndMicroDetailCleanupToCommands,
+  applyTravelAndMicroDetailCleanupToObjects,
+  createTravelAndMicroDetailCleanupReport,
+} from './travelAndMicroDetailCleanup.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -142,6 +146,7 @@ let _lastSameColorNearestNeighborOrderingReport = {
 };
 let _lastCartoonEmbroideryStructureReport = createCartoonEmbroideryStructureReport();
 let _lastUniversalAutoDigitizerProReport = createUniversalAutoDigitizerProReport();
+let _lastTravelAndMicroDetailCleanupReport = createTravelAndMicroDetailCleanupReport();
 
 function createCE01ZeroFillRecoveryReport() {
   return {
@@ -875,7 +880,7 @@ function generateCE01ZeroOutputFallbackFillCommands(obj, options = {}) {
   return countStitchCommands(commands) > 0 ? commands : [];
 }
 
-export function buildStitchObjects(regions, config = {}) {
+export function buildStitchObjects(regions, config = {}, machineSettings = {}) {
   const w = config.width_mm || 100;
   const h = config.height_mm || 100;
   const cartoonStructureRegions = prepareCartoonEmbroideryStructureRegions(regions, config);
@@ -938,6 +943,17 @@ export function buildStitchObjects(regions, config = {}) {
   _lastCartoonEmbroideryStructureReport = cartoonStructureObjects.report;
   if (_lastCartoonEmbroideryStructureReport.cartoonStructureModeApplied) {
     console.log('[cartoon-embroidery-structure]', _lastCartoonEmbroideryStructureReport);
+  }
+
+  const travelCleanupObjects = applyTravelAndMicroDetailCleanupToObjects(
+    objects,
+    config,
+    machineSettings
+  );
+  objects = travelCleanupObjects.objects;
+  _lastTravelAndMicroDetailCleanupReport = travelCleanupObjects.report;
+  if (_lastTravelAndMicroDetailCleanupReport.travelCleanupApplied) {
+    console.log('[travel-and-micro-detail-cleanup:objects]', _lastTravelAndMicroDetailCleanupReport);
   }
 
   // Sort by professional layer/color order; optimizeObjectOrder keeps nearest-neighbor inside each layer.
@@ -1897,7 +1913,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   const ms = { ...DEFAULT_MACHINE, ...machineSettings };
 
   // Stage 1: regions → objects
-  const objects = buildStitchObjects(regions, config);
+  const objects = buildStitchObjects(regions, config, ms);
 
   // Stage 2: objects → raw commands
   let commands = flattenToCommands(objects, ms);
@@ -2025,18 +2041,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   });
   commands = professionalPlannerRepair.commands;
 
-  // ── Stage 9: TRAVEL_AND_MICRO_DETAIL_CLEANUP_V1 — opt-in only ────────────
-  // Command-only cleanup. It never mutates original regions/path_points and is
-  // active only when config.travelAndMicroDetailCleanup=true.
-  const travelAndMicroDetailCleanup = applyTravelAndMicroDetailCleanup({
-    commands,
-    regions,
-    config,
-    machineSettings: ms,
-  });
-  commands = travelAndMicroDetailCleanup.commands;
-
-  // ── Stage 10: GOLDEN_MASTER_TRAVEL_REDUCTION_V1 — opt-in only ────────────
+  // ── Stage 9: GOLDEN_MASTER_TRAVEL_REDUCTION_V1 — opt-in only ─────────────
   // Applies only when goldenMasterWilcomAlignment=true and the Yoshi Wilcom
   // reference profile is explicitly selected. Normal exports are returned
   // unchanged; original regions/path_points are never mutated.
@@ -2051,6 +2056,16 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   );
   commands = goldenMasterTravelReduction.commands;
 
+  const travelCleanup = applyTravelAndMicroDetailCleanupToCommands(
+    commands,
+    objects,
+    config,
+    ms,
+    _lastTravelAndMicroDetailCleanupReport
+  );
+  commands = travelCleanup.commands;
+  _lastTravelAndMicroDetailCleanupReport = travelCleanup.report;
+
   const stitchCount = commands.filter(c => c.type === 'stitch').length;
   const jumpCount = commands.filter(c => c.type === 'jump').length;
   const trimCount = commands.filter(c => c.type === 'trim').length;
@@ -2063,6 +2078,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   const sameColorOrderingReport = _lastSameColorNearestNeighborOrderingReport || createSameColorOrderingReport();
   const cartoonStructureReport = _lastCartoonEmbroideryStructureReport || createCartoonEmbroideryStructureReport();
   const universalAutoDigitizerProReport = _lastUniversalAutoDigitizerProReport || createUniversalAutoDigitizerProReport();
+  const travelCleanupReport = _lastTravelAndMicroDetailCleanupReport || createTravelAndMicroDetailCleanupReport();
 
   const meta = {
     source: 'ce01_safe_pipeline',
@@ -2092,15 +2108,26 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     ...cartoonStructureReport,
     ...universalAutoDigitizerProReport,
     universalAutoDigitizerProReport,
-    ...travelAndMicroDetailCleanup.report,
-    travelAndMicroDetailCleanupReport: travelAndMicroDetailCleanup.report,
+    travelAndMicroDetailCleanupReport: travelCleanupReport,
+    travelCleanupApplied: travelCleanupReport.travelCleanupApplied,
+    sameColorBlocksMerged: travelCleanupReport.sameColorBlocksMerged,
+    microFragmentsSuppressed: travelCleanupReport.microFragmentsSuppressed,
+    microFragmentsMerged: travelCleanupReport.microFragmentsMerged,
+    trimsInsertedForTravel: travelCleanupReport.trimsInsertedForTravel,
+    jumpCountBefore: travelCleanupReport.jumpCountBefore,
+    jumpCountAfter: travelCleanupReport.jumpCountAfter,
+    jumpsOver10mmBefore: travelCleanupReport.jumpsOver10mmBefore,
+    jumpsOver10mmAfter: travelCleanupReport.jumpsOver10mmAfter,
+    totalJumpTravelMmBefore: travelCleanupReport.totalJumpTravelMmBefore,
+    totalJumpTravelMmAfter: travelCleanupReport.totalJumpTravelMmAfter,
+    estimatedTravelReductionPercent: travelCleanupReport.estimatedTravelReductionPercent,
     ...(goldenMasterProfile ? goldenMasterTravelReduction.report : createGoldenMasterTravelReductionReport()),
     goldenMasterTravelReductionReport: goldenMasterTravelReduction.report,
   };
 
   _lastFinalCommandsMeta = meta;
 
-  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, travelAndMicroDetailCleanupReport: travelAndMicroDetailCleanup.report, goldenMasterTravelReductionReport: goldenMasterTravelReduction.report, sameColorOrderingReport, cartoonStructureReport, universalAutoDigitizerProReport, validation };
+  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, travelCleanupReport, goldenMasterTravelReductionReport: goldenMasterTravelReduction.report, sameColorOrderingReport, cartoonStructureReport, universalAutoDigitizerProReport, validation };
 }
 
 /**
