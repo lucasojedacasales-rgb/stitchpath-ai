@@ -18,13 +18,16 @@ export default function CommandRuntimeForensicsPanel({
   const audit = useMemo(() => runRuntimeForensics({ finalCommands, finalObjects, regions, config, darkStroke, machineSettings, exportCommands, commandSourceLabel }), [finalCommands, finalObjects, regions, config, darkStroke, machineSettings, exportCommands, commandSourceLabel]);
 
   const downloadBlob = (content, filename) => {
-    const blob = new Blob([content], { type: 'text/markdown' });
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const downloadReport = (filename = 'EMBROIDERY_COMMAND_RUNTIME_FORENSICS_V1.md') => {
@@ -92,6 +95,43 @@ export default function CommandRuntimeForensicsPanel({
       const md = buildEngineProfileBenchmarkMarkdown(benchmark);
       setLastReport(benchmark);
       downloadBlob(md, 'ENGINE_PROFILE_BENCHMARK_V1.md');
+    } catch (error) {
+      const fallbackReport = {
+        reportId: 'ENGINE_PROFILE_BENCHMARK_V1',
+        generatedAt: new Date().toISOString(),
+        benchmarkOnly: true,
+        generationBehaviorChanged: false,
+        benchmarkValid: false,
+        modeDivergenceDetected: false,
+        isolatedPipelineRuns: false,
+        reusedCurrentCommandsDetected: false,
+        reason: 'benchmark_export_failed_runtime_error',
+        commandsModified: false,
+        regionsModified: false,
+        originalPathPointsMutated: false,
+        exportModified: false,
+        encodersTouched: false,
+        ExportModalTouched: false,
+        MachineSimulatorTouched: false,
+        FinalLookTouched: false,
+        rows: [{ modeName: 'benchmark-export', pipelineActuallyExecuted: false, error: error?.message || 'unknown benchmark export error' }],
+        summary: {
+          recommendedBaseMode: 'undetermined',
+          recommendedUnifiedArchitecture: 'undetermined',
+          safestNextImplementationStep: 'Revisar el error incluido en este reporte y repetir el benchmark desde Diagnóstico.',
+          bestModeOverall: 'undetermined',
+          bestModeForVectorization: 'undetermined',
+          bestModeForOutline: 'undetermined',
+          bestModeForFills: 'undetermined',
+          bestModeForTravel: 'undetermined',
+          worstMode: 'undetermined',
+          worstModeReason: error?.message || 'unknown benchmark export error',
+          recommendedPiecesToKeep: [],
+          recommendedPiecesToRemove: [],
+        },
+      };
+      setLastReport(fallbackReport);
+      downloadBlob(buildEngineProfileBenchmarkMarkdown(fallbackReport), 'ENGINE_PROFILE_BENCHMARK_V1_ERROR.md');
     } finally {
       setBenchmarkRunning(false);
     }
