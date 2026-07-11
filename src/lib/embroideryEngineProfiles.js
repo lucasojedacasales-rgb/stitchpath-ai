@@ -139,6 +139,8 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
   const requestedFillAngle = hasOwn(config, 'fill_angle') ? config.fill_angle : undefined;
   const requestedColorCount = hasOwn(config, 'color_count') ? config.color_count : undefined;
   const requestedCartoonStructure = config.cartoonEmbroideryStructureMode === true;
+  const requestedTravelAndMicroDetailCleanup = config.travelAndMicroDetailCleanup === true;
+  const requestedUniversalAutoDigitizerPro = config.universalAutoDigitizerPro === true;
   const panelPreprocess = preprocessSettings && typeof preprocessSettings === 'object' ? preprocessSettings : null;
 
   const effectivePreprocessSettings = unifiedStandardProRequested ? {
@@ -180,6 +182,8 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
     valueRecord('tatami_density', requestedTatamiDensity, effectiveTatamiDensity, requestedTatamiDensity == null ? 'mode backend default' : 'ConfigPanel tatami density'),
     valueRecord('fill_angle', requestedFillAngle, effectiveFillAngle, 'ConfigPanel fill angle'),
     valueRecord('cartoonEmbroideryStructureMode', requestedCartoonStructure, requestedCartoonStructure, 'explicit opt-in only'),
+    valueRecord('travelAndMicroDetailCleanup', requestedTravelAndMicroDetailCleanup, requestedTravelAndMicroDetailCleanup, 'explicit opt-in only'),
+    valueRecord('universalAutoDigitizerPro', requestedUniversalAutoDigitizerPro, requestedUniversalAutoDigitizerPro, 'explicit opt-in only'),
     valueRecord('goldenMasterProfileId', config.goldenMasterProfileId || null, effectiveGoldenMasterProfileId, 'explicit golden master config'),
   ];
 
@@ -213,7 +217,8 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
     stageTravelOptimizer: unifiedStandardProRequested ? true : config.stageTravelOptimizer,
     cartoonEmbroideryStructureMode: unifiedStandardProRequested ? requestedCartoonStructure : requestedCartoonStructure,
     goldenMasterProfileId: unifiedStandardProRequested ? null : effectiveGoldenMasterProfileId,
-    universalAutoDigitizerPro: unifiedStandardProRequested ? false : config.universalAutoDigitizerPro,
+    universalAutoDigitizerPro: requestedUniversalAutoDigitizerPro,
+    travelAndMicroDetailCleanup: requestedTravelAndMicroDetailCleanup,
     learnedFillDensityMm: config.learnedFillDensityMm ?? effectiveTatamiDensity,
     preprocessSettingsReachPipeline: true,
     posterizeControlsReachPipeline: true,
@@ -236,6 +241,8 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
       tatami_density: requestedTatamiDensity ?? null,
       fill_angle: requestedFillAngle ?? null,
       cartoonEmbroideryStructureMode: requestedCartoonStructure,
+      travelAndMicroDetailCleanup: requestedTravelAndMicroDetailCleanup,
+      universalAutoDigitizerPro: requestedUniversalAutoDigitizerPro,
       goldenMasterProfileId: config.goldenMasterProfileId || null,
     },
     unifiedStandardProProfileApplied: unifiedStandardProRequested,
@@ -253,6 +260,8 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
     effectiveTatamiDensity,
     effectiveFillAngle,
     effectiveCartoonStructureMode: requestedCartoonStructure,
+    effectiveTravelAndMicroDetailCleanup: requestedTravelAndMicroDetailCleanup,
+    effectiveUniversalAutoDigitizerPro: requestedUniversalAutoDigitizerPro,
     effectiveGoldenMasterProfileId,
     effectiveStitchStrategy: {
       ...(strategy.stitchStrategy || {}),

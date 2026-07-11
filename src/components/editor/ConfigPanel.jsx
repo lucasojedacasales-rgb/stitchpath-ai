@@ -528,6 +528,7 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
           <Toggle label="Secuenciación AI-aware" value={cfg.ai_sequence || false} onChange={v => set('ai_sequence', v)} />
           <Toggle label="Perfil Standard Pro unificado" value={cfg.unifiedStandardProProfile === true || cfg.profile_id === 'unified_standard_pro'} onChange={setUnifiedStandardProProfile} />
           <Toggle label="Universal Auto Digitizer Pro" value={cfg.universalAutoDigitizerPro || false} onChange={v => set('universalAutoDigitizerPro', v)} />
+          <Toggle label="Travel + micro-detail cleanup" value={cfg.travelAndMicroDetailCleanup || false} onChange={v => set('travelAndMicroDetailCleanup', v)} />
           <div className="py-1.5">
             <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-1 block">Compensación de tensión</label>
             <input

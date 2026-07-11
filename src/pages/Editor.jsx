@@ -94,6 +94,7 @@ const DEFAULT_CONFIG = {
   experimentalFinalLookSimulator: false,
   experimentalAestheticPreservation: false,
   professionalMode: false,
+  unifiedStandardProProfile: false,
   universalAutoDigitizerPro: false,
   travelAndMicroDetailCleanup: false,
 };
@@ -106,8 +107,9 @@ function pickMotorConfig(config = {}) {
   const keys = [
     'fabric_type', 'width_mm', 'height_mm', 'color_count', 'mode', 'remove_bg', 'tension_comp',
     'fill_angle', 'tatami_density', 'vector_engine', 'useVectorFusion', 'contourSafeMode',
-    'ce01SafeFillMode', 'ce01ProductionMode', 'validationMode', 'professionalMode', 'universalAutoDigitizerPro',
-    'travelAndMicroDetailCleanup', 'learnedFillDensityMm', 'learnedFillAngleDeg', 'learnedNeighborAngleVariationDeg',
+    'ce01SafeFillMode', 'ce01ProductionMode', 'validationMode', 'professionalMode', 'unifiedStandardProProfile',
+    'profile_id', 'profileId', 'engineProfileId', 'universalAutoDigitizerPro', 'travelAndMicroDetailCleanup',
+    'learnedFillDensityMm', 'learnedFillAngleDeg', 'learnedNeighborAngleVariationDeg',
   ];
   return keys.reduce((out, key) => { if (config[key] !== undefined) out[key] = config[key]; return out; }, {});
 }

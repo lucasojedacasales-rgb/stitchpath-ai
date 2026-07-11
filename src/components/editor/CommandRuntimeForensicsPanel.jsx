@@ -100,6 +100,14 @@ export default function CommandRuntimeForensicsPanel({
   const downloadTravelAndMicroDetailCleanupReport = () => {
     const report = commandMeta?.travelAndMicroDetailCleanupReport || createTravelAndMicroDetailCleanupReport({
       travelCleanupApplied: commandMeta?.travelCleanupApplied === true,
+      requestedTravelCleanup: commandMeta?.requestedTravelCleanup === true,
+      effectiveTravelCleanup: commandMeta?.effectiveTravelCleanup === true,
+      requestedUnifiedStandardProProfile: commandMeta?.requestedUnifiedStandardProProfile === true,
+      effectiveUnifiedStandardProProfile: commandMeta?.effectiveUnifiedStandardProProfile === true,
+      requestedUniversalAutoDigitizerPro: commandMeta?.requestedUniversalAutoDigitizerPro === true,
+      effectiveUniversalAutoDigitizerPro: commandMeta?.effectiveUniversalAutoDigitizerPro === true,
+      activationLostAt: commandMeta?.activationLostAt || ['finalEmbroideryCommands meta'],
+      activationLossTrace: commandMeta?.activationLossTrace || { finalEmbroideryCommandsMeta: 'travelAndMicroDetailCleanupReport missing from command meta' },
       sameColorBlocksMerged: commandMeta?.sameColorBlocksMerged || 0,
       microFragmentsSuppressed: commandMeta?.microFragmentsSuppressed || 0,
       microFragmentsMerged: commandMeta?.microFragmentsMerged || 0,

@@ -12,6 +12,47 @@ export function shouldApplyTravelAndMicroDetailCleanup(config = {}) {
     config.unifiedStandardProProfile === true;
 }
 
+function requestedUnifiedStandardProProfile(config = {}) {
+  const requested = config.effectiveProfile?.requestedProfile?.unifiedStandardProProfile;
+  if (requested != null) return requested === true;
+  return config.unifiedStandardProProfile === true ||
+    config.profile_id === 'unified_standard_pro' ||
+    config.profileId === 'unified_standard_pro' ||
+    config.engineProfileId === 'unified_standard_pro';
+}
+
+function requestedFlag(config = {}, key) {
+  const requested = config.effectiveProfile?.requestedProfile?.[key];
+  return requested != null ? requested === true : config[key] === true;
+}
+
+function buildActivationLossTrace({ requestedTravelCleanup, effectiveTravelCleanup, requestedUnifiedStandardProProfile, effectiveUnifiedStandardProProfile, requestedUniversalAutoDigitizerPro, effectiveUniversalAutoDigitizerPro, gateEnabled, hasProfileResolver }) {
+  const trace = {
+    UI: 'ok',
+    profileResolver: 'ok',
+    EditorState: 'ok',
+    exportPipeline: 'ok',
+    finalEmbroideryCommandsMeta: 'pending',
+  };
+  const lostAt = [];
+
+  if (!requestedTravelCleanup) { trace.UI = 'travelAndMicroDetailCleanup=false'; lostAt.push('UI'); }
+  if (!requestedUnifiedStandardProProfile) { trace.UI = trace.UI === 'ok' ? 'unifiedStandardProProfile=false' : `${trace.UI}; unifiedStandardProProfile=false`; lostAt.push('UI'); }
+  if (!requestedUniversalAutoDigitizerPro) { trace.UI = trace.UI === 'ok' ? 'universalAutoDigitizerPro=false' : `${trace.UI}; universalAutoDigitizerPro=false`; lostAt.push('UI'); }
+
+  if (requestedTravelCleanup && !effectiveTravelCleanup) { trace.EditorState = 'travelAndMicroDetailCleanup lost before export config'; lostAt.push(hasProfileResolver ? 'profile resolver' : 'Editor state'); }
+  if (requestedUnifiedStandardProProfile && !effectiveUnifiedStandardProProfile) { trace.profileResolver = 'unifiedStandardProProfile lost or not resolved'; lostAt.push('profile resolver'); }
+  if (requestedUniversalAutoDigitizerPro && !effectiveUniversalAutoDigitizerPro) { trace.profileResolver = 'universalAutoDigitizerPro lost or overridden'; lostAt.push('profile resolver'); }
+
+  if (effectiveTravelCleanup && effectiveUnifiedStandardProProfile && effectiveUniversalAutoDigitizerPro && !gateEnabled) {
+    trace.exportPipeline = 'effective flags true but gate disabled';
+    lostAt.push('export pipeline');
+  }
+
+  trace.finalEmbroideryCommandsMeta = gateEnabled ? 'gate state included in meta report' : 'gate-disabled state included in meta report';
+  return { trace, lostAt: [...new Set(lostAt)] };
+}
+
 export function createTravelAndMicroDetailCleanupReport(overrides = {}) {
   return {
     reportId: REPORT_ID,
@@ -19,10 +60,24 @@ export function createTravelAndMicroDetailCleanupReport(overrides = {}) {
     generatedAt: new Date().toISOString(),
     travelCleanupApplied: false,
     gateEnabled: false,
+    requestedTravelCleanup: false,
+    effectiveTravelCleanup: false,
+    requestedUnifiedStandardProProfile: false,
+    effectiveUnifiedStandardProProfile: false,
+    requestedUniversalAutoDigitizerPro: false,
+    effectiveUniversalAutoDigitizerPro: false,
     requiredFlags: {
       travelAndMicroDetailCleanup: false,
       universalAutoDigitizerPro: false,
       unifiedStandardProProfile: false,
+    },
+    activationLostAt: [],
+    activationLossTrace: {
+      UI: 'unknown',
+      profileResolver: 'unknown',
+      EditorState: 'unknown',
+      exportPipeline: 'unknown',
+      finalEmbroideryCommandsMeta: 'unknown',
     },
     sameColorBlocksMerged: 0,
     microFragmentsSuppressed: 0,
@@ -215,18 +270,57 @@ function nearestSameColorAnchor(object, anchors) {
 }
 
 function reportGate(config = {}) {
+  const effectiveTravelCleanup = config.travelAndMicroDetailCleanup === true;
+  const effectiveUnifiedStandardProProfile = config.unifiedStandardProProfile === true;
+  const effectiveUniversalAutoDigitizerPro = config.universalAutoDigitizerPro === true;
+  const requestedTravelCleanup = requestedFlag(config, 'travelAndMicroDetailCleanup');
+  const requestedUniversalAutoDigitizerPro = requestedFlag(config, 'universalAutoDigitizerPro');
+  const requestedUnifiedStandardPro = requestedUnifiedStandardProProfile(config);
+  const gateEnabled = effectiveTravelCleanup && effectiveUnifiedStandardProProfile && effectiveUniversalAutoDigitizerPro;
+  const activation = buildActivationLossTrace({
+    requestedTravelCleanup,
+    effectiveTravelCleanup,
+    requestedUnifiedStandardProProfile: requestedUnifiedStandardPro,
+    effectiveUnifiedStandardProProfile,
+    requestedUniversalAutoDigitizerPro,
+    effectiveUniversalAutoDigitizerPro,
+    gateEnabled,
+    hasProfileResolver: config.profileResolverApplied === true || config.effectiveProfile?.profileResolverApplied === true,
+  });
+
   return {
-    travelAndMicroDetailCleanup: config.travelAndMicroDetailCleanup === true,
-    universalAutoDigitizerPro: config.universalAutoDigitizerPro === true,
-    unifiedStandardProProfile: config.unifiedStandardProProfile === true,
+    travelAndMicroDetailCleanup: effectiveTravelCleanup,
+    universalAutoDigitizerPro: effectiveUniversalAutoDigitizerPro,
+    unifiedStandardProProfile: effectiveUnifiedStandardProProfile,
+    requestedTravelCleanup,
+    effectiveTravelCleanup,
+    requestedUnifiedStandardProProfile: requestedUnifiedStandardPro,
+    effectiveUnifiedStandardProProfile,
+    requestedUniversalAutoDigitizerPro,
+    effectiveUniversalAutoDigitizerPro,
+    gateEnabled,
+    activationLostAt: activation.lostAt,
+    activationLossTrace: activation.trace,
   };
 }
 
 export function applyTravelAndMicroDetailCleanupToObjects(objects = [], config = {}, machineSettings = {}) {
   const gate = reportGate(config);
   const report = createTravelAndMicroDetailCleanupReport({
-    gateEnabled: shouldApplyTravelAndMicroDetailCleanup(config),
-    requiredFlags: gate,
+    gateEnabled: gate.gateEnabled,
+    requestedTravelCleanup: gate.requestedTravelCleanup,
+    effectiveTravelCleanup: gate.effectiveTravelCleanup,
+    requestedUnifiedStandardProProfile: gate.requestedUnifiedStandardProProfile,
+    effectiveUnifiedStandardProProfile: gate.effectiveUnifiedStandardProProfile,
+    requestedUniversalAutoDigitizerPro: gate.requestedUniversalAutoDigitizerPro,
+    effectiveUniversalAutoDigitizerPro: gate.effectiveUniversalAutoDigitizerPro,
+    requiredFlags: {
+      travelAndMicroDetailCleanup: gate.travelAndMicroDetailCleanup,
+      universalAutoDigitizerPro: gate.universalAutoDigitizerPro,
+      unifiedStandardProProfile: gate.unifiedStandardProProfile,
+    },
+    activationLostAt: gate.activationLostAt,
+    activationLossTrace: gate.activationLossTrace,
   });
   if (!report.gateEnabled) {
     report.skippedReason = 'requires travelAndMicroDetailCleanup + universalAutoDigitizerPro + unifiedStandardProProfile';
@@ -521,8 +615,20 @@ export function applyTravelAndMicroDetailCleanupToCommands(commands = [], object
   const gate = reportGate(config);
   const report = {
     ...createTravelAndMicroDetailCleanupReport({
-      gateEnabled: shouldApplyTravelAndMicroDetailCleanup(config),
-      requiredFlags: gate,
+      gateEnabled: gate.gateEnabled,
+      requestedTravelCleanup: gate.requestedTravelCleanup,
+      effectiveTravelCleanup: gate.effectiveTravelCleanup,
+      requestedUnifiedStandardProProfile: gate.requestedUnifiedStandardProProfile,
+      effectiveUnifiedStandardProProfile: gate.effectiveUnifiedStandardProProfile,
+      requestedUniversalAutoDigitizerPro: gate.requestedUniversalAutoDigitizerPro,
+      effectiveUniversalAutoDigitizerPro: gate.effectiveUniversalAutoDigitizerPro,
+      requiredFlags: {
+        travelAndMicroDetailCleanup: gate.travelAndMicroDetailCleanup,
+        universalAutoDigitizerPro: gate.universalAutoDigitizerPro,
+        unifiedStandardProProfile: gate.unifiedStandardProProfile,
+      },
+      activationLostAt: gate.activationLostAt,
+      activationLossTrace: gate.activationLossTrace,
     }),
     ...(baseReport || {}),
     generatedAt: new Date().toISOString(),
@@ -614,7 +720,15 @@ export function buildTravelAndMicroDetailCleanupMarkdown(report = createTravelAn
   lines.push(`- generatedAt: ${r.generatedAt}`);
   lines.push(`- travelCleanupApplied: ${r.travelCleanupApplied}`);
   lines.push(`- gateEnabled: ${r.gateEnabled}`);
+  lines.push(`- requestedTravelCleanup: ${r.requestedTravelCleanup}`);
+  lines.push(`- effectiveTravelCleanup: ${r.effectiveTravelCleanup}`);
+  lines.push(`- requestedUnifiedStandardProProfile: ${r.requestedUnifiedStandardProProfile}`);
+  lines.push(`- effectiveUnifiedStandardProProfile: ${r.effectiveUnifiedStandardProProfile}`);
+  lines.push(`- requestedUniversalAutoDigitizerPro: ${r.requestedUniversalAutoDigitizerPro}`);
+  lines.push(`- effectiveUniversalAutoDigitizerPro: ${r.effectiveUniversalAutoDigitizerPro}`);
   lines.push(`- requiredFlags: ${JSON.stringify(r.requiredFlags)}`);
+  lines.push(`- activationLostAt: ${JSON.stringify(r.activationLostAt || [])}`);
+  lines.push(`- activationLossTrace: ${JSON.stringify(r.activationLossTrace || {})}`);
   lines.push(`- sameColorBlocksMerged: ${r.sameColorBlocksMerged}`);
   lines.push(`- microFragmentsSuppressed: ${r.microFragmentsSuppressed}`);
   lines.push(`- microFragmentsMerged: ${r.microFragmentsMerged}`);
