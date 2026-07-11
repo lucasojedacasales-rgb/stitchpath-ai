@@ -519,6 +519,7 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
         <div className="space-y-1">
           <Toggle label="Remover fondo (auto-limpieza)" value={cfg.remove_bg || false} onChange={v => set('remove_bg', v)} />
           <Toggle label="Secuenciación AI-aware" value={cfg.ai_sequence || false} onChange={v => set('ai_sequence', v)} />
+          <Toggle label="Universal Auto Digitizer Pro" value={cfg.universalAutoDigitizerPro || false} onChange={v => set('universalAutoDigitizerPro', v)} />
           <div className="py-1.5">
             <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-1 block">Compensación de tensión</label>
             <input

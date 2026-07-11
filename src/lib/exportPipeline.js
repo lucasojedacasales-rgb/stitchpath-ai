@@ -40,6 +40,10 @@ import {
   createCartoonEmbroideryStructureReport,
   prepareCartoonEmbroideryStructureRegions,
 } from './cartoonEmbroideryStructureMode.js';
+import {
+  applyUniversalAutoDigitizerPro,
+  createUniversalAutoDigitizerProReport,
+} from './universalAutoDigitizerPro.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -136,6 +140,7 @@ let _lastSameColorNearestNeighborOrderingReport = {
   longestObjectToObjectTravelAfterMm: 0,
 };
 let _lastCartoonEmbroideryStructureReport = createCartoonEmbroideryStructureReport();
+let _lastUniversalAutoDigitizerProReport = createUniversalAutoDigitizerProReport();
 
 function createCE01ZeroFillRecoveryReport() {
   return {
@@ -915,6 +920,13 @@ export function buildStitchObjects(regions, config = {}) {
   const professionalLayer = prepareProfessionalLayerObjects(objects);
   objects = professionalLayer.objects;
   console.log('[professional-layer-knockout]', professionalLayer.report);
+
+  const universalAutoDigitizer = applyUniversalAutoDigitizerPro(objects, sourceRegions, config);
+  objects = universalAutoDigitizer.objects;
+  _lastUniversalAutoDigitizerProReport = universalAutoDigitizer.report;
+  if (_lastUniversalAutoDigitizerProReport.universalAutoDigitizerProApplied) {
+    console.log('[universal-auto-digitizer-pro]', _lastUniversalAutoDigitizerProReport);
+  }
 
   const cartoonStructureObjects = applyCartoonEmbroideryStructureToObjects(
     objects,
@@ -1698,6 +1710,7 @@ export function runExportPipeline(regions, config, machineSettings, format) {
   }
   const ce01ZeroFillRecoveryReport = _lastCE01ZeroFillRecoveryReport || createCE01ZeroFillRecoveryReport();
   const sameColorOrderingReport = _lastSameColorNearestNeighborOrderingReport || createSameColorOrderingReport();
+  const universalAutoDigitizerProReport = _lastUniversalAutoDigitizerProReport || createUniversalAutoDigitizerProReport();
 
   return {
     stages: {
@@ -1719,6 +1732,7 @@ export function runExportPipeline(regions, config, machineSettings, format) {
         estimatedTravelReductionPercent: sameColorOrderingReport.estimatedTravelReductionPercent,
         longestObjectToObjectTravelBeforeMm: sameColorOrderingReport.longestObjectToObjectTravelBeforeMm,
         longestObjectToObjectTravelAfterMm: sameColorOrderingReport.longestObjectToObjectTravelAfterMm,
+        ...universalAutoDigitizerProReport,
       },
       validation,
       fixReport,
@@ -2036,6 +2050,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   const ce01ZeroFillRecoveryReport = _lastCE01ZeroFillRecoveryReport || createCE01ZeroFillRecoveryReport();
   const sameColorOrderingReport = _lastSameColorNearestNeighborOrderingReport || createSameColorOrderingReport();
   const cartoonStructureReport = _lastCartoonEmbroideryStructureReport || createCartoonEmbroideryStructureReport();
+  const universalAutoDigitizerProReport = _lastUniversalAutoDigitizerProReport || createUniversalAutoDigitizerProReport();
 
   const meta = {
     source: 'ce01_safe_pipeline',
@@ -2063,13 +2078,15 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     longestObjectToObjectTravelBeforeMm: sameColorOrderingReport.longestObjectToObjectTravelBeforeMm,
     longestObjectToObjectTravelAfterMm: sameColorOrderingReport.longestObjectToObjectTravelAfterMm,
     ...cartoonStructureReport,
+    ...universalAutoDigitizerProReport,
+    universalAutoDigitizerProReport,
     ...(goldenMasterProfile ? goldenMasterTravelReduction.report : createGoldenMasterTravelReductionReport()),
     goldenMasterTravelReductionReport: goldenMasterTravelReduction.report,
   };
 
   _lastFinalCommandsMeta = meta;
 
-  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, goldenMasterTravelReductionReport: goldenMasterTravelReduction.report, sameColorOrderingReport, cartoonStructureReport, validation };
+  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, goldenMasterTravelReductionReport: goldenMasterTravelReduction.report, sameColorOrderingReport, cartoonStructureReport, universalAutoDigitizerProReport, validation };
 }
 
 /**
