@@ -2,6 +2,20 @@ import { DIGITIZE_MODES, getModeStrategy } from './digitizeModes.js';
 
 const SUPPORTED_VECTOR_ENGINES = ['hybrid', 'opencv', 'vtracer', 'potrace'];
 const DEFAULT_MODE = 'hybrid';
+const UNIFIED_STANDARD_PRO_PROFILE_ID = 'unified_standard_pro';
+const UNIFIED_STANDARD_PRO_PROFILE_SOURCE = 'UNIFIED_STANDARD_PRO_PROFILE_V1';
+const UNIFIED_STANDARD_PRO_PREPROCESS = {
+  enabled: true,
+  gaussianRadius: 1,
+  contrastBoost: 1.4,
+  saturationBoost: 1.6,
+  sharpenEdges: true,
+  sharpenStrength: 0.8,
+  outputSize: 768,
+  posterizeColors: true,
+  posterizeLevels: 6,
+  morphologyCleanup: true,
+};
 
 function clone(value) {
   if (value == null) return value;
@@ -82,9 +96,43 @@ export function getVectorEngineProfile(vectorEngine = 'hybrid') {
 }
 
 export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSettings = null, machineSettings = {}) {
-  const modeProfile = getModeProfile(config.mode || DEFAULT_MODE);
+  const unifiedStandardProRequested = config.unifiedStandardProProfile === true
+    || config.profile_id === UNIFIED_STANDARD_PRO_PROFILE_ID
+    || config.profileId === UNIFIED_STANDARD_PRO_PROFILE_ID
+    || config.engineProfileId === UNIFIED_STANDARD_PRO_PROFILE_ID
+    || config.mode === UNIFIED_STANDARD_PRO_PROFILE_ID;
+  const standardModeProfile = getModeProfile('standard');
+  const baseModeProfile = getModeProfile(unifiedStandardProRequested ? 'standard' : (config.mode || DEFAULT_MODE));
+  const modeProfile = unifiedStandardProRequested ? {
+    ...standardModeProfile,
+    requestedMode: config.mode || UNIFIED_STANDARD_PRO_PROFILE_ID,
+    effectiveMode: UNIFIED_STANDARD_PRO_PROFILE_ID,
+    effectiveBaseEngine: 'standard',
+    strategy: {
+      ...standardModeProfile.strategy,
+      preprocess: UNIFIED_STANDARD_PRO_PREPROCESS,
+      backend: {
+        ...(standardModeProfile.strategy.backend || {}),
+        mode: 'standard',
+        vector_engine: 'hybrid',
+        use_ia_vision: true,
+        use_full_bg: false,
+        tatami_density: 0.25,
+      },
+      vectorizer: {
+        ...(standardModeProfile.strategy.vectorizer || {}),
+        color_count: 6,
+      },
+      stitchStrategy: {
+        ...(standardModeProfile.strategy.stitchStrategy || {}),
+        travelOptimize: true,
+        useAdaptiveEngine: true,
+        stageTravelOptimizer: true,
+      },
+    },
+  } : baseModeProfile;
   const strategy = modeProfile.strategy;
-  const vectorProfile = getVectorEngineProfile(config.vector_engine || strategy.backend?.vector_engine || 'hybrid');
+  const vectorProfile = getVectorEngineProfile(unifiedStandardProRequested ? 'hybrid' : (config.vector_engine || strategy.backend?.vector_engine || 'hybrid'));
   const requestedUseIaVision = hasOwn(config, 'use_ia_vision') ? config.use_ia_vision === true : undefined;
   const requestedUseFullBackground = hasOwn(config, 'use_full_bg') ? config.use_full_bg === true : undefined;
   const requestedTatamiDensity = hasOwn(config, 'tatami_density') ? config.tatami_density : undefined;
@@ -93,7 +141,9 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
   const requestedCartoonStructure = config.cartoonEmbroideryStructureMode === true;
   const panelPreprocess = preprocessSettings && typeof preprocessSettings === 'object' ? preprocessSettings : null;
 
-  const effectivePreprocessSettings = {
+  const effectivePreprocessSettings = unifiedStandardProRequested ? {
+    ...UNIFIED_STANDARD_PRO_PREPROCESS,
+  } : {
     ...(strategy.preprocess || {}),
     ...(panelPreprocess || {}),
   };
@@ -102,20 +152,24 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
     effectivePreprocessSettings.posterizeColors = effectivePreprocessSettings.posterizeColors !== false;
   }
 
-  const effectiveUseIaVision = modeProfile.effectiveMode === 'intelligent'
+  const effectiveUseIaVision = unifiedStandardProRequested
     ? true
-    : (requestedUseIaVision ?? (strategy.backend?.use_ia_vision === true));
+    : (modeProfile.effectiveMode === 'intelligent'
+      ? true
+      : (requestedUseIaVision ?? (strategy.backend?.use_ia_vision === true)));
   const effectiveUseFullBackground = requestedUseFullBackground ?? (strategy.backend?.use_full_bg === true);
-  const effectiveColorCount = finiteNumber(requestedColorCount, strategy.vectorizer?.color_count || 8);
-  const effectiveTatamiDensity = finiteNumber(requestedTatamiDensity, strategy.backend?.tatami_density || 0.4);
+  const effectiveColorCount = finiteNumber(requestedColorCount, unifiedStandardProRequested ? 6 : (strategy.vectorizer?.color_count || 8));
+  const effectiveTatamiDensity = finiteNumber(requestedTatamiDensity, unifiedStandardProRequested ? 0.25 : (strategy.backend?.tatami_density || 0.4));
   const effectiveFillAngle = requestedFillAngle ?? null;
   const effectiveGoldenMasterProfileId = (config.goldenMasterWilcomAlignment === true || config.goldenMasterProfileId)
     ? (config.goldenMasterProfileId || 'yoshi_wilcom_reference')
     : null;
 
   const fields = [
-    valueRecord('mode', config.mode || DEFAULT_MODE, modeProfile.effectiveMode, 'ConfigPanel mode selector'),
-    valueRecord('baseEngine', config.mode || DEFAULT_MODE, modeProfile.effectiveBaseEngine, modeProfile.effectiveMode === 'intelligent' ? 'intelligent uses hybrid base profile in V1' : 'digitizeModes strategy'),
+    valueRecord('unifiedStandardProProfile', unifiedStandardProRequested, unifiedStandardProRequested, 'explicit opt-in only'),
+    valueRecord('profileSource', unifiedStandardProRequested ? UNIFIED_STANDARD_PRO_PROFILE_SOURCE : null, unifiedStandardProRequested ? UNIFIED_STANDARD_PRO_PROFILE_SOURCE : null, 'profile resolver'),
+    valueRecord('mode', config.mode || DEFAULT_MODE, modeProfile.effectiveMode, unifiedStandardProRequested ? 'unified standard pro profile uses standard base' : 'ConfigPanel mode selector'),
+    valueRecord('baseEngine', config.mode || DEFAULT_MODE, modeProfile.effectiveBaseEngine, unifiedStandardProRequested ? 'UNIFIED_STANDARD_PRO_PROFILE_V1 standard base' : (modeProfile.effectiveMode === 'intelligent' ? 'intelligent uses hybrid base profile in V1' : 'digitizeModes strategy')),
     valueRecord('vector_engine', config.vector_engine || null, vectorProfile.effectiveVectorEngine, vectorProfile.supported ? 'ConfigPanel vector_engine' : 'fallback', vectorProfile.note),
     valueRecord('use_ia_vision', requestedUseIaVision, effectiveUseIaVision, modeProfile.effectiveMode === 'intelligent' ? 'intelligent V1 profile forces IA Vision true' : 'ConfigPanel IA Vision toggle or mode default'),
     valueRecord('use_full_bg', requestedUseFullBackground, effectiveUseFullBackground, requestedUseFullBackground == null ? 'mode default' : 'ConfigPanel full background toggle'),
@@ -140,7 +194,12 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
   if (modeProfile.effectiveMode === 'intelligent') stillUnwired.push('intelligentPlanConsumed=false until real per-region orchestration exists');
 
   const pipelineConfig = {
-    mode: modeProfile.effectiveMode,
+    mode: unifiedStandardProRequested ? 'standard' : modeProfile.effectiveMode,
+    effectiveMode: modeProfile.effectiveMode,
+    effectiveProfileId: unifiedStandardProRequested ? UNIFIED_STANDARD_PRO_PROFILE_ID : null,
+    unifiedStandardProProfile: unifiedStandardProRequested,
+    unifiedStandardProProfileApplied: unifiedStandardProRequested,
+    profileSource: unifiedStandardProRequested ? UNIFIED_STANDARD_PRO_PROFILE_SOURCE : 'mode_profile',
     effectiveBaseEngine: modeProfile.effectiveBaseEngine,
     vector_engine: vectorProfile.effectiveVectorEngine,
     use_ia_vision: effectiveUseIaVision,
@@ -148,12 +207,18 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
     color_count: effectiveColorCount,
     tatami_density: effectiveTatamiDensity,
     fill_angle: effectiveFillAngle,
-    cartoonEmbroideryStructureMode: requestedCartoonStructure,
-    goldenMasterProfileId: effectiveGoldenMasterProfileId,
+    contourSafeMode: unifiedStandardProRequested ? true : config.contourSafeMode,
+    professionalMode: unifiedStandardProRequested ? true : config.professionalMode,
+    adaptiveEngine: unifiedStandardProRequested ? true : config.adaptiveEngine,
+    stageTravelOptimizer: unifiedStandardProRequested ? true : config.stageTravelOptimizer,
+    cartoonEmbroideryStructureMode: unifiedStandardProRequested ? requestedCartoonStructure : requestedCartoonStructure,
+    goldenMasterProfileId: unifiedStandardProRequested ? null : effectiveGoldenMasterProfileId,
+    universalAutoDigitizerPro: unifiedStandardProRequested ? false : config.universalAutoDigitizerPro,
     learnedFillDensityMm: config.learnedFillDensityMm ?? effectiveTatamiDensity,
     preprocessSettingsReachPipeline: true,
     posterizeControlsReachPipeline: true,
     profileResolverApplied: true,
+    defaultBehaviorChanged: false,
   };
 
   return {
@@ -161,6 +226,8 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
     profileResolverApplied: true,
     requestedProfile: {
       mode: config.mode || DEFAULT_MODE,
+      profile_id: config.profile_id || config.profileId || config.engineProfileId || null,
+      unifiedStandardProProfile: unifiedStandardProRequested,
       vector_engine: config.vector_engine || null,
       use_ia_vision: requestedUseIaVision ?? null,
       use_full_bg: requestedUseFullBackground ?? null,
@@ -171,6 +238,9 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
       cartoonEmbroideryStructureMode: requestedCartoonStructure,
       goldenMasterProfileId: config.goldenMasterProfileId || null,
     },
+    unifiedStandardProProfileApplied: unifiedStandardProRequested,
+    profileSource: unifiedStandardProRequested ? UNIFIED_STANDARD_PRO_PROFILE_SOURCE : 'mode_profile',
+    defaultBehaviorChanged: false,
     effectiveMode: modeProfile.effectiveMode,
     effectiveBaseEngine: modeProfile.effectiveBaseEngine,
     effectiveVectorEngine: vectorProfile.effectiveVectorEngine,
@@ -206,6 +276,9 @@ export function buildEffectiveProfileAuditReport({ config = {}, preprocessSettin
     profileResolverApplied: profile.profileResolverApplied === true,
     requestedProfile: profile.requestedProfile,
     effectiveProfile: {
+      unifiedStandardProProfileApplied: profile.unifiedStandardProProfileApplied === true,
+      profileSource: profile.profileSource || 'mode_profile',
+      defaultBehaviorChanged: false,
       effectiveMode: profile.effectiveMode,
       effectiveBaseEngine: profile.effectiveBaseEngine,
       effectiveVectorEngine: profile.effectiveVectorEngine,

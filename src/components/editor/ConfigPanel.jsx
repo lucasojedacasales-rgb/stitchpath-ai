@@ -68,6 +68,13 @@ function Toggle({ label, value, onChange }) {
 export default function ConfigPanel({ config, onChange, regions, selectedRegionIds, onRegionsUpdate }) {
   const cfg = config || {};
   const set = (key, val) => onChange({ ...cfg, [key]: val });
+  const setUnifiedStandardProProfile = (enabled) => {
+    const { profile_id, profileId, engineProfileId, ...rest } = cfg;
+    onChange(enabled
+      ? { ...cfg, unifiedStandardProProfile: true, profile_id: 'unified_standard_pro' }
+      : { ...rest, unifiedStandardProProfile: false }
+    );
+  };
 
   const [isAnalyzing,     setIsAnalyzing]     = useState(false);
   const [aiResults,       setAiResults]       = useState(null);
@@ -519,6 +526,7 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
         <div className="space-y-1">
           <Toggle label="Remover fondo (auto-limpieza)" value={cfg.remove_bg || false} onChange={v => set('remove_bg', v)} />
           <Toggle label="Secuenciación AI-aware" value={cfg.ai_sequence || false} onChange={v => set('ai_sequence', v)} />
+          <Toggle label="Perfil Standard Pro unificado" value={cfg.unifiedStandardProProfile === true || cfg.profile_id === 'unified_standard_pro'} onChange={setUnifiedStandardProProfile} />
           <Toggle label="Universal Auto Digitizer Pro" value={cfg.universalAutoDigitizerPro || false} onChange={v => set('universalAutoDigitizerPro', v)} />
           <div className="py-1.5">
             <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-1 block">Compensación de tensión</label>

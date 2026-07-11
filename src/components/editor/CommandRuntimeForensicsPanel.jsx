@@ -4,6 +4,7 @@ import { buildRegionToCommandCoverageAuditMarkdown, runRegionToCommandCoverageAu
 import { buildEngineModesConfigToPipelineAuditMarkdown, runEngineModesConfigToPipelineAudit } from '@/lib/audits/engineModesConfigPipelineAudit.js';
 import { buildPreviewToExportParityAuditMarkdown, runPreviewToExportParityAudit } from '@/lib/audits/previewToExportParityAudit.js';
 import { buildEngineProfileBenchmarkMarkdown, runEngineProfileBenchmark } from '@/lib/audits/engineProfileBenchmark.js';
+import { buildUnifiedStandardProProfileMarkdown, createUnifiedStandardProProfileReport } from '@/lib/audits/unifiedStandardProProfileReport.js';
 import { buildUniversalAutoDigitizerProMarkdown, createUniversalAutoDigitizerProReport } from '@/lib/universalAutoDigitizerPro.js';
 
 const SEVERITY_RANK = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
@@ -86,6 +87,13 @@ export default function CommandRuntimeForensicsPanel({
     const md = buildUniversalAutoDigitizerProMarkdown(report);
     setLastReport(report);
     downloadBlob(md, 'UNIVERSAL_AUTO_DIGITIZER_PRO_REPORT_V1.md');
+  };
+
+  const downloadUnifiedStandardProProfileReport = () => {
+    const report = createUnifiedStandardProProfileReport({ finalCommands, finalObjects, regions, config, machineSettings, commandMeta });
+    const md = buildUnifiedStandardProProfileMarkdown(report);
+    setLastReport(report);
+    downloadBlob(md, 'UNIFIED_STANDARD_PRO_PROFILE_REPORT_V1.md');
   };
 
   const downloadEngineProfileBenchmarkReport = async () => {
@@ -175,6 +183,9 @@ export default function CommandRuntimeForensicsPanel({
           </button>
           <button onClick={downloadUniversalAutoDigitizerProReport} className="flex items-center gap-1.5 rounded-lg border border-teal-500/30 bg-teal-900/20 px-3 py-1.5 text-xs font-bold text-teal-200 hover:bg-teal-900/30 transition-colors">
             <Download className="w-3.5 h-3.5" /> Auto Digitizer Pro
+          </button>
+          <button onClick={downloadUnifiedStandardProProfileReport} className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-900/20 px-3 py-1.5 text-xs font-bold text-emerald-200 hover:bg-emerald-900/30 transition-colors">
+            <Download className="w-3.5 h-3.5" /> Standard Pro
           </button>
           <button onClick={() => downloadReport()} className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500 transition-colors">
             <Download className="w-3.5 h-3.5" /> Auditar comandos finales
