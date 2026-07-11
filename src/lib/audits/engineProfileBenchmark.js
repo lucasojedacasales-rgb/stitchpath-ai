@@ -1,19 +1,54 @@
 import { buildFinalCommands, DEFAULT_MACHINE } from '../exportPipeline.js';
 import { resolveEffectiveEmbroideryProfile } from '../embroideryEngineProfiles.js';
+import { runPipeline } from '../pipeline/runner.js';
+import { filterValidVisualRegions } from '../visualRegionGuard.js';
 
 const BENCHMARK_MODES = ['fast', 'standard', 'precision', 'hybrid', 'ultra', 'ai', 'intelligent'];
 
 function clone(value) {
   if (value == null) return value;
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch {
-    return value;
-  }
+  try { return JSON.parse(JSON.stringify(value)); } catch { return value; }
 }
 
 function round(value, digits = 3) {
   return Number.isFinite(value) ? Number(value.toFixed(digits)) : 0;
+}
+
+function stableStringify(value) {
+  const seen = new WeakSet();
+  return JSON.stringify(value, (key, val) => {
+    if (key === 'darkStroke' || key === 'mask') return '[omitted-heavy-runtime-data]';
+    if (val && typeof val === 'object') {
+      if (seen.has(val)) return '[circular]';
+      seen.add(val);
+      if (!Array.isArray(val)) {
+        return Object.keys(val).sort().reduce((out, k) => {
+          out[k] = val[k];
+          return out;
+        }, {});
+      }
+    }
+    return val;
+  });
+}
+
+function shortHash(value) {
+  const text = typeof value === 'string' ? value : stableStringify(value);
+  let hash = 5381;
+  for (let i = 0; i < text.length; i++) hash = ((hash << 5) + hash) ^ text.charCodeAt(i);
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function uniqueRunId(modeName) {
+  return `${modeName}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function safeConfigSnapshot(config = {}) {
+  const out = clone(config) || {};
+  delete out.darkStroke;
+  delete out.previewCommands;
+  delete out.rellenosPreviewCommands;
+  return out;
 }
 
 function commandPoint(command) {
@@ -30,17 +65,12 @@ function countUnique(values) {
 
 function hexToRgb(hex = '') {
   const h = String(hex || '').replace('#', '');
-  return {
-    r: parseInt(h.slice(0, 2), 16) || 0,
-    g: parseInt(h.slice(2, 4), 16) || 0,
-    b: parseInt(h.slice(4, 6), 16) || 0,
-  };
+  return { r: parseInt(h.slice(0, 2), 16) || 0, g: parseInt(h.slice(2, 4), 16) || 0, b: parseInt(h.slice(4, 6), 16) || 0 };
 }
 
 function isDarkColor(hex) {
   const { r, g, b } = hexToRgb(hex);
-  const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-  return luma < 80;
+  return 0.299 * r + 0.587 * g + 0.114 * b < 80;
 }
 
 function polygonArea(points = [], width = 100, height = 100) {
@@ -61,16 +91,43 @@ function objectIsContour(object) {
   return object?.isContour === true || text.includes('contour') || text.includes('outline') || text.includes('running');
 }
 
+function regionSignature(regions = []) {
+  return (regions || []).map(r => ({
+    id: r.id,
+    color: r.color || r.hex,
+    stitch_type: r.stitch_type,
+    visible: r.visible,
+    pointCount: Array.isArray(r.path_points) ? r.path_points.length : 0,
+    first: Array.isArray(r.path_points) ? r.path_points[0] : null,
+    last: Array.isArray(r.path_points) ? r.path_points[r.path_points.length - 1] : null,
+  }));
+}
+
+function objectSignature(objects = []) {
+  return (objects || []).map(o => ({
+    id: o.id,
+    color: o.color,
+    stitch_type: o.stitch_type,
+    layerType: o.layerType,
+    pointCount: Array.isArray(o.points) ? o.points.length : 0,
+  }));
+}
+
+function commandSignature(commands = []) {
+  return (commands || []).map(c => ({
+    type: c.type,
+    x: Number.isFinite(c.x) ? round(c.x, 2) : null,
+    y: Number.isFinite(c.y) ? round(c.y, 2) : null,
+    color: c.color || null,
+    regionId: c.regionId || null,
+  }));
+}
+
 function analyzeCommands(commands = []) {
   let previous = [0, 0];
-  let jumpsOver3mm = 0;
-  let jumpsOver6mm = 0;
-  let jumpsOver10mm = 0;
-  let totalJumpTravelMm = 0;
-  let maxJumpMm = 0;
-  let stitchCommandsLongerThan3mm = 0;
-  let stitchCommandsLongerThan6mm = 0;
-  let stitchCommandsLongerThan10mm = 0;
+  let jumpsOver3mm = 0, jumpsOver6mm = 0, jumpsOver10mm = 0;
+  let totalJumpTravelMm = 0, maxJumpMm = 0;
+  let stitchCommandsLongerThan3mm = 0, stitchCommandsLongerThan6mm = 0, stitchCommandsLongerThan10mm = 0;
 
   for (const command of commands) {
     const point = commandPoint(command);
@@ -104,13 +161,13 @@ function analyzeCommands(commands = []) {
 }
 
 function scoreMode(row) {
+  if (!row.pipelineActuallyExecuted) return null;
   const colorTargetScore = Math.max(0, 10 - Math.abs((row.regionColorCount || 0) - (row.effectiveColorCount || 8)) * 0.6);
   const travelPenalty = Math.min(6, row.jumpsOver10mm * 0.15 + row.totalJumpTravelMm / 600);
   const longStitchPenalty = Math.min(5, row.stitchCommandsLongerThan6mm * 0.08 + row.stitchCommandsLongerThan10mm * 0.25);
   const contourRatio = row.finalObjectCount ? row.contourObjectCount / row.finalObjectCount : 0;
   const fillRatio = row.finalObjectCount ? row.fillObjectCount / row.finalObjectCount : 0;
   const microPenalty = Math.min(4, row.microFragmentCount * 0.35);
-
   return {
     vectorizationQuality: round(Math.max(0, Math.min(10, 5 + row.regionCount / 22 - microPenalty)), 1),
     silhouetteQuality: round(Math.max(0, Math.min(10, 7 + contourRatio * 3 - longStitchPenalty * 0.35)), 1),
@@ -126,50 +183,28 @@ function scoreMode(row) {
 }
 
 function overallScore(row) {
-  const s = row.scores || {};
-  return round((
-    s.vectorizationQuality +
-    s.silhouetteQuality +
-    s.colorGroupingQuality +
-    s.blackOutlineQuality +
-    s.regionCoherence +
-    s.microFragmentSuppression +
-    s.fillQuality +
-    s.travelQuality +
-    s.ce01Compatibility +
-    s.universalAutoDigitizingPotential
-  ) / 10, 2);
+  const s = row.scores;
+  if (!s) return null;
+  return round((s.vectorizationQuality + s.silhouetteQuality + s.colorGroupingQuality + s.blackOutlineQuality + s.regionCoherence + s.microFragmentSuppression + s.fillQuality + s.travelQuality + s.ce01Compatibility + s.universalAutoDigitizingPotential) / 10, 2);
 }
 
-function benchmarkMode(modeName, { regions, config, machineSettings }) {
-  const inputRegions = clone(regions || []);
-  const modeConfig = {
-    ...clone(config || {}),
-    mode: modeName,
-    universalAutoDigitizerPro: false,
-  };
+async function benchmarkMode(modeName, { inputImageUrl, inputImageHash, config, machineSettings, darkStroke }) {
+  const uniqueBenchmarkRunId = uniqueRunId(modeName);
+  const baseConfig = safeConfigSnapshot(config || {});
+  const modeConfig = { ...baseConfig, mode: modeName, universalAutoDigitizerPro: false };
   const profile = resolveEffectiveEmbroideryProfile(modeConfig, modeConfig.preprocessSettings || null, machineSettings || {});
-  const pipelineConfig = {
-    ...modeConfig,
-    ...profile.pipelineConfig,
-    mode: modeName,
-    universalAutoDigitizerPro: false,
-  };
-  const resolvedMachine = {
-    ...DEFAULT_MACHINE,
-    ...(machineSettings || {}),
-    hoopSize: machineSettings?.hoopSize || [pipelineConfig.width_mm || config?.width_mm || 100, pipelineConfig.height_mm || config?.height_mm || 100],
-  };
-  const result = buildFinalCommands(inputRegions, pipelineConfig, resolvedMachine, 'DST');
-  const commands = result.commands || [];
-  const objects = result.objects || [];
-  const commandStats = analyzeCommands(commands);
-  const width = pipelineConfig.width_mm || config?.width_mm || 100;
-  const height = pipelineConfig.height_mm || config?.height_mm || 100;
-  const regionAreas = (regions || []).map(r => polygonArea(r.path_points || [], width, height));
+  const pipelineConfig = { ...modeConfig, ...profile.pipelineConfig, mode: modeName, universalAutoDigitizerPro: false };
+  const effectiveProfileHash = shortHash(profile);
+  const configSnapshot = safeConfigSnapshot(pipelineConfig);
+  const preprocessingSnapshot = clone(profile.effectivePreprocessSettings || {});
 
-  const row = {
+  const rowBase = {
     modeName,
+    uniqueBenchmarkRunId,
+    effectiveProfileHash,
+    inputImageHash,
+    configSnapshot,
+    preprocessingSnapshot,
     effectiveBaseEngine: profile.effectiveBaseEngine,
     effectiveVectorEngine: profile.effectiveVectorEngine,
     effectiveUseIaVision: profile.effectiveUseIaVision,
@@ -177,58 +212,143 @@ function benchmarkMode(modeName, { regions, config, machineSettings }) {
     effectivePreprocessSettings: profile.effectivePreprocessSettings,
     effectiveColorCount: profile.effectiveColorCount,
     effectiveTatamiDensity: profile.effectiveTatamiDensity,
-    regionCount: (regions || []).length,
-    regionColorCount: countUnique((regions || []).map(r => r.color || r.hex)),
-    commandColorCount: (commands.filter(c => c.type === 'colorChange').length || 0) + 1,
-    finalCommandCount: commands.length,
-    finalStitchCount: commands.filter(c => c.type === 'stitch').length,
-    finalJumpCount: commands.filter(c => c.type === 'jump').length,
-    finalTrimCount: commands.filter(c => c.type === 'trim').length,
-    finalColorChangeCount: commands.filter(c => c.type === 'colorChange').length,
-    finalObjectCount: objects.length,
-    fillObjectCount: objects.filter(o => o.stitch_type === 'fill').length,
-    contourObjectCount: objects.filter(objectIsContour).length,
-    darkOutlineObjectCount: objects.filter(o => objectIsContour(o) && isDarkColor(o.color)).length,
-    tinyRegionCount: regionAreas.filter(a => a > 0 && a < 1.5).length,
-    microFragmentCount: regionAreas.filter(a => a > 0 && a < 0.5).length,
-    ...commandStats,
-    visualStructureScoreEstimate: result.meta?.visualStructureScoreEstimate ?? null,
+    pipelineActuallyExecuted: false,
+    reusedCurrentCommands: false,
+    reusedCurrentRegions: false,
+    cacheHit: false,
   };
-  row.scores = scoreMode(row);
-  row.overallScore = overallScore(row);
-  row.machinePreviewRiskScoreEstimate = round(Math.max(0, Math.min(10, 10 - row.scores.ce01Compatibility)), 1);
-  return row;
+
+  if (!inputImageUrl) {
+    return { ...rowBase, error: 'missing_original_image_input' };
+  }
+
+  try {
+    const ctx = await runPipeline(inputImageUrl, pipelineConfig, {
+      initialCtx: { darkStroke, effectiveProfile: profile, benchmarkRunId: uniqueBenchmarkRunId },
+    });
+    const freshRegions = filterValidVisualRegions(ctx.regions || []);
+    if (freshRegions.length === 0) {
+      return { ...rowBase, pipelineActuallyExecuted: true, error: 'pipeline_produced_no_valid_regions' };
+    }
+
+    const resolvedMachine = {
+      ...DEFAULT_MACHINE,
+      ...(machineSettings || {}),
+      hoopSize: machineSettings?.hoopSize || [pipelineConfig.width_mm || 100, pipelineConfig.height_mm || 100],
+    };
+    const result = buildFinalCommands(clone(freshRegions), pipelineConfig, resolvedMachine, 'DST');
+    const commands = result.commands || [];
+    const objects = result.objects || [];
+    const commandStats = analyzeCommands(commands);
+    const width = pipelineConfig.width_mm || 100;
+    const height = pipelineConfig.height_mm || 100;
+    const regionAreas = freshRegions.map(r => polygonArea(r.path_points || [], width, height));
+    const regionSignatureHash = shortHash(regionSignature(freshRegions));
+    const objectSignatureHash = shortHash(objectSignature(objects));
+    const commandSignatureHash = shortHash(commandSignature(commands));
+
+    const row = {
+      ...rowBase,
+      pipelineActuallyExecuted: true,
+      regionSignatureHash,
+      objectSignatureHash,
+      commandSignatureHash,
+      regionCount: freshRegions.length,
+      regionColorCount: countUnique(freshRegions.map(r => r.color || r.hex)),
+      commandColorCount: (commands.filter(c => c.type === 'colorChange').length || 0) + 1,
+      finalCommandCount: commands.length,
+      finalStitchCount: commands.filter(c => c.type === 'stitch').length,
+      finalJumpCount: commands.filter(c => c.type === 'jump').length,
+      finalTrimCount: commands.filter(c => c.type === 'trim').length,
+      finalColorChangeCount: commands.filter(c => c.type === 'colorChange').length,
+      finalObjectCount: objects.length,
+      fillObjectCount: objects.filter(o => o.stitch_type === 'fill').length,
+      contourObjectCount: objects.filter(objectIsContour).length,
+      darkOutlineObjectCount: objects.filter(o => objectIsContour(o) && isDarkColor(o.color)).length,
+      tinyRegionCount: regionAreas.filter(a => a > 0 && a < 1.5).length,
+      microFragmentCount: regionAreas.filter(a => a > 0 && a < 0.5).length,
+      ...commandStats,
+      visualStructureScoreEstimate: result.meta?.visualStructureScoreEstimate ?? null,
+    };
+    row.scores = scoreMode(row);
+    row.overallScore = overallScore(row);
+    row.machinePreviewRiskScoreEstimate = row.scores ? round(Math.max(0, Math.min(10, 10 - row.scores.ce01Compatibility)), 1) : null;
+    return row;
+  } catch (error) {
+    return { ...rowBase, error: error?.message || 'isolated_pipeline_run_failed' };
+  }
 }
 
 function bestBy(rows, selector) {
-  return [...rows].sort((a, b) => selector(b) - selector(a))[0] || null;
+  return [...rows].filter(row => row.pipelineActuallyExecuted && row.overallScore != null).sort((a, b) => selector(b) - selector(a))[0] || null;
 }
 
 function worstByOverall(rows) {
-  return [...rows].sort((a, b) => a.overallScore - b.overallScore)[0] || null;
+  return [...rows].filter(row => row.pipelineActuallyExecuted && row.overallScore != null).sort((a, b) => a.overallScore - b.overallScore)[0] || null;
 }
 
-export function runEngineProfileBenchmark({ regions = [], config = {}, machineSettings = {}, finalCommands = [] } = {}) {
-  const generatedAt = new Date().toISOString();
-  const originalRegionsSnapshot = JSON.stringify(regions || []);
-  const originalPathPointsSnapshot = JSON.stringify((regions || []).map(r => r.path_points || []));
-  const originalCommandsSnapshot = JSON.stringify(finalCommands || []);
+function computeValidity(rows, inputImageUrl) {
+  if (!inputImageUrl) {
+    return { benchmarkValid: false, modeDivergenceDetected: false, isolatedPipelineRuns: false, reason: 'cannot_run_isolated_pipeline_per_mode_from_current_context' };
+  }
+  const isolatedPipelineRuns = rows.length === BENCHMARK_MODES.length && rows.every(row =>
+    row.pipelineActuallyExecuted &&
+    !row.error &&
+    row.regionCount > 0 &&
+    row.finalCommandCount > 0 &&
+    !!row.commandSignatureHash &&
+    !row.reusedCurrentCommands &&
+    !row.reusedCurrentRegions &&
+    row.cacheHit === false
+  );
+  if (!isolatedPipelineRuns) {
+    return { benchmarkValid: false, modeDivergenceDetected: false, isolatedPipelineRuns, reason: 'one_or_more_isolated_pipeline_runs_failed' };
+  }
+  const divergenceKeys = new Set(rows.map(row => [row.regionCount, row.finalStitchCount, row.finalJumpCount, row.commandSignatureHash].join('|')));
+  const modeDivergenceDetected = divergenceKeys.size > 1;
+  const commandMetricKeys = new Set(rows.map(row => [row.finalCommandCount, row.finalStitchCount, row.finalJumpCount, row.finalTrimCount, row.totalJumpTravelMm, row.commandSignatureHash].join('|')));
+  if (!modeDivergenceDetected || commandMetricKeys.size === 1) {
+    return { benchmarkValid: false, modeDivergenceDetected: false, isolatedPipelineRuns, reason: 'all_modes_identical_likely_reused_same_command_stream' };
+  }
+  return { benchmarkValid: true, modeDivergenceDetected: true, isolatedPipelineRuns, reason: 'isolated_mode_divergence_detected' };
+}
 
-  const rows = BENCHMARK_MODES.map(mode => benchmarkMode(mode, { regions, config, machineSettings }));
-  const bestOverall = bestBy(rows, row => row.overallScore);
-  const bestVectorization = bestBy(rows, row => row.scores.vectorizationQuality);
-  const bestOutline = bestBy(rows, row => row.scores.blackOutlineQuality);
-  const bestFills = bestBy(rows, row => row.scores.fillQuality);
-  const bestTravel = bestBy(rows, row => row.scores.travelQuality);
-  const worst = worstByOverall(rows);
+export async function runEngineProfileBenchmark({ imageUrl = null, originalImageUrl = null, regions = [], config = {}, machineSettings = {}, finalCommands = [], darkStroke = null } = {}) {
+  const generatedAt = new Date().toISOString();
+  const inputImageUrl = originalImageUrl || config?.originalUploadUrl || imageUrl || null;
+  const inputImageHash = inputImageUrl ? shortHash(inputImageUrl) : null;
+  const originalRegionsSnapshot = stableStringify(regions || []);
+  const originalPathPointsSnapshot = stableStringify((regions || []).map(r => r.path_points || []));
+  const originalCommandsSnapshot = stableStringify(finalCommands || []);
+
+  const rows = [];
+  for (const mode of BENCHMARK_MODES) {
+    rows.push(await benchmarkMode(mode, { inputImageUrl, inputImageHash, config, machineSettings, darkStroke }));
+  }
+
+  const validity = computeValidity(rows, inputImageUrl);
+  const reusableCurrentCommands = rows.some(row => row.reusedCurrentCommands === true);
+  const bestOverall = validity.benchmarkValid ? bestBy(rows, row => row.overallScore) : null;
+  const bestVectorization = validity.benchmarkValid ? bestBy(rows, row => row.scores?.vectorizationQuality || 0) : null;
+  const bestOutline = validity.benchmarkValid ? bestBy(rows, row => row.scores?.blackOutlineQuality || 0) : null;
+  const bestFills = validity.benchmarkValid ? bestBy(rows, row => row.scores?.fillQuality || 0) : null;
+  const bestTravel = validity.benchmarkValid ? bestBy(rows, row => row.scores?.travelQuality || 0) : null;
+  const worst = validity.benchmarkValid ? worstByOverall(rows) : null;
+  const recommendedBaseMode = validity.benchmarkValid ? (bestOverall?.modeName || 'undetermined') : 'undetermined';
 
   return {
     reportId: 'ENGINE_PROFILE_BENCHMARK_V1',
     generatedAt,
     benchmarkOnly: true,
-    commandsModified: originalCommandsSnapshot !== JSON.stringify(finalCommands || []),
-    regionsModified: originalRegionsSnapshot !== JSON.stringify(regions || []),
-    originalPathPointsMutated: originalPathPointsSnapshot !== JSON.stringify((regions || []).map(r => r.path_points || [])),
+    generationBehaviorChanged: false,
+    benchmarkValid: validity.benchmarkValid,
+    modeDivergenceDetected: validity.modeDivergenceDetected,
+    isolatedPipelineRuns: validity.isolatedPipelineRuns,
+    reusedCurrentCommandsDetected: reusableCurrentCommands,
+    reason: validity.reason,
+    commandsModified: originalCommandsSnapshot !== stableStringify(finalCommands || []),
+    regionsModified: originalRegionsSnapshot !== stableStringify(regions || []),
+    originalPathPointsMutated: originalPathPointsSnapshot !== stableStringify((regions || []).map(r => r.path_points || [])),
     exportModified: false,
     encodersTouched: false,
     ExportModalTouched: false,
@@ -237,27 +357,27 @@ export function runEngineProfileBenchmark({ regions = [], config = {}, machineSe
     modesBenchmarked: [...BENCHMARK_MODES],
     rows,
     summary: {
-      recommendedBaseMode: bestOverall?.modeName || 'hybrid',
-      recommendedUnifiedArchitecture: 'Resolver único de perfiles + pipeline común de comandos finales + benchmarks audit-only por modo.',
-      safestNextImplementationStep: 'Mantener el benchmark como diagnóstico y usar sus métricas para decidir una unificación sin cambiar generación.',
-      bestModeOverall: bestOverall?.modeName,
-      bestModeForVectorization: bestVectorization?.modeName,
-      bestModeForOutline: bestOutline?.modeName,
-      bestModeForFills: bestFills?.modeName,
-      bestModeForTravel: bestTravel?.modeName,
-      worstMode: worst?.modeName,
-      worstModeReason: worst ? `overallScore=${worst.overallScore}, travel=${worst.scores.travelQuality}, microFragments=${worst.microFragmentCount}, longStitches>10=${worst.stitchCommandsLongerThan10mm}` : 'n/a',
-      recommendedPiecesToKeep: [
-        `${bestVectorization?.modeName || 'hybrid'} vectorization settings`,
-        `${bestOutline?.modeName || 'hybrid'} outline preservation`,
-        `${bestFills?.modeName || 'hybrid'} fill density behavior`,
-        `${bestTravel?.modeName || 'hybrid'} travel behavior`,
-      ],
-      recommendedPiecesToRemove: [
+      recommendedBaseMode,
+      recommendedUnifiedArchitecture: validity.benchmarkValid ? 'Resolver único de perfiles + pipeline común, conservando las piezas ganadoras por etapa.' : 'undetermined',
+      safestNextImplementationStep: validity.benchmarkValid ? 'Revisar el reporte y elegir una pieza por etapa sin cambiar generación todavía.' : 'Habilitar un contexto diagnóstico con imagen original accesible y ejecución aislada por modo.',
+      bestModeOverall: bestOverall?.modeName || 'undetermined',
+      bestModeForVectorization: bestVectorization?.modeName || 'undetermined',
+      bestModeForOutline: bestOutline?.modeName || 'undetermined',
+      bestModeForFills: bestFills?.modeName || 'undetermined',
+      bestModeForTravel: bestTravel?.modeName || 'undetermined',
+      worstMode: worst?.modeName || 'undetermined',
+      worstModeReason: worst ? `overallScore=${worst.overallScore}, travel=${worst.scores.travelQuality}, microFragments=${worst.microFragmentCount}, longStitches>10=${worst.stitchCommandsLongerThan10mm}` : validity.reason,
+      recommendedPiecesToKeep: validity.benchmarkValid ? [
+        `${bestVectorization?.modeName || 'undetermined'} vectorization settings`,
+        `${bestOutline?.modeName || 'undetermined'} outline preservation`,
+        `${bestFills?.modeName || 'undetermined'} fill density behavior`,
+        `${bestTravel?.modeName || 'undetermined'} travel behavior`,
+      ] : [],
+      recommendedPiecesToRemove: validity.benchmarkValid ? [
         'Duplicated mode-specific assumptions that do not affect final command quality',
         'Micro-fragment heavy settings when they increase jumps without visual gain',
         'Any machine-specific interpretation inside artwork analysis layers',
-      ],
+      ] : [],
     },
   };
 }
@@ -268,13 +388,26 @@ function formatObject(value) {
   return String(value);
 }
 
+function scoreCell(row, key) {
+  return row.scores ? row.scores[key] : '';
+}
+
 export function buildEngineProfileBenchmarkMarkdown(report) {
   const lines = [];
   const rows = report.rows || [];
   lines.push('# ENGINE_PROFILE_BENCHMARK_V1');
   lines.push('');
+  lines.push('## Top summary');
+  lines.push(`benchmarkValid=${report.benchmarkValid}`);
+  lines.push(`modeDivergenceDetected=${report.modeDivergenceDetected}`);
+  lines.push(`isolatedPipelineRuns=${report.isolatedPipelineRuns}`);
+  lines.push(`reusedCurrentCommandsDetected=${report.reusedCurrentCommandsDetected}`);
+  lines.push(`recommendedBaseMode=${report.summary?.recommendedBaseMode || 'undetermined'}`);
+  lines.push(`reason=${report.reason}`);
+  lines.push('');
   lines.push(`generatedAt=${report.generatedAt}`);
   lines.push(`benchmarkOnly=${report.benchmarkOnly}`);
+  lines.push(`generationBehaviorChanged=${report.generationBehaviorChanged}`);
   lines.push(`commandsModified=${report.commandsModified}`);
   lines.push(`regionsModified=${report.regionsModified}`);
   lines.push(`originalPathPointsMutated=${report.originalPathPointsMutated}`);
@@ -285,27 +418,25 @@ export function buildEngineProfileBenchmarkMarkdown(report) {
   lines.push(`FinalLookTouched=${report.FinalLookTouched}`);
   lines.push('');
   lines.push('## 1. Summary');
-  for (const [key, value] of Object.entries(report.summary || {})) {
-    lines.push(`- ${key}: ${Array.isArray(value) ? value.join('; ') : value}`);
-  }
+  for (const [key, value] of Object.entries(report.summary || {})) lines.push(`- ${key}: ${Array.isArray(value) ? value.join('; ') : value}`);
   lines.push('');
   lines.push('## 2. Side-by-side mode table');
-  lines.push('| modeName | base | vector | IA | fullBg | colors | density | regions | regionColors | commandColors | commands | stitches | jumps | trims | colorChanges | objects | fillObjects | contourObjects | darkOutlines | tinyRegions | microFragments | jumps>3 | jumps>6 | jumps>10 | jumpTravelMm | maxJumpMm | stitch>3 | stitch>6 | stitch>10 | visualStructure | risk | overall |');
-  lines.push('|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
+  lines.push('| modeName | runId | profileHash | imageHash | executed | reusedCommands | reusedRegions | cacheHit | regionHash | objectHash | commandHash | base | vector | IA | fullBg | colors | density | regions | regionColors | commandColors | commands | stitches | jumps | trims | colorChanges | objects | fillObjects | contourObjects | darkOutlines | tinyRegions | microFragments | jumps>3 | jumps>6 | jumps>10 | jumpTravelMm | maxJumpMm | stitch>3 | stitch>6 | stitch>10 | visualStructure | risk | overall | error |');
+  lines.push('|---|---|---|---|---:|---:|---:|---:|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|');
   for (const row of rows) {
-    lines.push(`| ${row.modeName} | ${row.effectiveBaseEngine} | ${row.effectiveVectorEngine} | ${row.effectiveUseIaVision} | ${row.effectiveUseFullBackground} | ${row.effectiveColorCount} | ${row.effectiveTatamiDensity} | ${row.regionCount} | ${row.regionColorCount} | ${row.commandColorCount} | ${row.finalCommandCount} | ${row.finalStitchCount} | ${row.finalJumpCount} | ${row.finalTrimCount} | ${row.finalColorChangeCount} | ${row.finalObjectCount} | ${row.fillObjectCount} | ${row.contourObjectCount} | ${row.darkOutlineObjectCount} | ${row.tinyRegionCount} | ${row.microFragmentCount} | ${row.jumpsOver3mm} | ${row.jumpsOver6mm} | ${row.jumpsOver10mm} | ${row.totalJumpTravelMm} | ${row.maxJumpMm} | ${row.stitchCommandsLongerThan3mm} | ${row.stitchCommandsLongerThan6mm} | ${row.stitchCommandsLongerThan10mm} | ${row.visualStructureScoreEstimate ?? ''} | ${row.machinePreviewRiskScoreEstimate} | ${row.overallScore} |`);
+    lines.push(`| ${row.modeName} | ${row.uniqueBenchmarkRunId} | ${row.effectiveProfileHash} | ${row.inputImageHash || ''} | ${row.pipelineActuallyExecuted} | ${row.reusedCurrentCommands} | ${row.reusedCurrentRegions} | ${row.cacheHit} | ${row.regionSignatureHash || ''} | ${row.objectSignatureHash || ''} | ${row.commandSignatureHash || ''} | ${row.effectiveBaseEngine} | ${row.effectiveVectorEngine} | ${row.effectiveUseIaVision} | ${row.effectiveUseFullBackground} | ${row.effectiveColorCount} | ${row.effectiveTatamiDensity} | ${row.regionCount ?? ''} | ${row.regionColorCount ?? ''} | ${row.commandColorCount ?? ''} | ${row.finalCommandCount ?? ''} | ${row.finalStitchCount ?? ''} | ${row.finalJumpCount ?? ''} | ${row.finalTrimCount ?? ''} | ${row.finalColorChangeCount ?? ''} | ${row.finalObjectCount ?? ''} | ${row.fillObjectCount ?? ''} | ${row.contourObjectCount ?? ''} | ${row.darkOutlineObjectCount ?? ''} | ${row.tinyRegionCount ?? ''} | ${row.microFragmentCount ?? ''} | ${row.jumpsOver3mm ?? ''} | ${row.jumpsOver6mm ?? ''} | ${row.jumpsOver10mm ?? ''} | ${row.totalJumpTravelMm ?? ''} | ${row.maxJumpMm ?? ''} | ${row.stitchCommandsLongerThan3mm ?? ''} | ${row.stitchCommandsLongerThan6mm ?? ''} | ${row.stitchCommandsLongerThan10mm ?? ''} | ${row.visualStructureScoreEstimate ?? ''} | ${row.machinePreviewRiskScoreEstimate ?? ''} | ${row.overallScore ?? ''} | ${row.error || ''} |`);
   }
   lines.push('');
-  lines.push('### Effective preprocess settings');
-  for (const row of rows) lines.push(`- ${row.modeName}: ${formatObject(row.effectivePreprocessSettings)}`);
+  lines.push('### Config snapshots');
+  for (const row of rows) lines.push(`- ${row.modeName}: ${formatObject(row.configSnapshot)}`);
+  lines.push('');
+  lines.push('### Preprocessing snapshots');
+  for (const row of rows) lines.push(`- ${row.modeName}: ${formatObject(row.preprocessingSnapshot)}`);
   lines.push('');
   lines.push('### Qualitative scores 0-10');
   lines.push('| mode | vectorization | silhouette | colorGrouping | blackOutline | coherence | microSuppress | fill | travel | ce01 | universalPotential |');
   lines.push('|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
-  for (const row of rows) {
-    const s = row.scores;
-    lines.push(`| ${row.modeName} | ${s.vectorizationQuality} | ${s.silhouetteQuality} | ${s.colorGroupingQuality} | ${s.blackOutlineQuality} | ${s.regionCoherence} | ${s.microFragmentSuppression} | ${s.fillQuality} | ${s.travelQuality} | ${s.ce01Compatibility} | ${s.universalAutoDigitizingPotential} |`);
-  }
+  for (const row of rows) lines.push(`| ${row.modeName} | ${scoreCell(row, 'vectorizationQuality')} | ${scoreCell(row, 'silhouetteQuality')} | ${scoreCell(row, 'colorGroupingQuality')} | ${scoreCell(row, 'blackOutlineQuality')} | ${scoreCell(row, 'regionCoherence')} | ${scoreCell(row, 'microFragmentSuppression')} | ${scoreCell(row, 'fillQuality')} | ${scoreCell(row, 'travelQuality')} | ${scoreCell(row, 'ce01Compatibility')} | ${scoreCell(row, 'universalAutoDigitizingPotential')} |`);
   lines.push('');
   lines.push(`## 3. Best mode overall\n${report.summary.bestModeOverall}`);
   lines.push(`## 4. Best mode for vectorization\n${report.summary.bestModeForVectorization}`);
@@ -314,8 +445,8 @@ export function buildEngineProfileBenchmarkMarkdown(report) {
   lines.push(`## 7. Best mode for travel\n${report.summary.bestModeForTravel}`);
   lines.push(`## 8. Worst mode and why\n${report.summary.worstMode}: ${report.summary.worstModeReason}`);
   lines.push(`## 9. Recommended base mode\nrecommendedBaseMode=${report.summary.recommendedBaseMode}`);
-  lines.push(`## 10. Recommended pieces to keep\n${report.summary.recommendedPiecesToKeep.map(x => `- ${x}`).join('\n')}`);
-  lines.push(`## 11. Recommended pieces to remove\n${report.summary.recommendedPiecesToRemove.map(x => `- ${x}`).join('\n')}`);
+  lines.push(`## 10. Recommended pieces to keep\n${(report.summary.recommendedPiecesToKeep || []).map(x => `- ${x}`).join('\n') || '- none'}`);
+  lines.push(`## 11. Recommended pieces to remove\n${(report.summary.recommendedPiecesToRemove || []).map(x => `- ${x}`).join('\n') || '- none'}`);
   lines.push('## 12. Recommended unification plan');
   lines.push(`recommendedBaseMode=${report.summary.recommendedBaseMode}`);
   lines.push(`recommendedUnifiedArchitecture=${report.summary.recommendedUnifiedArchitecture}`);

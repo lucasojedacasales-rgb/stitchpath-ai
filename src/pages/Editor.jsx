@@ -1009,6 +1009,8 @@ export default function Editor() {
                 regions={regions}
                 config={configWithDarkStroke}
                 darkStroke={darkStroke}
+                imageUrl={imageUrl}
+                originalImageUrl={originalImageUrl}
                 machineSettings={editorMachineSettings}
                 transitionGuardReport={finalEmbroideryCommands.transitionGuardReport}
                 transitionGuardMd={finalEmbroideryCommands.transitionGuardMd}
