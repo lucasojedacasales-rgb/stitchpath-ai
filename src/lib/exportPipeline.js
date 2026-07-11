@@ -44,6 +44,7 @@ import {
   applyUniversalAutoDigitizerPro,
   createUniversalAutoDigitizerProReport,
 } from './universalAutoDigitizerPro.js';
+import { applyTravelAndMicroDetailCleanup } from './travelAndMicroDetailCleanup.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -2024,7 +2025,18 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   });
   commands = professionalPlannerRepair.commands;
 
-  // ── Stage 9: GOLDEN_MASTER_TRAVEL_REDUCTION_V1 — opt-in only ─────────────
+  // ── Stage 9: TRAVEL_AND_MICRO_DETAIL_CLEANUP_V1 — opt-in only ────────────
+  // Command-only cleanup. It never mutates original regions/path_points and is
+  // active only when config.travelAndMicroDetailCleanup=true.
+  const travelAndMicroDetailCleanup = applyTravelAndMicroDetailCleanup({
+    commands,
+    regions,
+    config,
+    machineSettings: ms,
+  });
+  commands = travelAndMicroDetailCleanup.commands;
+
+  // ── Stage 10: GOLDEN_MASTER_TRAVEL_REDUCTION_V1 — opt-in only ────────────
   // Applies only when goldenMasterWilcomAlignment=true and the Yoshi Wilcom
   // reference profile is explicitly selected. Normal exports are returned
   // unchanged; original regions/path_points are never mutated.
@@ -2080,13 +2092,15 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     ...cartoonStructureReport,
     ...universalAutoDigitizerProReport,
     universalAutoDigitizerProReport,
+    ...travelAndMicroDetailCleanup.report,
+    travelAndMicroDetailCleanupReport: travelAndMicroDetailCleanup.report,
     ...(goldenMasterProfile ? goldenMasterTravelReduction.report : createGoldenMasterTravelReductionReport()),
     goldenMasterTravelReductionReport: goldenMasterTravelReduction.report,
   };
 
   _lastFinalCommandsMeta = meta;
 
-  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, goldenMasterTravelReductionReport: goldenMasterTravelReduction.report, sameColorOrderingReport, cartoonStructureReport, universalAutoDigitizerProReport, validation };
+  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, travelAndMicroDetailCleanupReport: travelAndMicroDetailCleanup.report, goldenMasterTravelReductionReport: goldenMasterTravelReduction.report, sameColorOrderingReport, cartoonStructureReport, universalAutoDigitizerProReport, validation };
 }
 
 /**

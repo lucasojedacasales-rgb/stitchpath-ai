@@ -5,6 +5,7 @@ import { buildEngineModesConfigToPipelineAuditMarkdown, runEngineModesConfigToPi
 import { buildPreviewToExportParityAuditMarkdown, runPreviewToExportParityAudit } from '@/lib/audits/previewToExportParityAudit.js';
 import { buildEngineProfileBenchmarkMarkdown, runEngineProfileBenchmark } from '@/lib/audits/engineProfileBenchmark.js';
 import { buildUnifiedStandardProProfileMarkdown, createUnifiedStandardProProfileReport } from '@/lib/audits/unifiedStandardProProfileReport.js';
+import { buildTravelAndMicroDetailCleanupMarkdown } from '@/lib/travelAndMicroDetailCleanup.js';
 import { buildUniversalAutoDigitizerProMarkdown, createUniversalAutoDigitizerProReport } from '@/lib/universalAutoDigitizerPro.js';
 
 const SEVERITY_RANK = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
@@ -94,6 +95,13 @@ export default function CommandRuntimeForensicsPanel({
     const md = buildUnifiedStandardProProfileMarkdown(report);
     setLastReport(report);
     downloadBlob(md, 'UNIFIED_STANDARD_PRO_PROFILE_REPORT_V1.md');
+  };
+
+  const downloadTravelAndMicroDetailCleanupReport = () => {
+    const report = commandMeta?.travelAndMicroDetailCleanupReport || null;
+    const md = buildTravelAndMicroDetailCleanupMarkdown(report);
+    setLastReport(report || { generatedAt: new Date().toISOString() });
+    downloadBlob(md, 'TRAVEL_AND_MICRO_DETAIL_CLEANUP_V1.md');
   };
 
   const downloadEngineProfileBenchmarkReport = async () => {
@@ -186,6 +194,9 @@ export default function CommandRuntimeForensicsPanel({
           </button>
           <button onClick={downloadUnifiedStandardProProfileReport} className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-900/20 px-3 py-1.5 text-xs font-bold text-emerald-200 hover:bg-emerald-900/30 transition-colors">
             <Download className="w-3.5 h-3.5" /> Standard Pro
+          </button>
+          <button onClick={downloadTravelAndMicroDetailCleanupReport} className="flex items-center gap-1.5 rounded-lg border border-lime-500/30 bg-lime-900/20 px-3 py-1.5 text-xs font-bold text-lime-200 hover:bg-lime-900/30 transition-colors">
+            <Download className="w-3.5 h-3.5" /> Travel cleanup
           </button>
           <button onClick={() => downloadReport()} className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500 transition-colors">
             <Download className="w-3.5 h-3.5" /> Auditar comandos finales
