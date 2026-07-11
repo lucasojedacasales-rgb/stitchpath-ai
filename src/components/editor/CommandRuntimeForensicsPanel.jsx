@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Download, Search, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { buildRegionToCommandCoverageAuditMarkdown, runRegionToCommandCoverageAudit } from '@/lib/audits/regionToCommandCoverageAudit.js';
 import { buildEngineModesConfigToPipelineAuditMarkdown, runEngineModesConfigToPipelineAudit } from '@/lib/audits/engineModesConfigPipelineAudit.js';
+import { buildPreviewToExportParityAuditMarkdown, runPreviewToExportParityAudit } from '@/lib/audits/previewToExportParityAudit.js';
 
 const SEVERITY_RANK = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
 
@@ -57,6 +58,22 @@ export default function CommandRuntimeForensicsPanel({
     downloadBlob(md, 'ENGINE_MODES_CONFIG_TO_PIPELINE_AUDIT_V1.md');
   };
 
+  const downloadPreviewExportParityReport = () => {
+    const parityAudit = runPreviewToExportParityAudit({
+      rellenosPreviewCommands: config?.rellenosPreviewCommands || config?.previewCommands || null,
+      finalLookCommands: finalCommands,
+      simulatorCommands: finalCommands,
+      finalEmbroideryCommands: finalCommands,
+      exportCommands: exportCommands || finalCommands,
+      regions,
+      config,
+      machineSettings,
+    });
+    const md = buildPreviewToExportParityAuditMarkdown(parityAudit);
+    setLastReport(parityAudit);
+    downloadBlob(md, 'PREVIEW_TO_EXPORT_PARITY_AUDIT_V1.md');
+  };
+
   const downloadGuardReport = () => {
     if (!transitionGuardMd) return;
     downloadBlob(transitionGuardMd, 'STITCHED_TRANSITION_TO_JUMP_GUARD_REPORT_V1.md');
@@ -86,6 +103,9 @@ export default function CommandRuntimeForensicsPanel({
           </button>
           <button onClick={downloadEngineModesConfigReport} className="flex items-center gap-1.5 rounded-lg border border-slate-500/30 bg-slate-900/20 px-3 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-900/30 transition-colors">
             <Download className="w-3.5 h-3.5" /> Modos/config
+          </button>
+          <button onClick={downloadPreviewExportParityReport} className="flex items-center gap-1.5 rounded-lg border border-orange-500/30 bg-orange-900/20 px-3 py-1.5 text-xs font-bold text-orange-200 hover:bg-orange-900/30 transition-colors">
+            <Download className="w-3.5 h-3.5" /> Paridad preview/export
           </button>
           <button onClick={() => downloadReport()} className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500 transition-colors">
             <Download className="w-3.5 h-3.5" /> Auditar comandos finales
