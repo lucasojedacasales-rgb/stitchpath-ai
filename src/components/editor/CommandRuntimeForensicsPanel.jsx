@@ -7,6 +7,7 @@ import { buildEngineProfileBenchmarkMarkdown, runEngineProfileBenchmark } from '
 import { buildUnifiedStandardProProfileMarkdown, createUnifiedStandardProProfileReport } from '@/lib/audits/unifiedStandardProProfileReport.js';
 import { buildTravelAndMicroDetailCleanupMarkdown, createTravelAndMicroDetailCleanupReport } from '@/lib/travelAndMicroDetailCleanup.js';
 import { buildUniversalAutoDigitizerProMarkdown, createUniversalAutoDigitizerProReport } from '@/lib/universalAutoDigitizerPro.js';
+import { buildUniversalThreadColorSequenceOptimizerMarkdown, createUniversalThreadColorSequenceOptimizerReport } from '@/lib/universalThreadColorSequenceOptimizer.js';
 
 const SEVERITY_RANK = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
 
@@ -125,6 +126,18 @@ export default function CommandRuntimeForensicsPanel({
     downloadBlob(md, 'TRAVEL_AND_MICRO_DETAIL_CLEANUP_REPORT_V1.md');
   };
 
+  const downloadUniversalThreadColorSequenceOptimizerReport = () => {
+    const report = commandMeta?.universalThreadColorSequenceOptimizerReport || createUniversalThreadColorSequenceOptimizerReport({
+      enabled: commandMeta?.universalThreadColorSequenceOptimizerEnabled === true,
+      applied: commandMeta?.universalThreadColorSequenceOptimizerApplied === true,
+      colorChangeReduction: commandMeta?.universalThreadColorSequenceColorChangeReduction || 0,
+      reorderedBlockCount: commandMeta?.universalThreadColorSequenceReorderedBlockCount || 0,
+    });
+    const md = buildUniversalThreadColorSequenceOptimizerMarkdown(report);
+    setLastReport(report);
+    downloadBlob(md, 'UNIVERSAL_THREAD_COLOR_SEQUENCE_OPTIMIZER_V1.md');
+  };
+
   const downloadEngineProfileBenchmarkReport = async () => {
     setBenchmarkRunning(true);
     try {
@@ -218,6 +231,9 @@ export default function CommandRuntimeForensicsPanel({
           </button>
           <button onClick={downloadTravelAndMicroDetailCleanupReport} className="flex items-center gap-1.5 rounded-lg border border-lime-500/30 bg-lime-900/20 px-3 py-1.5 text-xs font-bold text-lime-200 hover:bg-lime-900/30 transition-colors">
             <Download className="w-3.5 h-3.5" /> Travel cleanup
+          </button>
+          <button onClick={downloadUniversalThreadColorSequenceOptimizerReport} className="flex items-center gap-1.5 rounded-lg border border-fuchsia-500/30 bg-fuchsia-900/20 px-3 py-1.5 text-xs font-bold text-fuchsia-200 hover:bg-fuchsia-900/30 transition-colors">
+            <Download className="w-3.5 h-3.5" /> Thread colors
           </button>
           <button onClick={() => downloadReport()} className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500 transition-colors">
             <Download className="w-3.5 h-3.5" /> Auditar comandos finales

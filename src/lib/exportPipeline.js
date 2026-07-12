@@ -49,6 +49,10 @@ import {
   applyTravelAndMicroDetailCleanupToObjects,
   createTravelAndMicroDetailCleanupReport,
 } from './travelAndMicroDetailCleanup.js';
+import {
+  applyUniversalThreadColorSequenceOptimizer,
+  createUniversalThreadColorSequenceOptimizerReport,
+} from './universalThreadColorSequenceOptimizer.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -147,6 +151,7 @@ let _lastSameColorNearestNeighborOrderingReport = {
 let _lastCartoonEmbroideryStructureReport = createCartoonEmbroideryStructureReport();
 let _lastUniversalAutoDigitizerProReport = createUniversalAutoDigitizerProReport();
 let _lastTravelAndMicroDetailCleanupReport = createTravelAndMicroDetailCleanupReport();
+let _lastUniversalThreadColorSequenceOptimizerReport = createUniversalThreadColorSequenceOptimizerReport();
 
 function createCE01ZeroFillRecoveryReport() {
   return {
@@ -1728,6 +1733,7 @@ export function runExportPipeline(regions, config, machineSettings, format) {
   const ce01ZeroFillRecoveryReport = _lastCE01ZeroFillRecoveryReport || createCE01ZeroFillRecoveryReport();
   const sameColorOrderingReport = _lastSameColorNearestNeighborOrderingReport || createSameColorOrderingReport();
   const universalAutoDigitizerProReport = _lastUniversalAutoDigitizerProReport || createUniversalAutoDigitizerProReport();
+  const universalThreadColorSequenceOptimizerReport = _lastUniversalThreadColorSequenceOptimizerReport || createUniversalThreadColorSequenceOptimizerReport();
 
   return {
     stages: {
@@ -1750,6 +1756,7 @@ export function runExportPipeline(regions, config, machineSettings, format) {
         longestObjectToObjectTravelBeforeMm: sameColorOrderingReport.longestObjectToObjectTravelBeforeMm,
         longestObjectToObjectTravelAfterMm: sameColorOrderingReport.longestObjectToObjectTravelAfterMm,
         ...universalAutoDigitizerProReport,
+        universalThreadColorSequenceOptimizerReport,
       },
       validation,
       fixReport,
@@ -2066,6 +2073,10 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   commands = travelCleanup.commands;
   _lastTravelAndMicroDetailCleanupReport = travelCleanup.report;
 
+  const threadColorSequence = applyUniversalThreadColorSequenceOptimizer(commands, config, ms);
+  commands = threadColorSequence.commands;
+  _lastUniversalThreadColorSequenceOptimizerReport = threadColorSequence.report;
+
   const stitchCount = commands.filter(c => c.type === 'stitch').length;
   const jumpCount = commands.filter(c => c.type === 'jump').length;
   const trimCount = commands.filter(c => c.type === 'trim').length;
@@ -2079,6 +2090,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   const cartoonStructureReport = _lastCartoonEmbroideryStructureReport || createCartoonEmbroideryStructureReport();
   const universalAutoDigitizerProReport = _lastUniversalAutoDigitizerProReport || createUniversalAutoDigitizerProReport();
   const travelCleanupReport = _lastTravelAndMicroDetailCleanupReport || createTravelAndMicroDetailCleanupReport();
+  const universalThreadColorSequenceOptimizerReport = _lastUniversalThreadColorSequenceOptimizerReport || createUniversalThreadColorSequenceOptimizerReport();
 
   const meta = {
     source: 'ce01_safe_pipeline',
@@ -2109,6 +2121,11 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     ...universalAutoDigitizerProReport,
     universalAutoDigitizerProReport,
     travelAndMicroDetailCleanupReport: travelCleanupReport,
+    universalThreadColorSequenceOptimizerReport,
+    universalThreadColorSequenceOptimizerApplied: universalThreadColorSequenceOptimizerReport.applied,
+    universalThreadColorSequenceOptimizerEnabled: universalThreadColorSequenceOptimizerReport.enabled,
+    universalThreadColorSequenceColorChangeReduction: universalThreadColorSequenceOptimizerReport.colorChangeReduction,
+    universalThreadColorSequenceReorderedBlockCount: universalThreadColorSequenceOptimizerReport.reorderedBlockCount,
     travelCleanupApplied: travelCleanupReport.travelCleanupApplied,
     requestedTravelCleanup: travelCleanupReport.requestedTravelCleanup,
     effectiveTravelCleanup: travelCleanupReport.effectiveTravelCleanup,
@@ -2135,7 +2152,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
 
   _lastFinalCommandsMeta = meta;
 
-  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, travelCleanupReport, goldenMasterTravelReductionReport: goldenMasterTravelReduction.report, sameColorOrderingReport, cartoonStructureReport, universalAutoDigitizerProReport, validation };
+  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, travelCleanupReport, universalThreadColorSequenceOptimizerReport, goldenMasterTravelReductionReport: goldenMasterTravelReduction.report, sameColorOrderingReport, cartoonStructureReport, universalAutoDigitizerProReport, validation };
 }
 
 /**
