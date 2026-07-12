@@ -141,6 +141,7 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
   const requestedCartoonStructure = config.cartoonEmbroideryStructureMode === true;
   const requestedTravelAndMicroDetailCleanup = config.travelAndMicroDetailCleanup === true;
   const requestedUniversalAutoDigitizerPro = config.universalAutoDigitizerPro === true;
+  const requestedUniversalThreadColorSequenceOptimizer = config.universalThreadColorSequenceOptimizer === true;
   const panelPreprocess = preprocessSettings && typeof preprocessSettings === 'object' ? preprocessSettings : null;
 
   const effectivePreprocessSettings = unifiedStandardProRequested ? {
@@ -184,6 +185,7 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
     valueRecord('cartoonEmbroideryStructureMode', requestedCartoonStructure, requestedCartoonStructure, 'explicit opt-in only'),
     valueRecord('travelAndMicroDetailCleanup', requestedTravelAndMicroDetailCleanup, requestedTravelAndMicroDetailCleanup, 'explicit opt-in only'),
     valueRecord('universalAutoDigitizerPro', requestedUniversalAutoDigitizerPro, requestedUniversalAutoDigitizerPro, 'explicit opt-in only'),
+    valueRecord('universalThreadColorSequenceOptimizer', requestedUniversalThreadColorSequenceOptimizer, requestedUniversalThreadColorSequenceOptimizer, 'explicit opt-in only'),
     valueRecord('goldenMasterProfileId', config.goldenMasterProfileId || null, effectiveGoldenMasterProfileId, 'explicit golden master config'),
   ];
 
@@ -219,6 +221,7 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
     goldenMasterProfileId: unifiedStandardProRequested ? null : effectiveGoldenMasterProfileId,
     universalAutoDigitizerPro: requestedUniversalAutoDigitizerPro,
     travelAndMicroDetailCleanup: requestedTravelAndMicroDetailCleanup,
+    universalThreadColorSequenceOptimizer: requestedUniversalThreadColorSequenceOptimizer,
     learnedFillDensityMm: config.learnedFillDensityMm ?? effectiveTatamiDensity,
     preprocessSettingsReachPipeline: true,
     posterizeControlsReachPipeline: true,
@@ -243,6 +246,7 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
       cartoonEmbroideryStructureMode: requestedCartoonStructure,
       travelAndMicroDetailCleanup: requestedTravelAndMicroDetailCleanup,
       universalAutoDigitizerPro: requestedUniversalAutoDigitizerPro,
+      universalThreadColorSequenceOptimizer: requestedUniversalThreadColorSequenceOptimizer,
       goldenMasterProfileId: config.goldenMasterProfileId || null,
     },
     unifiedStandardProProfileApplied: unifiedStandardProRequested,
@@ -262,6 +266,7 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
     effectiveCartoonStructureMode: requestedCartoonStructure,
     effectiveTravelAndMicroDetailCleanup: requestedTravelAndMicroDetailCleanup,
     effectiveUniversalAutoDigitizerPro: requestedUniversalAutoDigitizerPro,
+    effectiveUniversalThreadColorSequenceOptimizer: requestedUniversalThreadColorSequenceOptimizer,
     effectiveGoldenMasterProfileId,
     effectiveStitchStrategy: {
       ...(strategy.stitchStrategy || {}),

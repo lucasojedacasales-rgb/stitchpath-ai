@@ -17,6 +17,10 @@ export function createUniversalThreadColorSequenceOptimizerReport(overrides = {}
     optimizerApplied: false,
     universalThreadColorSequenceOptimizerApplied: false,
     gateEnabled: false,
+    requestedUniversalThreadColorSequenceOptimizer: false,
+    effectiveUniversalThreadColorSequenceOptimizer: false,
+    activationLostAt: [],
+    activationLossTrace: {},
     requiredFlags: {
       universalAutoDigitizerPro: false,
       unifiedStandardProProfile: false,
@@ -83,6 +87,24 @@ function reportGate(config = {}) {
     universalAutoDigitizerPro: config.universalAutoDigitizerPro === true,
     unifiedStandardProProfile: config.unifiedStandardProProfile === true,
     universalThreadColorSequenceOptimizer: config.universalThreadColorSequenceOptimizer === true,
+  };
+}
+
+function activationDiagnostics(config = {}, gate = reportGate(config)) {
+  const lostAt = [];
+  if (!gate.universalAutoDigitizerPro) lostAt.push('universalAutoDigitizerPro');
+  if (!gate.unifiedStandardProProfile) lostAt.push('unifiedStandardProProfile');
+  if (!gate.universalThreadColorSequenceOptimizer) lostAt.push('universalThreadColorSequenceOptimizer');
+  return {
+    requestedUniversalThreadColorSequenceOptimizer: config.universalThreadColorSequenceOptimizer === true,
+    effectiveUniversalThreadColorSequenceOptimizer: gate.universalThreadColorSequenceOptimizer,
+    activationLostAt: lostAt,
+    activationLossTrace: {
+      configUniversalAutoDigitizerPro: config.universalAutoDigitizerPro === true,
+      configUnifiedStandardProProfile: config.unifiedStandardProProfile === true,
+      configUniversalThreadColorSequenceOptimizer: config.universalThreadColorSequenceOptimizer === true,
+      gateEnabled: gate.universalAutoDigitizerPro && gate.unifiedStandardProProfile && gate.universalThreadColorSequenceOptimizer,
+    },
   };
 }
 
@@ -599,6 +621,7 @@ export function optimizeUniversalThreadColorSequenceObjects(objects = [], config
   const report = createUniversalThreadColorSequenceOptimizerReport({
     gateEnabled: shouldApplyUniversalThreadColorSequenceOptimizer(config),
     requiredFlags: gate,
+    ...activationDiagnostics(config, gate),
   });
 
   if (!report.gateEnabled) {
@@ -830,6 +853,10 @@ export function buildUniversalThreadColorSequenceOptimizerMarkdown(report = crea
   lines.push(`- optimizerApplied: ${r.optimizerApplied}`);
   lines.push(`- universalThreadColorSequenceOptimizerApplied: ${r.universalThreadColorSequenceOptimizerApplied}`);
   lines.push(`- gateEnabled: ${r.gateEnabled}`);
+  lines.push(`- requestedUniversalThreadColorSequenceOptimizer: ${r.requestedUniversalThreadColorSequenceOptimizer}`);
+  lines.push(`- effectiveUniversalThreadColorSequenceOptimizer: ${r.effectiveUniversalThreadColorSequenceOptimizer}`);
+  lines.push(`- activationLostAt: ${JSON.stringify(r.activationLostAt)}`);
+  lines.push(`- activationLossTrace: ${JSON.stringify(r.activationLossTrace)}`);
   lines.push(`- requiredFlags: ${JSON.stringify(r.requiredFlags)}`);
   lines.push(`- uniqueVisualColorCountBefore: ${r.uniqueVisualColorCountBefore}`);
   lines.push(`- normalizedThreadColorCountAfter: ${r.normalizedThreadColorCountAfter}`);
