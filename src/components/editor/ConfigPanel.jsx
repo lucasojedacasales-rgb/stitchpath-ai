@@ -530,6 +530,7 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
           <Toggle label="Universal Auto Digitizer Pro" value={cfg.universalAutoDigitizerPro || false} onChange={v => set('universalAutoDigitizerPro', v)} />
           <Toggle label="Travel + micro-detail cleanup" value={cfg.travelAndMicroDetailCleanup || false} onChange={v => set('travelAndMicroDetailCleanup', v)} />
           <Toggle label="Thread color sequence optimizer" value={cfg.universalThreadColorSequenceOptimizer || false} onChange={v => set('universalThreadColorSequenceOptimizer', v)} />
+          <Toggle label="Cartoon cleanup + outline merge" value={cfg.universalCartoonCleanupAndOutlineMerge || false} onChange={v => set('universalCartoonCleanupAndOutlineMerge', v)} />
           <div className="py-1.5">
             <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-1 block">Compensación de tensión</label>
             <input

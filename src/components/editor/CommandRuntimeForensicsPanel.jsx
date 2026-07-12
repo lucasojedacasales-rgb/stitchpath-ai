@@ -8,6 +8,7 @@ import { buildUnifiedStandardProProfileMarkdown, createUnifiedStandardProProfile
 import { buildTravelAndMicroDetailCleanupMarkdown, createTravelAndMicroDetailCleanupReport } from '@/lib/travelAndMicroDetailCleanup.js';
 import { buildUniversalAutoDigitizerProMarkdown, createUniversalAutoDigitizerProReport } from '@/lib/universalAutoDigitizerPro.js';
 import { buildUniversalThreadColorSequenceOptimizerMarkdown, createUniversalThreadColorSequenceOptimizerReport } from '@/lib/universalThreadColorSequenceOptimizer.js';
+import { buildUniversalCartoonCleanupAndOutlineMergeMarkdown, createUniversalCartoonCleanupAndOutlineMergeReport } from '@/lib/universalCartoonCleanupAndOutlineMerge.js';
 
 const SEVERITY_RANK = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
 
@@ -160,6 +161,17 @@ export default function CommandRuntimeForensicsPanel({
     downloadBlob(md, 'UNIVERSAL_THREAD_COLOR_SEQUENCE_OPTIMIZER_REPORT_V1.md');
   };
 
+  const downloadUniversalCartoonCleanupAndOutlineMergeReport = () => {
+    const report = commandMeta?.universalCartoonCleanupAndOutlineMergeReport || createUniversalCartoonCleanupAndOutlineMergeReport({
+      universalCartoonCleanupAndOutlineMergeApplied: commandMeta?.universalCartoonCleanupAndOutlineMergeApplied === true,
+      optimizationAccepted: commandMeta?.cartoonCleanupOptimizationAccepted === true,
+      rejectedReason: commandMeta?.cartoonCleanupRejectedReason || null,
+    });
+    const md = buildUniversalCartoonCleanupAndOutlineMergeMarkdown(report);
+    setLastReport(report);
+    downloadBlob(md, 'UNIVERSAL_CARTOON_CLEANUP_AND_OUTLINE_MERGE_REPORT_V1.md');
+  };
+
   const downloadEngineProfileBenchmarkReport = async () => {
     setBenchmarkRunning(true);
     try {
@@ -256,6 +268,9 @@ export default function CommandRuntimeForensicsPanel({
           </button>
           <button onClick={downloadUniversalThreadColorSequenceOptimizerReport} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-900/20 px-3 py-1.5 text-xs font-bold text-cyan-200 hover:bg-cyan-900/30 transition-colors">
             <Download className="w-3.5 h-3.5" /> Thread sequence
+          </button>
+          <button onClick={downloadUniversalCartoonCleanupAndOutlineMergeReport} className="flex items-center gap-1.5 rounded-lg border border-fuchsia-500/30 bg-fuchsia-900/20 px-3 py-1.5 text-xs font-bold text-fuchsia-200 hover:bg-fuchsia-900/30 transition-colors">
+            <Download className="w-3.5 h-3.5" /> Cartoon cleanup
           </button>
           <button onClick={() => downloadReport()} className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500 transition-colors">
             <Download className="w-3.5 h-3.5" /> Auditar comandos finales

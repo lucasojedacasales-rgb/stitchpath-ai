@@ -53,6 +53,11 @@ import {
   createUniversalThreadColorSequenceOptimizerReport,
   optimizeUniversalThreadColorSequenceObjects,
 } from './universalThreadColorSequenceOptimizer.js';
+import {
+  applyUniversalCartoonCleanupAndOutlineMergeToCommands,
+  applyUniversalCartoonCleanupAndOutlineMergeToObjects,
+  createUniversalCartoonCleanupAndOutlineMergeReport,
+} from './universalCartoonCleanupAndOutlineMerge.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -153,6 +158,8 @@ let _lastUniversalAutoDigitizerProReport = createUniversalAutoDigitizerProReport
 let _lastTravelAndMicroDetailCleanupReport = createTravelAndMicroDetailCleanupReport();
 let _lastUniversalThreadColorSequenceOptimizerReport = createUniversalThreadColorSequenceOptimizerReport();
 let _lastUniversalThreadColorSequenceOptimizerObjects = null;
+let _lastUniversalCartoonCleanupAndOutlineMergeReport = createUniversalCartoonCleanupAndOutlineMergeReport();
+let _lastUniversalCartoonCleanupAndOutlineMergeObjects = null;
 
 function createCE01ZeroFillRecoveryReport() {
   return {
@@ -994,14 +1001,26 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE, config = {
     config,
     ms
   );
-  const ordered = universalThreadSequence.objects;
+  const cartoonCleanup = applyUniversalCartoonCleanupAndOutlineMergeToObjects(
+    universalThreadSequence.objects,
+    config,
+    ms
+  );
+  const ordered = cartoonCleanup.objects;
   _lastUniversalThreadColorSequenceOptimizerReport = universalThreadSequence.report;
   _lastUniversalThreadColorSequenceOptimizerObjects = universalThreadSequence.report.optimizationAccepted
+    ? universalThreadSequence.objects
+    : null;
+  _lastUniversalCartoonCleanupAndOutlineMergeReport = cartoonCleanup.report;
+  _lastUniversalCartoonCleanupAndOutlineMergeObjects = cartoonCleanup.report.optimizationAccepted
     ? ordered
     : null;
   console.log('[same-color-nearest-neighbor-ordering]', sameColorOrdering.report);
   if (_lastUniversalThreadColorSequenceOptimizerReport.gateEnabled) {
     console.log('[universal-thread-color-sequence-optimizer]', _lastUniversalThreadColorSequenceOptimizerReport);
+  }
+  if (_lastUniversalCartoonCleanupAndOutlineMergeReport.gateEnabled) {
+    console.log('[universal-cartoon-cleanup-outline-merge]', _lastUniversalCartoonCleanupAndOutlineMergeReport);
   }
   const fillRouted = ordered.filter(o => o.stitch_type === 'fill' && o.ce01SafeFillMode).length;
   const contourRouted = ordered.filter(o => o.stitch_type === 'contour' || o.stitch_type === 'running_stitch').length;
@@ -1340,7 +1359,7 @@ export function validatePipeline(commands, objects, machine = DEFAULT_MACHINE, f
  * Fixable rules: R1 (split), R2 (split), R5 (close), R6 (remove), R7 (remove), R9 (append END), R10 (remove).
  * NOT fixable: R3, R4, R12, R8 (some) → these block export.
  */
-export function autoFix(commands, objects, machine = DEFAULT_MACHINE, format = 'DST') {
+export function autoFix(commands, objects, machine = DEFAULT_MACHINE, format = 'DST', config = {}) {
   const ms = { ...DEFAULT_MACHINE, ...machine };
   const limits = FORMAT_LIMITS[format] || FORMAT_LIMITS.DST;
   const applied = [];
@@ -1375,7 +1394,7 @@ export function autoFix(commands, objects, machine = DEFAULT_MACHINE, format = '
   });
   if (fixedObjects.length < before) {
     // Rebuild commands from fixed objects
-    cmds = flattenToCommands(fixedObjects, ms);
+    cmds = flattenToCommands(fixedObjects, ms, config);
   }
 
   // R7: Remove redundant color changes
@@ -1530,7 +1549,7 @@ export function runExportPipelineRaw(regions, config, machineSettings, format) {
  * Applies fix for a SINGLE rule only (used by the interactive wizard).
  * Returns { fixedCommands, fixedObjects, applied }.
  */
-export function applyFixForRule(commands, objects, rule, machine = DEFAULT_MACHINE, format = 'DST') {
+export function applyFixForRule(commands, objects, rule, machine = DEFAULT_MACHINE, format = 'DST', config = {}) {
   const ms = { ...DEFAULT_MACHINE, ...machine };
   const limits = FORMAT_LIMITS[format] || FORMAT_LIMITS.DST;
   const applied = [];
@@ -1552,7 +1571,7 @@ export function applyFixForRule(commands, objects, rule, machine = DEFAULT_MACHI
       }
       return obj;
     });
-    cmds = flattenToCommands(fixedObjects, ms);
+    cmds = flattenToCommands(fixedObjects, ms, config);
   }
 
   if (fixKey === 'R4' || fixKey === 'R10') {
@@ -1570,7 +1589,7 @@ export function applyFixForRule(commands, objects, rule, machine = DEFAULT_MACHI
       return true;
     });
     if (fixedObjects.length < before) {
-      cmds = flattenToCommands(fixedObjects, ms);
+      cmds = flattenToCommands(fixedObjects, ms, config);
     }
   }
 
@@ -1729,7 +1748,7 @@ export function runExportPipeline(regions, config, machineSettings, format) {
   const objects = buildStitchObjects(regions, config);
 
   // Stage 2: objects → commands
-  let commands = flattenToCommands(objects, ms);
+  let commands = flattenToCommands(objects, ms, config);
 
   // Stage 3: validate
   let validation = validatePipeline(commands, objects, ms, format);
@@ -1737,7 +1756,7 @@ export function runExportPipeline(regions, config, machineSettings, format) {
   // Stage 3b: auto-fix if there are fixable issues
   let fixReport = { applied: [] };
   if (validation.fixable.length > 0 || !validation.passed) {
-    const fixed = autoFix(commands, objects, ms, format);
+    const fixed = autoFix(commands, objects, ms, format, config);
     commands = fixed.fixedCommands;
     fixReport = { applied: fixed.applied };
     // Re-validate after fix
@@ -1937,14 +1956,16 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
 
   // Stage 2: objects → raw commands
   let commands = flattenToCommands(objects, ms, config);
-  if (_lastUniversalThreadColorSequenceOptimizerObjects) {
+  if (_lastUniversalCartoonCleanupAndOutlineMergeObjects) {
+    objects = _lastUniversalCartoonCleanupAndOutlineMergeObjects;
+  } else if (_lastUniversalThreadColorSequenceOptimizerObjects) {
     objects = _lastUniversalThreadColorSequenceOptimizerObjects;
   }
 
   // Stage 3: autoFix (R5 close, R4/R10 remove empty, R7 dedupe color, R6 dedupe trim, R9 END, R13 trim insertion)
   let validation = validatePipeline(commands, objects, ms, format);
   if (validation.fixable.length > 0 || !validation.passed) {
-    const fixed = autoFix(commands, objects, ms, format);
+    const fixed = autoFix(commands, objects, ms, format, config);
     commands = fixed.fixedCommands;
     validation = validatePipeline(commands, fixed.fixedObjects, ms, format);
   }
@@ -2089,6 +2110,16 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   commands = travelCleanup.commands;
   _lastTravelAndMicroDetailCleanupReport = travelCleanup.report;
 
+  const cartoonCommandCleanup = applyUniversalCartoonCleanupAndOutlineMergeToCommands(
+    commands,
+    objects,
+    config,
+    ms,
+    _lastUniversalCartoonCleanupAndOutlineMergeReport
+  );
+  commands = cartoonCommandCleanup.commands;
+  _lastUniversalCartoonCleanupAndOutlineMergeReport = cartoonCommandCleanup.report;
+
   const stitchCount = commands.filter(c => c.type === 'stitch').length;
   const jumpCount = commands.filter(c => c.type === 'jump').length;
   const trimCount = commands.filter(c => c.type === 'trim').length;
@@ -2103,6 +2134,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   const universalAutoDigitizerProReport = _lastUniversalAutoDigitizerProReport || createUniversalAutoDigitizerProReport();
   const travelCleanupReport = _lastTravelAndMicroDetailCleanupReport || createTravelAndMicroDetailCleanupReport();
   const universalThreadColorSequenceOptimizerReport = _lastUniversalThreadColorSequenceOptimizerReport || createUniversalThreadColorSequenceOptimizerReport();
+  const universalCartoonCleanupAndOutlineMergeReport = _lastUniversalCartoonCleanupAndOutlineMergeReport || createUniversalCartoonCleanupAndOutlineMergeReport();
 
   const meta = {
     source: 'ce01_safe_pipeline',
@@ -2134,6 +2166,10 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     universalAutoDigitizerProReport,
     travelAndMicroDetailCleanupReport: travelCleanupReport,
     universalThreadColorSequenceOptimizerReport,
+    universalCartoonCleanupAndOutlineMergeReport,
+    universalCartoonCleanupAndOutlineMergeApplied: universalCartoonCleanupAndOutlineMergeReport.universalCartoonCleanupAndOutlineMergeApplied,
+    cartoonCleanupOptimizationAccepted: universalCartoonCleanupAndOutlineMergeReport.optimizationAccepted,
+    cartoonCleanupRejectedReason: universalCartoonCleanupAndOutlineMergeReport.rejectedReason,
     universalThreadColorSequenceOptimizerApplied: universalThreadColorSequenceOptimizerReport.universalThreadColorSequenceOptimizerApplied,
     threadColorSequenceOptimizerApplied: universalThreadColorSequenceOptimizerReport.optimizerApplied,
     uniqueVisualColorCountBefore: universalThreadColorSequenceOptimizerReport.uniqueVisualColorCountBefore,
@@ -2186,7 +2222,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
 
   _lastFinalCommandsMeta = meta;
 
-  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, travelCleanupReport, universalThreadColorSequenceOptimizerReport, goldenMasterTravelReductionReport: goldenMasterTravelReduction.report, sameColorOrderingReport, cartoonStructureReport, universalAutoDigitizerProReport, validation };
+  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, travelCleanupReport, universalThreadColorSequenceOptimizerReport, universalCartoonCleanupAndOutlineMergeReport, goldenMasterTravelReductionReport: goldenMasterTravelReduction.report, sameColorOrderingReport, cartoonStructureReport, universalAutoDigitizerProReport, validation };
 }
 
 /**

@@ -98,6 +98,7 @@ const DEFAULT_CONFIG = {
   universalAutoDigitizerPro: false,
   travelAndMicroDetailCleanup: false,
   universalThreadColorSequenceOptimizer: false,
+  universalCartoonCleanupAndOutlineMerge: false,
 };
 
 function stableHash(value) {
@@ -110,7 +111,7 @@ function pickMotorConfig(config = {}) {
     'fill_angle', 'tatami_density', 'vector_engine', 'useVectorFusion', 'contourSafeMode',
     'ce01SafeFillMode', 'ce01ProductionMode', 'validationMode', 'professionalMode', 'unifiedStandardProProfile',
     'profile_id', 'profileId', 'engineProfileId', 'universalAutoDigitizerPro', 'travelAndMicroDetailCleanup',
-    'universalThreadColorSequenceOptimizer',
+    'universalThreadColorSequenceOptimizer', 'universalCartoonCleanupAndOutlineMerge',
     'learnedFillDensityMm', 'learnedFillAngleDeg', 'learnedNeighborAngleVariationDeg',
   ];
   return keys.reduce((out, key) => { if (config[key] !== undefined) out[key] = config[key]; return out; }, {});
