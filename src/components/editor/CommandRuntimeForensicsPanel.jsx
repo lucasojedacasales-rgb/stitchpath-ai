@@ -128,14 +128,36 @@ export default function CommandRuntimeForensicsPanel({
 
   const downloadUniversalThreadColorSequenceOptimizerReport = () => {
     const report = commandMeta?.universalThreadColorSequenceOptimizerReport || createUniversalThreadColorSequenceOptimizerReport({
-      enabled: commandMeta?.universalThreadColorSequenceOptimizerEnabled === true,
-      applied: commandMeta?.universalThreadColorSequenceOptimizerApplied === true,
-      colorChangeReduction: commandMeta?.universalThreadColorSequenceColorChangeReduction || 0,
-      reorderedBlockCount: commandMeta?.universalThreadColorSequenceReorderedBlockCount || 0,
+      optimizerApplied: commandMeta?.universalThreadColorSequenceOptimizerApplied === true || commandMeta?.threadColorSequenceOptimizerApplied === true,
+      universalThreadColorSequenceOptimizerApplied: commandMeta?.universalThreadColorSequenceOptimizerApplied === true || commandMeta?.threadColorSequenceOptimizerApplied === true,
+      uniqueVisualColorCountBefore: commandMeta?.uniqueVisualColorCountBefore || 0,
+      normalizedThreadColorCountAfter: commandMeta?.normalizedThreadColorCountAfter || 0,
+      colorBlockCountBefore: commandMeta?.colorBlockCountBefore || 0,
+      colorBlockCountAfter: commandMeta?.colorBlockCountAfter || 0,
+      repeatedThreadColorBlocksBefore: commandMeta?.repeatedThreadColorBlocksBefore || 0,
+      repeatedThreadColorBlocksAfter: commandMeta?.repeatedThreadColorBlocksAfter || 0,
+      unnecessaryColorChangesRemoved: commandMeta?.unnecessaryColorChangesRemoved || 0,
+      threadChangesBefore: commandMeta?.threadChangesBefore || 0,
+      threadChangesAfter: commandMeta?.threadChangesAfter || 0,
+      blackOutlineBlocksBefore: commandMeta?.blackOutlineBlocksBefore || 0,
+      blackOutlineBlocksAfter: commandMeta?.blackOutlineBlocksAfter || 0,
+      blackOutlineFinishesLast: commandMeta?.blackOutlineFinishesLast !== false,
+      jumpCountBefore: commandMeta?.threadSequenceJumpCountBefore || 0,
+      jumpCountAfter: commandMeta?.threadSequenceJumpCountAfter || 0,
+      jumpsOver10mmBefore: commandMeta?.threadSequenceJumpsOver10mmBefore || 0,
+      jumpsOver10mmAfter: commandMeta?.threadSequenceJumpsOver10mmAfter || 0,
+      totalJumpTravelMmBefore: commandMeta?.threadSequenceTotalJumpTravelMmBefore || 0,
+      totalJumpTravelMmAfter: commandMeta?.threadSequenceTotalJumpTravelMmAfter || 0,
+      maxJumpMmBefore: commandMeta?.threadSequenceMaxJumpMmBefore || 0,
+      maxJumpMmAfter: commandMeta?.threadSequenceMaxJumpMmAfter || 0,
+      estimatedTravelReductionPercent: commandMeta?.threadSequenceEstimatedTravelReductionPercent || 0,
+      routeWithinColorBlocksApplied: commandMeta?.routeWithinColorBlocksApplied === true,
+      optimizationAccepted: commandMeta?.threadSequenceOptimizationAccepted === true,
+      rejectedReason: commandMeta?.threadSequenceRejectedReason || null,
     });
     const md = buildUniversalThreadColorSequenceOptimizerMarkdown(report);
     setLastReport(report);
-    downloadBlob(md, 'UNIVERSAL_THREAD_COLOR_SEQUENCE_OPTIMIZER_V1.md');
+    downloadBlob(md, 'UNIVERSAL_THREAD_COLOR_SEQUENCE_OPTIMIZER_REPORT_V1.md');
   };
 
   const downloadEngineProfileBenchmarkReport = async () => {
@@ -232,8 +254,8 @@ export default function CommandRuntimeForensicsPanel({
           <button onClick={downloadTravelAndMicroDetailCleanupReport} className="flex items-center gap-1.5 rounded-lg border border-lime-500/30 bg-lime-900/20 px-3 py-1.5 text-xs font-bold text-lime-200 hover:bg-lime-900/30 transition-colors">
             <Download className="w-3.5 h-3.5" /> Travel cleanup
           </button>
-          <button onClick={downloadUniversalThreadColorSequenceOptimizerReport} className="flex items-center gap-1.5 rounded-lg border border-fuchsia-500/30 bg-fuchsia-900/20 px-3 py-1.5 text-xs font-bold text-fuchsia-200 hover:bg-fuchsia-900/30 transition-colors">
-            <Download className="w-3.5 h-3.5" /> Thread colors
+          <button onClick={downloadUniversalThreadColorSequenceOptimizerReport} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-900/20 px-3 py-1.5 text-xs font-bold text-cyan-200 hover:bg-cyan-900/30 transition-colors">
+            <Download className="w-3.5 h-3.5" /> Thread sequence
           </button>
           <button onClick={() => downloadReport()} className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500 transition-colors">
             <Download className="w-3.5 h-3.5" /> Auditar comandos finales

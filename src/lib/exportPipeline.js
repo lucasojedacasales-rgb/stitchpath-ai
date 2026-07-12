@@ -50,8 +50,8 @@ import {
   createTravelAndMicroDetailCleanupReport,
 } from './travelAndMicroDetailCleanup.js';
 import {
-  applyUniversalThreadColorSequenceOptimizer,
   createUniversalThreadColorSequenceOptimizerReport,
+  optimizeUniversalThreadColorSequenceObjects,
 } from './universalThreadColorSequenceOptimizer.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
@@ -152,6 +152,7 @@ let _lastCartoonEmbroideryStructureReport = createCartoonEmbroideryStructureRepo
 let _lastUniversalAutoDigitizerProReport = createUniversalAutoDigitizerProReport();
 let _lastTravelAndMicroDetailCleanupReport = createTravelAndMicroDetailCleanupReport();
 let _lastUniversalThreadColorSequenceOptimizerReport = createUniversalThreadColorSequenceOptimizerReport();
+let _lastUniversalThreadColorSequenceOptimizerObjects = null;
 
 function createCE01ZeroFillRecoveryReport() {
   return {
@@ -977,7 +978,7 @@ export function buildStitchObjects(regions, config = {}, machineSettings = {}) {
  * Applies offset and breaks long stitches into sub-stitches.
  * This is the GENERATION stage — no file bytes yet.
  */
-export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
+export function flattenToCommands(objects, machine = DEFAULT_MACHINE, config = {}) {
   const ms = { ...DEFAULT_MACHINE, ...machine };
   const [offX, offY] = ms.designOffset;
   const cmds = [];
@@ -988,8 +989,20 @@ export function flattenToCommands(objects, machine = DEFAULT_MACHINE) {
   // Industrial: optimize object order, then make each same-color block spatially local.
   const industrialOrdered = optimizeObjectOrder(objects);
   const sameColorOrdering = applySameColorNearestNeighborOrdering(industrialOrdered);
-  const ordered = sameColorOrdering.objects;
+  const universalThreadSequence = optimizeUniversalThreadColorSequenceObjects(
+    sameColorOrdering.objects,
+    config,
+    ms
+  );
+  const ordered = universalThreadSequence.objects;
+  _lastUniversalThreadColorSequenceOptimizerReport = universalThreadSequence.report;
+  _lastUniversalThreadColorSequenceOptimizerObjects = universalThreadSequence.report.optimizationAccepted
+    ? ordered
+    : null;
   console.log('[same-color-nearest-neighbor-ordering]', sameColorOrdering.report);
+  if (_lastUniversalThreadColorSequenceOptimizerReport.gateEnabled) {
+    console.log('[universal-thread-color-sequence-optimizer]', _lastUniversalThreadColorSequenceOptimizerReport);
+  }
   const fillRouted = ordered.filter(o => o.stitch_type === 'fill' && o.ce01SafeFillMode).length;
   const contourRouted = ordered.filter(o => o.stitch_type === 'contour' || o.stitch_type === 'running_stitch').length;
   console.log(`[ce01-safe-fill-wire] regions input: ${ordered.length}`);
@@ -1920,10 +1933,13 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   const ms = { ...DEFAULT_MACHINE, ...machineSettings };
 
   // Stage 1: regions → objects
-  const objects = buildStitchObjects(regions, config, ms);
+  let objects = buildStitchObjects(regions, config, ms);
 
   // Stage 2: objects → raw commands
-  let commands = flattenToCommands(objects, ms);
+  let commands = flattenToCommands(objects, ms, config);
+  if (_lastUniversalThreadColorSequenceOptimizerObjects) {
+    objects = _lastUniversalThreadColorSequenceOptimizerObjects;
+  }
 
   // Stage 3: autoFix (R5 close, R4/R10 remove empty, R7 dedupe color, R6 dedupe trim, R9 END, R13 trim insertion)
   let validation = validatePipeline(commands, objects, ms, format);
@@ -2073,10 +2089,6 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   commands = travelCleanup.commands;
   _lastTravelAndMicroDetailCleanupReport = travelCleanup.report;
 
-  const threadColorSequence = applyUniversalThreadColorSequenceOptimizer(commands, config, ms);
-  commands = threadColorSequence.commands;
-  _lastUniversalThreadColorSequenceOptimizerReport = threadColorSequence.report;
-
   const stitchCount = commands.filter(c => c.type === 'stitch').length;
   const jumpCount = commands.filter(c => c.type === 'jump').length;
   const trimCount = commands.filter(c => c.type === 'trim').length;
@@ -2122,10 +2134,32 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     universalAutoDigitizerProReport,
     travelAndMicroDetailCleanupReport: travelCleanupReport,
     universalThreadColorSequenceOptimizerReport,
-    universalThreadColorSequenceOptimizerApplied: universalThreadColorSequenceOptimizerReport.applied,
-    universalThreadColorSequenceOptimizerEnabled: universalThreadColorSequenceOptimizerReport.enabled,
-    universalThreadColorSequenceColorChangeReduction: universalThreadColorSequenceOptimizerReport.colorChangeReduction,
-    universalThreadColorSequenceReorderedBlockCount: universalThreadColorSequenceOptimizerReport.reorderedBlockCount,
+    universalThreadColorSequenceOptimizerApplied: universalThreadColorSequenceOptimizerReport.universalThreadColorSequenceOptimizerApplied,
+    threadColorSequenceOptimizerApplied: universalThreadColorSequenceOptimizerReport.optimizerApplied,
+    uniqueVisualColorCountBefore: universalThreadColorSequenceOptimizerReport.uniqueVisualColorCountBefore,
+    normalizedThreadColorCountAfter: universalThreadColorSequenceOptimizerReport.normalizedThreadColorCountAfter,
+    colorBlockCountBefore: universalThreadColorSequenceOptimizerReport.colorBlockCountBefore,
+    colorBlockCountAfter: universalThreadColorSequenceOptimizerReport.colorBlockCountAfter,
+    repeatedThreadColorBlocksBefore: universalThreadColorSequenceOptimizerReport.repeatedThreadColorBlocksBefore,
+    repeatedThreadColorBlocksAfter: universalThreadColorSequenceOptimizerReport.repeatedThreadColorBlocksAfter,
+    unnecessaryColorChangesRemoved: universalThreadColorSequenceOptimizerReport.unnecessaryColorChangesRemoved,
+    threadChangesBefore: universalThreadColorSequenceOptimizerReport.threadChangesBefore,
+    threadChangesAfter: universalThreadColorSequenceOptimizerReport.threadChangesAfter,
+    blackOutlineBlocksBefore: universalThreadColorSequenceOptimizerReport.blackOutlineBlocksBefore,
+    blackOutlineBlocksAfter: universalThreadColorSequenceOptimizerReport.blackOutlineBlocksAfter,
+    blackOutlineFinishesLast: universalThreadColorSequenceOptimizerReport.blackOutlineFinishesLast,
+    threadSequenceJumpCountBefore: universalThreadColorSequenceOptimizerReport.jumpCountBefore,
+    threadSequenceJumpCountAfter: universalThreadColorSequenceOptimizerReport.jumpCountAfter,
+    threadSequenceJumpsOver10mmBefore: universalThreadColorSequenceOptimizerReport.jumpsOver10mmBefore,
+    threadSequenceJumpsOver10mmAfter: universalThreadColorSequenceOptimizerReport.jumpsOver10mmAfter,
+    threadSequenceTotalJumpTravelMmBefore: universalThreadColorSequenceOptimizerReport.totalJumpTravelMmBefore,
+    threadSequenceTotalJumpTravelMmAfter: universalThreadColorSequenceOptimizerReport.totalJumpTravelMmAfter,
+    threadSequenceMaxJumpMmBefore: universalThreadColorSequenceOptimizerReport.maxJumpMmBefore,
+    threadSequenceMaxJumpMmAfter: universalThreadColorSequenceOptimizerReport.maxJumpMmAfter,
+    threadSequenceEstimatedTravelReductionPercent: universalThreadColorSequenceOptimizerReport.estimatedTravelReductionPercent,
+    routeWithinColorBlocksApplied: universalThreadColorSequenceOptimizerReport.routeWithinColorBlocksApplied,
+    threadSequenceOptimizationAccepted: universalThreadColorSequenceOptimizerReport.optimizationAccepted,
+    threadSequenceRejectedReason: universalThreadColorSequenceOptimizerReport.rejectedReason,
     travelCleanupApplied: travelCleanupReport.travelCleanupApplied,
     requestedTravelCleanup: travelCleanupReport.requestedTravelCleanup,
     effectiveTravelCleanup: travelCleanupReport.effectiveTravelCleanup,
