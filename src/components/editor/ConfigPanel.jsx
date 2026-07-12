@@ -531,6 +531,8 @@ export default function ConfigPanel({ config, onChange, regions, selectedRegionI
           <Toggle label="Travel + micro-detail cleanup" value={cfg.travelAndMicroDetailCleanup || false} onChange={v => set('travelAndMicroDetailCleanup', v)} />
           <Toggle label="Thread color sequence optimizer" value={cfg.universalThreadColorSequenceOptimizer || false} onChange={v => set('universalThreadColorSequenceOptimizer', v)} />
           <Toggle label="Cartoon cleanup + outline merge" value={cfg.universalCartoonCleanupAndOutlineMerge || false} onChange={v => set('universalCartoonCleanupAndOutlineMerge', v)} />
+          <Toggle label="Thread stop compaction V1" value={cfg.threadStopCompactionV1 || false} onChange={v => set('threadStopCompactionV1', v)} />
+          <Toggle label="Contour cleanup V1" value={cfg.contourCleanupV1 || false} onChange={v => set('contourCleanupV1', v)} />
           <div className="py-1.5">
             <label className="text-[11px] text-slate-500 uppercase tracking-wider mb-1 block">Compensación de tensión</label>
             <input

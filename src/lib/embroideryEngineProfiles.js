@@ -143,6 +143,8 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
   const requestedUniversalAutoDigitizerPro = config.universalAutoDigitizerPro === true;
   const requestedUniversalThreadColorSequenceOptimizer = config.universalThreadColorSequenceOptimizer === true;
   const requestedUniversalCartoonCleanupAndOutlineMerge = config.universalCartoonCleanupAndOutlineMerge === true;
+  const requestedThreadStopCompactionV1 = config.threadStopCompactionV1 === true;
+  const requestedContourCleanupV1 = config.contourCleanupV1 === true;
   const panelPreprocess = preprocessSettings && typeof preprocessSettings === 'object' ? preprocessSettings : null;
 
   const effectivePreprocessSettings = unifiedStandardProRequested ? {
@@ -188,6 +190,8 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
     valueRecord('universalAutoDigitizerPro', requestedUniversalAutoDigitizerPro, requestedUniversalAutoDigitizerPro, 'explicit opt-in only'),
     valueRecord('universalThreadColorSequenceOptimizer', requestedUniversalThreadColorSequenceOptimizer, requestedUniversalThreadColorSequenceOptimizer, 'explicit opt-in only'),
     valueRecord('universalCartoonCleanupAndOutlineMerge', requestedUniversalCartoonCleanupAndOutlineMerge, requestedUniversalCartoonCleanupAndOutlineMerge, 'explicit opt-in only'),
+    valueRecord('threadStopCompactionV1', requestedThreadStopCompactionV1, requestedThreadStopCompactionV1, 'explicit opt-in only'),
+    valueRecord('contourCleanupV1', requestedContourCleanupV1, requestedContourCleanupV1, 'explicit opt-in only'),
     valueRecord('goldenMasterProfileId', config.goldenMasterProfileId || null, effectiveGoldenMasterProfileId, 'explicit golden master config'),
   ];
 
@@ -225,6 +229,8 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
     travelAndMicroDetailCleanup: requestedTravelAndMicroDetailCleanup,
     universalThreadColorSequenceOptimizer: requestedUniversalThreadColorSequenceOptimizer,
     universalCartoonCleanupAndOutlineMerge: requestedUniversalCartoonCleanupAndOutlineMerge,
+    threadStopCompactionV1: requestedThreadStopCompactionV1,
+    contourCleanupV1: requestedContourCleanupV1,
     learnedFillDensityMm: config.learnedFillDensityMm ?? effectiveTatamiDensity,
     preprocessSettingsReachPipeline: true,
     posterizeControlsReachPipeline: true,
@@ -251,6 +257,8 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
       universalAutoDigitizerPro: requestedUniversalAutoDigitizerPro,
       universalThreadColorSequenceOptimizer: requestedUniversalThreadColorSequenceOptimizer,
       universalCartoonCleanupAndOutlineMerge: requestedUniversalCartoonCleanupAndOutlineMerge,
+      threadStopCompactionV1: requestedThreadStopCompactionV1,
+      contourCleanupV1: requestedContourCleanupV1,
       goldenMasterProfileId: config.goldenMasterProfileId || null,
     },
     unifiedStandardProProfileApplied: unifiedStandardProRequested,
@@ -272,6 +280,8 @@ export function resolveEffectiveEmbroideryProfile(config = {}, preprocessSetting
     effectiveUniversalAutoDigitizerPro: requestedUniversalAutoDigitizerPro,
     effectiveUniversalThreadColorSequenceOptimizer: requestedUniversalThreadColorSequenceOptimizer,
     effectiveUniversalCartoonCleanupAndOutlineMerge: requestedUniversalCartoonCleanupAndOutlineMerge,
+    effectiveThreadStopCompactionV1: requestedThreadStopCompactionV1,
+    effectiveContourCleanupV1: requestedContourCleanupV1,
     effectiveGoldenMasterProfileId,
     effectiveStitchStrategy: {
       ...(strategy.stitchStrategy || {}),

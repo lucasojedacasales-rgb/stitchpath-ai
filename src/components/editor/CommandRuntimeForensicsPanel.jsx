@@ -9,6 +9,7 @@ import { buildTravelAndMicroDetailCleanupMarkdown, createTravelAndMicroDetailCle
 import { buildUniversalAutoDigitizerProMarkdown, createUniversalAutoDigitizerProReport } from '@/lib/universalAutoDigitizerPro.js';
 import { buildUniversalThreadColorSequenceOptimizerMarkdown, createUniversalThreadColorSequenceOptimizerReport } from '@/lib/universalThreadColorSequenceOptimizer.js';
 import { buildUniversalCartoonCleanupAndOutlineMergeMarkdown, createUniversalCartoonCleanupAndOutlineMergeReport } from '@/lib/universalCartoonCleanupAndOutlineMerge.js';
+import { buildContourCleanupMarkdown, buildThreadStopCompactionMarkdown, createContourCleanupReport, createThreadStopCompactionReport } from '@/lib/contourCleanupAndThreadStopCompaction.js';
 
 const SEVERITY_RANK = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
 
@@ -172,6 +173,24 @@ export default function CommandRuntimeForensicsPanel({
     downloadBlob(md, 'UNIVERSAL_CARTOON_CLEANUP_AND_OUTLINE_MERGE_REPORT_V1.md');
   };
 
+  const downloadThreadStopCompactionReport = () => {
+    const report = commandMeta?.threadStopCompactionReport || createThreadStopCompactionReport({
+      threadStopCompactionApplied: commandMeta?.threadStopCompactionApplied === true,
+    });
+    const md = buildThreadStopCompactionMarkdown(report);
+    setLastReport(report);
+    downloadBlob(md, 'THREAD_STOP_COMPACTION_REPORT_V1.md');
+  };
+
+  const downloadContourCleanupReport = () => {
+    const report = commandMeta?.contourCleanupReport || createContourCleanupReport({
+      contourCleanupApplied: commandMeta?.contourCleanupApplied === true,
+    });
+    const md = buildContourCleanupMarkdown(report);
+    setLastReport(report);
+    downloadBlob(md, 'CONTOUR_CLEANUP_REPORT_V1.md');
+  };
+
   const downloadEngineProfileBenchmarkReport = async () => {
     setBenchmarkRunning(true);
     try {
@@ -271,6 +290,12 @@ export default function CommandRuntimeForensicsPanel({
           </button>
           <button onClick={downloadUniversalCartoonCleanupAndOutlineMergeReport} className="flex items-center gap-1.5 rounded-lg border border-fuchsia-500/30 bg-fuchsia-900/20 px-3 py-1.5 text-xs font-bold text-fuchsia-200 hover:bg-fuchsia-900/30 transition-colors">
             <Download className="w-3.5 h-3.5" /> Cartoon cleanup
+          </button>
+          <button onClick={downloadThreadStopCompactionReport} className="flex items-center gap-1.5 rounded-lg border border-indigo-500/30 bg-indigo-900/20 px-3 py-1.5 text-xs font-bold text-indigo-200 hover:bg-indigo-900/30 transition-colors">
+            <Download className="w-3.5 h-3.5" /> Thread stops
+          </button>
+          <button onClick={downloadContourCleanupReport} className="flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-900/20 px-3 py-1.5 text-xs font-bold text-rose-200 hover:bg-rose-900/30 transition-colors">
+            <Download className="w-3.5 h-3.5" /> Contour cleanup
           </button>
           <button onClick={() => downloadReport()} className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500 transition-colors">
             <Download className="w-3.5 h-3.5" /> Auditar comandos finales

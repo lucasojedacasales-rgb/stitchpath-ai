@@ -58,6 +58,12 @@ import {
   applyUniversalCartoonCleanupAndOutlineMergeToObjects,
   createUniversalCartoonCleanupAndOutlineMergeReport,
 } from './universalCartoonCleanupAndOutlineMerge.js';
+import {
+  applyContourCleanupV1,
+  applyThreadStopCompactionV1,
+  createContourCleanupReport,
+  createThreadStopCompactionReport,
+} from './contourCleanupAndThreadStopCompaction.js';
 
 // ─── Machine format limits (DST/DSB physical constraints) ───────────────────
 const FORMAT_LIMITS = {
@@ -160,6 +166,8 @@ let _lastUniversalThreadColorSequenceOptimizerReport = createUniversalThreadColo
 let _lastUniversalThreadColorSequenceOptimizerObjects = null;
 let _lastUniversalCartoonCleanupAndOutlineMergeReport = createUniversalCartoonCleanupAndOutlineMergeReport();
 let _lastUniversalCartoonCleanupAndOutlineMergeObjects = null;
+let _lastThreadStopCompactionReport = createThreadStopCompactionReport();
+let _lastContourCleanupReport = createContourCleanupReport();
 
 function createCE01ZeroFillRecoveryReport() {
   return {
@@ -2120,6 +2128,21 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   commands = cartoonCommandCleanup.commands;
   _lastUniversalCartoonCleanupAndOutlineMergeReport = cartoonCommandCleanup.report;
 
+  const threadStopCompaction = applyThreadStopCompactionV1(commands, config, ms, {
+    afterUniversalAutoDigitizer: preOptCommands,
+    afterThreadSequenceOptimizer: preOptCommands,
+    afterTravelCleanup: travelCleanup.commands,
+    afterCartoonCleanup: cartoonCommandCleanup.commands,
+    beforeExportRepair: preOptCommands,
+    afterExportRepair: commands,
+  });
+  commands = threadStopCompaction.commands;
+  _lastThreadStopCompactionReport = threadStopCompaction.report;
+
+  const contourCleanup = applyContourCleanupV1(commands, config, ms);
+  commands = contourCleanup.commands;
+  _lastContourCleanupReport = contourCleanup.report;
+
   const stitchCount = commands.filter(c => c.type === 'stitch').length;
   const jumpCount = commands.filter(c => c.type === 'jump').length;
   const trimCount = commands.filter(c => c.type === 'trim').length;
@@ -2135,6 +2158,8 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
   const travelCleanupReport = _lastTravelAndMicroDetailCleanupReport || createTravelAndMicroDetailCleanupReport();
   const universalThreadColorSequenceOptimizerReport = _lastUniversalThreadColorSequenceOptimizerReport || createUniversalThreadColorSequenceOptimizerReport();
   const universalCartoonCleanupAndOutlineMergeReport = _lastUniversalCartoonCleanupAndOutlineMergeReport || createUniversalCartoonCleanupAndOutlineMergeReport();
+  const threadStopCompactionReport = _lastThreadStopCompactionReport || createThreadStopCompactionReport();
+  const contourCleanupReport = _lastContourCleanupReport || createContourCleanupReport();
 
   const meta = {
     source: 'ce01_safe_pipeline',
@@ -2167,6 +2192,10 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
     travelAndMicroDetailCleanupReport: travelCleanupReport,
     universalThreadColorSequenceOptimizerReport,
     universalCartoonCleanupAndOutlineMergeReport,
+    threadStopCompactionReport,
+    contourCleanupReport,
+    threadStopCompactionApplied: threadStopCompactionReport.threadStopCompactionApplied,
+    contourCleanupApplied: contourCleanupReport.contourCleanupApplied,
     universalCartoonCleanupAndOutlineMergeApplied: universalCartoonCleanupAndOutlineMergeReport.universalCartoonCleanupAndOutlineMergeApplied,
     cartoonCleanupOptimizationAccepted: universalCartoonCleanupAndOutlineMergeReport.optimizationAccepted,
     cartoonCleanupRejectedReason: universalCartoonCleanupAndOutlineMergeReport.rejectedReason,
@@ -2222,7 +2251,7 @@ export function buildFinalCommands(regions, config = {}, machineSettings = {}, f
 
   _lastFinalCommandsMeta = meta;
 
-  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, travelCleanupReport, universalThreadColorSequenceOptimizerReport, universalCartoonCleanupAndOutlineMergeReport, goldenMasterTravelReductionReport: goldenMasterTravelReduction.report, sameColorOrderingReport, cartoonStructureReport, universalAutoDigitizerProReport, validation };
+  return { commands, objects, meta, sanitizeReport, repairReport: repairResult.report, travelReport: travelResult.report, finalTravelReport: finalTravelResult.report, trimReport: trimResult.report, contourSegmentReport, professionalPlannerRepairReport: professionalPlannerRepair.report, travelCleanupReport, universalThreadColorSequenceOptimizerReport, universalCartoonCleanupAndOutlineMergeReport, threadStopCompactionReport, contourCleanupReport, goldenMasterTravelReductionReport: goldenMasterTravelReduction.report, sameColorOrderingReport, cartoonStructureReport, universalAutoDigitizerProReport, validation };
 }
 
 /**
