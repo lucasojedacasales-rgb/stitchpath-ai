@@ -1,0 +1,34 @@
+import { beforeAll, describe, expect, it } from 'vitest';
+import { resolveCanonicalCompilationConfig } from '../commandCompilation/canonicalCompilationConfig.js';
+import { classifyPhysicalDiscontinuity, compileDiscontinuityCommands } from '../commandCompilation/discontinuityClassifier.js';
+import { createHoleGapCommandFixture } from '../fixtures/holeGapCommandFixture.js';
+import { createGenericMascotCommandFixture } from '../fixtures/genericMascotCommandFixture.js';
+import { createSafeConnectorCommandFixture } from '../fixtures/safeConnectorCommandFixture.js';
+import { createUnsafeGapCommandFixture } from '../fixtures/unsafeGapCommandFixture.js';
+
+let safe; let hole; let unsafe; let generic;
+beforeAll(() => { safe = createSafeConnectorCommandFixture(); hole = createHoleGapCommandFixture(); unsafe = createUnsafeGapCommandFixture(); generic = createGenericMascotCommandFixture(); });
+const firstClassification = (fixture, type) => fixture.canonicalCompilation.discontinuityClassifications.find(item => item.classification === type);
+
+describe('Phase 10 physical discontinuity classification', () => {
+  it('classifies a proven connector as a stitch', () => expect(firstClassification(safe, 'safe_connector_stitch')).toBeTruthy());
+  it('marks safe connectors allowed', () => expect(firstClassification(safe, 'safe_connector_stitch').safeConnectorAllowed).toBe(true));
+  it('uses the safe connector reason code', () => expect(firstClassification(safe, 'safe_connector_stitch').reasonCode).toBe('SAFE_SUBPATH_CONNECTOR'));
+  it('emits one safe connector stitch', () => { const item = firstClassification(safe, 'safe_connector_stitch'); expect(safe.canonicalCompilation.commands.filter(command => command.transitionId === item.transitionId)).toHaveLength(1); });
+  it('keeps connector stitches separate from source stitches', () => expect(safe.canonicalCompilation.summary.connectorStitchCommandCount).toBeGreaterThan(0));
+  it('classifies hole crossings as jumps with trim', () => { const transitionIds = new Set(hole.physicalPlan.objectPaths[0].subpathTransitions.filter(item => item.crossesHole).map(item => item.id)); expect(hole.canonicalCompilation.discontinuityClassifications.filter(item => transitionIds.has(item.transitionId)).every(item => item.classification === 'jump_with_trim')).toBe(true); });
+  it('never allows a connector across a hole', () => { const transitionIds = new Set(hole.physicalPlan.objectPaths[0].subpathTransitions.filter(item => item.crossesHole).map(item => item.id)); expect(hole.canonicalCompilation.discontinuityClassifications.filter(item => transitionIds.has(item.transitionId)).every(item => !item.safeConnectorAllowed)).toBe(true); });
+  it('emits trim before an unsafe jump', () => { const jump = unsafe.canonicalCompilation.commands.find(item => item.type === 'jump' && item.transitionId); expect(unsafe.canonicalCompilation.commands[jump.sequenceIndex - 1].type).toBe('trim'); });
+  it('supports unsafe jump without trim when configured', () => { const fixture = createUnsafeGapCommandFixture({ trimUnsafeSubpathDiscontinuities: false, trimBetweenObjects: false }); expect(fixture.canonicalCompilation.discontinuityClassifications.some(item => item.classification === 'jump_without_trim')).toBe(true); });
+  it('does not emit zero-distance jumps', () => expect(unsafe.canonicalCompilation.summary.zeroDistanceJumpCommandCount).toBe(0));
+  it('classifies zero-distance continuation', () => expect(generic.canonicalCompilation.discontinuityClassifications.some(item => item.classification === 'zero_distance_continuation')).toBe(true));
+  it('emits no command for zero-distance continuation', () => { const item = firstClassification(generic, 'zero_distance_continuation'); expect(generic.canonicalCompilation.commands.some(command => command.transitionId === item.transitionId)).toBe(false); });
+  it('enforces the technical maximum', () => { const fixture = safe; const path = fixture.physicalPlan.objectPaths[0]; const transition = structuredClone(path.subpathTransitions.find(item => item.continuousStitchAllowed)); transition.distanceMm = 99; transition.toPoint = { x: transition.fromPoint.x + 99, y: transition.fromPoint.y }; const from = path.subpaths.find(item => item.id === transition.fromSubpathId); const to = structuredClone(path.subpaths.find(item => item.id === transition.toSubpathId)); to.points[0].x = transition.toPoint.x; to.points[0].y = transition.toPoint.y; const result = classifyPhysicalDiscontinuity({ object: fixture.threadedObjectMaterialization.objects[0], technicalSpecification: fixture.technicalPlan.specifications[0], physicalTransition: transition, fromSubpath: from, toSubpath: to, config: resolveCanonicalCompilationConfig() }); expect(result.classification).toBe('jump_with_trim'); });
+  it('rejects outside-region connectors', () => { const fixture = safe; const path = fixture.physicalPlan.objectPaths[0]; const transition = structuredClone(path.subpathTransitions.find(item => item.continuousStitchAllowed)); transition.crossesOutsideEffectiveRegion = true; const result = classifyPhysicalDiscontinuity({ object: fixture.threadedObjectMaterialization.objects[0], technicalSpecification: fixture.technicalPlan.specifications[0], physicalTransition: transition, fromSubpath: path.subpaths.find(item => item.id === transition.fromSubpathId), toSubpath: path.subpaths.find(item => item.id === transition.toSubpathId), config: resolveCanonicalCompilationConfig() }); expect(result.safeConnectorAllowed).toBe(false); });
+  it('rejects noncontinuous transitions', () => expect(hole.canonicalCompilation.discontinuityClassifications.filter(item => item.classification !== 'zero_distance_continuation').some(item => !item.safeConnectorAllowed)).toBe(true));
+  it('uses no machine threshold metadata', () => expect(JSON.stringify(safe.canonicalCompilation.discontinuityClassifications)).not.toMatch(/machine|ce01/i));
+  it('preserves transition identity', () => expect(safe.canonicalCompilation.discontinuityClassifications.every(item => item.id === `canonical-gap:${item.transitionId}`)).toBe(true));
+  it('classifies every transition once', () => expect(safe.canonicalCompilation.summary.discontinuityClassificationCoveragePercent).toBe(100));
+  it('has no duplicate classifications', () => expect(safe.canonicalCompilation.summary.duplicateDiscontinuityClassificationCount).toBe(0));
+  it('compiles a direct jump-without-trim request', () => { const classification = { classification: 'jump_without_trim', transitionId: 't' }; const result = compileDiscontinuityCommands({ classification, targetPoint: { x: 2, y: 0 }, currentPosition: { x: 0, y: 0 }, commandContext: { threadId: 'thread', objectId: 'object' }, config: resolveCanonicalCompilationConfig() }); expect(result.commands.map(item => item.type)).toEqual(['jump']); });
+});

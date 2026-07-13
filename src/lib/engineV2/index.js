@@ -343,3 +343,32 @@ export {
   validatePhysicalSubpathTransitionV2,
 } from './stitchGeneration/physicalStitchValidation.js';
 export { createPhysicalStitchDiagnostic } from './stitchGeneration/physicalStitchDiagnostics.js';
+
+export { canonicalCommandId } from './commandCompilation/canonicalCommandId.js';
+export {
+  CANONICAL_COMPILATION_STATUSES,
+  CANONICAL_DISCONTINUITY_CLASSIFICATIONS,
+  canonicalDispositionId,
+  canonicalGapId,
+  canonicalSpanId,
+  createCanonicalCommandCompilationV2,
+  createCanonicalCompilationDispositionV2,
+  createCanonicalDiscontinuityClassificationV2,
+  createCanonicalObjectCommandSpanV2,
+} from './commandCompilation/canonicalCompilationModel.js';
+export {
+  DEFAULT_CANONICAL_COMPILATION_CONFIG,
+  resolveCanonicalCompilationConfig,
+  validateCanonicalCompilationConfig,
+} from './commandCompilation/canonicalCompilationConfig.js';
+export { classifyPhysicalDiscontinuity, compileDiscontinuityCommands } from './commandCompilation/discontinuityClassifier.js';
+export { compileObjectPhysicalPathToCanonicalCommands, compilePhysicalSubpathToCanonicalCommands } from './commandCompilation/objectCommandCompiler.js';
+export { compileThreadBlocksToCanonicalCommands } from './commandCompilation/threadBlockCommandCompiler.js';
+export { compileCanonicalCommandStream } from './commandCompilation/canonicalCommandCompiler.js';
+export {
+  validateCanonicalCommandCompilationV2,
+  validateCanonicalCompilationDispositionV2,
+  validateCanonicalDiscontinuityClassificationV2,
+  validateCanonicalObjectCommandSpanV2,
+} from './commandCompilation/canonicalCompilationValidation.js';
+export { createCanonicalCompilationDiagnostic } from './commandCompilation/canonicalCompilationDiagnostics.js';

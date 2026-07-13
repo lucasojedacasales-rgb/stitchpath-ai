@@ -162,6 +162,16 @@ export function createThreadBlockV2(input = {}) {
  * @property {string|null} threadId
  * @property {string|null} objectId
  * @property {string|null} regionId
+ * @property {string|null} id
+ * @property {number|null} sequenceIndex
+ * @property {string|null} threadBlockId
+ * @property {string|null} executionStepId
+ * @property {string|null} subpathId
+ * @property {string|null} physicalPointId
+ * @property {string|null} transitionId
+ * @property {string|null} phase
+ * @property {string|null} technique
+ * @property {string|null} reasonCode
  * @property {*} source
  */
 
@@ -174,6 +184,16 @@ export function createCanonicalCommandV2(input = {}) {
     threadId: input.threadId ?? null,
     objectId: input.objectId ?? null,
     regionId: input.regionId ?? null,
+    id: input.id ?? null,
+    sequenceIndex: Number.isInteger(input.sequenceIndex) ? input.sequenceIndex : null,
+    threadBlockId: input.threadBlockId ?? null,
+    executionStepId: input.executionStepId ?? null,
+    subpathId: input.subpathId ?? null,
+    physicalPointId: input.physicalPointId ?? null,
+    transitionId: input.transitionId ?? null,
+    phase: input.phase ?? null,
+    technique: input.technique ?? null,
+    reasonCode: input.reasonCode ?? null,
     source: cloneValue(input.source ?? null),
   };
 }

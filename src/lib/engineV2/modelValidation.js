@@ -143,6 +143,11 @@ export function validateCanonicalCommandV2(command) {
   if (command.type === 'colorChange' && !hasId(command.threadId)) {
     errors.push(error('COLOR_CHANGE_THREAD_REQUIRED', 'threadId', 'colorChange requires a threadId.'));
   }
+  if (command.id !== null && command.id !== undefined && !hasId(command.id)) errors.push(error('INVALID_COMMAND_ID', 'id', 'Command id must be a non-empty string when supplied.'));
+  if (command.sequenceIndex !== null && command.sequenceIndex !== undefined && (!Number.isInteger(command.sequenceIndex) || command.sequenceIndex < 0)) errors.push(error('INVALID_COMMAND_SEQUENCE_INDEX', 'sequenceIndex', 'Command sequenceIndex must be a non-negative integer when supplied.'));
+  for (const field of ['threadBlockId', 'executionStepId', 'subpathId', 'physicalPointId', 'transitionId', 'phase', 'technique', 'reasonCode']) {
+    if (command[field] !== null && command[field] !== undefined && !hasId(command[field])) errors.push(error('INVALID_COMMAND_LINEAGE', field, `${field} must be a non-empty string when supplied.`));
+  }
   return result(errors);
 }
 

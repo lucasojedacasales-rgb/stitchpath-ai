@@ -106,3 +106,13 @@ Running generation follows and deterministically resamples source geometry. It n
 Phase 7 underlay plans now produce physical `center_run`, `edge_run`, `zigzag`, and `tatami_lattice` subpaths before top stitches. Pull compensation may adjust generated endpoints within the configured envelope, but source object geometry and holes remain unchanged. Selected Phase 8 entry and exit points become explicit anchor subpaths and remain the first and last physical points.
 
 There is no silent point or stitch cap, including no 12,000-point cap. Configured object, total-point, and scanline limits block generation transactionally and never return a truncated or partially valid path. Phase 9 creates no canonical commands, jump commands, trim commands, color-change commands, end commands, machine limits, hoop transforms, CE01 behavior, DST/DSB encoding, or application integration. V1 remains active and untouched, and Engine V2 remains disconnected from the application.
+
+## Phase 10: universal canonical command compilation
+
+Phase 10 compiles validated Phase 9 physical paths into one deterministic universal stream containing only `stitch`, `jump`, `trim`, `colorChange`, and `end`. Stitch commands are needle-penetrating movements; jumps are unadapted non-sewing movements; trims are universal thread-cut intents. All movement coordinates remain absolute design-space millimetres.
+
+The Phase 8 object order and thread-block order remain authoritative. `initialThreadId` activates the first block without an initial color change, and the default stream begins with one positioning jump to the first physical anchor. Exactly one color change is emitted between adjacent Phase 8 blocks, including dependency-required revisits, and exactly one `end` terminates the stream.
+
+Every Phase 9 physical stitch maps to exactly one physical-source stitch command. Every physical point is reached, and every explicit subpath discontinuity is classified exactly once. A discontinuity becomes a connector stitch only when the Phase 9 transition proves same-object continuity, remains inside effective geometry, avoids holes, and fits the Phase 7 technical maximum. Other gaps remain non-sewing jumps, optionally preceded by one deduplicated trim. A stitch is never introduced across an object boundary.
+
+Commands preserve object, region, thread, execution-step, thread-block, subpath, physical-point, transition, phase, and technique lineage. Coordinates are not quantized, movements are not split, and no machine profile, hoop transform, CE01 rule, DST/DSB encoder, or encoder byte limit is used. Engine V2 remains disconnected from the application and V1 remains unchanged.
