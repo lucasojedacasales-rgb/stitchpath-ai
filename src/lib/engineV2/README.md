@@ -40,3 +40,13 @@ Semantic analysis combines controlled source labels, normalized geometry, graph 
 `negative_space` requires explicit hole or trusted negative-space, cutout, or void evidence; nesting alone is insufficient. Assessments below the default accepted confidence of `0.72`, or with conflicting evidence, are marked for review and prefer `unknown` over an unsafe guess.
 
 Phase 3 assigns no stitch types, contours, threads, embroidery objects, commands, sequence plans, or machine adaptations. Engine V2 remains disconnected from the application.
+
+## Phase 4: conservative embroidery-object proposals
+
+Phase 4 adds a planning-only decision layer over accepted `RegionV2`, `RegionGraphV2`, and semantic assessments. Controlled source vocabulary now recognizes equivalent English and Spanish concepts while preserving the exact source values and rejecting unsafe substring matches. Artwork roles remain distinct from proposed embroidery roles.
+
+Every accepted region receives exactly one immutable decision: an active proposal, an explicit exclusion, or manual review. A proposed stitch type is only a recommendation and contains no stitch coordinates. Negative space is excluded, backgrounds are excluded by default, and unknown or ambiguous regions are retained for manual review instead of disappearing.
+
+Outline proposals are allowed only for explicit, region-backed outline evidence that also passes dark-color, dark-stroke-support, topology, confidence, and conflict checks. Dark color alone never implies an outline. Synthetic outlines remain disabled, and disconnected explicit outline regions remain separate.
+
+Phase 4 does not materialize final `EmbroideryObjectV2` objects. Thread assignment, physical stitch generation, global sequencing, travel routing, machine adaptation, and encoding remain deferred. Engine V2 is still isolated from and unimported by the production application.

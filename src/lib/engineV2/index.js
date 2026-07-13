@@ -89,3 +89,45 @@ export {
 } from './semantics/semanticAnalysisValidation.js';
 
 export { createSemanticAnalysisDiagnostic } from './semantics/semanticDiagnostics.js';
+
+export {
+  CONTROLLED_SOURCE_SEMANTIC_VOCABULARY,
+  SOURCE_SEMANTIC_CONCEPTS,
+  isOutlineIntentConcept,
+  matchControlledSemanticTerms,
+  normalizeControlledSemanticText,
+} from './semantics/sourceSemanticVocabulary.js';
+
+export {
+  EMBROIDERY_PROPOSAL_ROLES,
+  EMBROIDERY_PROPOSAL_STITCH_TYPES,
+  createEmbroideryObjectProposalV2,
+  proposalIdFor,
+} from './planning/embroideryPlanningModel.js';
+
+export {
+  DEFAULT_OBJECT_PLANNING_CONFIG,
+  resolveObjectPlanningConfig,
+  validateObjectPlanningConfig,
+} from './planning/planningConfig.js';
+
+export {
+  normalizedHolesToMillimeters,
+  normalizedPolygonToMillimeters,
+  regionGeometryToMillimeters,
+} from './planning/normalizedToMillimeterGeometry.js';
+
+export { evaluateOutlineEligibility } from './planning/outlineEligibility.js';
+export { planEmbroideryRoleForRegion } from './planning/embroideryRolePlanner.js';
+export {
+  buildEmbroideryProposalDependencies,
+  getProposalAncestors,
+  getProposalDescendants,
+  getProposalExecutionLayers,
+} from './planning/dependencyPlanner.js';
+export { buildEmbroideryObjectProposalPlan } from './planning/objectPlanningPipeline.js';
+export {
+  validateEmbroideryObjectProposalPlan,
+  validateEmbroideryObjectProposalV2,
+} from './planning/objectPlanningValidation.js';
+export { createObjectPlanningDiagnostic } from './planning/objectPlanningDiagnostics.js';
