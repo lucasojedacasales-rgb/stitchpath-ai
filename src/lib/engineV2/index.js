@@ -285,3 +285,61 @@ export {
   validateSequenceTransitionV2,
 } from './sequencing/sequencePlanningValidation.js';
 export { createGlobalSequenceDiagnostic } from './sequencing/sequencePlanningDiagnostics.js';
+
+export {
+  PHYSICAL_DISPOSITION_STATUSES,
+  PHYSICAL_GENERATORS,
+  PHYSICAL_STITCH_PHASES,
+  PHYSICAL_STITCH_SOURCE_TYPES,
+  PHYSICAL_STITCH_TECHNIQUES,
+  createMachineIndependentPhysicalStitchPlanV2,
+  createObjectPhysicalStitchDispositionV2,
+  createObjectPhysicalStitchPathV2,
+  createPhysicalStitchPointV2,
+  createPhysicalStitchSubpathV2,
+  createPhysicalSubpathTransitionV2,
+  physicalDispositionId,
+  physicalGapId,
+  physicalPathId,
+  physicalPointId,
+  physicalSubpathId,
+} from './stitchGeneration/physicalStitchModel.js';
+export {
+  DEFAULT_PHYSICAL_GENERATION_CONFIG,
+  PHYSICAL_GENERATION_PROFILES,
+  resolvePhysicalGenerationConfig,
+  validatePhysicalGenerationConfig,
+} from './stitchGeneration/physicalGenerationConfig.js';
+export {
+  calculatePathBounds,
+  calculateSubpathMetrics,
+  distanceBetweenPoints,
+  insertPointIntoPolyline,
+  inverseRotatePoint,
+  pointOnPolygonBoundary,
+  pointsEqualWithinTolerance,
+  polylineLength,
+  projectPointToSegment,
+  removeConsecutiveDuplicatePoints,
+  resampleClosedPolyline,
+  resampleOpenPolyline,
+  rotatePoint,
+  segmentCrossesHole,
+  segmentInsideEffectiveRegion,
+} from './stitchGeneration/stitchGeometry.js';
+export { distributeStitchIntervals, summarizeStitchLengths } from './stitchGeneration/stitchLengthDistribution.js';
+export { clipScanlineToRegion, generateParallelScanlineOrigins } from './stitchGeneration/polygonScanlineClipper.js';
+export { generateRunningPhysicalPath } from './stitchGeneration/runningStitchGenerator.js';
+export { generateTatamiPhysicalPath } from './stitchGeneration/tatamiStitchGenerator.js';
+export { generateSatinPhysicalPath } from './stitchGeneration/satinStitchGenerator.js';
+export { generatePhysicalUnderlay } from './stitchGeneration/physicalUnderlayGenerator.js';
+export { assembleObjectPhysicalStitchPath } from './stitchGeneration/objectPathAssembler.js';
+export { buildMachineIndependentPhysicalStitchPlan } from './stitchGeneration/physicalStitchPipeline.js';
+export {
+  validateMachineIndependentPhysicalStitchPlan,
+  validateObjectPhysicalStitchPathV2,
+  validatePhysicalStitchPointV2,
+  validatePhysicalStitchSubpathV2,
+  validatePhysicalSubpathTransitionV2,
+} from './stitchGeneration/physicalStitchValidation.js';
+export { createPhysicalStitchDiagnostic } from './stitchGeneration/physicalStitchDiagnostics.js';

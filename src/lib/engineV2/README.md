@@ -94,3 +94,15 @@ Selected entry and exit points are existing Phase 7 candidate points. They are c
 `ThreadBlockV2` records are planning blocks derived from the single global order. Same-thread objects remain separate embroidery objects, and disconnected objects or contours are never concatenated. A later block that reuses a closed thread requires an explicit reason. Black is not moved last automatically, and outlines are not moved last unless structural dependencies require that order.
 
 Phase 8 generates no physical stitches, underlay coordinates, jumps, trims, color-change commands, canonical commands, machine adaptation, CE01 behavior, or encoding. Engine V2 remains disconnected from and unimported by the production application.
+
+## Phase 9: machine-independent physical stitch paths
+
+Phase 9 is the first Engine V2 phase that generates physical needle-point coordinates. It consumes immutable final objects, thread definitions, Phase 7 technical specifications, and the authoritative Phase 8 execution order, thread blocks, and selected entry/exit candidate identities. It does not reinterpret or reorder those decisions.
+
+Physical subpaths contain actual stitch movements: each consecutive pair of points inside one continuous subpath is one physical stitch. Gaps between subpaths are explicit diagnostic discontinuities. They are not stitches, jumps, trims, color changes, or machine movements; classification remains deferred to a future canonical-command compiler.
+
+Running generation follows and deterministically resamples source geometry. It never invents a centerline. Tatami generation uses clipped scanlines, preserves explicit holes, alternates rows, and leaves disconnected row intervals as separate subpaths. Satin generation uses cross-sections across the column rather than tracing polygon boundaries and blocks unsupported hole, branching, and width cases instead of falling back to another stitch type.
+
+Phase 7 underlay plans now produce physical `center_run`, `edge_run`, `zigzag`, and `tatami_lattice` subpaths before top stitches. Pull compensation may adjust generated endpoints within the configured envelope, but source object geometry and holes remain unchanged. Selected Phase 8 entry and exit points become explicit anchor subpaths and remain the first and last physical points.
+
+There is no silent point or stitch cap, including no 12,000-point cap. Configured object, total-point, and scanline limits block generation transactionally and never return a truncated or partially valid path. Phase 9 creates no canonical commands, jump commands, trim commands, color-change commands, end commands, machine limits, hoop transforms, CE01 behavior, DST/DSB encoding, or application integration. V1 remains active and untouched, and Engine V2 remains disconnected from the application.
