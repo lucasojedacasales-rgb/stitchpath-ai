@@ -1,0 +1,30 @@
+import { beforeAll, describe, expect, it } from 'vitest';
+import { createGenericMascotDSBFixture } from '../fixtures/genericMascotDSBFixture.js';
+import { explicitDSBTrimNoOutputConfig } from '../fixtures/dsbTrimPolicyFixture.js';
+
+describe('Phase 12C DSB format diagnostics', () => {
+  let strict; let explicit;
+  beforeAll(() => { strict = createGenericMascotDSBFixture().dsbExport; explicit = createGenericMascotDSBFixture(explicitDSBTrimNoOutputConfig()).dsbExport; });
+  it('reports strict trim policy', () => expect(strict.diagnostic.trimPolicy).toBe('block'));
+  it('reports strict acknowledgement absent', () => expect(strict.diagnostic.trimAcknowledgementPresent).toBe(false));
+  it('reports strict transaction blocked', () => expect(strict.diagnostic.transactionBlocked).toBe(true));
+  it('reports strict binary absent', () => expect(strict.diagnostic.binaryOutputGenerated).toBe(false));
+  it('reports strict seventeen blocked trims', () => expect(strict.diagnostic.blockedTrimCount).toBe(17));
+  it('reports explicit trim policy', () => expect(explicit.diagnostic.trimPolicy).toBe('explicit_no_output'));
+  it('reports explicit acknowledgement present', () => expect(explicit.diagnostic.trimAcknowledgementPresent).toBe(true));
+  it('reports explicit transaction accepted', () => expect(explicit.diagnostic.transactionBlocked).toBe(false));
+  it('reports explicit binary generated', () => expect(explicit.diagnostic.binaryOutputGenerated).toBe(true));
+  it('reports seventeen zero-output trims', () => expect(explicit.diagnostic.trimZeroOutputCount).toBe(17));
+  it('reports zero trim binary records', () => expect(explicit.diagnostic.trimBinaryRecordCount).toBe(0));
+  it('reports four color records', () => expect(explicit.diagnostic.binaryColorChangeRecordCount).toBe(4));
+  it('reports one END record', () => expect(explicit.diagnostic.binaryEndRecordCount).toBe(1));
+  it('reports final EOF', () => expect(explicit.diagnostic.finalEOFPresent).toBe(true));
+  it('reports parser roundtrip', () => expect(explicit.diagnostic.parserRoundtripPassed).toBe(true));
+  it('reports deterministic bytes', () => expect(explicit.diagnostic.deterministicBytesVerified).toBe(true));
+  it('reports low-level encoder invocation', () => expect(explicit.diagnostic.DSBLowLevelEncoderInvoked).toBe(true));
+  it('reports no DST invocation', () => expect(explicit.diagnostic.DSTInvoked).toBe(false));
+  it('reports no Base44 invocation', () => expect(explicit.diagnostic.Base44Invoked).toBe(false));
+  it('reports no source mutation', () => expect(explicit.diagnostic.sourceMutationsDetected).toBe(false));
+  it('reports no encoder modification', () => expect(explicit.diagnostic.encoderFilesModified).toBe(false));
+  it('never claims physical trim support', () => expect(explicit.diagnostic.physicalTrimSupportVerified).toBe(false));
+});

@@ -138,3 +138,15 @@ One universal trim intent becomes one legacy trim command, which the existing en
 Every Phase 11 command receives one immutable DST disposition and one expected binary span, including zero-output commands. Binary acceptance uses the existing parser and inspector and rejects record-count, lineage, bounds, endpoint, STOP, END, EOF, parser, or determinism mismatches transactionally.
 
 Phase 12B has no UI integration, browser download, Base44 invocation, DSB invocation, artwork reinterpretation, travel optimization, thread reordering, CE01 artwork behavior, or V1 modification. Engine V2 remains unimported by the production application.
+
+## Phase 12C: transactional DSB format adaptation
+
+Phase 12C is a disconnected DSB format adapter around the unchanged low-level functions in `dsbEncoder.js`. It reuses `encodeDSBRecord`, `decodeDSBRecord`, and `buildDSBHeader`; the V2 wrapper supplies complete Phase 11 command handling without using the stitch-point-only legacy file builder.
+
+Phase 11 integer coordinates remain 0.1 mm units. Stitch and jump components are split deterministically to the DSB limit of +/-127 units before one low-level record call per plan entry. Record byte order remains command, Y, X. Zero-distance stitches remain explicit `80 00 00` penetrations unless blocked, while zero-distance jumps retain explicit zero-output lineage.
+
+The verified DSB contract has no physical trim representation. The default `trimPolicy: "block"` rejects the entire transaction and returns no binary when trim intents exist. The explicit `trimPolicy: "explicit_no_output"` requires a non-empty acknowledgement, preserves every trim disposition and its acknowledgement, emits zero trim records, and never claims physical trim support.
+
+The initial thread is implicit, color change uses `88 00 00`, END uses `F8 00 00`, and one final `0x1A` follows the record data. The existing 512-byte header builder supplies label, record count, color-change count, decoded full-movement bounds, and final position. An isolated V2 parser verifies the header, signed deltas, byte order, bounds, END, EOF, lineage, parser roundtrip, and deterministic bytes.
+
+Phase 12C invokes no DST encoder, Base44 function, UI, browser download, application route, artwork logic, CE01 behavior, or V1 code path. Engine V2 remains disconnected from and unimported by the production application.

@@ -1,0 +1,33 @@
+import { beforeAll, describe, expect, it } from 'vitest';
+import { buildEngineV2DSBExport } from '../formatAdaptation/dsbExportPipeline.js';
+import { createGenericMascotDSBFixture } from '../fixtures/genericMascotDSBFixture.js';
+import { explicitDSBTrimNoOutputConfig } from '../fixtures/dsbTrimPolicyFixture.js';
+
+describe('Phase 12C DSB binary acceptance', () => {
+  let result; let binary;
+  beforeAll(() => { result = createGenericMascotDSBFixture(explicitDSBTrimNoOutputConfig()).dsbExport; binary = result.binary; });
+  it('accepts the explicit-policy binary', () => expect(binary.valid).toBe(true));
+  it('returns immutable acceptance result', () => expect(Object.isFrozen(binary)).toBe(true));
+  it('returns Uint8Array bytes', () => expect(binary.bytes).toBeInstanceOf(Uint8Array));
+  it('matches reported byte length', () => expect(binary.byteLength).toBe(binary.bytes.length));
+  it('uses nonzero deterministic checksum', () => expect(binary.checksum).toBeGreaterThanOrEqual(0));
+  it('matches expected and actual record counts', () => expect(binary.summary.actualBinaryRecordCount).toBe(binary.summary.expectedBinaryRecordCount));
+  it('maps every source to one span', () => expect(binary.adaptation.binaryRecordSpans).toHaveLength(1550));
+  it('verifies every lineage span', () => expect(binary.adaptation.binaryRecordSpans.every(span => span.verified)).toBe(true));
+  it('has no duplicate binary lineage mapping', () => expect(binary.summary.duplicateBinaryLineageMappingCount).toBe(0));
+  it('keeps seventeen trim spans at zero records', () => { const trimIds = new Set(binary.adaptation.dispositions.filter(item => item.sourceType === 'trim').map(item => item.sourceMachineCommandId)); expect(binary.adaptation.binaryRecordSpans.filter(span => trimIds.has(span.sourceMachineCommandId)).every(span => span.actualBinaryRecordCount === 0)).toBe(true); });
+  it('reports trim intent present', () => expect(binary.summary.trimIntentPresent).toBe(true));
+  it('reports no trim binary representation', () => expect(binary.summary.trimBinaryRepresentationPresent).toBe(false));
+  it('reports no physical trim encoding', () => expect(binary.summary.physicalTrimEncoded).toBe(false));
+  it('reports no verified physical trim support', () => expect(binary.summary.physicalTrimSupportVerified).toBe(false));
+  it('verifies parser roundtrip', () => expect(binary.summary.parserRoundtripPassed).toBe(true));
+  it('verifies deterministic bytes', () => expect(binary.summary.deterministicBytesVerified).toBe(true));
+  it('matches header ST to records', () => expect(binary.header.ST).toBe(binary.records.length));
+  it('matches header CO to four records', () => expect(binary.header.CO).toBe(4));
+  it('matches parsed and header bounds', () => expect(binary.header.bounds).toEqual(binary.parsed.decodedBounds));
+  it('matches parsed and expected final position', () => expect(binary.header.finalPosition).toEqual(binary.adaptation.headerMetadata.expectedFinalPosition));
+  it('ends in F8 00 00 before EOF', () => expect(Array.from(binary.bytes.slice(-4))).toEqual([0xF8, 0, 0, 0x1A]));
+  it('does not report source mutation', () => expect(binary.summary.sourceStreamMutationCount).toBe(0));
+  it('does not invoke DST', () => expect(binary.metadata.DSTEncoderInvoked).toBe(false));
+  it('does not invoke Base44', () => expect(binary.metadata.Base44Invoked).toBe(false));
+});

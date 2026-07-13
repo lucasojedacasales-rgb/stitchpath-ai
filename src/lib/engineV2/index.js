@@ -447,3 +447,36 @@ export {
 } from './formatAdaptation/dstFormatValidation.js';
 export { createDSTFormatDiagnostic } from './formatAdaptation/dstFormatDiagnostics.js';
 export { buildEngineV2DSTExport } from './formatAdaptation/dstExportPipeline.js';
+
+export {
+  DSB_SOURCE_DISPOSITION_STATUSES,
+  createDSBBinaryAcceptanceResultV2,
+  createDSBBinaryRecordSpanV2,
+  createDSBFormatAdaptationV2,
+  createDSBRecordPlanV2,
+  createDSBSourceCommandDispositionV2,
+  dsbBinaryRecordSpanId,
+  dsbDispositionId,
+  dsbRecordPlanId,
+} from './formatAdaptation/dsbFormatModel.js';
+export {
+  DEFAULT_DSB_FORMAT_CONFIG,
+  DSB_TRIM_POLICIES,
+  DSB_ZERO_JUMP_POLICIES,
+  DSB_ZERO_STITCH_POLICIES,
+  resolveDSBFormatConfig,
+  validateDSBFormatConfig,
+} from './formatAdaptation/dsbFormatConfig.js';
+export { splitDSBIntegerMovement } from './formatAdaptation/dsbIntegerMovementSplitter.js';
+export { adaptMachineCommandStreamToDSB, sanitizeDSBLabel } from './formatAdaptation/dsbCommandAdapter.js';
+export { buildDSBBinaryFromRecordPlan } from './formatAdaptation/dsbBinaryBuilder.js';
+export { parseEngineV2DSBBinary } from './formatAdaptation/dsbBinaryParser.js';
+export { validateDSBBinaryAcceptance } from './formatAdaptation/dsbBinaryAcceptance.js';
+export {
+  validateDSBBinaryAcceptanceResultV2,
+  validateDSBFormatAdaptationV2,
+  validateDSBRecordPlanV2,
+  validateDSBSourceCommandDispositionV2,
+} from './formatAdaptation/dsbFormatValidation.js';
+export { createDSBFormatDiagnostic } from './formatAdaptation/dsbFormatDiagnostics.js';
+export { buildEngineV2DSBExport } from './formatAdaptation/dsbExportPipeline.js';
