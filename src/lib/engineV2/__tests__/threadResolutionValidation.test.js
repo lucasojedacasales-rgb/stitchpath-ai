@@ -1,0 +1,30 @@
+import { describe, expect, it } from 'vitest';
+import { materializeThreadedEmbroideryObjects, resolveDraftThreadAssignments, validateThreadResolutionResult, validateThreadedObjectMaterialization } from '../index.js';
+import { createExactArtworkThreadFixture } from '../fixtures/exactArtworkThreadFixture.js';
+import { createFinalObjectMaterializationFixture } from '../fixtures/finalObjectMaterializationFixture.js';
+
+const resolution = fixture => resolveDraftThreadAssignments({ drafts: fixture.drafts, config: fixture.config });
+const materialization = fixture => materializeThreadedEmbroideryObjects({ regions: fixture.regions, objectDraftMaterialization: fixture.objectDraftMaterialization, threadResolutionConfig: fixture.config });
+
+describe('Phase 6 thread resolution validation', () => {
+  it('validates a complete resolution', () => { const fixture = createExactArtworkThreadFixture(); expect(validateThreadResolutionResult(resolution(fixture), fixture.drafts).valid).toBe(true); });
+  it('detects a draft without an assignment', () => { const fixture = createExactArtworkThreadFixture(); const result = { ...resolution(fixture), assignments: [] }; expect(validateThreadResolutionResult(result, fixture.drafts).errors.some(item => item.code === 'DRAFT_WITHOUT_THREAD_ASSIGNMENT')).toBe(true); });
+  it('detects an assignment for an unknown draft', () => { const fixture = createExactArtworkThreadFixture(); const result = resolution(fixture); result.assignments = [{ ...result.assignments[0], draftId: 'draft:unknown', id: 'thread-assignment:draft:unknown' }]; expect(validateThreadResolutionResult(result, fixture.drafts).errors.some(item => item.code === 'ASSIGNMENT_UNKNOWN_DRAFT')).toBe(true); });
+  it('detects duplicate assignments', () => { const fixture = createExactArtworkThreadFixture(); const result = resolution(fixture); result.assignments = [...result.assignments, result.assignments[0]]; expect(validateThreadResolutionResult(result, fixture.drafts).errors.some(item => item.code === 'DUPLICATE_DRAFT_THREAD_ASSIGNMENT')).toBe(true); });
+  it('detects unknown assignment thread IDs', () => { const fixture = createExactArtworkThreadFixture(); const result = resolution(fixture); result.assignments = [{ ...result.assignments[0], threadId: 'thread:missing' }]; expect(validateThreadResolutionResult(result, fixture.drafts).errors.some(item => item.code === 'ASSIGNMENT_UNKNOWN_THREAD')).toBe(true); });
+  it('detects duplicate thread IDs', () => { const fixture = createExactArtworkThreadFixture(); const result = resolution(fixture); result.threads = [...result.threads, result.threads[0]]; expect(validateThreadResolutionResult(result, fixture.drafts).errors.some(item => item.code === 'DUPLICATE_THREAD_ID')).toBe(true); });
+  it('detects a missing visual color sample', () => { const fixture = createExactArtworkThreadFixture(); const result = resolution(fixture); result.threads = [{ ...result.threads[0], visualColorSamples: [] }]; expect(validateThreadResolutionResult(result, fixture.drafts).errors.some(item => item.code === 'MISSING_SOURCE_VISUAL_COLOR_SAMPLE')).toBe(true); });
+  it('detects malformed machine color', () => { const fixture = createExactArtworkThreadFixture(); const result = resolution(fixture); result.threads = [{ ...result.threads[0], machineColor: null }]; expect(validateThreadResolutionResult(result, fixture.drafts).errors.some(item => item.code === 'MALFORMED_MACHINE_COLOR')).toBe(true); });
+  it('validates complete threaded object materialization', () => { const fixture = createFinalObjectMaterializationFixture(); expect(validateThreadedObjectMaterialization(materialization(fixture), fixture.drafts, fixture.regions).valid).toBe(true); });
+  it.each([
+    ['geometry', 'FINAL_OBJECT_GEOMETRY_MUTATION', []],
+    ['holes', 'FINAL_OBJECT_HOLE_MUTATION', [[{ x: 1, y: 1 }, { x: 2, y: 1 }, { x: 1, y: 2 }]]],
+    ['visualColor', 'FINAL_OBJECT_VISUAL_COLOR_MUTATION', '#ABCDEF'],
+    ['role', 'FINAL_OBJECT_ROLE_MUTATION', 'highlight'],
+    ['stitchType', 'FINAL_OBJECT_STITCH_TYPE_MUTATION', 'manual'],
+    ['layer', 'FINAL_OBJECT_LAYER_MUTATION', 99],
+  ])('detects %s mutation', (field, code, value) => { const fixture = createFinalObjectMaterializationFixture(); const result = materialization(fixture); result.objects = [{ ...result.objects[0], [field]: value }, ...result.objects.slice(1)]; expect(validateThreadedObjectMaterialization(result, fixture.drafts, fixture.regions).errors.some(item => item.code === code)).toBe(true); });
+  it('detects final objects for blocked assignments', () => { const fixture = createFinalObjectMaterializationFixture(); const result = materialization(fixture); result.assignments = result.assignments.map((item, index) => index ? item : { ...item, status: 'blocked', threadId: null }); expect(validateThreadedObjectMaterialization(result, fixture.drafts, fixture.regions).errors.some(item => item.code === 'FINAL_OBJECT_FOR_BLOCKED_ASSIGNMENT')).toBe(true); });
+  it('detects non-empty entry and exit candidates', () => { const fixture = createFinalObjectMaterializationFixture(); const result = materialization(fixture); result.objects = [{ ...result.objects[0], entryCandidates: [{ x: 1, y: 1 }], exitCandidates: [{ x: 2, y: 2 }] }, ...result.objects.slice(1)]; const errors = validateThreadedObjectMaterialization(result, fixture.drafts, fixture.regions).errors; expect(errors.some(item => item.code === 'FINAL_OBJECT_ENTRY_CANDIDATES_NOT_DEFERRED')).toBe(true); expect(errors.some(item => item.code === 'FINAL_OBJECT_EXIT_CANDIDATES_NOT_DEFERRED')).toBe(true); });
+  it.each(['threadBlocks', 'commands', 'canonicalCommands', 'machineProfile', 'encoder'])('rejects forbidden top-level %s', field => { const fixture = createFinalObjectMaterializationFixture(); const result = { ...materialization(fixture), [field]: [] }; expect(validateThreadedObjectMaterialization(result, fixture.drafts, fixture.regions).errors.some(item => item.code === 'FORBIDDEN_THREADED_MATERIALIZATION_FIELD')).toBe(true); });
+});

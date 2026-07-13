@@ -75,6 +75,8 @@ export function createRegionV2(input = {}) {
  * @property {string} role
  * @property {string} stitchType
  * @property {PointV2[]} geometry Millimetre coordinates.
+ * @property {PointV2[][]} holes Millimetre polygons excluded from the object geometry.
+ * @property {*} visualColor Artwork color, independent from the selected machine thread.
  * @property {number} layer
  * @property {string[]} dependencyIds
  * @property {string} threadId
@@ -93,6 +95,8 @@ export function createEmbroideryObjectV2(input = {}) {
     role: input.role ?? null,
     stitchType: input.stitchType ?? null,
     geometry: clonePoints(input.geometry),
+    holes: Array.isArray(input.holes) ? input.holes.map(clonePoints) : [],
+    visualColor: cloneValue(input.visualColor ?? null),
     layer: Number.isFinite(input.layer) ? input.layer : 0,
     dependencyIds: Array.isArray(input.dependencyIds) ? [...input.dependencyIds] : [],
     threadId: input.threadId ?? null,

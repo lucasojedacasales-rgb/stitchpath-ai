@@ -1,0 +1,41 @@
+import { describe, expect, it } from 'vitest';
+import { resolveDraftThreadAssignments } from '../index.js';
+import { createExactArtworkThreadFixture } from '../fixtures/exactArtworkThreadFixture.js';
+import { createInvalidArtworkColorFixture } from '../fixtures/invalidArtworkColorFixture.js';
+import { createNearestPaletteFixture } from '../fixtures/nearestPaletteFixture.js';
+import { createPaletteTieFixture } from '../fixtures/paletteTieFixture.js';
+import { createSharedThreadFixture } from '../fixtures/sharedThreadFixture.js';
+import { createThreadCatalogFixture } from '../fixtures/threadCatalogFixture.js';
+
+const resolve = fixture => resolveDraftThreadAssignments({ drafts: fixture.drafts, config: fixture.config });
+
+describe('Phase 6 thread palette resolver', () => {
+  it('creates an exact artwork thread', () => { const result = resolve(createExactArtworkThreadFixture()); expect(result.assignments[0].threadId).toBe('thread:artwork:12AB34'); expect(result.threads[0].id).toBe('thread:artwork:12AB34'); });
+  it('normalizes shorthand colors into the same exact thread', () => expect(resolve(createExactArtworkThreadFixture('#0f0')).threads[0].id).toBe('thread:artwork:00FF00'));
+  it('sets exact artwork Delta E to zero', () => expect(resolve(createExactArtworkThreadFixture()).assignments[0]).toMatchObject({ deltaE: 0, exactMatch: true, confidence: 1 }));
+  it('does not claim a verified physical spool for artwork colors', () => expect(resolve(createExactArtworkThreadFixture()).threads[0].source.physicalSpoolAvailabilityVerified).toBe(false));
+  it('uses artwork color as machine color only for internal exact resolution', () => expect(resolve(createExactArtworkThreadFixture()).threads[0].machineColor).toMatchObject({ hex: '#12AB34', manufacturer: null, code: null, catalogEntryId: 'artwork:12AB34' }));
+  it('shares identical normalized artwork colors', () => { const result = resolve(createSharedThreadFixture()); expect(result.threads).toHaveLength(1); expect(result.assignments.map(item => item.threadId)).toEqual(['thread:artwork:00FF00', 'thread:artwork:00FF00']); });
+  it('aggregates unique sorted visual samples', () => expect(resolve(createSharedThreadFixture()).threads[0].visualColorSamples).toEqual(['#00FF00']));
+  it('reports identical-color sharing', () => expect(resolve(createSharedThreadFixture()).summary.sharedIdenticalColorCount).toBe(1));
+  it('does not merge visually close colors in exact mode', () => expect(resolve(createSharedThreadFixture(['#00FF00', '#01FF00'])).threads).toHaveLength(2));
+  it('never applies Delta E merging in exact mode', () => expect(resolve(createSharedThreadFixture(['#00FF00', '#00FE00'])).summary.paletteConsolidationCount).toBe(0));
+  it('performs an exact catalog match', () => { const fixture = createExactArtworkThreadFixture('#12AB34'); fixture.config = { policy: 'catalog_exact', catalog: createThreadCatalogFixture() }; const result = resolve(fixture); expect(result.assignments[0]).toMatchObject({ status: 'assigned', threadId: 'thread:catalog:catalog-green', exactMatch: true, deltaE: 0 }); });
+  it('preserves catalog machine metadata', () => { const fixture = createExactArtworkThreadFixture('#12AB34'); fixture.config = { policy: 'catalog_exact', catalog: createThreadCatalogFixture() }; expect(resolve(fixture).threads[0].machineColor).toMatchObject({ manufacturer: 'Synthetic Threads', code: 'ST-101', name: 'Leaf Green' }); });
+  it('blocks catalog_exact without a match', () => { const fixture = createExactArtworkThreadFixture('#123456'); fixture.config = { policy: 'catalog_exact', catalog: createThreadCatalogFixture() }; expect(resolve(fixture).assignments[0]).toMatchObject({ status: 'blocked', reasonCode: 'CATALOG_EXACT_MATCH_NOT_FOUND', threadId: null }); });
+  it('selects a nearest catalog match within tolerance', () => { const result = resolve(createNearestPaletteFixture()); expect(result.assignments[0].status).toBe('assigned'); expect(result.assignments[0].paletteEntryId).toBe('catalog-green'); expect(result.assignments[0].deltaE).toBeGreaterThan(0); });
+  it('blocks a nearest match outside tolerance', () => { const result = resolve(createNearestPaletteFixture('#0000FF', 0.1)); expect(result.assignments[0].reasonCode).toBe('CATALOG_MATCH_OUT_OF_TOLERANCE'); expect(result.summary.outOfToleranceCount).toBe(1); });
+  it('supports CIE76 matching explicitly', () => { const fixture = createNearestPaletteFixture(); fixture.config.colorDifferenceFormula = 'cie76'; expect(resolve(fixture).assignments[0].status).toBe('assigned'); });
+  it('breaks equal palette distances by catalog ID', () => expect(resolve(createPaletteTieFixture()).assignments[0].paletteEntryId).toBe('a-tie'));
+  it('is independent of catalog order', () => { const fixture = createPaletteTieFixture(); const forward = resolve(fixture).assignments[0].paletteEntryId; fixture.config.catalog.reverse(); expect(resolve(fixture).assignments[0].paletteEntryId).toBe(forward); });
+  it('blocks invalid artwork colors', () => expect(resolve(createInvalidArtworkColorFixture()).assignments[0]).toMatchObject({ status: 'blocked', reasonCode: 'INVALID_ARTWORK_COLOR', threadId: null }));
+  it('does not create a black fallback thread', () => expect(resolve(createInvalidArtworkColorFixture()).threads).toEqual([]));
+  it('gives every draft exactly one disposition', () => { const result = resolve(createSharedThreadFixture(['#f00', 'bad', '#0f0'])); expect(result.assignments).toHaveLength(3); expect(result.summary.draftThreadAssignmentCoveragePercent).toBe(100); expect(result.summary.silentDraftDropCount).toBe(0); });
+  it('reports no duplicate assignments', () => expect(resolve(createSharedThreadFixture()).summary.duplicateAssignmentCount).toBe(0));
+  it('consolidates different artwork colors only through one catalog entry', () => { const fixture = createSharedThreadFixture(['#10AB34', '#12AB34']); fixture.config = { policy: 'catalog_nearest', catalog: createThreadCatalogFixture(), maximumAcceptedDeltaE: 10 }; const result = resolve(fixture); expect(result.threads).toHaveLength(1); expect(result.threads[0].visualColorSamples).toEqual(['#10AB34', '#12AB34']); expect(result.summary.paletteConsolidationCount).toBe(1); });
+  it('preserves each assignment visual color after catalog consolidation', () => { const fixture = createSharedThreadFixture(['#10AB34', '#12AB34']); fixture.config = { policy: 'catalog_nearest', catalog: createThreadCatalogFixture(), maximumAcceptedDeltaE: 10 }; expect(resolve(fixture).assignments.map(item => item.visualColor)).toEqual(['#10AB34', '#12AB34']); });
+  it.each(['catalog_exact', 'catalog_nearest'])('blocks all matching when %s catalog is empty', policy => { const fixture = createExactArtworkThreadFixture(); fixture.config = { policy, catalog: [] }; const result = resolve(fixture); expect(result.valid).toBe(false); expect(result.assignments[0].status).toBe('blocked'); });
+  it('does not partially match an invalid catalog', () => { const fixture = createExactArtworkThreadFixture(); fixture.config = { policy: 'catalog_nearest', catalog: [{ id: 'ok', hex: '#12AB34' }, { id: 'bad', hex: 'red' }] }; const result = resolve(fixture); expect(result.assignments[0].reasonCode).toBe('INVALID_THREAD_CATALOG'); expect(result.threads).toEqual([]); });
+  it('detects sanitized catalog thread ID collisions', () => { const fixture = createExactArtworkThreadFixture(); fixture.config = { policy: 'catalog_nearest', catalog: [{ id: 'a b', hex: '#12AB34' }, { id: 'a-b', hex: '#FFFFFF' }] }; const result = resolve(fixture); expect(result.errors.some(item => item.code === 'CATALOG_THREAD_ID_COLLISION')).toBe(true); expect(result.assignments[0].status).toBe('blocked'); });
+  it('does not use timestamps or random text in IDs', () => { const first = resolve(createExactArtworkThreadFixture()); const second = resolve(createExactArtworkThreadFixture()); expect(first.assignments[0].id).toBe(second.assignments[0].id); expect(first.threads[0].id).toBe(second.threads[0].id); });
+});

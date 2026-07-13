@@ -163,3 +163,38 @@ export {
   validateProposalReviewDecisionV2,
 } from './materialization/objectDraftValidation.js';
 export { createObjectDraftMaterializationDiagnostic } from './materialization/objectDraftDiagnostics.js';
+
+export {
+  deltaE76,
+  deltaE2000,
+  determineColorFamily,
+  hexToLab,
+  linearRgbToXyz,
+  parseHexColor,
+  rgbToLab,
+  rgbToLinearRgb,
+  xyzToLab,
+} from './threads/colorScience.js';
+export { createExactArtworkPaletteEntry, createThreadPaletteEntryV2 } from './threads/threadPaletteModel.js';
+export {
+  COLOR_DIFFERENCE_FORMULAS,
+  DEFAULT_THREAD_RESOLUTION_CONFIG,
+  THREAD_RESOLUTION_POLICIES,
+  resolveThreadResolutionConfig,
+  validateThreadResolutionConfig,
+} from './threads/threadResolutionConfig.js';
+export { validateThreadCatalog } from './threads/threadCatalogValidation.js';
+export {
+  DRAFT_THREAD_ASSIGNMENT_STATUSES,
+  createDraftThreadAssignmentV2,
+  threadAssignmentIdForDraft,
+  validateDraftThreadAssignmentV2,
+} from './threads/threadAssignmentModel.js';
+export { resolveDraftThreadAssignments } from './threads/threadPaletteResolver.js';
+export {
+  finalObjectIdForDraft,
+  materializeThreadedEmbroideryObjects,
+  translateDraftDependenciesToFinalObjects,
+} from './threads/finalObjectMaterializer.js';
+export { validateThreadResolutionResult, validateThreadedObjectMaterialization } from './threads/threadResolutionValidation.js';
+export { createThreadResolutionDiagnostic } from './threads/threadResolutionDiagnostics.js';

@@ -78,6 +78,11 @@ export function validateEmbroideryObjectV2(object) {
   if (!ALLOWED_EMBROIDERY_ROLES.includes(object.role)) errors.push(error('INVALID_ROLE', 'role', `Unknown embroidery role: ${String(object.role)}.`));
   if (!ALLOWED_STITCH_TYPES.includes(object.stitchType)) errors.push(error('INVALID_STITCH_TYPE', 'stitchType', `Unknown stitch type: ${String(object.stitchType)}.`));
   errors.push(...validatePointArray(object.geometry, 'geometry'));
+  if (!Array.isArray(object.holes)) {
+    errors.push(error('INVALID_OBJECT_HOLES', 'holes', 'Embroidery object holes must be an array of polygons.'));
+  } else {
+    object.holes.forEach((hole, index) => errors.push(...validatePointArray(hole, `holes[${index}]`, { polygon: true })));
+  }
   for (const field of ['entryCandidates', 'exitCandidates']) {
     if (!Array.isArray(object[field])) {
       errors.push(error('INVALID_CANDIDATE_POINTS', field, `${field} must be an array.`));
@@ -100,6 +105,12 @@ export function validateThreadDefinitionV2(thread) {
   if (!thread || typeof thread !== 'object') return result([error('INVALID_THREAD', 'thread', 'Thread definition must be an object.')]);
   if (!hasId(thread.id)) errors.push(error('MISSING_ID', 'id', 'Thread id is required.'));
   if (!Array.isArray(thread.visualColorSamples)) errors.push(error('INVALID_VISUAL_COLOR_SAMPLES', 'visualColorSamples', 'visualColorSamples must be an array.'));
+  else if (thread.visualColorSamples.some(sample => typeof sample !== 'string')) errors.push(error('INVALID_VISUAL_COLOR_SAMPLES', 'visualColorSamples', 'Every visual color sample must be a string.'));
+  const legacyMachineColor = typeof thread.machineColor === 'string' && thread.machineColor.length > 0;
+  const structuredMachineColor = thread.machineColor && typeof thread.machineColor === 'object' && typeof thread.machineColor.hex === 'string' && typeof thread.machineColor.name === 'string' && typeof thread.machineColor.catalogEntryId === 'string';
+  if (!legacyMachineColor && !structuredMachineColor) {
+    errors.push(error('INVALID_MACHINE_COLOR', 'machineColor', 'machineColor requires hex, name, and catalogEntryId strings.'));
+  }
   return result(errors);
 }
 

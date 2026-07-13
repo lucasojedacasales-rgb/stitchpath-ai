@@ -60,3 +60,13 @@ Only accepted or validly overridden proposals become immutable `EmbroideryObject
 Draft dependencies preserve structural proposal dependencies only. Missing required dependencies block dependents to a stable fixed point; they do not trigger color grouping, arbitrary sibling order, or travel routing. Geometry, holes, visual color, layer, role, and reviewed stitch-type proposals remain unchanged. Entry and exit candidates stay empty.
 
 Thread palette resolution and conversion to final embroidery objects are deferred to Phase 6. Stitch generation, density, fill angles, underlay, pull compensation, global sequencing, machine adaptation, commands, and encoding are also deferred. Engine V2 remains disconnected from the production application.
+
+## Phase 6: thread resolution and final embroidery objects
+
+Phase 6 gives every reviewed object draft one explicit thread-assignment disposition and materializes final `EmbroideryObjectV2` records only for drafts with valid thread definitions and structurally complete dependencies. Invalid artwork colors are blocked explicitly and are never converted to black. A blocked required dependency propagates to dependents before any final object is created.
+
+Artwork `visualColor` remains separate from the selected machine thread color. The default `artwork_exact` policy creates deterministic internal thread definitions for exact normalized artwork colors, but does not claim that a matching physical manufacturer spool exists. Visually close colors remain separate under this policy; only identical normalized colors share a definition. Manufacturer catalogs must be supplied explicitly for `catalog_exact` or `catalog_nearest`, and Delta E matching occurs only under the latter policy. Catalog assignments preserve all contributing artwork colors in `visualColorSamples` without modifying final object colors.
+
+The canonical `EmbroideryObjectV2` model now preserves millimetre `holes` and artwork `visualColor` while retaining backward-compatible factory defaults. Final objects require a valid `threadId`, preserve draft geometry, holes, role, stitch type, layer, and structural dependencies, and keep entry and exit candidates empty. Thread assignment is the only planning flag completed in this phase.
+
+Phase 6 creates no `ThreadBlockV2` records and performs no color sequencing, global routing, travel optimization, stitch generation, underlay planning, density or fill-angle selection, pull compensation, machine adaptation, canonical command generation, or encoding. Engine V2 remains disconnected from the production application.
