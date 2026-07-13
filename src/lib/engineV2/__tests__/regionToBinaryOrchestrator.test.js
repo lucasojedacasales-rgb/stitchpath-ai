@@ -1,0 +1,48 @@
+import { beforeAll, describe, expect, it } from 'vitest';
+import { createEndToEndDSBExplicitFixture } from '../fixtures/endToEndDSBExplicitFixture.js';
+import { createEndToEndDSBStrictFixture } from '../fixtures/endToEndDSBStrictFixture.js';
+import { createEndToEndDSTFixture, createEndToEndManualDirectParityFixture } from '../fixtures/endToEndDSTFixture.js';
+import { createEndToEndStageBlockingFixture } from '../fixtures/endToEndStageBlockingFixture.js';
+import { fingerprintEngineV2Value } from '../orchestration/deterministicStageFingerprint.js';
+import { runEngineV2RegionToBinary } from '../orchestration/regionToBinaryOrchestrator.js';
+
+describe('Phase 13A disconnected RegionV2-to-binary orchestrator', () => {
+  let dst; let dsbStrict; let dsbExplicit;
+  beforeAll(() => { dst = createEndToEndDSTFixture(); dsbStrict = createEndToEndDSBStrictFixture(); dsbExplicit = createEndToEndDSBExplicitFixture(); }, 120000);
+  it('accepts the DST end-to-end run', () => expect(dst.result.binaryAccepted).toBe(true));
+  it('completes the DST pipeline', () => expect(dst.result.pipelineCompleted).toBe(true));
+  it('keeps DST architecture valid', () => expect(dst.result.valid).toBe(true));
+  it('returns eleven DST stage results', () => expect(dst.result.stageResults).toHaveLength(11));
+  it('completes every DST stage', () => expect(dst.result.stageResults.every(stage => stage.status === 'completed')).toBe(true));
+  it('preserves DST stage coverage', () => expect(dst.result.summary.pipelineStageDispositionCoveragePercent).toBe(100));
+  it('preserves DST cross-stage coverage', () => expect(dst.result.summary.crossStageReferenceCoveragePercent).toBe(100));
+  it('creates a DST artifact', () => expect(dst.result.binaryExport.artifact).not.toBeNull());
+  it('preserves DST direct facade parity', () => expect(dst.result.binaryExport.summary.formatResultParityPercent).toBe(100));
+  it('captures synthetic DST manifest', () => expect(dst.result.referenceCaptureManifest?.valid).toBe(true));
+  it('does not claim a real DST fixture', () => expect(dst.result.summary.realReferenceFixtureAvailable).toBe(false));
+  it('does not mutate DST source request', () => expect(dst.result.summary.sourceRequestMutationCount).toBe(0));
+  it('does not mutate DST stage inputs', () => expect(dst.result.summary.stageInputMutationCount).toBe(0));
+  it('policy-blocks strict DSB', () => expect(dsbStrict.result.policyBlocked).toBe(true));
+  it('completes strict DSB architecture', () => expect(dsbStrict.result.pipelineCompleted).toBe(true));
+  it('keeps strict DSB architecture valid', () => expect(dsbStrict.result.valid).toBe(true));
+  it('does not accept strict DSB binary', () => expect(dsbStrict.result.binaryAccepted).toBe(false));
+  it('keeps strict DSB artifact null', () => expect(dsbStrict.result.binaryExport.artifact).toBeNull());
+  it('marks strict DSB binary stage completed', () => expect(dsbStrict.result.stageResults.at(-1).status).toBe('completed'));
+  it('marks strict DSB binary outcome policy-blocked', () => expect(dsbStrict.result.stageResults.at(-1).outcomeCategory).toBe('policy_blocked'));
+  it('does not fall back strict DSB to DST', () => expect(dsbStrict.result.binaryExport.summary.formatFallbackCount).toBe(0));
+  it('accepts explicit DSB end-to-end run', () => expect(dsbExplicit.result.binaryAccepted).toBe(true));
+  it('completes explicit DSB pipeline', () => expect(dsbExplicit.result.pipelineCompleted).toBe(true));
+  it('does not claim explicit DSB physical trim encoding', () => expect(dsbExplicit.result.binaryExport.summary.physicalTrimEncoded).toBe(false));
+  it('does not claim explicit DSB physical trim support', () => expect(dsbExplicit.result.binaryExport.summary.physicalTrimSupportVerified).toBe(false));
+  it('is deterministic for repeated DST runs', () => { const repeated = runEngineV2RegionToBinary(dst.request); expect(repeated.request.id).toBe(dst.result.request.id); expect(repeated.binaryExport.artifact.bytes).toEqual(dst.result.binaryExport.artifact.bytes); });
+  it.each(['invalid_region', 'invalid_design_size', 'semantic_analysis', 'object_planning', 'draft_materialization', 'thread_resolution', 'technical_planning', 'global_sequence', 'physical_generation', 'canonical_compilation', 'machine_adaptation'])('blocks requested stage fixture %s transactionally', kind => { const fixture = createEndToEndStageBlockingFixture(kind); const expected = kind === 'invalid_region' || kind === 'invalid_design_size' ? 'region_ingestion' : kind; expect(fixture.result.firstBlockingStageId).toBe(expected); expect(fixture.result.stageResults.slice(fixture.result.stageResults.findIndex(stage => stage.stageId === expected) + 1).every(stage => stage.status === 'skipped')).toBe(true); });
+  it.each(['invalid_region', 'invalid_design_size', 'semantic_analysis', 'object_planning', 'draft_materialization', 'thread_resolution', 'technical_planning', 'global_sequence', 'physical_generation', 'canonical_compilation', 'machine_adaptation'])('returns eleven dispositions for blocked fixture %s', kind => expect(createEndToEndStageBlockingFixture(kind).result.stageResults).toHaveLength(11));
+  it.each(['missing_format', 'unsupported_format'])('does not cross-format fallback for %s', kind => { const fixture = createEndToEndStageBlockingFixture(kind); expect(fixture.result.binaryExport?.summary?.formatFallbackCount ?? 0).toBe(0); });
+  it('matches a manual direct execution at every stage and binary byte', () => {
+    const parity = createEndToEndManualDirectParityFixture();
+    const outputKeys = ['regionIngestion', 'semanticAnalysis', 'objectPlanning', 'draftMaterialization', 'threadResolution', 'technicalPlanning', 'globalSequence', 'physicalGeneration', 'canonicalCompilation', 'machineAdaptation', 'binaryExport'];
+    outputKeys.forEach((key, index) => expect(fingerprintEngineV2Value(parity.direct[key])).toBe(parity.orchestrated.result.stageResults[index].outputFingerprint));
+    expect(parity.direct.binaryExport.artifact.bytes).toEqual(parity.orchestrated.result.binaryExport.artifact.bytes);
+    expect(parity.direct.binaryExport.artifact.checksum).toBe(parity.orchestrated.result.binaryExport.artifact.checksum);
+  });
+});

@@ -512,3 +512,59 @@ export {
   validateUnifiedBinaryExportResultV2,
 } from './formatAdaptation/binaryExportFacadeValidation.js';
 export { createUnifiedBinaryExportDiagnostic } from './formatAdaptation/binaryExportFacadeDiagnostics.js';
+
+export {
+  ENGINE_V2_PIPELINE_OUTCOME_CATEGORIES,
+  ENGINE_V2_PIPELINE_STAGE_STATUSES,
+  createEngineV2PipelineStageDefinition,
+  createEngineV2PipelineStageResult,
+  createEngineV2RegionToBinaryRequest,
+  createEngineV2RegionToBinaryResult,
+  normalizeEngineV2BinaryFormat,
+  pipelineStageResultId,
+} from './orchestration/endToEndPipelineModel.js';
+export {
+  DEFAULT_END_TO_END_PIPELINE_CONFIG,
+  resolveEndToEndPipelineConfig,
+  validateEndToEndPipelineConfig,
+} from './orchestration/endToEndPipelineConfig.js';
+export {
+  ENGINE_V2_END_TO_END_STAGE_REGISTRY,
+  getEngineV2EndToEndStageDefinition,
+  getEngineV2EndToEndStageRegistry,
+} from './orchestration/endToEndStageRegistry.js';
+export {
+  fingerprintEngineV2Value,
+  stableSerializeEngineV2Value,
+} from './orchestration/deterministicStageFingerprint.js';
+export { runEngineV2RegionToBinary } from './orchestration/regionToBinaryOrchestrator.js';
+export {
+  validateEngineV2PipelineStageResult,
+  validateEngineV2RegionToBinaryRequest,
+  validateEngineV2RegionToBinaryResult,
+} from './orchestration/endToEndPipelineValidation.js';
+export { createEndToEndPipelineDiagnostic } from './orchestration/endToEndPipelineDiagnostics.js';
+
+export {
+  PHYSICAL_MACHINE_TEST_STATUSES,
+  REFERENCE_EVIDENCE_TYPES,
+  REFERENCE_SOURCE_KINDS,
+  createEngineV2ReferenceCaptureManifest,
+  createPhysicalMachineTestV2,
+  createReferenceCaptureGateResultV2,
+  createReferenceSourceProvenanceV2,
+} from './referenceCapture/referenceCaptureModel.js';
+export {
+  DEFAULT_REFERENCE_CAPTURE_CONFIG,
+  resolveReferenceCaptureConfig,
+  validateReferenceCaptureConfig,
+} from './referenceCapture/referenceCaptureConfig.js';
+export { evaluateReferenceCaptureGate } from './referenceCapture/referenceCaptureGate.js';
+export { buildEngineV2ReferenceCaptureManifest } from './referenceCapture/referenceCaptureManifest.js';
+export {
+  validateEngineV2ReferenceCaptureManifest,
+  validatePhysicalMachineTestV2,
+  validateReferenceCaptureGateResult,
+  validateReferenceSourceProvenanceV2,
+} from './referenceCapture/referenceCaptureValidation.js';
+export { createReferenceCaptureDiagnostic } from './referenceCapture/referenceCaptureDiagnostics.js';

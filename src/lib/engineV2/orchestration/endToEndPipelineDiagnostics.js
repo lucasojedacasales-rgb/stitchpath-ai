@@ -1,0 +1,35 @@
+export function createEndToEndPipelineDiagnostic({ request, pipelineResult }) {
+  const summary = pipelineResult?.summary || {}; const stages = pipelineResult?.stageResults || [];
+  const distribution = field => Object.fromEntries([...new Set(stages.map(stage => stage[field]))].sort().map(value => [value, stages.filter(stage => stage[field] === value).length]));
+  return Object.freeze({
+    valid: pipelineResult?.valid === true,
+    stageStatusDistribution: Object.freeze(distribution('status')),
+    stageOutcomeDistribution: Object.freeze(distribution('outcomeCategory')),
+    pipelineStageDispositionCoveragePercent: summary.pipelineStageDispositionCoveragePercent ?? 0,
+    silentPipelineStageDropCount: summary.silentPipelineStageDropCount ?? 0,
+    firstBlockingStageId: pipelineResult?.firstBlockingStageId ?? null,
+    stageFingerprints: Object.freeze(Object.fromEntries(stages.map(stage => [stage.stageId, stage.outputFingerprint]))),
+    crossStageReferenceCoveragePercent: summary.crossStageReferenceCoveragePercent ?? 0,
+    crossStageReferenceMismatchCount: summary.crossStageReferenceMismatchCount ?? 0,
+    regionCount: summary.regionCount ?? 0, proposalCount: summary.proposalCount ?? 0, draftCount: summary.draftCount ?? 0,
+    finalObjectCount: summary.finalObjectCount ?? 0, threadCount: summary.threadDefinitionCount ?? 0,
+    technicalSpecificationCount: summary.technicalSpecificationCount ?? 0, executionStepCount: summary.executionStepCount ?? 0,
+    threadBlockCount: summary.threadBlockCount ?? 0, physicalPointCount: summary.physicalPointCount ?? 0,
+    physicalStitchCount: summary.physicalStitchCount ?? 0, canonicalCommandCount: summary.canonicalCommandCount ?? 0,
+    machineCommandCount: summary.machineAdaptedCommandCount ?? 0, requestedFormat: request?.format ?? null,
+    binaryAccepted: summary.binaryAccepted === true, binaryByteLength: summary.binaryByteLength ?? 0,
+    binaryChecksum: summary.binaryChecksum ?? null, parserRoundtripPassed: summary.parserRoundtripPassed === true,
+    deterministicBytesVerified: summary.deterministicBytesVerified === true,
+    manualDirectStageParityPercent: summary.manualDirectStageParityPercent ?? 0,
+    manualDirectBinaryParity: summary.manualDirectBinaryParity === true,
+    sourceMutationsDetected: (summary.sourceRequestMutationCount ?? 0) > 0,
+    stageMutationsDetected: (summary.stageInputMutationCount ?? 0) > 0,
+    referenceCaptureGate: pipelineResult?.metadata?.referenceCaptureGate ?? null,
+    realReferenceFixtureAvailable: false, physicalMachineAcceptanceVerified: false,
+    readyForApplicationIntegration: false, readyForProductionRelease: false,
+    Base44Invoked: (summary.Base44InvocationCount ?? 0) > 0,
+    applicationConnected: (summary.applicationInvocationCount ?? 0) > 0,
+    browserDownloadCreated: (summary.browserDownloadCreationCount ?? 0) > 0,
+    errors: Object.freeze([...(pipelineResult?.errors || [])]), warnings: Object.freeze([...(pipelineResult?.warnings || [])]),
+  });
+}

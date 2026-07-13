@@ -158,3 +158,11 @@ Phase 12D provides one format-neutral entry point above the validated Phase 12B 
 DST structural acceptance proves only deterministic synthetic binary acceptance. It does not prove physical-machine or physical-trim behavior. DSB continues to block trim intent by default. Its explicit no-output trim policy still requires the caller's acknowledgement, emits no physical trim representation, and never claims physical trim support.
 
 The facade does not regenerate commands or binary records. It creates no Blob, object URL, browser download, Base44 invocation, ExportModal connection, production route, or application integration. Direct format warnings, errors, metrics, limitations, parser results, EOF results, and binary lineage remain visible. Engine V2 remains disconnected from and unimported by the production application.
+
+## Phase 13A: disconnected RegionV2-to-binary orchestration
+
+Phase 13A starts at validated `RegionV2` artwork data, never at image pixels. It coordinates the existing Phase 2 through 12D APIs in one fixed eleven-stage order and does not replace or reinterpret any stage. Every registry stage receives exactly one immutable result. An invalid invoked stage blocks transactionally, and all later stages receive explicit `upstream_blocked` dispositions without execution.
+
+DSB policy blocking remains distinct from an internal pipeline failure. The Phase 12D binary facade stays authoritative, format fallback is forbidden, and the orchestrator does not call an encoder outside the binary-export stage. Stage fingerprints are deterministic reproducibility fingerprints based on stable serialization; they are lightweight non-cryptographic identifiers and must not be described as SHA-256 or as security hashes.
+
+Reference capture is in-memory and gated. Deterministic synthetic manifests are allowed, but synthetic provenance cannot be labelled real. No genuine tracked real-reference fixture currently exists, and parser roundtrip never implies physical-machine acceptance. Phase 13A creates no file persistence, browser download, Base44 invocation, application connection, or production route. Engine V2 remains disconnected from the application, physically unverified, and not ready for application integration or production release.
