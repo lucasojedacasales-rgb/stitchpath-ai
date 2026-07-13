@@ -241,3 +241,47 @@ export { evaluateGeneratorReadiness, evaluateStitchTypeCompatibility, planStitch
 export { buildTechnicalEmbroideryPlan } from './technical/technicalPlanningPipeline.js';
 export { validateObjectTechnicalSpecificationV2, validateTechnicalEmbroideryPlan } from './technical/technicalPlanningValidation.js';
 export { createTechnicalPlanningDiagnostic } from './technical/technicalPlanningDiagnostics.js';
+
+export {
+  REPEATED_THREAD_REASONS,
+  SEQUENCE_DISPOSITION_STATUSES,
+  createGlobalSequencePlanV2,
+  createObjectExecutionStepV2,
+  createObjectSequenceDispositionV2,
+  createSelectedEntryExitPairV2,
+  createSequenceSearchMetadataV2,
+  createSequenceTransitionV2,
+  executionStepId,
+  selectedEntryExitIdForObject,
+  sequenceDispositionIdForObject,
+  transitionId,
+} from './sequencing/sequencePlanningModel.js';
+export {
+  DEFAULT_SEQUENCE_PLANNING_CONFIG,
+  SEQUENCE_PLANNING_ALGORITHMS,
+  resolveSequenceAlgorithm,
+  resolveSequencePlanningConfig,
+  validateSequencePlanningConfig,
+} from './sequencing/sequencePlanningConfig.js';
+export {
+  SEQUENCE_TRAVEL_COMPARISON_TOLERANCE,
+  compareSequenceCosts,
+  createSequenceCost,
+  formatSequenceStableSignature,
+} from './sequencing/sequenceCostModel.js';
+export {
+  enumerateValidEntryExitPairs,
+  selectEntryExitPairForTransition,
+  sequencePointDistance,
+} from './sequencing/candidatePairSelector.js';
+export { scheduleDependencyAwareObjects } from './sequencing/dependencyAwareScheduler.js';
+export { buildThreadBlocksFromExecution, sanitizeThreadIdForBlock } from './sequencing/threadBlockBuilder.js';
+export { buildGlobalSequencePlan } from './sequencing/globalSequencePlanner.js';
+export {
+  validateGlobalSequencePlan,
+  validateObjectExecutionStepV2,
+  validateObjectSequenceDispositionV2,
+  validateSelectedEntryExitPairV2,
+  validateSequenceTransitionV2,
+} from './sequencing/sequencePlanningValidation.js';
+export { createGlobalSequenceDiagnostic } from './sequencing/sequencePlanningDiagnostics.js';

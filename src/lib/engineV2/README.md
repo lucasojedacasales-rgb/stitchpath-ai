@@ -82,3 +82,15 @@ Geometry analysis remains in millimetres and subtracts explicit holes. It report
 Tatami, satin, running, and manual parameter records contain technical limits only. Fill angles are planned but no rows are generated. Underlay components are planned but no underlay paths or coordinates are generated. Pull compensation is planned but geometry is not offset. Entry and exit candidates are individual source-backed points, not routes, and no final entry/exit pair is selected.
 
 Phase 7 creates no thread blocks, global sequence, travel optimization, physical stitch coordinates, canonical commands, machine adaptation, CE01 behavior, or encoding. Engine V2 remains disconnected from the production application.
+
+## Phase 8: global sequence and thread blocks
+
+Phase 8 provides the only global sequence planner in Engine V2. It consumes final objects, thread definitions, structural dependencies, Phase 7 technical specifications, and valid Phase 7 entry/exit candidates. Every final object receives exactly one explicit sequence disposition: `scheduled`, `manual_required`, or `blocked`.
+
+The planner uses a strict lexicographic objective. Dependency validity has the highest priority, followed by complete scheduled coverage, thread changes, thread revisits, estimated interobject travel, and stable identifiers. Thread changes are therefore minimized before estimated travel, and neither metric can override a structural dependency. Exact search is used for bounded inputs and deterministic beam search for larger inputs; beam output explicitly does not claim optimality.
+
+Selected entry and exit points are existing Phase 7 candidate points. They are chosen jointly with object order and are never invented, moved, or converted into centerlines or paths. Reported transition distance is only the Euclidean estimate from one selected exit to the next selected entry. It is not a physical stitch route or actual machine travel.
+
+`ThreadBlockV2` records are planning blocks derived from the single global order. Same-thread objects remain separate embroidery objects, and disconnected objects or contours are never concatenated. A later block that reuses a closed thread requires an explicit reason. Black is not moved last automatically, and outlines are not moved last unless structural dependencies require that order.
+
+Phase 8 generates no physical stitches, underlay coordinates, jumps, trims, color-change commands, canonical commands, machine adaptation, CE01 behavior, or encoding. Engine V2 remains disconnected from and unimported by the production application.

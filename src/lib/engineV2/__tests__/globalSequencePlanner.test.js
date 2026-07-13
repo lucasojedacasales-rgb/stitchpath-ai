@@ -1,0 +1,41 @@
+import { describe, expect, it } from 'vitest';
+import { createCandidateTravelFixture } from '../fixtures/candidateTravelFixture.js';
+import { createDependencyThreadRevisitFixture } from '../fixtures/dependencyThreadRevisitFixture.js';
+import { createGenericMascotSequenceFixture } from '../fixtures/genericMascotSequenceFixture.js';
+import { createLargeSequenceFixture } from '../fixtures/largeSequenceFixture.js';
+import { createSequenceTieFixture } from '../fixtures/sequenceTieFixture.js';
+import { createThreadChangeOptimizationFixture } from '../fixtures/threadChangeOptimizationFixture.js';
+import { createUnscheduledDependencyFixture } from '../fixtures/unscheduledDependencyFixture.js';
+import { buildGlobalSequencePlan } from '../sequencing/globalSequencePlanner.js';
+
+const build = (fixture, config = {}) => buildGlobalSequencePlan({ regions: fixture.regions, threadedObjectMaterialization: fixture.threadedObjectMaterialization, technicalPlan: fixture.technicalPlan, config });
+const mascotFixture = createGenericMascotSequenceFixture();
+const mascot = build(mascotFixture);
+
+describe('Phase 8 global sequence planner', () => {
+  it('creates a valid generic mascot sequence', () => expect(mascot.valid).toBe(true));
+  it('covers every final object with a disposition', () => expect(mascot.summary.sequenceDispositionCoveragePercent).toBe(100));
+  it('has no silent final-object drops', () => expect(mascot.summary.silentFinalObjectDropCount).toBe(0));
+  it('has no duplicate dispositions', () => expect(mascot.summary.duplicateDispositionCount).toBe(0));
+  it('schedules all seven mascot objects', () => expect(mascot.summary.scheduledObjectCount).toBe(7));
+  it('selects one pair per scheduled object', () => expect(mascot.summary.selectedEntryExitPairCount).toBe(mascot.summary.scheduledObjectCount));
+  it('has no missing selected entry', () => expect(mascot.summary.objectsWithoutSelectedEntry).toBe(0));
+  it('has no missing selected exit', () => expect(mascot.summary.objectsWithoutSelectedExit).toBe(0));
+  it('creates contiguous execution indices', () => expect(mascot.executionSteps.map(step => step.sequenceIndex)).toEqual([0, 1, 2, 3, 4, 5, 6]));
+  it('puts every scheduled object in exactly one block', () => expect(new Set(mascot.threadBlocks.flatMap(block => block.objectIds)).size).toBe(mascot.summary.scheduledObjectCount));
+  it('respects all mascot dependencies', () => expect(mascot.summary.dependencyViolationCount).toBe(0));
+  it('creates structural execution layers', () => expect(mascot.executionLayers.length).toBeGreaterThan(1));
+  it('does not rewrite object layers', () => expect(mascot.summary.layerMutationCount).toBe(0));
+  it('reduces mascot thread changes from its stable baseline', () => expect(mascot.summary.optimizedThreadChangeCount).toBeLessThan(mascot.summary.baselineThreadChangeCount));
+  it('reduces mascot estimated travel from its stable baseline', () => expect(mascot.summary.estimatedTravelMm).toBeLessThan(mascot.summary.baselineEstimatedTravelMm));
+  it('optimizes candidate travel jointly', () => expect(build(createCandidateTravelFixture()).selectedEntryExitPairs).toHaveLength(2));
+  it('uses stable object IDs for a full tie', () => expect(build(createSequenceTieFixture()).executionSteps[0].objectId).toBe('object:tie-alpha'));
+  it('groups eligible same-thread objects', () => expect(build(createThreadChangeOptimizationFixture()).threadBlocks).toHaveLength(2));
+  it('creates a dependency-gated revisit block', () => expect(build(createDependencyThreadRevisitFixture()).threadBlocks.at(-1).repeatedThreadReason).toBe('dependency_gated_revisit'));
+  it('propagates manual dependency blocking transitively', () => { const plan = build(createUnscheduledDependencyFixture()); expect([plan.summary.manualRequiredCount, plan.summary.blockedCount, plan.summary.executionStepCount]).toEqual([1, 2, 0]); });
+  it('uses deterministic beam search for a larger fixture', () => { const fixture = createLargeSequenceFixture(); expect(build(fixture).executionSteps.map(step => step.objectId)).toEqual(build(fixture).executionSteps.map(step => step.objectId)); });
+  it('does not automatically move black last', () => expect(mascot.config.blackLast).toBe(false));
+  it('does not automatically force outlines last', () => expect(mascot.config.forceOutlinesLast).toBe(false));
+  it.each(['geometryMutationCount', 'holeMutationCount', 'visualColorMutationCount', 'threadIdMutationCount', 'roleMutationCount', 'stitchTypeMutationCount', 'layerMutationCount', 'dependencyMutationCount', 'technicalSpecificationMutationCount'])('reports zero %s', field => expect(mascot.summary[field]).toBe(0));
+  it.each(['physicalStitchesGenerated', 'physicalUnderlayGenerated', 'jumpCommandsGenerated', 'trimCommandsGenerated', 'colorChangeCommandsGenerated', 'canonicalCommandsGenerated', 'machineAdaptationAdded', 'encodingAdded'])('keeps %s false', field => expect(mascot.metadata[field]).toBe(false));
+});
