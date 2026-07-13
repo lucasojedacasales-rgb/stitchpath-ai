@@ -1,0 +1,30 @@
+import { describe, expect, it } from 'vitest';
+import { buildBinaryExportReadiness, createBinaryExportReadinessV2 } from '../formatAdaptation/binaryExportReadiness.js';
+
+describe('Phase 12D binary export readiness', () => {
+  const acceptedStatus = { accepted: true };
+  const acceptedArtifact = { parserRoundtripPassed: true, deterministicBytesVerified: true, finalEOFPresent: true };
+  const dstResult = { version: 'dst-direct', summary: { trimIntentPresent: true, actualTrimBinaryRecordCount: 3 } };
+  const dsbResult = { version: 'dsb-direct', summary: { trimIntentPresent: true, trimBinaryRepresentationPresent: false } };
+  it('creates immutable readiness', () => expect(Object.isFrozen(createBinaryExportReadinessV2())).toBe(true));
+  it('freezes blocking reasons', () => expect(Object.isFrozen(createBinaryExportReadinessV2({ blockingReasons: ['X'] }).blockingReasons)).toBe(true));
+  it('freezes warnings', () => expect(Object.isFrozen(createBinaryExportReadinessV2({ warnings: ['X'] }).warnings)).toBe(true));
+  it.each(['structurallyAccepted', 'parserRoundtripPassed', 'deterministicBytesVerified', 'binaryGenerated', 'trimIntentPresent', 'trimBinaryRepresentationPresent', 'physicalTrimEncoded', 'physicalTrimSupportVerified', 'physicalMachineAcceptanceVerified', 'realReferenceBinaryAvailable', 'readyForDisconnectedBinaryTesting', 'readyForApplicationIntegration', 'readyForProductionRelease'])('normalizes %s to strict boolean', key => { expect(createBinaryExportReadinessV2({ [key]: 1 })[key]).toBe(false); expect(createBinaryExportReadinessV2({ [key]: true })[key]).toBe(true); });
+  it('accepts structurally valid DST', () => expect(buildBinaryExportReadiness({ format: 'DST', status: acceptedStatus, artifact: acceptedArtifact, formatResult: dstResult }).structurallyAccepted).toBe(true));
+  it('marks DST binary generated', () => expect(buildBinaryExportReadiness({ format: 'DST', status: acceptedStatus, artifact: acceptedArtifact, formatResult: dstResult }).binaryGenerated).toBe(true));
+  it('detects DST trim representation', () => expect(buildBinaryExportReadiness({ format: 'DST', status: acceptedStatus, artifact: acceptedArtifact, formatResult: dstResult }).trimBinaryRepresentationPresent).toBe(true));
+  it('marks accepted DST ready for disconnected testing', () => expect(buildBinaryExportReadiness({ format: 'DST', status: acceptedStatus, artifact: acceptedArtifact, formatResult: dstResult }).readyForDisconnectedBinaryTesting).toBe(true));
+  it('does not mark DST physically verified', () => expect(buildBinaryExportReadiness({ format: 'DST', status: acceptedStatus, artifact: acceptedArtifact, formatResult: dstResult }).physicalMachineAcceptanceVerified).toBe(false));
+  it('does not mark DST application ready', () => expect(buildBinaryExportReadiness({ format: 'DST', status: acceptedStatus, artifact: acceptedArtifact, formatResult: dstResult }).readyForApplicationIntegration).toBe(false));
+  it('does not mark DST production ready', () => expect(buildBinaryExportReadiness({ format: 'DST', status: acceptedStatus, artifact: acceptedArtifact, formatResult: dstResult }).readyForProductionRelease).toBe(false));
+  it('preserves DSB trim intent', () => expect(buildBinaryExportReadiness({ format: 'DSB', status: acceptedStatus, artifact: acceptedArtifact, formatResult: dsbResult }).trimIntentPresent).toBe(true));
+  it('does not invent DSB trim representation', () => expect(buildBinaryExportReadiness({ format: 'DSB', status: acceptedStatus, artifact: acceptedArtifact, formatResult: dsbResult }).trimBinaryRepresentationPresent).toBe(false));
+  it('allows explicit DSB disconnected testing', () => expect(buildBinaryExportReadiness({ format: 'DSB', status: acceptedStatus, artifact: acceptedArtifact, formatResult: dsbResult }).readyForDisconnectedBinaryTesting).toBe(true));
+  it('blocks strict DSB without artifact', () => expect(buildBinaryExportReadiness({ format: 'DSB', status: { accepted: false }, artifact: null, formatResult: dsbResult }).readyForDisconnectedBinaryTesting).toBe(false));
+  it('collects blocking limitation codes', () => expect(buildBinaryExportReadiness({ format: 'DSB', status: { accepted: false }, artifact: null, formatResult: dsbResult, limitations: [{ code: 'BLOCK', severity: 'blocking' }] }).blockingReasons).toEqual(['BLOCK']));
+  it('collects warning limitation codes', () => expect(buildBinaryExportReadiness({ format: 'DST', status: acceptedStatus, artifact: acceptedArtifact, formatResult: dstResult, limitations: [{ code: 'WARN', severity: 'warning' }] }).warnings).toEqual(['WARN']));
+  it('requires parser acceptance for disconnected readiness', () => expect(buildBinaryExportReadiness({ format: 'DST', status: acceptedStatus, artifact: { ...acceptedArtifact, parserRoundtripPassed: false }, formatResult: dstResult }).readyForDisconnectedBinaryTesting).toBe(false));
+  it('requires deterministic bytes for disconnected readiness', () => expect(buildBinaryExportReadiness({ format: 'DST', status: acceptedStatus, artifact: { ...acceptedArtifact, deterministicBytesVerified: false }, formatResult: dstResult }).readyForDisconnectedBinaryTesting).toBe(false));
+  it('requires EOF for disconnected readiness', () => expect(buildBinaryExportReadiness({ format: 'DST', status: acceptedStatus, artifact: { ...acceptedArtifact, finalEOFPresent: false }, formatResult: dstResult }).readyForDisconnectedBinaryTesting).toBe(false));
+  it('never claims a real reference binary', () => expect(buildBinaryExportReadiness({ format: 'DST', status: acceptedStatus, artifact: acceptedArtifact, formatResult: dstResult }).realReferenceBinaryAvailable).toBe(false));
+});

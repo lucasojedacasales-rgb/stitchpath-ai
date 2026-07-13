@@ -480,3 +480,35 @@ export {
 } from './formatAdaptation/dsbFormatValidation.js';
 export { createDSBFormatDiagnostic } from './formatAdaptation/dsbFormatDiagnostics.js';
 export { buildEngineV2DSBExport } from './formatAdaptation/dsbExportPipeline.js';
+
+export {
+  BINARY_EXPORT_FORMATS,
+  BINARY_EXPORT_STATUS_CATEGORIES,
+  BINARY_EXPORT_STATUS_CODES,
+  BINARY_FORMAT_LIMITATION_SEVERITIES,
+  createBinaryExportRequestV2,
+  createBinaryExportStatusV2,
+  createBinaryFormatLimitationV2,
+  createUnifiedBinaryExportResultV2,
+  fingerprintMachineAdaptedStreamV2,
+  normalizeBinaryExportFormat,
+} from './formatAdaptation/binaryExportFacadeModel.js';
+export {
+  DEFAULT_BINARY_EXPORT_FACADE_CONFIG,
+  resolveBinaryExportFacadeConfig,
+  validateBinaryExportFacadeConfig,
+} from './formatAdaptation/binaryExportFacadeConfig.js';
+export {
+  createUnifiedBinaryArtifactFromFormatResult,
+  createUnifiedBinaryArtifactV2,
+} from './formatAdaptation/binaryExportArtifact.js';
+export { buildBinaryExportReadiness, createBinaryExportReadinessV2 } from './formatAdaptation/binaryExportReadiness.js';
+export { exportMachineAdaptedStreamV2 } from './formatAdaptation/binaryExportFacade.js';
+export {
+  validateBinaryExportReadinessV2,
+  validateBinaryExportRequestV2,
+  validateBinaryExportStatusV2,
+  validateUnifiedBinaryArtifactV2,
+  validateUnifiedBinaryExportResultV2,
+} from './formatAdaptation/binaryExportFacadeValidation.js';
+export { createUnifiedBinaryExportDiagnostic } from './formatAdaptation/binaryExportFacadeDiagnostics.js';

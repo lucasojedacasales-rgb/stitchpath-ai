@@ -1,0 +1,38 @@
+import { beforeAll, describe, expect, it } from 'vitest';
+import { createUnifiedBinaryExportDiagnostic } from '../formatAdaptation/binaryExportFacadeDiagnostics.js';
+import { createUnifiedDSBStrictFixture } from '../fixtures/unifiedDSBStrictFixture.js';
+import { createUnifiedDSTExportFixture } from '../fixtures/unifiedDSTExportFixture.js';
+
+describe('Phase 12D unified binary export diagnostics', () => {
+  let dst; let dsbStrict; let diagnostic;
+  beforeAll(() => { dst = createUnifiedDSTExportFixture(); dsbStrict = createUnifiedDSBStrictFixture(); diagnostic = createUnifiedBinaryExportDiagnostic({ machineAdaptedStream: dst.machineAdaptedStream, unifiedResult: dst.unifiedResult }); }, 60000);
+  it('reports valid accepted result', () => expect(diagnostic.valid).toBe(true));
+  it('reports requested format', () => expect(diagnostic.requestedFormat).toBe('DST'));
+  it('reports normalized format', () => expect(diagnostic.normalizedFormat).toBe('DST'));
+  it('reports selected adapter', () => expect(diagnostic.selectedAdapter).toBe('engineV2-dst'));
+  it('reports accepted status category', () => expect(diagnostic.statusCategory).toBe('accepted'));
+  it.each(['exportAccepted', 'binaryGenerated', 'parserRoundtripPassed', 'deterministicBytesVerified', 'finalEOFPresent'])('reports %s true', field => expect(diagnostic[field]).toBe(true));
+  it('reports transaction unblocked', () => expect(diagnostic.transactionBlocked).toBe(false));
+  it('reports artifact byte length', () => expect(diagnostic.artifactByteLength).toBe(5292));
+  it('reports artifact checksum', () => expect(diagnostic.artifactChecksum).toBe(174));
+  it('reports source coverage', () => expect(diagnostic.sourceCommandDispositionCoveragePercent).toBe(100));
+  it('reports binary lineage coverage', () => expect(diagnostic.binaryLineageCoveragePercent).toBe(100));
+  it.each(['physicalTrimEncoded', 'physicalTrimSupportVerified', 'physicalMachineAcceptanceVerified', 'sourceMutationsDetected', 'Base44Invoked', 'applicationConnected', 'browserDownloadCreated'])('reports %s false', field => expect(diagnostic[field]).toBe(false));
+  it('reports one DST invocation', () => expect(diagnostic.DSTAdapterInvocationCount).toBe(1));
+  it('reports zero DSB invocations', () => expect(diagnostic.DSBAdapterInvocationCount).toBe(0));
+  it('reports one total invocation', () => expect(diagnostic.totalFormatAdapterInvocationCount).toBe(1));
+  it('reports zero fallback', () => expect(diagnostic.formatFallbackCount).toBe(0));
+  it('reports zero cross-format invocation', () => expect(diagnostic.crossFormatInvocationCount).toBe(0));
+  it('reports complete direct parity', () => expect(diagnostic.formatResultParityPercent).toBe(100));
+  it('reports zero metric mutation', () => expect(diagnostic.formatMetricMutationCount).toBe(0));
+  it('reports zero warning suppression', () => expect(diagnostic.formatWarningSuppressionCount).toBe(0));
+  it('reports zero error suppression', () => expect(diagnostic.formatErrorSuppressionCount).toBe(0));
+  it('reports source command count', () => expect(diagnostic.sourceMachineCommandCount).toBe(dst.machineAdaptedStream.commands.length));
+  it('retains readiness reference contract', () => expect(diagnostic.readiness).toEqual(dst.unifiedResult.readiness));
+  it('retains limitations', () => expect(diagnostic.limitations).toEqual(dst.unifiedResult.limitations));
+  it('freezes diagnostic', () => expect(Object.isFrozen(diagnostic)).toBe(true));
+  it('freezes diagnostic errors', () => expect(Object.isFrozen(diagnostic.errors)).toBe(true));
+  it('freezes diagnostic warnings', () => expect(Object.isFrozen(diagnostic.warnings)).toBe(true));
+  it('reports strict DSB as blocked', () => { const value = createUnifiedBinaryExportDiagnostic({ machineAdaptedStream: dsbStrict.machineAdaptedStream, unifiedResult: dsbStrict.unifiedResult }); expect(value).toMatchObject({ valid: false, statusCategory: 'policy_blocked', transactionBlocked: true, binaryGenerated: false }); });
+  it('defaults absent summary values conservatively', () => { const value = createUnifiedBinaryExportDiagnostic({ machineAdaptedStream: null, unifiedResult: null }); expect(value).toMatchObject({ valid: false, artifactByteLength: 0, sourceMachineCommandCount: 0, formatResultParityPercent: 0 }); });
+});

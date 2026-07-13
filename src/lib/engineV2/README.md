@@ -150,3 +150,11 @@ The verified DSB contract has no physical trim representation. The default `trim
 The initial thread is implicit, color change uses `88 00 00`, END uses `F8 00 00`, and one final `0x1A` follows the record data. The existing 512-byte header builder supplies label, record count, color-change count, decoded full-movement bounds, and final position. An isolated V2 parser verifies the header, signed deltas, byte order, bounds, END, EOF, lineage, parser roundtrip, and deterministic bytes.
 
 Phase 12C invokes no DST encoder, Base44 function, UI, browser download, application route, artwork logic, CE01 behavior, or V1 code path. Engine V2 remains disconnected from and unimported by the production application.
+
+## Phase 12D: disconnected unified binary export facade
+
+Phase 12D provides one format-neutral entry point above the validated Phase 12B DST and Phase 12C DSB pipelines. Every request must explicitly supply `DST` or `DSB`; casing is normalized deterministically, exactly one matching adapter may run, and there is no format inference, cross-format invocation, or fallback after a blocked or failed export. The normalized result preserves the selected direct adapter result, clones accepted bytes into an immutable artifact contract, and distinguishes accepted, policy-blocked, unsupported, invalid-request, and adapter-error outcomes.
+
+DST structural acceptance proves only deterministic synthetic binary acceptance. It does not prove physical-machine or physical-trim behavior. DSB continues to block trim intent by default. Its explicit no-output trim policy still requires the caller's acknowledgement, emits no physical trim representation, and never claims physical trim support.
+
+The facade does not regenerate commands or binary records. It creates no Blob, object URL, browser download, Base44 invocation, ExportModal connection, production route, or application integration. Direct format warnings, errors, metrics, limitations, parser results, EOF results, and binary lineage remain visible. Engine V2 remains disconnected from and unimported by the production application.
