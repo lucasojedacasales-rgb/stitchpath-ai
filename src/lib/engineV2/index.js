@@ -416,3 +416,34 @@ export {
   validateMachineProfileV2,
 } from './machineAdaptation/machineAdaptationValidation.js';
 export { createMachineAdaptationDiagnostic } from './machineAdaptation/machineAdaptationDiagnostics.js';
+
+export {
+  DST_SOURCE_DISPOSITION_STATUSES,
+  createDSTBinaryAcceptanceResultV2,
+  createDSTBinaryRecordSpanV2,
+  createDSTEncoderCommandV2,
+  createDSTFormatAdaptationV2,
+  createDSTSourceCommandDispositionV2,
+  dstBinaryRecordSpanId,
+  dstDispositionId,
+  dstEncoderCommandId,
+} from './formatAdaptation/dstFormatModel.js';
+export {
+  DEFAULT_DST_FORMAT_CONFIG,
+  DST_TRIM_POLICIES,
+  DST_ZERO_JUMP_POLICIES,
+  DST_ZERO_STITCH_POLICIES,
+  resolveDSTFormatConfig,
+  validateDSTFormatConfig,
+} from './formatAdaptation/dstFormatConfig.js';
+export { splitDSTIntegerMovement } from './formatAdaptation/dstIntegerMovementSplitter.js';
+export { adaptMachineCommandStreamToDST, sanitizeDSTLabel } from './formatAdaptation/dstCommandAdapter.js';
+export { encodeDSTFormatAdaptation, validateDSTBinaryAcceptance } from './formatAdaptation/dstBinaryAcceptance.js';
+export {
+  validateDSTBinaryAcceptanceResultV2,
+  validateDSTEncoderCommandV2,
+  validateDSTFormatAdaptationV2,
+  validateDSTSourceCommandDispositionV2,
+} from './formatAdaptation/dstFormatValidation.js';
+export { createDSTFormatDiagnostic } from './formatAdaptation/dstFormatDiagnostics.js';
+export { buildEngineV2DSTExport } from './formatAdaptation/dstExportPipeline.js';

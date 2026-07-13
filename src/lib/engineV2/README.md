@@ -126,3 +126,15 @@ Transforms are explicit and uniformly scaled. The adapter never fits, shrinks, t
 Trim intent is never silently removed. Native trims are preserved, intent-only and unknown capabilities preserve with warnings, and unsupported trims either preserve with a warning or block transactionally. Hoop validation never repairs an out-of-bounds design.
 
 The built-in `generic_dst` profile prepares unbounded integer coordinates at 0.1 mm resolution. It is an internal preparation profile, not manufacturer-certified, and does not enforce an exact encoder byte contract. Exact DST/DSB limits and binary encoding remain Phase 12 responsibilities. Phase 11 produces no DST bytes, DSB bytes, binary payload, or CE01 artwork behavior, and Engine V2 remains disconnected from the application.
+
+## Phase 12B: transactional DST format adaptation
+
+Phase 12B is a disconnected format adapter around the existing frontend DST encoder. The encoder and its binary implementation remain unchanged. Phase 11 integer coordinates are consumed directly as 0.1 mm units and converted to exact absolute millimetres without another transform or quantization pass.
+
+DST movement components are limited to +/-121 units per axis. Long stitch and jump movements are split deterministically before encoder invocation, so the encoder performs no unreported movement split. Zero-distance jumps receive explicit zero-output lineage and never reach the encoder. Zero-distance stitches remain explicit penetrations unless the caller selects the transactional blocking policy.
+
+One universal trim intent becomes one legacy trim command, which the existing encoder expands into exactly three zero-jump records. The initial thread is implicit; five thread blocks therefore produce four STOP records. Exactly one final END record and the existing strict final EOF byte are required. Header labels, counts, stitch-target bounds, padding, and terminators retain the existing encoder semantics.
+
+Every Phase 11 command receives one immutable DST disposition and one expected binary span, including zero-output commands. Binary acceptance uses the existing parser and inspector and rejects record-count, lineage, bounds, endpoint, STOP, END, EOF, parser, or determinism mismatches transactionally.
+
+Phase 12B has no UI integration, browser download, Base44 invocation, DSB invocation, artwork reinterpretation, travel optimization, thread reordering, CE01 artwork behavior, or V1 modification. Engine V2 remains unimported by the production application.
