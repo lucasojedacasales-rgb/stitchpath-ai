@@ -116,3 +116,13 @@ The Phase 8 object order and thread-block order remain authoritative. `initialTh
 Every Phase 9 physical stitch maps to exactly one physical-source stitch command. Every physical point is reached, and every explicit subpath discontinuity is classified exactly once. A discontinuity becomes a connector stitch only when the Phase 9 transition proves same-object continuity, remains inside effective geometry, avoids holes, and fits the Phase 7 technical maximum. Other gaps remain non-sewing jumps, optionally preceded by one deduplicated trim. A stitch is never introduced across an object boundary.
 
 Commands preserve object, region, thread, execution-step, thread-block, subpath, physical-point, transition, phase, and technique lineage. Coordinates are not quantized, movements are not split, and no machine profile, hoop transform, CE01 rule, DST/DSB encoder, or encoder byte limit is used. Engine V2 remains disconnected from the application and V1 remains unchanged.
+
+## Phase 11: deterministic machine adaptation
+
+Phase 11 is a separate output-adaptation layer. Phase 10 canonical commands remain authoritative and immutable; artwork, regions, objects, stitches, threads, thread blocks, and global order are never reinterpreted. Every canonical command receives exactly one adaptation span with complete source lineage.
+
+Transforms are explicit and uniformly scaled. The adapter never fits, shrinks, translates, or clips a design automatically. Absolute transformed targets are quantized with half-away-from-zero rounding before integer deltas are calculated, preventing cumulative rounding drift. Explicit profile limits may split long stitches or jumps into deterministic integer segments without changing their command type or endpoint.
+
+Trim intent is never silently removed. Native trims are preserved, intent-only and unknown capabilities preserve with warnings, and unsupported trims either preserve with a warning or block transactionally. Hoop validation never repairs an out-of-bounds design.
+
+The built-in `generic_dst` profile prepares unbounded integer coordinates at 0.1 mm resolution. It is an internal preparation profile, not manufacturer-certified, and does not enforce an exact encoder byte contract. Exact DST/DSB limits and binary encoding remain Phase 12 responsibilities. Phase 11 produces no DST bytes, DSB bytes, binary payload, or CE01 artwork behavior, and Engine V2 remains disconnected from the application.

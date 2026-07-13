@@ -372,3 +372,47 @@ export {
   validateCanonicalObjectCommandSpanV2,
 } from './commandCompilation/canonicalCompilationValidation.js';
 export { createCanonicalCompilationDiagnostic } from './commandCompilation/canonicalCompilationDiagnostics.js';
+
+export {
+  BUILT_IN_MACHINE_PROFILES,
+  GENERIC_DST_MACHINE_PROFILE,
+  MACHINE_ORIGIN_MODES,
+  TRIM_CAPABILITIES,
+  UNSUPPORTED_TRIM_POLICIES,
+  createMachineProfileV2,
+  resolveMachineProfile,
+} from './machineAdaptation/machineProfileModel.js';
+export {
+  DEFAULT_MACHINE_ADAPTATION_CONFIG,
+  resolveMachineAdaptationConfig,
+  validateMachineAdaptationConfig,
+} from './machineAdaptation/machineAdaptationConfig.js';
+export {
+  calculateCanonicalDesignBounds,
+  inverseTransformMachineMillimetersToDesignPoint,
+  transformDesignPointToMachineMillimeters,
+} from './machineAdaptation/machineCoordinateTransform.js';
+export {
+  dequantizeMachineUnitsToMillimeters,
+  quantizationErrorMm,
+  quantizeMachineMillimetersToUnits,
+  roundHalfAwayFromZero,
+} from './machineAdaptation/machineCoordinateQuantizer.js';
+export { splitIntegerMovement } from './machineAdaptation/integerMovementSplitter.js';
+export { adaptTrimCommandForMachineProfile } from './machineAdaptation/trimCapabilityAdapter.js';
+export {
+  MACHINE_ADAPTATION_SPAN_STATUSES,
+  canonicalCommandAdaptationSpanId,
+  createCanonicalCommandAdaptationSpanV2,
+  createMachineAdaptedCommandStreamV2,
+  createMachineAdaptedCommandV2,
+  machineAdaptedCommandId,
+} from './machineAdaptation/machineAdaptedCommandModel.js';
+export { adaptCanonicalCommandsForMachine } from './machineAdaptation/machineCommandAdapter.js';
+export {
+  validateCanonicalCommandAdaptationSpanV2,
+  validateMachineAdaptedCommandStreamV2,
+  validateMachineAdaptedCommandV2,
+  validateMachineProfileV2,
+} from './machineAdaptation/machineAdaptationValidation.js';
+export { createMachineAdaptationDiagnostic } from './machineAdaptation/machineAdaptationDiagnostics.js';
