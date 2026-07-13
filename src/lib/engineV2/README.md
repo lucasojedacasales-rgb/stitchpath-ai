@@ -70,3 +70,15 @@ Artwork `visualColor` remains separate from the selected machine thread color. T
 The canonical `EmbroideryObjectV2` model now preserves millimetre `holes` and artwork `visualColor` while retaining backward-compatible factory defaults. Final objects require a valid `threadId`, preserve draft geometry, holes, role, stitch type, layer, and structural dependencies, and keep entry and exit candidates empty. Thread assignment is the only planning flag completed in this phase.
 
 Phase 6 creates no `ThreadBlockV2` records and performs no color sequencing, global routing, travel optimization, stitch generation, underlay planning, density or fill-angle selection, pull compensation, machine adaptation, canonical command generation, or encoding. Engine V2 remains disconnected from the production application.
+
+## Phase 7: technical stitch specifications
+
+Phase 7 creates one immutable `ObjectTechnicalSpecificationV2` disposition for every validated final object. Specifications are separate records and do not mutate final `EmbroideryObjectV2` geometry, holes, visual colors, roles, stitch types, layers, dependencies, or thread IDs. A disposition is explicitly `planned`, `manual_required`, or `blocked`; no object disappears silently.
+
+Material profiles are configurable internal planning assumptions, not machine profiles or manufacturer-certified settings. They centralize default tatami and satin spacing, running length, pull-compensation scale, and underlay scale for generic woven, lightweight woven, stretch knit, heavy woven, high-loft, and explicit custom materials.
+
+Geometry analysis remains in millimetres and subtracts explicit holes. It reports deterministic area, bounds, perimeter, centroid, principal axes, and clearly labelled width estimates without smoothing, simplifying, offsetting, or inserting contour geometry. Stitch compatibility never changes an object's existing stitch type: unsuitable geometry becomes manual-required or blocked.
+
+Tatami, satin, running, and manual parameter records contain technical limits only. Fill angles are planned but no rows are generated. Underlay components are planned but no underlay paths or coordinates are generated. Pull compensation is planned but geometry is not offset. Entry and exit candidates are individual source-backed points, not routes, and no final entry/exit pair is selected.
+
+Phase 7 creates no thread blocks, global sequence, travel optimization, physical stitch coordinates, canonical commands, machine adaptation, CE01 behavior, or encoding. Engine V2 remains disconnected from the production application.

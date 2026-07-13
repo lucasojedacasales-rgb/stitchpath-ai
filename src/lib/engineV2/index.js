@@ -198,3 +198,46 @@ export {
 } from './threads/finalObjectMaterializer.js';
 export { validateThreadResolutionResult, validateThreadedObjectMaterialization } from './threads/threadResolutionValidation.js';
 export { createThreadResolutionDiagnostic } from './threads/threadResolutionDiagnostics.js';
+
+export {
+  BUILT_IN_MATERIAL_PROFILES,
+  MATERIAL_PROFILE_CATEGORIES,
+  MATERIAL_STABILITIES,
+  MATERIAL_STRETCHES,
+  MATERIAL_SURFACES,
+  MATERIAL_THICKNESSES,
+  TECHNICAL_PLANNING_NUMERIC_DEFAULTS,
+  createMaterialProfileV2,
+  resolveMaterialProfileV2,
+  validateMaterialProfileV2,
+} from './technical/materialProfileModel.js';
+export {
+  DEFAULT_TECHNICAL_PLANNING_CONFIG,
+  TECHNICAL_PLANNING_PROFILES,
+  resolveTechnicalPlanningConfig,
+  validateTechnicalPlanningConfig,
+} from './technical/technicalPlanningConfig.js';
+export {
+  ENTRY_EXIT_KINDS,
+  ENTRY_EXIT_SOURCE_TYPES,
+  FILL_ANGLE_STRATEGIES,
+  GENERATOR_TYPES,
+  PULL_COMPENSATION_STRATEGIES,
+  TECHNICAL_SPECIFICATION_STATUSES,
+  UNDERLAY_COMPONENT_TYPES,
+  createEntryExitCandidateV2,
+  createGeneratorReadinessV2,
+  createObjectTechnicalSpecificationV2,
+  createPullCompensationPlanV2,
+  createUnderlayPlanV2,
+  technicalSpecificationIdForObject,
+} from './technical/technicalPlanningModel.js';
+export { analyzeEmbroideryObjectGeometry } from './technical/objectGeometryMetrics.js';
+export { normalizeFillAngle, planFillAngle } from './technical/fillAnglePlanner.js';
+export { planObjectUnderlay } from './technical/underlayPlanner.js';
+export { planPullCompensation } from './technical/pullCompensationPlanner.js';
+export { planEntryExitCandidates } from './technical/entryExitCandidatePlanner.js';
+export { evaluateGeneratorReadiness, evaluateStitchTypeCompatibility, planStitchParameters } from './technical/stitchParameterPlanner.js';
+export { buildTechnicalEmbroideryPlan } from './technical/technicalPlanningPipeline.js';
+export { validateObjectTechnicalSpecificationV2, validateTechnicalEmbroideryPlan } from './technical/technicalPlanningValidation.js';
+export { createTechnicalPlanningDiagnostic } from './technical/technicalPlanningDiagnostics.js';
