@@ -50,3 +50,13 @@ Every accepted region receives exactly one immutable decision: an active proposa
 Outline proposals are allowed only for explicit, region-backed outline evidence that also passes dark-color, dark-stroke-support, topology, confidence, and conflict checks. Dark color alone never implies an outline. Synthetic outlines remain disabled, and disconnected explicit outline regions remain separate.
 
 Phase 4 does not materialize final `EmbroideryObjectV2` objects. Thread assignment, physical stitch generation, global sequencing, travel routing, machine adaptation, and encoding remain deferred. Engine V2 is still isolated from and unimported by the production application.
+
+## Phase 5: reviewed unthreaded object drafts
+
+Phase 5 creates an explicit disposition for every Phase 4 proposal. Valid active proposals may be accepted automatically, planning exclusions remain excluded, and manual-review or low-confidence proposals remain deferred. Explicit rejection and tightly validated overrides are recorded without changing source geometry or artwork color.
+
+Only accepted or validly overridden proposals become immutable `EmbroideryObjectDraftV2` records. Drafts are not final `EmbroideryObjectV2` objects: final objects still require a real `threadId`, while every Phase 5 draft has `threadAssignmentStatus="pending"` and no `threadId` property. Negative space, excluded proposals, unresolved manual review, rejected proposals, blocked proposals, and unsafe outlines cannot materialize.
+
+Draft dependencies preserve structural proposal dependencies only. Missing required dependencies block dependents to a stable fixed point; they do not trigger color grouping, arbitrary sibling order, or travel routing. Geometry, holes, visual color, layer, role, and reviewed stitch-type proposals remain unchanged. Entry and exit candidates stay empty.
+
+Thread palette resolution and conversion to final embroidery objects are deferred to Phase 6. Stitch generation, density, fill angles, underlay, pull compensation, global sequencing, machine adaptation, commands, and encoding are also deferred. Engine V2 remains disconnected from the production application.

@@ -1,0 +1,23 @@
+import { describe, expect, it } from 'vitest';
+import { materializeEmbroideryObjectDrafts, validateEmbroideryObjectDraftV2, validateObjectDraftMaterialization } from '../index.js';
+import { createDraftMaterializationFixture } from '../fixtures/draftMaterializationFixture.js';
+
+function valid() { const fixture = createDraftMaterializationFixture(); const result = materializeEmbroideryObjectDrafts({ regions: fixture.regions, proposalPlan: fixture.proposalPlan }); return { fixture, result, draft: result.drafts[0] }; }
+
+describe('Phase 5 object draft validation', () => {
+  it('accepts valid materialization', () => { const { fixture, result } = valid(); expect(validateObjectDraftMaterialization(result, fixture.proposalPlan, fixture.regions).valid).toBe(true); });
+  it.each(['threadId', 'machineColor', 'stitches', 'stitchCoordinates', 'commands', 'canonicalCommands', 'machineProfile'])('rejects forbidden draft field %s', field => {
+    const { draft } = valid(); expect(validateEmbroideryObjectDraftV2({ ...draft, [field]: [] }).valid).toBe(false);
+  });
+  it('rejects non-empty entry candidates', () => { const { draft } = valid(); expect(validateEmbroideryObjectDraftV2({ ...draft, entryCandidates: [{ x: 0, y: 0 }] }).valid).toBe(false); });
+  it('rejects non-empty exit candidates', () => { const { draft } = valid(); expect(validateEmbroideryObjectDraftV2({ ...draft, exitCandidates: [{ x: 0, y: 0 }] }).valid).toBe(false); });
+  it('rejects geometry mutation', () => { const { fixture, result, draft } = valid(); const changed = { ...result, drafts: [{ ...draft, geometryMm: draft.geometryMm.slice(0, 3) }, ...result.drafts.slice(1)] }; expect(validateObjectDraftMaterialization(changed, fixture.proposalPlan, fixture.regions).errors.some(item => item.code === 'DRAFT_GEOMETRY_MUTATION')).toBe(true); });
+  it('rejects hole mutation', () => { const { fixture, result, draft } = valid(); const changed = { ...result, drafts: [{ ...draft, holesMm: [] }, ...result.drafts.slice(1)] }; expect(validateObjectDraftMaterialization(changed, fixture.proposalPlan, fixture.regions).errors.some(item => item.code === 'DRAFT_HOLE_MUTATION')).toBe(true); });
+  it('rejects visual-color mutation', () => { const { fixture, result, draft } = valid(); const changed = { ...result, drafts: [{ ...draft, visualColor: '#000000' }, ...result.drafts.slice(1)] }; expect(validateObjectDraftMaterialization(changed, fixture.proposalPlan, fixture.regions).errors.some(item => item.code === 'DRAFT_VISUAL_COLOR_MUTATION')).toBe(true); });
+  it('rejects unknown proposal draft', () => { const { fixture, result, draft } = valid(); const changed = { ...result, drafts: [{ ...draft, proposalId: 'missing', id: 'draft:missing' }, ...result.drafts.slice(1)] }; expect(validateObjectDraftMaterialization(changed, fixture.proposalPlan, fixture.regions).errors.some(item => item.code === 'DRAFT_UNKNOWN_PROPOSAL')).toBe(true); });
+  it('rejects unknown region draft', () => { const { fixture, result, draft } = valid(); const changed = { ...result, drafts: [{ ...draft, regionId: 'missing' }, ...result.drafts.slice(1)] }; expect(validateObjectDraftMaterialization(changed, fixture.proposalPlan, fixture.regions).errors.some(item => item.code === 'DRAFT_UNKNOWN_REGION')).toBe(true); });
+  it('rejects duplicate draft IDs', () => { const { fixture, result, draft } = valid(); const changed = { ...result, drafts: [...result.drafts, draft] }; expect(validateObjectDraftMaterialization(changed, fixture.proposalPlan, fixture.regions).errors.some(item => item.code === 'DUPLICATE_DRAFT_ID')).toBe(true); });
+  it('rejects missing draft dependency', () => { const { fixture, result, draft } = valid(); const changed = { ...result, drafts: [{ ...draft, dependencyIds: ['draft:missing'] }, ...result.drafts.slice(1)] }; expect(validateObjectDraftMaterialization(changed, fixture.proposalPlan, fixture.regions).errors.some(item => item.code === 'MISSING_DRAFT_DEPENDENCY')).toBe(true); });
+  it('rejects disposition coverage below 100', () => { const { fixture, result } = valid(); const changed = { ...result, summary: { ...result.summary, proposalDispositionCoveragePercent: 50 } }; expect(validateObjectDraftMaterialization(changed, fixture.proposalPlan, fixture.regions).errors.some(item => item.code === 'DISPOSITION_COVERAGE_BELOW_100')).toBe(true); });
+  it.each(['threads', 'threadDefinitions', 'threadBlocks', 'commands', 'canonicalCommands', 'machineProfile'])('rejects forbidden materialization collection %s', field => { const { fixture, result } = valid(); expect(validateObjectDraftMaterialization({ ...result, [field]: [] }, fixture.proposalPlan, fixture.regions).valid).toBe(false); });
+});

@@ -131,3 +131,35 @@ export {
   validateEmbroideryObjectProposalV2,
 } from './planning/objectPlanningValidation.js';
 export { createObjectPlanningDiagnostic } from './planning/objectPlanningDiagnostics.js';
+
+export {
+  PROPOSAL_REVIEW_ACTIONS,
+  createProposalReviewDecisionV2,
+  reviewDecisionIdFor,
+} from './materialization/reviewDecisionModel.js';
+export {
+  DEFAULT_PROPOSAL_REVIEW_POLICY_CONFIG,
+  resolveProposalReviewPolicyConfig,
+  validateProposalReviewPolicyConfig,
+} from './materialization/reviewPolicyConfig.js';
+export { resolveProposalReviewDecisions } from './materialization/proposalReviewResolver.js';
+export {
+  EMBROIDERY_DRAFT_ROLES,
+  EMBROIDERY_DRAFT_STITCH_TYPES,
+  buildDraftPlanningParameters,
+  createEmbroideryObjectDraftV2,
+  draftIdFor,
+} from './materialization/embroideryObjectDraftModel.js';
+export {
+  getDraftAncestors,
+  getDraftDescendants,
+  getDraftExecutionLayers,
+  translateProposalDependenciesToDrafts,
+} from './materialization/draftDependencyTranslator.js';
+export { materializeEmbroideryObjectDrafts } from './materialization/objectDraftMaterializer.js';
+export {
+  validateEmbroideryObjectDraftV2,
+  validateObjectDraftMaterialization,
+  validateProposalReviewDecisionV2,
+} from './materialization/objectDraftValidation.js';
+export { createObjectDraftMaterializationDiagnostic } from './materialization/objectDraftDiagnostics.js';
