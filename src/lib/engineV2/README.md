@@ -28,3 +28,15 @@ Geometry canonicalization is deterministic. It removes only duplicate closing an
 `RegionGraphV2` records containment, overlap, boundary touching, parent/child structure, and disconnected spatial components. A parent is the smallest containing region and is not automatically a hole. Holes come only from explicit source geometry or future explicit negative-space metadata. Disconnected regions with the same visual color remain separate.
 
 The graph does not generate contours, stitches, embroidery objects, commands, routes, or thread assignments. Engine V2 remains disconnected from the production application after Phase 2.
+
+## Phase 3: hole-aware topology and artwork semantics
+
+Phase 3 treats a region's effective area as its counter-clockwise outer polygon minus its explicitly supplied clockwise holes. Point, containment, overlap, touching, equality, parent selection, and area calculations respect those holes. A region entirely inside an explicit hole is outside the containing region's effective area and cannot receive it as a parent. No new holes are inferred.
+
+Artwork interpretation uses a separate semantic model: `background`, `primary_shape`, `secondary_shape`, `internal_feature`, `dark_mark`, `highlight`, `negative_space`, and `unknown`. These are artwork semantic roles, not embroidery roles. In particular, `dark_mark` is a candidate interpretation and is never automatically an outline. A visual color remains artwork evidence and is never a machine thread.
+
+Semantic analysis combines controlled source labels, normalized geometry, graph topology, explicit negative-space evidence, dark-stroke support, and deterministic color features. Default color thresholds use relative luminance values of `0.10` for very dark, `0.22` for dark, `0.78` for light, and `0.90` for very light, with `0.12` as the neutral saturation threshold. Callers may override these thresholds explicitly.
+
+`negative_space` requires explicit hole or trusted negative-space, cutout, or void evidence; nesting alone is insufficient. Assessments below the default accepted confidence of `0.72`, or with conflicting evidence, are marked for review and prefer `unknown` over an unsafe guess.
+
+Phase 3 assigns no stitch types, contours, threads, embroidery objects, commands, sequence plans, or machine adaptations. Engine V2 remains disconnected from the application.

@@ -1,10 +1,9 @@
 import {
   DEFAULT_GEOMETRY_TOLERANCES,
-  polygonArea,
   polygonBounds,
   polygonCentroid,
 } from '../ingestion/geometryCanonicalization.js';
-import { analyzeAllRegionRelations } from './regionRelations.js';
+import { analyzeAllRegionRelations, regionAreaWithHoles } from './regionRelations.js';
 
 function cloneValue(value) {
   if (Array.isArray(value)) return value.map(cloneValue);
@@ -55,7 +54,7 @@ export function buildRegionGraphV2(regions, options = {}) {
     minimumAreaNormalized: options.minimumAreaNormalized ?? DEFAULT_GEOMETRY_TOLERANCES.minimumAreaNormalized,
   };
   const relations = analyzeAllRegionRelations(sortedRegions, tolerances);
-  const areas = new Map(sortedRegions.map(region => [region.id, polygonArea(region.geometry)]));
+  const areas = new Map(sortedRegions.map(region => [region.id, regionAreaWithHoles(region)]));
   const nodes = Object.fromEntries(sortedRegions.map(region => [region.id, {
     regionId: region.id,
     parentId: null,
@@ -71,9 +70,13 @@ export function buildRegionGraphV2(regions, options = {}) {
   }]));
   const edges = [];
   const equalGeometryCandidates = [];
+  const explicitHoleExclusions = [];
   const disjointSet = makeDisjointSet(sortedRegions.map(region => region.id));
 
-  relations.forEach(({ regionAId, regionBId, relation }) => {
+  relations.forEach(({ regionAId, regionBId, relation, excludedByExplicitHole, explicitHoleIdOrIndex }) => {
+    if (excludedByExplicitHole) {
+      explicitHoleExclusions.push({ regionAId, regionBId, explicitHoleIdOrIndex });
+    }
     if (relation === 'contains') {
       nodes[regionAId].containedRegionIds.push(regionBId);
       nodes[regionBId].containingRegionIds.push(regionAId);
@@ -145,6 +148,9 @@ export function buildRegionGraphV2(regions, options = {}) {
     metadata: {
       tolerances,
       equalGeometryCandidates: equalGeometryCandidates.map(pair => [...pair]),
+      explicitHoleExclusions: explicitHoleExclusions.map(item => ({ ...item })),
+      regionsInsideExplicitHoles: explicitHoleExclusions.length,
+      holeAwareParentCorrections: explicitHoleExclusions.length,
       inferredHoleCount: 0,
     },
   };

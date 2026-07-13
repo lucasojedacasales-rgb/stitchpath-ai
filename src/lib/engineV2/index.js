@@ -56,5 +56,36 @@ export {
   REGION_RELATIONS,
   analyzeAllRegionRelations,
   analyzeRegionRelation,
+  analyzeRegionRelationDetailed,
+  isPointInRegionArea,
   polygonsHaveEqualGeometry,
+  regionAreaWithHoles,
+  regionContainsRegionArea,
+  regionInsideExplicitHole,
+  regionsOverlapArea,
+  regionsTouchArea,
 } from './topology/regionRelations.js';
+
+export {
+  ARTWORK_SEMANTIC_ROLES,
+  DEFAULT_SEMANTIC_ANALYSIS_OPTIONS,
+  createSemanticRegionAssessmentV2,
+  resolveSemanticAnalysisOptions,
+} from './semantics/semanticRoleModel.js';
+
+export {
+  DEFAULT_ARTWORK_COLOR_THRESHOLDS,
+  analyzeArtworkColor,
+} from './semantics/colorFeatureAnalysis.js';
+
+export { analyzeRegionGeometryFeatures } from './semantics/geometryFeatureAnalysis.js';
+export { analyzeSourceSemanticEvidence } from './semantics/sourceSemanticEvidence.js';
+export { analyzeSemanticRegionRoles } from './semantics/semanticRoleAnalyzer.js';
+
+export {
+  validateSemanticAnalysisResult,
+  validateSemanticAnalyzerOptions,
+  validateSemanticRegionAssessmentV2,
+} from './semantics/semanticAnalysisValidation.js';
+
+export { createSemanticAnalysisDiagnostic } from './semantics/semanticDiagnostics.js';
