@@ -1,8 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Activity, CheckCircle, XCircle, Download, Play } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { runRegressionSuite } from '@/tests/runEmbroideryRegression';
 
 /**
  * RegressionTestPage — runs the real embroidery motor against synthetic
@@ -14,23 +13,41 @@ export default function RegressionTestPage() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
+  const workerRef = useRef(null);
+
+  useEffect(() => () => workerRef.current?.terminate(), []);
 
   const run = () => {
+    workerRef.current?.terminate();
     setRunning(true);
     setError(null);
-    setTimeout(() => {
-      try {
-        const r = runRegressionSuite();
-        setResult(r);
-      } catch (e) {
-        setError(e.message + '\n' + (e.stack || ''));
-      } finally {
+    const startedAt = performance.now();
+    requestAnimationFrame(() => {
+      const worker = new Worker(new URL('../workers/regression.worker.js', import.meta.url), { type: 'module' });
+      workerRef.current = worker;
+      worker.onmessage = (event) => {
+        if (event.data?.type === 'complete') {
+          setResult(event.data.result);
+          console.log('[PERF] regressionWorkerRunMs', Math.round(performance.now() - startedAt));
+          setRunning(false);
+          worker.terminate();
+          workerRef.current = null;
+        } else if (event.data?.type === 'error') {
+          setError(`${event.data.message}\n${event.data.stack || ''}`);
+          setRunning(false);
+          worker.terminate();
+          workerRef.current = null;
+        }
+      };
+      worker.onerror = (event) => {
+        setError(event.message || 'No se pudo ejecutar la suite de regresión');
         setRunning(false);
-      }
-    }, 50);
+        worker.terminate();
+        workerRef.current = null;
+      };
+      worker.postMessage({ type: 'run' });
+    });
   };
-
-  useEffect(() => { run(); }, []);
 
   const downloadMd = () => {
     if (!result) return;
@@ -53,7 +70,7 @@ export default function RegressionTestPage() {
             <h1 className="text-lg font-bold text-white">Suite de Regresión — StitchPath AI</h1>
             <p className="text-xs text-slate-500">Ejecuta el motor real contra fixtures sintéticos. Sin datos de preview.</p>
           </div>
-          <button onClick={() => navigate('/')}
+          <button onClick={() => { workerRef.current?.terminate(); navigate('/'); }}
             className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161a23] border border-[#2a2d3a] hover:border-violet-500 text-slate-300 text-xs font-bold">
             <ArrowLeft className="w-3.5 h-3.5" /> Volver
           </button>
@@ -70,6 +87,20 @@ export default function RegressionTestPage() {
         {error && (
           <div className="bg-red-900/20 border border-red-500/40 rounded-lg p-3 text-xs text-red-300 whitespace-pre-wrap font-mono">
             {error}
+          </div>
+        )}
+
+        {!result && !running && !error && (
+          <div className="rounded-lg border border-[#1e2130] bg-[#161a23] p-8 text-center">
+            <p className="text-sm font-semibold text-slate-300">La suite está lista</p>
+            <p className="mt-1 text-xs text-slate-500">El motor se cargará únicamente cuando pulses “Re-ejecutar”.</p>
+          </div>
+        )}
+
+        {running && !result && (
+          <div className="flex items-center justify-center gap-3 rounded-lg border border-violet-500/20 bg-violet-950/10 p-10">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
+            <span className="text-xs text-violet-200">Cargando módulos y ejecutando pruebas…</span>
           </div>
         )}
 

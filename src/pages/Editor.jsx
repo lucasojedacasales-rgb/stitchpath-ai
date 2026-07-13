@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Save, Download, Zap, ChevronRight, ArrowLeft, ShieldCheck, RefreshCw, Sparkles, FileText } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
@@ -6,27 +6,9 @@ import StepPipeline from '@/components/editor/StepPipeline';
 import AIProgressIndicator from '@/components/editor/AIProgressIndicator';
 import StitchCanvas from '@/components/editor/StitchCanvas';
 import ConfigPanel from '@/components/editor/ConfigPanel';
-import RegionsPanel from '@/components/editor/RegionsPanel';
-import SubpixelMetricsPanel from '@/components/editor/SubpixelMetricsPanel.jsx';
-import QualityAnalysisPanel from '@/components/editor/QualityAnalysisPanel.jsx';
-import StitchPlannerPanel from '@/components/editor/StitchPlannerPanel.jsx';
-import IntelligencePanel from '@/components/editor/IntelligencePanel.jsx';
-import TravelOptimizerPanel from '@/components/editor/TravelOptimizerPanel.jsx';
-import ExportModal from '@/components/editor/ExportModal';
-import MachineValidatorPanel from '@/components/editor/MachineValidatorPanel';
-import StabilityOptimizerPanel from '@/components/editor/StabilityOptimizerPanel';
-import TravelPathOptimizerPanel from '@/components/editor/TravelPathOptimizerPanel';
-import TrimOptimizerPanel from '@/components/editor/TrimOptimizerPanel';
-import ContourRefinePanel from '@/components/editor/ContourRefinePanel';
-import MachineSimulator from '@/components/editor/MachineSimulator';
-import SimulationReportPanel from '@/components/editor/SimulationReportPanel';
-import FinalLookSimulator from '@/components/editor/FinalLookSimulator.jsx';
-import DetailDiagnosticPanel from '@/components/editor/DetailDiagnosticPanel.jsx';
-import AestheticPreservationPanel from '@/components/editor/AestheticPreservationPanel.jsx';
+import TechnicalToolLoading from '@/components/editor/TechnicalToolLoading';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
-import MaskToolbar from '@/components/editor/MaskToolbar';
-import MaskCanvas from '@/components/editor/MaskCanvas';
-import NeedlePathPanel from '@/components/editor/NeedlePathPanel';
+
 import { runPipeline } from '@/lib/pipeline/runner';
 import { resolveEffectiveEmbroideryProfile } from '@/lib/embroideryEngineProfiles.js';
 import { filterValidVisualRegions } from '@/lib/visualRegionGuard';
@@ -34,16 +16,10 @@ import { buildFinalCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
 import { calculateUnifiedCommandMetrics } from '@/lib/unifiedCommandMetrics';
 import { simplifyGeometry } from '@/lib/industrialStitchProcessor';
 import { buildStrictDarkStrokeContextFromOriginalImage } from '@/lib/rawDarkStrokeTest';
-import RealImageDiagnosticPanel from '@/components/editor/RealImageDiagnosticPanel';
-import FootContourExportDiagnostic from '@/components/editor/FootContourExportDiagnostic';
-import ProfessionalQualityPanel from '@/components/editor/ProfessionalQualityPanel';
-import ReferenceLearningPanel from '@/components/referenceLearning/ReferenceLearningPanel';
+
 import { applyProfessionalPipeline } from '@/lib/professionalDigitizingMode';
 import { autoApplyLearnedProfileForDesign } from '@/lib/referenceLearning/referenceLearningApplier';
-import LearnedConfigDiffPanel from '@/components/editor/LearnedConfigDiffPanel';
-import LearnedPresetValidationPanel from '@/components/referenceLearning/LearnedPresetValidationPanel';
-import IntegratedPipelineReportButton from '@/components/referenceLearning/IntegratedPipelineReportButton';
-import CommandRuntimeForensicsPanel from '@/components/editor/CommandRuntimeForensicsPanel';
+
 import { applyStitchedTransitionToJumpGuard } from '@/lib/stitchTransitionGuard';
 import { LIGHTWEIGHT_APP_BOOT_V1, logPerf, logSafeBootStatus, perfNow } from '@/lib/safeBoot';
 import { recordVectorizationRun, referenceLearningEnabled } from '@/lib/emergencyStabilization';
@@ -53,7 +29,37 @@ import { cleanCartoonSegmentationRegions } from '@/lib/cartoonSegmentationCleanu
 
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
 import { useDecisionEngine } from '@/hooks/useDecisionEngine.js';
-import { DecisionPanel } from '@/components/DecisionPanel.jsx';
+const RegionsPanel = lazy(() => import('@/components/editor/RegionsPanel'));
+const SubpixelMetricsPanel = lazy(() => import('@/components/editor/SubpixelMetricsPanel.jsx'));
+const QualityAnalysisPanel = lazy(() => import('@/components/editor/QualityAnalysisPanel.jsx'));
+const StitchPlannerPanel = lazy(() => import('@/components/editor/StitchPlannerPanel.jsx'));
+const IntelligencePanel = lazy(() => import('@/components/editor/IntelligencePanel.jsx'));
+const TravelOptimizerPanel = lazy(() => import('@/components/editor/TravelOptimizerPanel.jsx'));
+const ExportModal = lazy(() => import('@/components/editor/ExportModal'));
+const MachineValidatorPanel = lazy(() => import('@/components/editor/MachineValidatorPanel'));
+const StabilityOptimizerPanel = lazy(() => import('@/components/editor/StabilityOptimizerPanel'));
+const TravelPathOptimizerPanel = lazy(() => import('@/components/editor/TravelPathOptimizerPanel'));
+const TrimOptimizerPanel = lazy(() => import('@/components/editor/TrimOptimizerPanel'));
+const ContourRefinePanel = lazy(() => import('@/components/editor/ContourRefinePanel'));
+const MachineSimulator = lazy(() => import('@/components/editor/MachineSimulator'));
+const SimulationReportPanel = lazy(() => import('@/components/editor/SimulationReportPanel'));
+const FinalLookSimulator = lazy(() => import('@/components/editor/FinalLookSimulator.jsx'));
+const DetailDiagnosticPanel = lazy(() => import('@/components/editor/DetailDiagnosticPanel.jsx'));
+const AestheticPreservationPanel = lazy(() => import('@/components/editor/AestheticPreservationPanel.jsx'));
+const MaskToolbar = lazy(() => import('@/components/editor/MaskToolbar'));
+const MaskCanvas = lazy(() => import('@/components/editor/MaskCanvas'));
+const NeedlePathPanel = lazy(() => import('@/components/editor/NeedlePathPanel'));
+const RealImageDiagnosticPanel = lazy(() => import('@/components/editor/RealImageDiagnosticPanel'));
+const FootContourExportDiagnostic = lazy(() => import('@/components/editor/FootContourExportDiagnostic'));
+const ProfessionalQualityPanel = lazy(() => import('@/components/editor/ProfessionalQualityPanel'));
+const ReferenceLearningPanel = lazy(() => import('@/components/referenceLearning/ReferenceLearningPanel'));
+const LearnedConfigDiffPanel = lazy(() => import('@/components/editor/LearnedConfigDiffPanel'));
+const LearnedPresetValidationPanel = lazy(() => import('@/components/referenceLearning/LearnedPresetValidationPanel'));
+const IntegratedPipelineReportButton = lazy(() => import('@/components/referenceLearning/IntegratedPipelineReportButton'));
+const CommandRuntimeForensicsPanel = lazy(() => import('@/components/editor/CommandRuntimeForensicsPanel'));
+const DecisionPanel = lazy(() => import('@/components/DecisionPanel.jsx').then(module => ({ default: module.DecisionPanel })));
+
+const TECHNICAL_TABS = new Set(['mask', 'planner', 'travel', 'simulate', 'finallook', 'validate', 'details', 'diagnostic', 'prof', 'learn']);
 const AI_ENABLED = true; // Cambiar a false para desactivar
 // ═══════════════════════════════════════════
 
@@ -160,7 +166,9 @@ export default function Editor() {
   const [showFill, setShowFill] = useState(true);
   const [showContour, setShowContour] = useState(true);
   const [showExport, setShowExport] = useState(false);
+  const [exportReady, setExportReady] = useState(false);
   const [activeTab, setActiveTab] = useState('editor');
+  const [preparedTool, setPreparedTool] = useState('editor');
   const [editorUiMode, setEditorUiMode] = useState('simple');
   const [focusMode, setFocusMode] = useState(false);
   const [cleanConfigOpen, setCleanConfigOpen] = useState(false);
@@ -291,8 +299,9 @@ export default function Editor() {
     trimThreshold: 3.5,
   }), [config.width_mm, config.height_mm]);
 
-  const activeTabNeedsCommands = activeTab === 'simulate' || activeTab === 'finallook' || activeTab === 'validate' || activeTab === 'diagnostic' || activeTab === 'prof' || activeTab === 'learn';
-  const needsFinalCommandBuild = !LIGHTWEIGHT_APP_BOOT_V1 || !!optimizedCommandsOverride || processing || showExport || activeTabNeedsCommands || !!finalCommandCacheRef.current.value;
+  const activeToolReady = !TECHNICAL_TABS.has(activeTab) || preparedTool === activeTab;
+  const activeTabNeedsCommands = activeToolReady && (activeTab === 'simulate' || activeTab === 'finallook' || activeTab === 'validate' || activeTab === 'diagnostic' || activeTab === 'prof' || activeTab === 'learn');
+  const needsFinalCommandBuild = !LIGHTWEIGHT_APP_BOOT_V1 || !!optimizedCommandsOverride || processing || (showExport && exportReady) || activeTabNeedsCommands || !!finalCommandCacheRef.current.value;
   const regionsVersion = useMemo(() => regionsCommandHash(regions), [regions]);
   const optimizedOverrideVersion = useMemo(() => commandSequenceHash(optimizedCommandsOverride || []), [optimizedCommandsOverride]);
 
@@ -679,14 +688,47 @@ export default function Editor() {
   const activeInMore = labMoreTabs.some((tab) => tab.id === activeTab);
   const switchEditorTab = useCallback((tab) => {
     tabSwitchStartRef.current = perfNow();
+    setPreparedTool(null);
     setActiveTab(tab);
   }, []);
   useEffect(() => {
-    if (!tabSwitchStartRef.current) return;
-    if (activeTab === 'simulate') perfLog('switchToSimulate', tabSwitchStartRef.current);
-    if (activeTab === 'finallook') perfLog('switchToFinalLook', tabSwitchStartRef.current);
-    tabSwitchStartRef.current = null;
+    if (!TECHNICAL_TABS.has(activeTab)) {
+      setPreparedTool(activeTab);
+      return;
+    }
+    let secondFrame = null;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => setPreparedTool(activeTab));
+    });
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame) cancelAnimationFrame(secondFrame);
+    };
   }, [activeTab]);
+  useEffect(() => {
+    if (!tabSwitchStartRef.current || !activeToolReady) return;
+    perfLog(`switchTo${activeTab}`, tabSwitchStartRef.current);
+    tabSwitchStartRef.current = null;
+  }, [activeTab, activeToolReady]);
+
+  const handleOpenExport = useCallback(() => {
+    setExportReady(false);
+    setShowExport(true);
+  }, []);
+  useEffect(() => {
+    if (!showExport) {
+      setExportReady(false);
+      return;
+    }
+    let secondFrame = null;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => setExportReady(true));
+    });
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame) cancelAnimationFrame(secondFrame);
+    };
+  }, [showExport]);
   useEffect(() => {
     if (!isLabMode && !simpleTabs.some((tab) => tab.id === activeTab)) setActiveTab('editor');
   }, [isLabMode, activeTab]);
@@ -785,7 +827,7 @@ export default function Editor() {
           </button>
           <AIProgressIndicator active={processing} elapsed={processingElapsed} />
           <div className="flex items-center gap-1.5">
-            <NavButton onClick={() => setShowExport(true)} icon={Download} label="Exportar" accent />
+            <NavButton onClick={handleOpenExport} icon={Download} label="Exportar" accent />
             <NavButton onClick={() => startProcessing()} icon={Zap} label="Procesar" disabled={!imageUrl || processing} />
             <NavButton onClick={() => saveProject()} icon={Save} label={saving ? '...' : 'Guardar'} />
           </div>
@@ -800,7 +842,7 @@ export default function Editor() {
               )}
               {isLabMode && (
                 <>
-                  <button onClick={() => setShowExport(true)} className="px-3 py-1 rounded text-xs font-medium text-slate-500 hover:text-slate-300 transition-colors">Exportar</button>
+                  <button onClick={handleOpenExport} className="px-3 py-1 rounded text-xs font-medium text-slate-500 hover:text-slate-300 transition-colors">Exportar</button>
                   <button onClick={() => setShowMoreTabs((v) => !v)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeInMore ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>Más...</button>
                   {showMoreTabs && (
                     <div className="absolute top-8 left-56 z-30 w-44 rounded-xl border border-[#2a2d3a] bg-[#11141c] p-2 shadow-2xl">
@@ -880,6 +922,7 @@ export default function Editor() {
         )}
 
         <div className="flex-1 flex flex-col overflow-hidden">
+          <Suspense fallback={<TechnicalToolLoading label={`Cargando ${activeTab}…`} />}>
           {isLabMode && !focusMode && activeTab !== 'mask' && activeTab !== 'planner' && activeTab !== 'travel' && activeTab !== 'simulate' && activeTab !== 'finallook' && activeTab !== 'details' && <div className="flex items-center gap-4 px-4 py-2 border-b border-[#1a1d27] bg-[#0a0c12]">
             <SliderControl label="Imagen" value={imageOpacity} onChange={setImageOpacity} color="text-amber-400" />
             <SliderControl label="Puntadas" value={stitchOpacity} onChange={setStitchOpacity} color="text-violet-400" />
@@ -889,7 +932,9 @@ export default function Editor() {
             </div>
           </div>}
 
-          {activeTab === 'planner' ? (
+          {!activeToolReady ? (
+            <TechnicalToolLoading label={`Preparando ${activeTab}…`} />
+          ) : activeTab === 'planner' ? (
             <div className="flex-1 overflow-hidden">
               <StitchPlannerPanel
                 regions={regions}
@@ -1224,11 +1269,13 @@ export default function Editor() {
               </button>
            </div>
           }
-        </div>
+          </Suspense>
+          </div>
 
-        {isLabMode && !focusMode && (
+          {isLabMode && !focusMode && (
           <div className="w-64 flex-shrink-0 border-l border-[#1e2130] overflow-hidden flex flex-col">
             {/* Right panel tab switcher */}
+            <Suspense fallback={<TechnicalToolLoading label="Cargando regiones…" />}>
             {selectedRegionId ? (() => {
               const selRegion = regions.find(r => r.id === selectedRegionId);
               return (
@@ -1245,11 +1292,18 @@ export default function Editor() {
                 <RegionsPanel regions={regions} selectedId={selectedRegionId} onSelect={setSelectedRegionId} onUpdate={handleRegionsUpdate} config={config} />
               </div>
             )}
+            </Suspense>
           </div>
         )}
       </div>
 
-      {showExport && <ExportModal project={project} config={configWithDarkStroke} regions={regions} darkStroke={darkStroke} canonicalFinalCommands={finalEmbroideryCommands.commands} canonicalFinalObjects={finalEmbroideryCommands.objects} canonicalCommandMeta={finalEmbroideryCommands.meta} finalCommands={finalEmbroideryCommands.commands} finalObjects={finalEmbroideryCommands.objects} finalMeta={finalEmbroideryCommands.meta} commandVersion={commandVersion} onClose={() => setShowExport(false)} />}
+      {showExport && (!exportReady ? (
+        <TechnicalToolLoading label="Preparando exportación…" overlay />
+      ) : (
+        <Suspense fallback={<TechnicalToolLoading label="Cargando exportadores…" overlay />}>
+          <ExportModal project={project} config={configWithDarkStroke} regions={regions} darkStroke={darkStroke} canonicalFinalCommands={finalEmbroideryCommands.commands} canonicalFinalObjects={finalEmbroideryCommands.objects} canonicalCommandMeta={finalEmbroideryCommands.meta} finalCommands={finalEmbroideryCommands.commands} finalObjects={finalEmbroideryCommands.objects} finalMeta={finalEmbroideryCommands.meta} commandVersion={commandVersion} onClose={() => setShowExport(false)} />
+        </Suspense>
+      ))}
     </div>);
 
 }
@@ -1273,7 +1327,7 @@ function LazyLabTool({ title, open, onToggle, children }) {
         <span>{title}</span>
         <span className="text-slate-600">{open ? '−' : '+'}</span>
       </button>
-      {open && <div className="p-3 border-t border-[#1e2130]">{children}</div>}
+      {open && <div className="p-3 border-t border-[#1e2130]"><Suspense fallback={<TechnicalToolLoading label={`Cargando ${title}…`} />}>{children}</Suspense></div>}
     </div>
   );
 }
@@ -1312,6 +1366,7 @@ function RightPanelTabs({ region, regions, config, onUpdate, onSelect }) {
         ))}
       </div>
       <div className="flex-1 overflow-y-auto min-h-0">
+        <Suspense fallback={<TechnicalToolLoading label="Cargando panel…" />}>
         {tab === 'regions' && (
           <RegionsPanel regions={regions} selectedId={region?.id} onSelect={onSelect} onUpdate={onUpdate} config={config} />
         )}
@@ -1329,6 +1384,7 @@ function RightPanelTabs({ region, regions, config, onUpdate, onSelect }) {
             />
           </div>
         )}
+        </Suspense>
       </div>
     </div>
   );

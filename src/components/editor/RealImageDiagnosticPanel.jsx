@@ -102,7 +102,33 @@ function regionShouldBeContour(r) {
     rc === 'outer_outline' || rc === 'inner_outline' || rc === 'detail_open_curve';
 }
 
-export default function RealImageDiagnosticPanel({
+export default function RealImageDiagnosticPanel(props) {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let secondFrame = null;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => setReady(true));
+    });
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame) cancelAnimationFrame(secondFrame);
+    };
+  }, []);
+
+  if (!ready) {
+    return (
+      <div className="flex min-h-48 items-center justify-center gap-3 rounded-xl border border-[#1e2130] bg-[#0d0f14] text-xs text-slate-400">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
+        Preparando diagnóstico de imagen…
+      </div>
+    );
+  }
+
+  return <RealImageDiagnosticContent {...props} />;
+}
+
+function RealImageDiagnosticContent({
   imageUrl, regions = [], config = {}, darkStroke,
   finalCommands = [], finalObjects = [], machineSettings = {},
   originalImageUrl, darkStrokeSourceUrl, contourSegmentReport,

@@ -1,6 +1,8 @@
+import { lazy, Suspense } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Sparkles } from 'lucide-react';
-import ReferenceLearningPanel from '@/components/referenceLearning/ReferenceLearningPanel';
+
+const ReferenceLearningPanel = lazy(() => import('@/components/referenceLearning/ReferenceLearningPanel'));
 
 export default function ReferenceLearningPage() {
   return (
@@ -20,7 +22,9 @@ export default function ReferenceLearningPage() {
         </div>
       </header>
       <div className="p-4 max-w-6xl mx-auto">
-        <ReferenceLearningPanel />
+        <Suspense fallback={<div className="flex min-h-64 items-center justify-center gap-3 text-xs text-slate-400"><div className="h-6 w-6 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" /> Cargando herramientas de aprendizaje…</div>}>
+          <ReferenceLearningPanel />
+        </Suspense>
       </div>
     </div>
   );
