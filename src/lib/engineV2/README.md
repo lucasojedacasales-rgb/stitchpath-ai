@@ -18,3 +18,13 @@ Canonical commands are universal. Machine-specific coordinate transforms, limits
 ## Phase 1 scope
 
 Phase 1 provides immutable factories, configuration resolution, validation, diagnostics, tests, and documentation. It performs no image segmentation, vectorization, fill generation, contour generation, routing, machine adaptation, or file encoding. Enabling configuration flags only makes the resolver report V2 as enabled; no production application path invokes it in this phase.
+
+## Phase 2: region ingestion and topology
+
+Phase 2 adds an isolated boundary that adapts legacy artwork regions into canonical `RegionV2` data and builds `RegionGraphV2`. Every source must declare its coordinate space explicitly as `normalized`, `pixel`, or `millimeter`; pixel and millimeter inputs also require their corresponding source or design dimensions. Output region geometry always remains normalized.
+
+Geometry canonicalization is deterministic. It removes only duplicate closing and consecutive duplicate points, preserves meaningful corners, normalizes outer polygons counter-clockwise and explicit holes clockwise, and rejects invalid, degenerate, out-of-range, or obviously self-intersecting polygons. It does not smooth or repair artwork.
+
+`RegionGraphV2` records containment, overlap, boundary touching, parent/child structure, and disconnected spatial components. A parent is the smallest containing region and is not automatically a hole. Holes come only from explicit source geometry or future explicit negative-space metadata. Disconnected regions with the same visual color remain separate.
+
+The graph does not generate contours, stitches, embroidery objects, commands, routes, or thread assignments. Engine V2 remains disconnected from the production application after Phase 2.
