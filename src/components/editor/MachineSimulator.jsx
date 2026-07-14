@@ -1,9 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
-  Play, Pause, SkipForward, SkipBack, RotateCcw, Zap, Scissors,
-  Palette, Flag, AlertTriangle, MapPin, Navigation, Gauge, Layers,
-  Flame, Grid2x2, ShieldCheck, ShieldAlert, Bug, Eye, Activity,
-  Route,
+  Play, Pause, SkipForward, Zap, Scissors, Palette, Flag,
+  AlertTriangle, Layers, Grid2x2, Eye, Route,
 } from 'lucide-react';
 import { buildStitchObjects, flattenToCommands, DEFAULT_MACHINE } from '@/lib/exportPipeline';
 import { analyzeSimulation } from '@/lib/simulationMetrics';
@@ -107,11 +105,11 @@ export default function MachineSimulator({ regions, config, machineSettings, fin
     const cw = canvas.width, ch = canvas.height;
 
     // Background
-    ctx.fillStyle = '#0a0c12';
+    ctx.fillStyle = '#f7f8fb';
     ctx.fillRect(0, 0, cw, ch);
 
     // Grid
-    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+    ctx.strokeStyle = 'rgba(15,23,42,0.05)';
     ctx.lineWidth = 1;
     for (let gx = 0; gx < cw; gx += 20) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, ch); ctx.stroke(); }
     for (let gy = 0; gy < ch; gy += 20) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(cw, gy); ctx.stroke(); }
@@ -210,161 +208,68 @@ export default function MachineSimulator({ regions, config, machineSettings, fin
   const visStats = simData.stats;
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex-shrink-0 border-b border-[#1e2130] bg-[#0a0c12] px-4 py-2">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-xs font-bold text-emerald-300">Simulación basada en comandos finales</div>
-            <div className="text-[10px] text-slate-500">Esta vista usa la misma secuencia que Final Look. La reparación real se hace desde Exportar → Reparar y validar.</div>
+    <div className="flex h-full flex-col overflow-hidden bg-[#071126]">
+      <header className="flex-shrink-0 border-b border-[#17315f] bg-[#09152d] px-5 py-3 text-center">
+        <h2 className="text-base font-bold text-slate-100 sm:text-lg">Simulación basada en comandos finales</h2>
+        <p className="mt-1 text-[10px] text-slate-400 sm:text-xs">Esta vista usa la misma secuencia que Final Look. La reparación real se hace desde Exportar → Reparar y validar.</p>
+        <div className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1 rounded-lg border border-[#1d3c70] bg-[#061127] px-3 py-1.5 text-[9px] text-slate-400 sm:text-[10px]">
+          <span>simulationCommandCount=<b className="text-violet-300">{commands.length}</b></span>
+          <span>finalCommandCount=<b className="text-cyan-300">{finalCommandCount || commands.length}</b></span>
+          <span>commandSourceUsed=<b className="text-emerald-300">{commandSourceUsed}</b></span>
+          <span className={simulationMatchesFinalCommands ? 'font-bold text-emerald-300' : 'font-bold text-amber-300'}>{simulationMatchesFinalCommands ? 'simulationMatchesFinalCommands=true' : 'fallback=true'}</span>
+        </div>
+      </header>
+
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-px bg-[#17315f] lg:grid-cols-[minmax(0,1fr)_176px]">
+        <div className="relative min-h-[360px] overflow-hidden bg-[#f7f8fb]">
+          <canvas ref={canvasRef} width={1000} height={700} className="h-full w-full" />
+
+          <div className="absolute left-3 top-3 flex flex-wrap items-center gap-1.5 rounded-xl border border-[#214177] bg-[#07152f]/95 p-2 shadow-2xl backdrop-blur-sm">
+            {Object.entries(TYPE_META).map(([type, meta]) => {
+              const Icon = meta.icon;
+              return <div key={type} className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-bold ${curCmd?.type === type ? 'bg-violet-600 text-white' : 'bg-[#142851] text-slate-300'}`}><Icon className="h-3 w-3" />{meta.label}</div>;
+            })}
+            <span className="ml-1 text-[9px] text-slate-400">#{currentIndex + 1}/{commands.length}</span>
           </div>
-          <div className="flex items-center gap-3 text-[10px] text-slate-500">
-            <span>simulationCommandCount <b className="text-violet-300">{commands.length}</b></span>
-            <span>finalCommandCount <b className="text-cyan-300">{finalCommandCount || commands.length}</b></span>
-            <span>commandSourceUsed <b className="text-emerald-300">{commandSourceUsed}</b></span>
-            <span className={simulationMatchesFinalCommands ? 'text-emerald-300 font-bold' : 'text-amber-300 font-bold'}>{simulationMatchesFinalCommands ? 'simulationMatchesFinalCommands=true' : 'fallback=true'}</span>
+
+          <div className="absolute left-3 right-3 top-14 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-[#214177] bg-[#07152f]/95 px-3 py-2 text-[10px] text-slate-300 shadow-xl backdrop-blur-sm">
+            {curPC && curPC.x !== null && <><span>Pos: <b className="font-mono text-white">{curPC.x.toFixed(1)}, {curPC.y.toFixed(1)}</b></span><span>Dir: <b className="text-white">{curPC.direction !== null ? `${curPC.direction}°` : '—'}</b></span><span>Long: <b className="text-white">{curPC.length}mm</b></span><span>Vel: <b className="text-white">{curPC.speedMmS}mm/s</b></span></>}
+            {curBlock && <><span>Bloque: <b className="text-white">B{curBlock.blockId}</b></span><span className="rounded bg-violet-900/40 px-1.5 py-0.5 text-violet-200">{curBlock.isContour ? 'contour' : 'fill'}</span></>}
+            <div className="ml-auto flex flex-wrap gap-1">
+              <SimToggle active={simSettings.realisticThreadPreview} onClick={() => toggleSetting('realisticThreadPreview')} icon={Eye} label="Hilo" />
+              <SimToggle active={simSettings.showJumps} onClick={() => toggleSetting('showJumps')} icon={Route} label="Saltos" />
+              <SimToggle active={simSettings.showTrims} onClick={() => toggleSetting('showTrims')} icon={Scissors} label="Trims" />
+              <SimToggle active={simSettings.showWarnings} onClick={() => toggleSetting('showWarnings')} icon={AlertTriangle} label="Avisos" />
+              <SimToggle active={simSettings.showCurrentBlockOnly} onClick={() => toggleSetting('showCurrentBlockOnly')} icon={Layers} label="Bloque" />
+              <SimToggle active={showHoop} onClick={() => setShowHoop(!showHoop)} icon={Grid2x2} label="Hoop" />
+            </div>
           </div>
-        </div>
-      </div>
-      {/* Canvas */}
-      <div className="flex-1 relative bg-[#0a0c12] min-h-0">
-        <canvas ref={canvasRef} width={800} height={500} className="w-full h-full" />
 
-        {/* Current command badge */}
-        <div className="absolute top-3 left-3 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0d0f14] border border-[#2a2d3a]">
-          <TypeIcon className="w-3.5 h-3.5" style={{ color: typeMeta.color }} />
-          <span className="text-xs font-bold" style={{ color: typeMeta.color }}>{typeMeta.label}</span>
-          <span className="text-[10px] text-slate-500 ml-1">#{currentIndex + 1}/{commands.length}</span>
-          {curPC?.tiePhase && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-900/30 text-cyan-400 border border-cyan-500/30 font-bold">
-              {curPC.tiePhase}
-            </span>
-          )}
+          {curPC?.errors?.length > 0 && <div className="absolute bottom-3 left-3 max-w-[280px] space-y-1">{curPC.errors.map((error, index) => <div key={index} className="rounded-lg border border-red-500/40 bg-red-950/90 px-2.5 py-1.5 text-[10px] text-red-300"><b>[{error.rule}] {error.severity}</b><div className="text-[9px] text-red-400/80">{error.message}</div></div>)}</div>}
         </div>
 
-        {/* Needle info HUD — top right */}
-        {curPC && curPC.x !== null && (
-          <div className="absolute top-3 right-3 flex flex-col gap-1 px-3 py-2 rounded-lg bg-[#0d0f14] border border-[#2a2d3a] min-w-[140px]">
-            <div className="flex items-center gap-1.5 text-[10px]">
-              <MapPin className="w-3 h-3 text-violet-400" />
-              <span className="text-slate-400">Pos:</span>
-              <span className="text-white font-mono">{curPC.x.toFixed(1)}, {curPC.y.toFixed(1)}mm</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-[10px]">
-              <Navigation className="w-3 h-3 text-cyan-400" />
-              <span className="text-slate-400">Dir:</span>
-              <span className="text-white font-mono">{curPC.direction !== null ? `${curPC.direction}°` : '—'}</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-[10px]">
-              <Activity className="w-3 h-3 text-amber-400" />
-              <span className="text-slate-400">Long:</span>
-              <span className="text-white font-mono">{curPC.length}mm</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-[10px]">
-              <Gauge className="w-3 h-3 text-emerald-400" />
-              <span className="text-slate-400">Vel:</span>
-              <span className="text-white font-mono">{curPC.speedMmS}mm/s</span>
-            </div>
-            {curBlock && (
-              <>
-                <div className="flex items-center gap-1.5 text-[10px]">
-                  <Layers className="w-3 h-3 text-violet-400" />
-                  <span className="text-slate-400">Bloque:</span>
-                  <span className="text-white font-mono">B{curBlock.blockId}</span>
-                  <span className={`px-1 rounded text-[8px] ${curBlock.isContour ? 'text-cyan-400 bg-cyan-900/20' : 'text-violet-400 bg-violet-900/20'}`}>
-                    {curBlock.isContour ? 'contour' : 'fill'}
-                  </span>
-                </div>
-                {curBlock.regionName && (
-                  <div className="text-[9px] text-slate-500 truncate max-w-[130px]">{curBlock.regionName}</div>
-                )}
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Error markers for current command */}
-        {curPC?.errors?.length > 0 && (
-          <div className="absolute bottom-3 left-3 flex flex-col gap-1 max-w-[260px]">
-            {curPC.errors.map((e, i) => (
-              <div key={i} className="flex items-start gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-950/50 border border-red-500/40">
-                <AlertTriangle className="w-3 h-3 text-red-400 flex-shrink-0 mt-0.5" />
-                <div>
-                  <div className="text-[10px] font-bold text-red-300">[{e.rule}] {e.severity}</div>
-                  <div className="text-[9px] text-red-400/80">{e.message}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Status badge */}
-        <div className="absolute bottom-3 right-3 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0d0f14] border border-[#2a2d3a]">
-          {analysis.status === 'SAFE'
-            ? <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            : <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />}
-          <span className="text-xs font-bold text-white">{analysis.qualityScore}/100</span>
-        </div>
-
-        {/* Simulation settings toggles — right side */}
-        <div className="absolute top-1/2 -translate-y-1/2 right-3 flex flex-col gap-1">
-          <SimToggle active={simSettings.realisticThreadPreview} onClick={() => toggleSetting('realisticThreadPreview')} icon={Eye} label="Hilo" />
-          <SimToggle active={simSettings.showJumps} onClick={() => toggleSetting('showJumps')} icon={Route} label="Saltos" />
-          <SimToggle active={simSettings.showTrims} onClick={() => toggleSetting('showTrims')} icon={Scissors} label="Trims" />
-          <SimToggle active={simSettings.showWarnings} onClick={() => toggleSetting('showWarnings')} icon={AlertTriangle} label="Avisos" />
-          <SimToggle active={simSettings.showDensityHeatmap} onClick={() => toggleSetting('showDensityHeatmap')} icon={Flame} label="Dens" />
-          <SimToggle active={simSettings.showCurrentBlockOnly} onClick={() => toggleSetting('showCurrentBlockOnly')} icon={Layers} label="Bloque" />
-          <SimToggle active={showHoop} onClick={() => setShowHoop(!showHoop)} icon={Grid2x2} label="Hoop" />
-          <SimToggle active={isDebugMode} onClick={() => toggleSetting('showDebugPath')} icon={Bug} label="Debug" />
-        </div>
+        <aside className="grid content-start gap-1 overflow-y-auto bg-[#08152e] p-2 sm:grid-cols-2 lg:grid-cols-1">
+          <LiveStat label="Puntadas" value={liveStats.stitches} color="text-violet-300" />
+          <LiveStat label="Saltos" value={liveStats.jumps} color="text-slate-200" />
+          <LiveStat label="Trims" value={liveStats.trims} color="text-amber-300" />
+          <LiveStat label="C.color" value={liveStats.colorChanges} color="text-cyan-300" />
+          <LiveStat label="Fuera región" value={visStats.stitchesOutsideRegion} color={visStats.stitchesOutsideRegion > 0 ? 'text-orange-300' : 'text-emerald-300'} />
+          <LiveStat label="Duplicados" value={visStats.duplicateStitches} color={visStats.duplicateStitches > 0 ? 'text-orange-300' : 'text-emerald-300'} />
+        </aside>
       </div>
 
-      {/* Live stats bar */}
-      <div className="flex-shrink-0 grid grid-cols-6 gap-1 px-3 py-1.5 border-t border-[#1e2130] bg-[#0a0c12]">
-        <LiveStat label="Puntadas" value={liveStats.stitches} color="text-violet-400" />
-        <LiveStat label="Saltos" value={liveStats.jumps} color="text-slate-300" />
-        <LiveStat label="Trims" value={liveStats.trims} color="text-amber-400" />
-        <LiveStat label="C.color" value={liveStats.colorChanges} color="text-cyan-400" />
-        <LiveStat label="Fuera región" value={visStats.stitchesOutsideRegion} color={visStats.stitchesOutsideRegion > 0 ? 'text-orange-400' : 'text-emerald-400'} />
-        <LiveStat label="Duplicados" value={visStats.duplicateStitches} color={visStats.duplicateStitches > 0 ? 'text-orange-400' : 'text-emerald-400'} />
-      </div>
-
-      {/* Progress */}
-      <div className="flex-shrink-0 px-4 py-2 border-t border-[#1e2130] bg-[#0a0c12]">
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-[10px] text-slate-500">Progreso de costura</span>
-          <span className="text-[10px] text-violet-400 font-bold">{progress}%</span>
+      <footer className="flex-shrink-0 border-t border-[#17315f] bg-[#07152f] px-3 py-2.5">
+        <input type="range" min={0} max={commands.length - 1} value={currentIndex} onChange={(event) => { setIsPlaying(false); setCurrentIndex(Number(event.target.value)); }} className="mb-2 w-full accent-cyan-500" aria-label="Progreso de costura" />
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-auto text-[10px] text-slate-400">Progreso de costura <b className="text-cyan-300">{progress}%</b></span>
+          <button onClick={handleReset} className="rounded-lg bg-[#142851] px-3 py-2 text-xs text-slate-200 hover:bg-[#1c376d]">Reiniciar</button>
+          <button onClick={handleStepBack} disabled={currentIndex === 0} className="rounded-lg bg-[#142851] px-3 py-2 text-xs text-slate-200 disabled:opacity-30">Paso atrás</button>
+          <button onClick={() => isPlaying ? setIsPlaying(false) : handlePlay()} className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-500">{isPlaying ? <><Pause className="h-4 w-4" /> Pausar</> : <><Play className="h-4 w-4" /> Simular costura</>}</button>
+          <button onClick={handleStepFwd} disabled={currentIndex >= commands.length - 1} className="rounded-lg bg-[#142851] px-3 py-2 text-xs text-slate-200 disabled:opacity-30">Paso adelante</button>
+          <span className="ml-2 text-[10px] text-slate-400">Vel</span>
+          {[1, 5, 15, 50].map((value) => <button key={value} onClick={() => setSpeed(value)} className={`rounded-md px-2 py-1.5 text-[10px] font-bold ${speed === value ? 'bg-cyan-600 text-white' : 'text-slate-300 hover:bg-[#142851]'}`}>{value}×</button>)}
         </div>
-        <input
-          type="range" min={0} max={commands.length - 1} value={currentIndex}
-          onChange={(e) => { setIsPlaying(false); setCurrentIndex(Number(e.target.value)); }}
-          className="w-full accent-violet-600"
-        />
-      </div>
-
-      {/* Controls */}
-      <div className="flex-shrink-0 flex items-center gap-2 px-4 py-3 border-t border-[#1e2130] bg-[#0a0c12]">
-        <button onClick={handleReset} className="p-2 rounded-lg border border-[#2a2d3a] text-slate-400 hover:text-white hover:border-[#3a3d4a] transition-colors" title="Reiniciar">
-          <RotateCcw className="w-4 h-4" />
-        </button>
-        <button onClick={handleStepBack} disabled={currentIndex === 0} className="p-2 rounded-lg border border-[#2a2d3a] text-slate-400 hover:text-white hover:border-[#3a3d4a] transition-colors disabled:opacity-30" title="Paso atrás">
-          <SkipBack className="w-4 h-4" />
-        </button>
-        <button onClick={() => isPlaying ? setIsPlaying(false) : handlePlay()} className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold transition-colors">
-          {isPlaying ? <><Pause className="w-4 h-4" /> Pausar</> : <><Play className="w-4 h-4" /> Simular costura</>}
-        </button>
-        <button onClick={handleStepFwd} disabled={currentIndex >= commands.length - 1} className="p-2 rounded-lg border border-[#2a2d3a] text-slate-400 hover:text-white hover:border-[#3a3d4a] transition-colors disabled:opacity-30" title="Paso adelante">
-          <SkipForward className="w-4 h-4" />
-        </button>
-        <div className="flex items-center gap-1 ml-1">
-          <span className="text-[10px] text-slate-600">Vel</span>
-          {[1, 5, 15, 50].map(s => (
-            <button key={s} onClick={() => setSpeed(s)}
-              className={`px-2 py-1 rounded text-[10px] font-bold transition-colors ${speed === s ? 'bg-violet-900/40 text-violet-300 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300 border border-transparent'}`}>
-              {s}×
-            </button>
-          ))}
-        </div>
-      </div>
+      </footer>
     </div>
   );
 }
@@ -396,9 +301,9 @@ function SimToggle({ active, onClick, icon: Icon, label }) {
 
 function LiveStat({ label, value, color }) {
   return (
-    <div className="text-center">
-      <div className={`text-sm font-bold ${color}`}>{value}</div>
-      <div className="text-[8px] text-slate-600 uppercase tracking-wider truncate">{label}</div>
+    <div className="rounded-lg border border-[#244273] bg-[#142851] px-3 py-1 shadow-lg">
+      <div className="text-[9px] font-bold text-slate-100">{label}</div>
+      <div className={`text-base font-bold ${color}`}>{value}</div>
     </div>
   );
 }

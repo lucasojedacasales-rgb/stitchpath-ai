@@ -150,50 +150,40 @@ export default function FinalLookSimulator({ regions, config, machineSettings, d
   }, [commands, objectById, detailMap, projection, showOutlinesOnly, showPreservedDetails, highlightDiscarded, threadThickness, w, h]);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Controls */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-[#1e2130] flex-shrink-0 flex-wrap">
-        <div className="flex items-center gap-1 text-[11px] text-slate-500">
-          <Sparkles className="w-3.5 h-3.5 text-violet-400" />
-          <span className="font-bold text-violet-300">Final Look</span>
+    <div className="flex h-full flex-col overflow-hidden bg-[#0b0d12]">
+      <header className="flex-shrink-0 border-b border-[#242936] bg-[#10131a] px-5 py-4 text-center">
+        <div className="flex items-center justify-center gap-2">
+          <Sparkles className="h-5 w-5 text-violet-400" />
+          <h2 className="text-xl font-bold tracking-tight text-slate-100 sm:text-2xl">Final Look</h2>
         </div>
-        <div className="w-px h-4 bg-[#2a2d3a]" />
-        <ToggleChip icon={Layers} label="Solo contornos" active={showOutlinesOnly} onClick={() => setShowOutlinesOnly(!showOutlinesOnly)} />
-        <ToggleChip icon={Eye} label="Detalles" active={showPreservedDetails} onClick={() => setShowPreservedDetails(!showPreservedDetails)} />
-        <ToggleChip icon={EyeOff} label="Descartados" active={highlightDiscarded} onClick={() => setHighlightDiscarded(!highlightDiscarded)} />
-        <div className="flex items-center gap-1 ml-auto">
-          <span className="text-[10px] text-slate-600">Grosor hilo</span>
-          <input type="range" min="0.5" max="3" step="0.1" value={threadThickness}
-            onChange={e => setThreadThickness(Number(e.target.value))}
-            className="w-16 accent-violet-600" />
-          <span className="text-[10px] text-violet-400 font-bold w-8">{threadThickness.toFixed(1)}mm</span>
-        </div>
-      </div>
+        <p className="mt-1 text-[10px] text-slate-500">Inspección ampliada del acabado final</p>
+      </header>
 
-      {/* Canvas */}
-      <div className="flex-1 relative bg-[#0d0f14] overflow-hidden">
-        <canvas
-          ref={canvasRef}
-          width={600}
-          height={400}
-          className="w-full h-full"
-        />
-        {/* Legend */}
-        <div className="absolute bottom-2 left-2 space-y-0.5 text-[9px]">
-          <div className="flex items-center gap-1.5 text-slate-400">
-            <div className="w-3 h-0.5 bg-violet-400 rounded" /> Relleno
+      <div className="relative min-h-0 flex-1 overflow-hidden bg-[#0b0d12] p-4 sm:p-6">
+        <div className="relative h-full overflow-hidden rounded-2xl border border-[#303746] bg-[#0d1016] shadow-2xl">
+          <canvas ref={canvasRef} width={900} height={620} className="h-full w-full" />
+
+          <div className="absolute left-4 top-1/2 flex -translate-y-1/2 flex-col gap-2">
+            <ToggleChip icon={Layers} label="Solo contornos" active={showOutlinesOnly} onClick={() => setShowOutlinesOnly(!showOutlinesOnly)} />
+            <ToggleChip icon={Eye} label="Detalles" active={showPreservedDetails} onClick={() => setShowPreservedDetails(!showPreservedDetails)} />
+            <ToggleChip icon={EyeOff} label="Descartados" active={highlightDiscarded} onClick={() => setHighlightDiscarded(!highlightDiscarded)} />
           </div>
-          <div className="flex items-center gap-1.5 text-slate-400">
-            <div className="w-3 h-0.5 bg-cyan-400 rounded" /> Contorno
-          </div>
-          <div className="flex items-center gap-1.5 text-slate-400">
-            <div className="w-3 h-0.5 bg-amber-400 rounded" /> Detalle
-          </div>
-          {highlightDiscarded && (
-            <div className="flex items-center gap-1.5 text-slate-400">
-              <div className="w-3 h-0.5 bg-red-400 rounded" /> Descartado
+
+          <div className="absolute right-4 top-1/2 w-36 -translate-y-1/2 rounded-2xl border border-cyan-400/70 bg-[#080b10]/95 p-4 shadow-[0_0_28px_rgba(34,211,238,0.22)] backdrop-blur-sm">
+            <div className="mb-3 text-sm font-bold text-slate-100">Grosor hilo</div>
+            <div className="flex items-center gap-3">
+              <input type="range" min="0.5" max="3" step="0.1" value={threadThickness} onChange={(event) => setThreadThickness(Number(event.target.value))} className="h-28 w-5 accent-cyan-400 [writing-mode:vertical-lr] [direction:rtl]" aria-label="Grosor hilo" />
+              <div className="space-y-2 text-[9px] text-slate-500"><div>0.5mm</div><div>1.0mm</div><div>1.5mm</div><div>2.0mm</div><div>2.5mm</div><div>3.0mm</div></div>
             </div>
-          )}
+            <div className="mt-3 text-center text-xs font-bold text-cyan-300">{threadThickness.toFixed(1)}mm</div>
+          </div>
+        </div>
+
+        <div className="absolute bottom-7 left-1/2 flex -translate-x-1/2 flex-wrap items-center justify-center gap-5 rounded-full border border-violet-500/70 bg-black/95 px-7 py-3 text-xs text-slate-200 shadow-[0_0_28px_rgba(124,58,237,0.3)] sm:gap-7 sm:px-10">
+          <LegendItem color="bg-cyan-400" label="Relleno" />
+          <LegendItem ring label="Contorno" />
+          <LegendItem detail label="Detalle" />
+          {highlightDiscarded && <LegendItem discarded label="Descartado" />}
         </div>
       </div>
     </div>
@@ -206,16 +196,12 @@ function isCurrentFillType(region, type) {
 
 function ToggleChip({ icon: Icon, label, active, onClick }) {
   return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium border transition-colors ${
-        active
-          ? 'bg-violet-900/20 border-violet-500/40 text-violet-300'
-          : 'border-[#2a2d3a] text-slate-600 hover:text-slate-400'
-      }`}
-    >
-      <Icon className="w-3 h-3" />
-      {label}
+    <button onClick={onClick} className={`flex min-w-36 items-center gap-2 rounded-xl border px-4 py-3 text-xs font-bold shadow-lg backdrop-blur-sm transition-colors ${active ? 'border-violet-500/80 bg-[#151024]/95 text-violet-200 shadow-violet-900/30' : 'border-[#3a4050] bg-[#11141b]/90 text-slate-500 hover:text-slate-300'}`}>
+      <Icon className="h-4 w-4" />{label}
     </button>
   );
+}
+
+function LegendItem({ color, label, ring, detail, discarded }) {
+  return <div className="flex items-center gap-2"><span className={`h-4 w-4 ${color || ''} ${ring ? 'rounded-full border-2 border-cyan-400' : ''} ${detail ? 'border-y border-violet-400 bg-violet-900/40' : ''} ${discarded ? 'rounded border border-dashed border-slate-600' : ''}`} />{label}</div>;
 }
