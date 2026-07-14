@@ -1,4 +1,8 @@
+import { useMemo } from 'react';
 import { ShieldCheck, ShieldAlert, Eye, EyeOff, Layers, Scissors, Palette } from 'lucide-react';
+import { preserveDetails } from '@/lib/detailPreservation.js';
+import { classifyAllRegions } from '@/lib/regionClassifier.js';
+import { processDetailRegions } from '@/lib/centerlineExtractor.js';
 
 /**
  * DetailDiagnosticPanel — Lists preserved/discarded details with reasons.
@@ -15,8 +19,20 @@ const CLASS_LABELS = {
   fill:              { label: 'Relleno',           color: 'text-violet-400', icon: Palette },
 };
 
-export default function DetailDiagnosticPanel({ detailReport, classReport, centerlineReport, outlineReport }) {
-  if (!detailReport && !classReport) {
+export default function DetailDiagnosticPanel({ regions = [], config = {}, detailReport, classReport, centerlineReport, outlineReport }) {
+  const fallbackReports = useMemo(() => {
+    if (detailReport || classReport || regions.length === 0) return null;
+    const scored = preserveDetails(regions, { ...config, preserveAestheticDetails: true });
+    const classified = classifyAllRegions(scored.regions, config);
+    const centerlined = processDetailRegions(classified.regions, config);
+    return { detail: scored.report, classes: classified.report, centerlines: centerlined.report };
+  }, [regions, config, detailReport, classReport]);
+
+  const effectiveDetailReport = detailReport || fallbackReports?.detail;
+  const effectiveClassReport = classReport || fallbackReports?.classes;
+  const effectiveCenterlineReport = centerlineReport || fallbackReports?.centerlines;
+
+  if (!effectiveDetailReport && !effectiveClassReport) {
     return (
       <div className="p-3 text-center text-[11px] text-slate-600">
         Procesa una imagen para ver el diagnóstico de detalles.
@@ -24,9 +40,9 @@ export default function DetailDiagnosticPanel({ detailReport, classReport, cente
     );
   }
 
-  const details = detailReport?.details || [];
-  const classes = classReport?.classes || [];
-  const centerlines = centerlineReport?.details || [];
+  const details = effectiveDetailReport?.details || [];
+  const classes = effectiveClassReport?.classes || [];
+  const centerlines = effectiveCenterlineReport?.details || [];
   const outlines = outlineReport?.outlines || [];
 
   // Build lookup maps
@@ -166,10 +182,10 @@ function DetailRow({ detail, preserved }) {
         )}
         <span className="ml-auto">Orden: {detail.priority}</span>
       </div>
-      {!preserved && detail.reasons.length === 0 && (
+      {!preserved && (!detail.reasons || detail.reasons.length === 0) && (
         <div className="text-[9px] text-red-400 mt-0.5">Descartado: score insuficiente ({detail.score}/55)</div>
       )}
-      {preserved && detail.reasons.length > 0 && (
+      {preserved && detail.reasons?.length > 0 && (
         <div className="text-[9px] text-emerald-400 mt-0.5">{detail.reasons.join(' · ')}</div>
       )}
     </div>

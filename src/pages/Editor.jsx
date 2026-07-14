@@ -981,6 +981,8 @@ export default function Editor() {
                   <span className="text-sm font-bold text-white">🔍 Diagnóstico de Detalles</span>
                 </div>
                 <DetailDiagnosticPanel
+                  regions={regions}
+                  config={config}
                   detailReport={detailReport}
                   classReport={classReport}
                   centerlineReport={centerlineReport}
