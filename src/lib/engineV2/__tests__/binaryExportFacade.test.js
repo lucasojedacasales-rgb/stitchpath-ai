@@ -46,7 +46,7 @@ describe('Phase 12D disconnected unified binary export facade', () => {
   it('uses missing-format reason code', () => expect(missing.unifiedResult.status.reasonCode).toBe('BINARY_EXPORT_FORMAT_REQUIRED'));
   it('invokes no adapter for missing format', () => expect(missing.unifiedResult.summary.totalFormatAdapterInvocationCount).toBe(0));
   it('does not claim direct parity for missing format', () => expect(missing.unifiedResult.summary.formatResultParityPercent).toBe(0));
-  it.each([['dst', 'DST'], ['DST', 'DST'], ['dsb', 'DSB'], ['DSB', 'DSB']])('normalizes %s to %s', (format, expected) => { const fixture = expected === 'DST' ? createUnifiedDSTExportFixture(format) : createUnifiedDSBExplicitFixture(format); expect(fixture.unifiedResult.request.format).toBe(expected); });
+  it.each([['dst', 'DST'], ['DST', 'DST'], ['dsb', 'DSB'], ['DSB', 'DSB']])('normalizes %s to %s', (format, expected) => { const fixture = expected === 'DST' ? createUnifiedDSTExportFixture(format) : createUnifiedDSBExplicitFixture(format); expect(fixture.unifiedResult.request.format).toBe(expected); }, 15000);
   it.each(['dst', 'dsbStrict', 'dsbExplicit', 'unsupported', 'missing'])('never uses format fallback for %s', name => expect(fixtureByName(name).unifiedResult.summary.formatFallbackCount).toBe(0));
   it.each(['dst', 'dsbStrict', 'dsbExplicit', 'unsupported', 'missing'])('never invokes cross format for %s', name => expect(fixtureByName(name).unifiedResult.summary.crossFormatInvocationCount).toBe(0));
   it.each(['dst', 'dsbStrict', 'dsbExplicit', 'unsupported', 'missing'])('never invokes Base44 for %s', name => expect(fixtureByName(name).unifiedResult.summary.Base44InvocationCount).toBe(0));

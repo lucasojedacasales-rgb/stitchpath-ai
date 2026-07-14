@@ -1,7 +1,7 @@
 import { validateRegionV2 } from '../modelValidation.js';
 import { ENGINE_V2_END_TO_END_STAGE_REGISTRY } from './endToEndStageRegistry.js';
 import { ENGINE_V2_PIPELINE_OUTCOME_CATEGORIES, ENGINE_V2_PIPELINE_STAGE_STATUSES, normalizeEngineV2BinaryFormat, pipelineStageResultId } from './endToEndPipelineModel.js';
-import { fingerprintEngineV2Value } from './deterministicStageFingerprint.js';
+import { fingerprintEngineV2Value, stableSerializeEngineV2Value } from './deterministicStageFingerprint.js';
 
 const issue = (code, path, message) => ({ code, path, message });
 const fingerprintPattern = /^[0-9a-f]{8}$/;
@@ -49,6 +49,32 @@ export function validateEngineV2RegionToBinaryResult(result) {
   if (firstBlocked >= 0 && stages.slice(firstBlocked + 1).some(stage => stage.status !== 'skipped')) errors.push(issue('DOWNSTREAM_STAGE_EXECUTED_AFTER_BLOCK', 'stageResults', 'Downstream stages must be skipped after a block.'));
   if (firstBlocked < 0 && stages.some(stage => stage.status === 'skipped')) errors.push(issue('STAGE_SKIPPED_WITHOUT_BLOCKER', 'stageResults', 'A stage was skipped without an upstream blocker.'));
   const summary = result?.summary || {};
+  const draftStageIndex = stages.findIndex(stage => stage.stageId === 'draft_materialization');
+  const draftStage = stages[draftStageIndex];
+  const readiness = draftStage?.summary?.reviewReadiness;
+  const unresolvedReviewCount = readiness?.unresolvedReviewDecisionCount ?? 0;
+  const laterStages = draftStageIndex < 0 ? [] : stages.slice(draftStageIndex + 1);
+  if (unresolvedReviewCount > 0 && laterStages.some(stage => stage.status !== 'skipped')) errors.push(issue('DOWNSTREAM_INVOKED_AFTER_UNRESOLVED_REVIEW', 'stageResults', 'Unresolved review must skip every downstream stage.'));
+  if (draftStage?.outcomeCategory === 'policy_blocked' && draftStage.status === 'completed') errors.push(issue('INTERMEDIATE_POLICY_BLOCK_MARKED_COMPLETED', 'stageResults.draft_materialization', 'Intermediate policy blocks must be blocked.'));
+  if (draftStage?.status === 'blocked' && draftStage?.outcomeCategory === 'policy_blocked' && laterStages.some(stage => stage.status !== 'skipped')) errors.push(issue('INTERMEDIATE_POLICY_BLOCK_NOT_TRANSACTIONAL', 'stageResults', 'Every stage after an intermediate policy block must be skipped.'));
+  if ((readiness?.deferredDecisionCount ?? 0) > 0 && result?.binaryExport?.artifact) errors.push(issue('DEFERRED_REVIEW_BINARY_ARTIFACT', 'binaryExport.artifact', 'Deferred review cannot produce a binary artifact.'));
+  if ((readiness?.blockedDecisionCount ?? 0) > 0 && result?.binaryExport?.artifact) errors.push(issue('BLOCKED_REVIEW_BINARY_ARTIFACT', 'binaryExport.artifact', 'Blocked review cannot produce a binary artifact.'));
+  if (unresolvedReviewCount > 0 && (readiness?.materializedDraftCount ?? 0) > 0 && result?.binaryExport?.artifact) errors.push(issue('PARTIAL_REVIEW_EXPORT_FORBIDDEN', 'binaryExport.artifact', 'A partial accepted subset cannot be exported.'));
+  const canonicalStage = stages.find(stage => stage.stageId === 'canonical_compilation');
+  if ((readiness?.sourceProposalCount ?? 0) > 0 && (readiness?.materializedDraftCount ?? 0) === 0 && canonicalStage?.status !== 'skipped') errors.push(issue('EMPTY_DRAFT_CANONICAL_COMPILATION', 'stageResults.canonical_compilation', 'An empty draft design cannot reach canonical compilation.'));
+  if (readiness?.policyBlocked && draftStage?.outcomeCategory === 'validation_failed') errors.push(issue('REVIEW_POLICY_REPORTED_AS_VALIDATION_FAILURE', 'stageResults.draft_materialization', 'Review policy blocks must use policy_blocked outcome.'));
+  if (draftStage?.outcomeCategory === 'policy_blocked' && (!(readiness?.affectedProposalIds?.length) || !(readiness?.affectedRegionIds?.length))) errors.push(issue('REVIEW_POLICY_AFFECTED_IDS_MISSING', 'stageResults.draft_materialization.summary.reviewReadiness', 'Review policy blocks require affected proposal and region IDs.'));
+  const binaryStage = stages.find(stage => stage.stageId === 'binary_export');
+  if (binaryStage?.outcomeCategory === 'policy_blocked' && binaryStage.status !== 'completed') errors.push(issue('FINAL_BINARY_POLICY_BLOCK_NOT_COMPLETED', 'stageResults.binary_export', 'Final binary policy blocking must remain a completed stage.'));
+  const planningStage = stages.find(stage => stage.stageId === 'object_planning');
+  if (planningStage?.result && result?.objectPlanning && stableSerializeEngineV2Value(planningStage.result) !== stableSerializeEngineV2Value(result.objectPlanning)) errors.push(issue('PROPOSAL_RESULT_MUTATION', 'objectPlanning', 'Preserved proposal planning output differs from its stage result.'));
+  if (draftStage?.result && result?.draftMaterialization && stableSerializeEngineV2Value(draftStage.result) !== stableSerializeEngineV2Value(result.draftMaterialization)) errors.push(issue('DRAFT_RESULT_MUTATION', 'draftMaterialization', 'Preserved draft materialization output differs from its stage result.'));
+  if (readiness) {
+    const decisions = result?.draftMaterialization?.decisions || [];
+    const actionCount = action => decisions.filter(decision => decision.action === action).length;
+    if (readiness.reviewDecisionCount !== decisions.length || readiness.deferredDecisionCount !== actionCount('defer') || readiness.blockedDecisionCount !== actionCount('blocked')) errors.push(issue('REVIEW_DECISION_MUTATION', 'draftMaterialization.decisions', 'Review readiness counts differ from preserved decisions.'));
+    if (readiness.materializedDraftCount !== (result?.draftMaterialization?.drafts?.length ?? 0)) errors.push(issue('DRAFT_COUNT_MUTATION', 'draftMaterialization.drafts', 'Review readiness draft count differs from preserved drafts.'));
+  }
   if (summary.pipelineStageDispositionCoveragePercent !== 100 || summary.silentPipelineStageDropCount !== 0 || summary.duplicatePipelineStageResultCount !== 0) errors.push(issue('PIPELINE_STAGE_DISPOSITION_INCOMPLETE', 'summary', 'Stage disposition coverage must remain complete.'));
   if (summary.crossStageReferenceCoveragePercent !== 100 || summary.crossStageReferenceMismatchCount !== 0) errors.push(issue('CROSS_STAGE_REFERENCE_COVERAGE_INCOMPLETE', 'summary', 'Cross-stage references must remain complete.'));
   ['sourceRequestMutationCount', 'stageInputMutationCount', 'stageOrderMutationCount', 'objectOrderMutationCount', 'threadBlockOrderMutationCount', 'threadIdMutationCount', 'geometryMutationCount', 'holeMutationCount', 'visualColorMutationCount', 'Base44InvocationCount', 'applicationInvocationCount', 'browserDownloadCreationCount'].forEach(key => { if (summary[key] !== 0) errors.push(issue('END_TO_END_INVARIANT_MUTATED', `summary.${key}`, `${key} must remain zero.`)); });

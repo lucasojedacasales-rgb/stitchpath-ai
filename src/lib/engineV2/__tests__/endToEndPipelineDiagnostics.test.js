@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createEndToEndDSTFixture } from '../fixtures/endToEndDSTFixture.js';
 import { createEndToEndStageBlockingFixture } from '../fixtures/endToEndStageBlockingFixture.js';
+import { createUnresolvedReviewEndToEndFixture } from '../fixtures/unresolvedReviewPolicyFixture.js';
 import { createEndToEndPipelineDiagnostic } from '../orchestration/endToEndPipelineDiagnostics.js';
 
 describe('Phase 13A end-to-end diagnostics', () => {
@@ -21,4 +22,21 @@ describe('Phase 13A end-to-end diagnostics', () => {
   it('reports downstream skips', () => expect(blocked.result.diagnostic.stageStatusDistribution.skipped).toBe(10));
   it('freezes diagnostic root', () => expect(Object.isFrozen(accepted.result.diagnostic)).toBe(true));
   it('freezes stage fingerprints', () => expect(Object.isFrozen(accepted.result.diagnostic.stageFingerprints)).toBe(true));
+});
+
+describe('Phase 13A1 review-policy diagnostics', () => {
+  let diagnostic;
+  beforeAll(() => { const fixture = createUnresolvedReviewEndToEndFixture(); diagnostic = createEndToEndPipelineDiagnostic({ request: fixture.result.request, pipelineResult: fixture.result }); }, 60000);
+  it.each([
+    ['reviewRequired', true], ['reviewPolicyBlocked', true], ['reviewPolicyReasonCode', 'EXPLICIT_REVIEW_REQUIRED'],
+    ['unresolvedReviewDecisionCount', 3], ['deferredReviewDecisionCount', 3], ['blockedReviewDecisionCount', 0],
+    ['materializedDraftCount', 0], ['partialReviewExportPrevented', true], ['downstreamInvocationAfterReviewBlockCount', 0],
+    ['firstBlockingStageId', 'draft_materialization'], ['canonicalCommandCount', 0], ['machineCommandCount', 0],
+    ['binaryAccepted', false], ['binaryByteLength', 0],
+  ])('reports review diagnostic field %s', (key, expected) => expect(diagnostic[key]).toBe(expected));
+  it('includes immutable review readiness', () => expect(Object.isFrozen(diagnostic.reviewReadiness)).toBe(true));
+  it('includes all affected proposal IDs', () => expect(diagnostic.reviewReadiness.affectedProposalIds).toHaveLength(3));
+  it('includes all affected region IDs', () => expect(diagnostic.reviewReadiness.affectedRegionIds).toHaveLength(3));
+  it('reports policy-blocked outcome distribution', () => expect(diagnostic.stageOutcomeDistribution.policy_blocked).toBe(1));
+  it('reports seven skipped stages', () => expect(diagnostic.stageStatusDistribution.skipped).toBe(7));
 });

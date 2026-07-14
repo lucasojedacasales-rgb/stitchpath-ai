@@ -29,6 +29,7 @@ import { ENGINE_V2_END_TO_END_STAGE_REGISTRY } from './endToEndStageRegistry.js'
 import { createEngineV2PipelineStageResult, createEngineV2RegionToBinaryRequest, createEngineV2RegionToBinaryResult } from './endToEndPipelineModel.js';
 import { fingerprintEngineV2Value, stableSerializeEngineV2Value } from './deterministicStageFingerprint.js';
 import { validateEngineV2RegionToBinaryRequest, validateEngineV2RegionToBinaryResult } from './endToEndPipelineValidation.js';
+import { evaluateDraftMaterializationReadiness } from './reviewReadinessGate.js';
 
 const issue = (code, path, message) => ({ code, path, message });
 const same = (left, right) => stableSerializeEngineV2Value(left) === stableSerializeEngineV2Value(right);
@@ -55,16 +56,24 @@ function stageCount(stageId, result) {
   return countBy(result, paths[stageId] || []);
 }
 
-function stageResult({ definition, input, result, validation, inputCount, policyBlocked = false, inputMutated = false }) {
-  const errors = [...(result?.errors || []), ...(validation?.errors || [])]; const warnings = [...(result?.warnings || []), ...(validation?.warnings || [])];
+function stageResult({ definition, input, result, validation, inputCount, finalPolicyBlocked = false, pipelineReadiness = null, inputMutated = false }) {
+  const pipelineBlocked = pipelineReadiness?.safeToContinue === false;
+  const policyIssue = pipelineBlocked ? issue(pipelineReadiness.reasonCode, 'draft_materialization.review', pipelineReadiness.reason) : null;
+  if (policyIssue) {
+    policyIssue.affectedProposalIds = pipelineReadiness.affectedProposalIds;
+    policyIssue.affectedRegionIds = pipelineReadiness.affectedRegionIds;
+  }
+  const errors = [...(result?.errors || []), ...(validation?.errors || []), ...(policyIssue ? [policyIssue] : [])]; const warnings = [...(result?.warnings || []), ...(validation?.warnings || [])];
   const accepted = result?.valid === true && validation?.valid !== false;
-  const contractValid = policyBlocked ? validation?.valid !== false : accepted;
+  const contractValid = finalPolicyBlocked ? validation?.valid !== false : accepted;
+  const status = pipelineBlocked ? 'blocked' : contractValid ? 'completed' : 'blocked';
+  const outcomeCategory = pipelineBlocked && pipelineReadiness.policyBlocked ? 'policy_blocked' : finalPolicyBlocked ? 'policy_blocked' : contractValid ? 'accepted' : 'validation_failed';
   return createEngineV2PipelineStageResult({
-    stageId: definition.id, sequenceIndex: definition.sequenceIndex, status: contractValid ? 'completed' : 'blocked',
-    outcomeCategory: policyBlocked ? 'policy_blocked' : contractValid ? 'accepted' : 'validation_failed',
+    stageId: definition.id, sequenceIndex: definition.sequenceIndex, status,
+    outcomeCategory,
     inputFingerprint: fingerprintEngineV2Value(input), outputFingerprint: fingerprintEngineV2Value(result),
-    inputCount, outputCount: stageCount(definition.id, result), valid: contractValid, errors, warnings,
-    summary: { ...(result?.summary || {}), validationPassed: validation?.valid !== false, inputMutationDetected: inputMutated },
+    inputCount, outputCount: stageCount(definition.id, result), valid: pipelineBlocked ? false : contractValid, errors, warnings,
+    summary: { ...(result?.summary || {}), ...(pipelineReadiness ? { reviewReadiness: pipelineReadiness } : {}), validationPassed: validation?.valid !== false, inputMutationDetected: inputMutated },
     result, source: { orchestrator: 'engine-v2-phase13a', sourceModule: definition.sourceModule, directStageResultPreserved: true },
   });
 }
@@ -88,8 +97,8 @@ function crossStageMetrics(outputs, stageResults) {
   const mismatches = [];
   if (outputs.regionIngestion && outputs.objectPlanning?.summary?.decisionCoveragePercent !== 100) mismatches.push('region_planning');
   if (outputs.objectPlanning && outputs.draftMaterialization?.summary?.proposalDispositionCoveragePercent !== 100) mismatches.push('proposal_review');
-  if (outputs.draftMaterialization && outputs.threadResolution?.summary?.draftThreadAssignmentCoveragePercent !== 100) mismatches.push('draft_thread');
-  if (outputs.threadResolution && outputs.technicalPlanning?.summary?.technicalDispositionCoveragePercent !== 100) mismatches.push('object_technical');
+  if (outputs.draftMaterialization && outputs.threadResolution && outputs.threadResolution.summary?.draftThreadAssignmentCoveragePercent !== 100) mismatches.push('draft_thread');
+  if (outputs.threadResolution && outputs.technicalPlanning && outputs.technicalPlanning.summary?.technicalDispositionCoveragePercent !== 100) mismatches.push('object_technical');
   if (outputs.globalSequence?.valid && outputs.globalSequence?.summary?.sequenceDispositionCoveragePercent !== 100) mismatches.push('object_sequence');
   if (outputs.physicalGeneration?.valid && outputs.physicalGeneration?.summary?.physicalDispositionCoveragePercent !== 100) mismatches.push('object_physical');
   if (outputs.canonicalCompilation?.valid && outputs.canonicalCompilation?.summary?.physicalPointReachabilityCoveragePercent !== 100) mismatches.push('physical_canonical');
@@ -105,7 +114,11 @@ function buildSummary(stageResults, outputs, request, mutations, sourceMutationC
   const canonicalOrder = outputs.canonicalCompilation?.executionOrder || [];
   const sequenceBlocks = (outputs.globalSequence?.threadBlocks || []).map(block => block.id);
   const canonicalBlocks = outputs.canonicalCompilation?.threadBlockOrder || [];
-  const internalBlocked = stageResults.some(stage => stage.status === 'blocked'); const policyBlocked = binary?.status?.category === 'policy_blocked';
+  const internalBlocked = stageResults.some(stage => stage.status === 'blocked');
+  const policyBlocked = stageResults.some(stage => stage.outcomeCategory === 'policy_blocked');
+  const reviewStage = stageResults.find(stage => stage.stageId === 'draft_materialization');
+  const reviewReadiness = reviewStage?.summary?.reviewReadiness ?? null;
+  const reviewPolicyBlocked = reviewStage?.outcomeCategory === 'policy_blocked';
   const pipelineCompleted = !internalBlocked && stageResults.every(stage => stage.status === 'completed');
   return {
     pipelineStageCount: 11, pipelineStageResultCount: stageResults.length,
@@ -119,6 +132,13 @@ function buildSummary(stageResults, outputs, request, mutations, sourceMutationC
     firstBlockingStageId: stageResults.find(stage => stage.status === 'blocked')?.stageId ?? null,
     regionCount: outputs.regionIngestion?.regions?.length ?? 0, proposalCount: outputs.objectPlanning?.proposals?.length ?? 0,
     draftCount: outputs.draftMaterialization?.drafts?.length ?? 0, finalObjectCount: outputs.threadResolution?.objects?.length ?? 0,
+    reviewRequired: (reviewReadiness?.unresolvedReviewDecisionCount ?? 0) > 0,
+    reviewPolicyBlocked,
+    unresolvedReviewDecisionCount: reviewReadiness?.unresolvedReviewDecisionCount ?? 0,
+    deferredReviewDecisionCount: reviewReadiness?.deferredDecisionCount ?? 0,
+    blockedReviewDecisionCount: reviewReadiness?.blockedDecisionCount ?? 0,
+    materializedDraftCount: reviewReadiness?.materializedDraftCount ?? 0,
+    partialReviewExportPrevented: reviewPolicyBlocked && ((reviewReadiness?.unresolvedReviewDecisionCount ?? 0) > 0 || (reviewReadiness?.materializedDraftCount ?? 0) === 0),
     threadDefinitionCount: outputs.threadResolution?.threads?.length ?? 0, technicalSpecificationCount: outputs.technicalPlanning?.specifications?.length ?? 0,
     executionStepCount: outputs.globalSequence?.executionSteps?.length ?? 0, threadBlockCount: outputs.globalSequence?.threadBlocks?.length ?? 0,
     physicalPointCount: outputs.physicalGeneration?.summary?.physicalPointCount ?? 0, physicalStitchCount: outputs.physicalGeneration?.summary?.physicalStitchCount ?? 0,
@@ -152,8 +172,9 @@ export function runEngineV2RegionToBinary({ regions, designSizeMm, format, metad
     const snapshot = stableSerializeEngineV2Value(input); let result; let validation;
     try { result = run(); validation = validate(result); } catch (error) { result = { valid: false, errors: [issue('PIPELINE_STAGE_EXCEPTION', stageId, error.message)], warnings: [] }; validation = { valid: false, errors: result.errors, warnings: [] }; }
     const inputMutated = snapshot !== stableSerializeEngineV2Value(input); if (inputMutated) stageInputMutationCount += 1;
-    const policyBlocked = options.policyBlocked?.(result) === true;
-    const completed = stageResult({ definition, input, result, validation, inputCount, policyBlocked, inputMutated }); stageResults.push(completed); outputs[options.outputKey] = result;
+    const finalPolicyBlocked = options.policyBlocked?.(result) === true;
+    const pipelineReadiness = options.pipelineReadiness?.(result) ?? null;
+    const completed = stageResult({ definition, input, result, validation, inputCount, finalPolicyBlocked, pipelineReadiness, inputMutated }); stageResults.push(completed); outputs[options.outputKey] = result;
     if (completed.status === 'blocked') blocker = stageId;
     return result;
   };
@@ -172,7 +193,10 @@ export function runEngineV2RegionToBinary({ regions, designSizeMm, format, metad
   const semantics = outputs.semanticAnalysis;
   invoke('object_planning', { regions: ingestion?.regions, graph: ingestion?.graph, semanticResult: semantics }, () => buildEmbroideryObjectProposalPlan({ regions: ingestion.regions, graph: ingestion.graph, semanticResult: semantics, config: { ...(request.stageConfig.objectPlanning || {}), designWidthMm: request.designSizeMm.width, designHeightMm: request.designSizeMm.height } }), result => validateEmbroideryObjectProposalPlan(result, ingestion.regions, ingestion.graph, semantics), ingestion?.regions?.length ?? 0, { outputKey: 'objectPlanning' });
   const planning = outputs.objectPlanning; const review = request.stageConfig.review || {}; const { explicitReviewDecisions = [], ...reviewConfig } = review;
-  invoke('draft_materialization', { regions: ingestion?.regions, graph: ingestion?.graph, semanticResult: semantics, proposalPlan: planning }, () => materializeEmbroideryObjectDrafts({ regions: ingestion.regions, graph: ingestion.graph, semanticResult: semantics, proposalPlan: planning, explicitReviewDecisions, config: { ...(request.stageConfig.materialization || {}), ...reviewConfig } }), result => validateObjectDraftMaterialization(result, planning, ingestion.regions), planning?.proposals?.length ?? 0, { outputKey: 'draftMaterialization' });
+  invoke('draft_materialization', { regions: ingestion?.regions, graph: ingestion?.graph, semanticResult: semantics, proposalPlan: planning }, () => materializeEmbroideryObjectDrafts({ regions: ingestion.regions, graph: ingestion.graph, semanticResult: semantics, proposalPlan: planning, explicitReviewDecisions, config: { ...(request.stageConfig.materialization || {}), ...reviewConfig } }), result => validateObjectDraftMaterialization(result, planning, ingestion.regions), planning?.proposals?.length ?? 0, {
+    outputKey: 'draftMaterialization',
+    pipelineReadiness: result => evaluateDraftMaterializationReadiness({ proposalPlan: planning, draftMaterialization: result }),
+  });
   const drafts = outputs.draftMaterialization;
   invoke('thread_resolution', { regions: ingestion?.regions, objectDraftMaterialization: drafts }, () => materializeThreadedEmbroideryObjects({ regions: ingestion.regions, objectDraftMaterialization: drafts, threadResolutionConfig: request.stageConfig.threadResolution || {} }), result => validateThreadedObjectMaterialization(result, drafts.drafts, ingestion.regions), drafts?.drafts?.length ?? 0, { outputKey: 'threadResolution' });
   const threaded = outputs.threadResolution;

@@ -1,5 +1,8 @@
 export function createEndToEndPipelineDiagnostic({ request, pipelineResult }) {
   const summary = pipelineResult?.summary || {}; const stages = pipelineResult?.stageResults || [];
+  const reviewStage = stages.find(stage => stage.stageId === 'draft_materialization');
+  const reviewReadiness = reviewStage?.summary?.reviewReadiness ?? null;
+  const reviewBlockedIndex = stages.findIndex(stage => stage.stageId === 'draft_materialization' && stage.outcomeCategory === 'policy_blocked');
   const distribution = field => Object.fromEntries([...new Set(stages.map(stage => stage[field]))].sort().map(value => [value, stages.filter(stage => stage[field] === value).length]));
   return Object.freeze({
     valid: pipelineResult?.valid === true,
@@ -8,6 +11,16 @@ export function createEndToEndPipelineDiagnostic({ request, pipelineResult }) {
     pipelineStageDispositionCoveragePercent: summary.pipelineStageDispositionCoveragePercent ?? 0,
     silentPipelineStageDropCount: summary.silentPipelineStageDropCount ?? 0,
     firstBlockingStageId: pipelineResult?.firstBlockingStageId ?? null,
+    reviewReadiness,
+    reviewRequired: summary.reviewRequired === true,
+    reviewPolicyBlocked: summary.reviewPolicyBlocked === true,
+    reviewPolicyReasonCode: reviewReadiness?.reasonCode ?? null,
+    unresolvedReviewDecisionCount: summary.unresolvedReviewDecisionCount ?? 0,
+    deferredReviewDecisionCount: summary.deferredReviewDecisionCount ?? 0,
+    blockedReviewDecisionCount: summary.blockedReviewDecisionCount ?? 0,
+    materializedDraftCount: summary.materializedDraftCount ?? 0,
+    partialReviewExportPrevented: summary.partialReviewExportPrevented === true,
+    downstreamInvocationAfterReviewBlockCount: reviewBlockedIndex < 0 ? 0 : stages.slice(reviewBlockedIndex + 1).filter(stage => stage.status !== 'skipped').length,
     stageFingerprints: Object.freeze(Object.fromEntries(stages.map(stage => [stage.stageId, stage.outputFingerprint]))),
     crossStageReferenceCoveragePercent: summary.crossStageReferenceCoveragePercent ?? 0,
     crossStageReferenceMismatchCount: summary.crossStageReferenceMismatchCount ?? 0,

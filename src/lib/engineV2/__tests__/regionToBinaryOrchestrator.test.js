@@ -3,6 +3,7 @@ import { createEndToEndDSBExplicitFixture } from '../fixtures/endToEndDSBExplici
 import { createEndToEndDSBStrictFixture } from '../fixtures/endToEndDSBStrictFixture.js';
 import { createEndToEndDSTFixture, createEndToEndManualDirectParityFixture } from '../fixtures/endToEndDSTFixture.js';
 import { createEndToEndStageBlockingFixture } from '../fixtures/endToEndStageBlockingFixture.js';
+import { createUnresolvedReviewEndToEndFixture } from '../fixtures/unresolvedReviewPolicyFixture.js';
 import { fingerprintEngineV2Value } from '../orchestration/deterministicStageFingerprint.js';
 import { runEngineV2RegionToBinary } from '../orchestration/regionToBinaryOrchestrator.js';
 
@@ -45,4 +46,31 @@ describe('Phase 13A disconnected RegionV2-to-binary orchestrator', () => {
     expect(parity.direct.binaryExport.artifact.bytes).toEqual(parity.orchestrated.result.binaryExport.artifact.bytes);
     expect(parity.direct.binaryExport.artifact.checksum).toBe(parity.orchestrated.result.binaryExport.artifact.checksum);
   });
+});
+
+describe('Phase 13A1 unresolved review orchestration policy', () => {
+  let result; let draftStage;
+  beforeAll(() => { result = createUnresolvedReviewEndToEndFixture().result; draftStage = result.stageResults[3]; }, 60000);
+  it('blocks at draft materialization', () => expect(result.firstBlockingStageId).toBe('draft_materialization'));
+  it('marks draft materialization blocked', () => expect(draftStage.status).toBe('blocked'));
+  it('classifies the block as policy blocked', () => expect(draftStage.outcomeCategory).toBe('policy_blocked'));
+  it('marks the blocked stage invalid', () => expect(draftStage.valid).toBe(false));
+  it('preserves the direct materialization result', () => expect(draftStage.result).toEqual(result.draftMaterialization));
+  it('preserves three deferred decisions', () => expect(result.draftMaterialization.summary.deferredDecisionCount).toBe(3));
+  it('preserves zero drafts', () => expect(result.draftMaterialization.drafts).toHaveLength(0));
+  it('adds one structured policy issue', () => expect(draftStage.errors.filter(error => error.code === 'EXPLICIT_REVIEW_REQUIRED')).toHaveLength(1));
+  it('reports every affected proposal', () => expect(draftStage.errors.find(error => error.code === 'EXPLICIT_REVIEW_REQUIRED').affectedProposalIds).toHaveLength(3));
+  it('reports every affected region', () => expect(draftStage.errors.find(error => error.code === 'EXPLICIT_REVIEW_REQUIRED').affectedRegionIds).toHaveLength(3));
+  it('returns exactly seven skipped downstream stages', () => expect(result.stageResults.slice(4).filter(stage => stage.status === 'skipped')).toHaveLength(7));
+  it.each(['thread_resolution', 'technical_planning', 'global_sequence', 'physical_generation', 'canonical_compilation', 'machine_adaptation', 'binary_export'])('skips downstream stage %s', stageId => expect(result.stageResults.find(stage => stage.stageId === stageId)).toMatchObject({ status: 'skipped', outcomeCategory: 'upstream_blocked', result: null }));
+  it('does not create an END-only stream', () => expect(result.canonicalCompilation).toBeNull());
+  it('does not invoke the binary facade', () => expect(result.binaryExport).toBeNull());
+  it('reports three completed stages', () => expect(result.summary.completedStageCount).toBe(3));
+  it('reports one blocked stage', () => expect(result.summary.blockedStageCount).toBe(1));
+  it('reports seven skipped stages', () => expect(result.summary.skippedStageCount).toBe(7));
+  it('reports policy blocking', () => expect(result.policyBlocked).toBe(true));
+  it('reports review policy blocking', () => expect(result.summary.reviewPolicyBlocked).toBe(true));
+  it('reports partial export prevention', () => expect(result.summary.partialReviewExportPrevented).toBe(true));
+  it('does not complete the pipeline', () => expect(result.pipelineCompleted).toBe(false));
+  it('does not accept a binary', () => expect(result.binaryAccepted).toBe(false));
 });
