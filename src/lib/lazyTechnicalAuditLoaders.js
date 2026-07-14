@@ -1,18 +1,23 @@
-let regionCoveragePromise;
-let previewParityPromise;
-let engineBenchmarkPromise;
+const modulePromises = {};
+
+function loadCached(name, importer) {
+  if (!modulePromises[name]) {
+    modulePromises[name] = importer().catch((error) => {
+      modulePromises[name] = null;
+      throw error;
+    });
+  }
+  return modulePromises[name];
+}
 
 export function loadRegionCoverageAudit() {
-  regionCoveragePromise ||= import('@/lib/audits/regionToCommandCoverageAudit.js');
-  return regionCoveragePromise;
+  return loadCached('coverage', () => import('@/lib/audits/regionToCommandCoverageAudit.js'));
 }
 
 export function loadPreviewExportParityAudit() {
-  previewParityPromise ||= import('@/lib/audits/previewToExportParityAudit.js');
-  return previewParityPromise;
+  return loadCached('parity', () => import('@/lib/audits/previewToExportParityAudit.js'));
 }
 
 export function loadEngineProfileBenchmarkAudit() {
-  engineBenchmarkPromise ||= import('@/lib/audits/engineProfileBenchmark.js');
-  return engineBenchmarkPromise;
+  return loadCached('benchmark', () => import('@/lib/audits/engineProfileBenchmark.js'));
 }

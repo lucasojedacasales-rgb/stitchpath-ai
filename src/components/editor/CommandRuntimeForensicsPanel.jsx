@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Download, Search, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { buildEngineModesConfigToPipelineAuditMarkdown, runEngineModesConfigToPipelineAudit } from '@/lib/audits/engineModesConfigPipelineAudit.js';
 import { loadEngineProfileBenchmarkAudit, loadPreviewExportParityAudit, loadRegionCoverageAudit } from '@/lib/lazyTechnicalAuditLoaders.js';
-import { InlineTechnicalLoading } from '@/components/editor/TechnicalToolLoading.jsx';
+import TechnicalToolStatus from '@/components/editor/TechnicalToolStatus.jsx';
+import useTechnicalToolLauncher from '@/hooks/useTechnicalToolLauncher.js';
 import { buildUnifiedStandardProProfileMarkdown, createUnifiedStandardProProfileReport } from '@/lib/audits/unifiedStandardProProfileReport.js';
 import { buildTravelAndMicroDetailCleanupMarkdown, createTravelAndMicroDetailCleanupReport } from '@/lib/travelAndMicroDetailCleanup.js';
 import { buildUniversalAutoDigitizerProMarkdown, createUniversalAutoDigitizerProReport } from '@/lib/universalAutoDigitizerPro.js';
@@ -11,6 +12,16 @@ import { buildUniversalCartoonCleanupAndOutlineMergeMarkdown, createUniversalCar
 import { buildContourCleanupMarkdown, buildThreadStopCompactionMarkdown, createContourCleanupReport, createThreadStopCompactionReport } from '@/lib/contourCleanupAndThreadStopCompaction.js';
 
 const SEVERITY_RANK = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
+const TECHNICAL_AUDIT_LOADERS = {
+  coverage: loadRegionCoverageAudit,
+  parity: loadPreviewExportParityAudit,
+  benchmark: loadEngineProfileBenchmarkAudit,
+};
+const TECHNICAL_AUDIT_NAMES = {
+  coverage: 'auditoría de cobertura',
+  parity: 'auditoría de paridad',
+  benchmark: 'benchmark de motores',
+};
 
 export default function CommandRuntimeForensicsPanel({
   finalCommands = [], finalObjects = [], regions = [], config = {}, darkStroke, machineSettings = {}, exportCommands = null,
@@ -18,18 +29,8 @@ export default function CommandRuntimeForensicsPanel({
   transitionGuardReport = null, transitionGuardMd = null, commandSourceLabel = 'finalEmbroideryCommands', commandMeta = {},
 }) {
   const [lastReport, setLastReport] = useState(null);
-  const [activeAudit, setActiveAudit] = useState(null);
-  const activeAuditRef = useRef(null);
-  const mountedRef = useRef(true);
-  const benchmarkRunning = activeAudit === 'benchmark';
+  const { tools, open, close, preload } = useTechnicalToolLauncher(TECHNICAL_AUDIT_LOADERS);
   const audit = useMemo(() => runRuntimeForensics({ finalCommands, finalObjects, regions, config, darkStroke, machineSettings, exportCommands, commandSourceLabel }), [finalCommands, finalObjects, regions, config, darkStroke, machineSettings, exportCommands, commandSourceLabel]);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
 
   const downloadBlob = (content, filename) => {
     const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
@@ -50,23 +51,14 @@ export default function CommandRuntimeForensicsPanel({
     downloadBlob(md, filename);
   };
 
-  const downloadRegionCoverageReport = async () => {
-    if (activeAuditRef.current) return;
-    activeAuditRef.current = 'coverage';
-    setActiveAudit('coverage');
-    try {
-      const { buildRegionToCommandCoverageAuditMarkdown, runRegionToCommandCoverageAudit } = await loadRegionCoverageAudit();
-      if (!mountedRef.current) return;
-      const regionCoverageAudit = runRegionToCommandCoverageAudit({
-        finalCommands, finalObjects, regions, config, darkStroke, machineSettings, exportCommands, commandSourceLabel,
-      });
-      setLastReport(regionCoverageAudit);
-      downloadBlob(buildRegionToCommandCoverageAuditMarkdown(regionCoverageAudit), 'QUALITY_PHASE_2B_REGION_TO_FINAL_COMMAND_COVERAGE_AUDIT_REPORT_V1.md');
-    } finally {
-      activeAuditRef.current = null;
-      if (mountedRef.current) setActiveAudit(null);
-    }
-  };
+  const downloadRegionCoverageReport = () => open('coverage', ({ buildRegionToCommandCoverageAuditMarkdown, runRegionToCommandCoverageAudit }, isCurrent) => {
+    const report = runRegionToCommandCoverageAudit({
+      finalCommands, finalObjects, regions, config, darkStroke, machineSettings, exportCommands, commandSourceLabel,
+    });
+    if (!isCurrent()) return;
+    setLastReport(report);
+    downloadBlob(buildRegionToCommandCoverageAuditMarkdown(report), 'QUALITY_PHASE_2B_REGION_TO_FINAL_COMMAND_COVERAGE_AUDIT_REPORT_V1.md');
+  });
 
   const downloadEngineModesConfigReport = () => {
     const engineModesAudit = runEngineModesConfigToPipelineAudit({
@@ -81,30 +73,19 @@ export default function CommandRuntimeForensicsPanel({
     downloadBlob(md, 'ENGINE_MODES_CONFIG_TO_PIPELINE_AUDIT_V1.md');
   };
 
-  const downloadPreviewExportParityReport = async () => {
-    if (activeAuditRef.current) return;
-    activeAuditRef.current = 'parity';
-    setActiveAudit('parity');
-    try {
-      const { buildPreviewToExportParityAuditMarkdown, runPreviewToExportParityAudit } = await loadPreviewExportParityAudit();
-      if (!mountedRef.current) return;
-      const parityAudit = runPreviewToExportParityAudit({
-        rellenosPreviewCommands: config?.rellenosPreviewCommands || config?.previewCommands || null,
-        finalLookCommands: finalCommands,
-        simulatorCommands: finalCommands,
-        finalEmbroideryCommands: finalCommands,
-        exportCommands: exportCommands || finalCommands,
-        regions,
-        config,
-        machineSettings,
-      });
-      setLastReport(parityAudit);
-      downloadBlob(buildPreviewToExportParityAuditMarkdown(parityAudit), 'PREVIEW_TO_EXPORT_PARITY_AUDIT_V1.md');
-    } finally {
-      activeAuditRef.current = null;
-      if (mountedRef.current) setActiveAudit(null);
-    }
-  };
+  const downloadPreviewExportParityReport = () => open('parity', ({ buildPreviewToExportParityAuditMarkdown, runPreviewToExportParityAudit }, isCurrent) => {
+    const report = runPreviewToExportParityAudit({
+      rellenosPreviewCommands: config?.rellenosPreviewCommands || config?.previewCommands || null,
+      finalLookCommands: finalCommands,
+      simulatorCommands: finalCommands,
+      finalEmbroideryCommands: finalCommands,
+      exportCommands: exportCommands || finalCommands,
+      regions, config, machineSettings,
+    });
+    if (!isCurrent()) return;
+    setLastReport(report);
+    downloadBlob(buildPreviewToExportParityAuditMarkdown(report), 'PREVIEW_TO_EXPORT_PARITY_AUDIT_V1.md');
+  });
 
   const downloadUniversalAutoDigitizerProReport = () => {
     const report = commandMeta?.universalAutoDigitizerProReport || createUniversalAutoDigitizerProReport({ totalRegionsInput: regions.length });
@@ -211,65 +192,12 @@ export default function CommandRuntimeForensicsPanel({
     downloadBlob(md, 'CONTOUR_CLEANUP_REPORT_V1.md');
   };
 
-  const downloadEngineProfileBenchmarkReport = async () => {
-    if (activeAuditRef.current) return;
-    activeAuditRef.current = 'benchmark';
-    setActiveAudit('benchmark');
-    let buildEngineProfileBenchmarkMarkdown;
-    try {
-      const benchmarkModule = await loadEngineProfileBenchmarkAudit();
-      if (!mountedRef.current) return;
-      buildEngineProfileBenchmarkMarkdown = benchmarkModule.buildEngineProfileBenchmarkMarkdown;
-      const benchmark = await benchmarkModule.runEngineProfileBenchmark({ imageUrl, originalImageUrl, regions, config, machineSettings, finalCommands, darkStroke });
-      if (!mountedRef.current) return;
-      const md = buildEngineProfileBenchmarkMarkdown(benchmark);
-      setLastReport(benchmark);
-      downloadBlob(md, 'ENGINE_PROFILE_BENCHMARK_V1.md');
-    } catch (error) {
-      if (!mountedRef.current) return;
-      const fallbackReport = {
-        reportId: 'ENGINE_PROFILE_BENCHMARK_V1',
-        generatedAt: new Date().toISOString(),
-        benchmarkOnly: true,
-        generationBehaviorChanged: false,
-        benchmarkValid: false,
-        modeDivergenceDetected: false,
-        isolatedPipelineRuns: false,
-        reusedCurrentCommandsDetected: false,
-        reason: 'benchmark_export_failed_runtime_error',
-        commandsModified: false,
-        regionsModified: false,
-        originalPathPointsMutated: false,
-        exportModified: false,
-        encodersTouched: false,
-        ExportModalTouched: false,
-        MachineSimulatorTouched: false,
-        FinalLookTouched: false,
-        rows: [{ modeName: 'benchmark-export', pipelineActuallyExecuted: false, error: error?.message || 'unknown benchmark export error' }],
-        summary: {
-          recommendedBaseMode: 'undetermined',
-          recommendedUnifiedArchitecture: 'undetermined',
-          safestNextImplementationStep: 'Revisar el error incluido en este reporte y repetir el benchmark desde Diagnóstico.',
-          bestModeOverall: 'undetermined',
-          bestModeForVectorization: 'undetermined',
-          bestModeForOutline: 'undetermined',
-          bestModeForFills: 'undetermined',
-          bestModeForTravel: 'undetermined',
-          worstMode: 'undetermined',
-          worstModeReason: error?.message || 'unknown benchmark export error',
-          recommendedPiecesToKeep: [],
-          recommendedPiecesToRemove: [],
-        },
-      };
-      setLastReport(fallbackReport);
-      if (buildEngineProfileBenchmarkMarkdown) {
-        downloadBlob(buildEngineProfileBenchmarkMarkdown(fallbackReport), 'ENGINE_PROFILE_BENCHMARK_V1_ERROR.md');
-      }
-    } finally {
-      activeAuditRef.current = null;
-      if (mountedRef.current) setActiveAudit(null);
-    }
-  };
+  const downloadEngineProfileBenchmarkReport = () => open('benchmark', async ({ buildEngineProfileBenchmarkMarkdown, runEngineProfileBenchmark }, isCurrent) => {
+    const report = await runEngineProfileBenchmark({ imageUrl, originalImageUrl, regions, config, machineSettings, finalCommands, darkStroke });
+    if (!isCurrent()) return;
+    setLastReport(report);
+    downloadBlob(buildEngineProfileBenchmarkMarkdown(report), 'ENGINE_PROFILE_BENCHMARK_V1.md');
+  });
 
   const downloadGuardReport = () => {
     if (!transitionGuardMd) return;
@@ -295,17 +223,17 @@ export default function CommandRuntimeForensicsPanel({
           <button onClick={() => downloadReport('EMBROIDERY_COMMAND_RUNTIME_FORENSICS_AFTER_TRANSITION_GUARD_V1.md')} className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-900/20 px-3 py-1.5 text-xs font-bold text-emerald-200 hover:bg-emerald-900/30 transition-colors">
             <Download className="w-3.5 h-3.5" /> After guard
           </button>
-          <button onClick={downloadRegionCoverageReport} disabled={activeAudit !== null} className="flex items-center gap-1.5 rounded-lg border border-violet-500/30 bg-violet-900/20 px-3 py-1.5 text-xs font-bold text-violet-200 hover:bg-violet-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50">
-            <Download className="w-3.5 h-3.5" /> {activeAudit === 'coverage' ? 'Cargando cobertura…' : 'Cobertura regiones'}
+          <button onClick={downloadRegionCoverageReport} onMouseEnter={() => preload('coverage')} onFocus={() => preload('coverage')} disabled={tools.coverage?.status === 'loading'} className="flex items-center gap-1.5 rounded-lg border border-violet-500/30 bg-violet-900/20 px-3 py-1.5 text-xs font-bold text-violet-200 hover:bg-violet-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50">
+            <Download className="w-3.5 h-3.5" /> {tools.coverage?.status === 'loading' ? 'Cargando cobertura…' : 'Cobertura regiones'}
           </button>
           <button onClick={downloadEngineModesConfigReport} className="flex items-center gap-1.5 rounded-lg border border-slate-500/30 bg-slate-900/20 px-3 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-900/30 transition-colors">
             <Download className="w-3.5 h-3.5" /> Modos/config
           </button>
-          <button onClick={downloadEngineProfileBenchmarkReport} disabled={activeAudit !== null} className="flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-900/20 px-3 py-1.5 text-xs font-bold text-blue-200 hover:bg-blue-900/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-            <Download className="w-3.5 h-3.5" /> {benchmarkRunning ? 'Benchmark…' : 'Benchmark motores'}
+          <button onClick={downloadEngineProfileBenchmarkReport} onMouseEnter={() => preload('benchmark')} onFocus={() => preload('benchmark')} disabled={tools.benchmark?.status === 'loading'} className="flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-900/20 px-3 py-1.5 text-xs font-bold text-blue-200 hover:bg-blue-900/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+            <Download className="w-3.5 h-3.5" /> {tools.benchmark?.status === 'loading' ? 'Benchmark…' : 'Benchmark motores'}
           </button>
-          <button onClick={downloadPreviewExportParityReport} disabled={activeAudit !== null} className="flex items-center gap-1.5 rounded-lg border border-orange-500/30 bg-orange-900/20 px-3 py-1.5 text-xs font-bold text-orange-200 hover:bg-orange-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50">
-            <Download className="w-3.5 h-3.5" /> {activeAudit === 'parity' ? 'Cargando paridad…' : 'Paridad preview/export'}
+          <button onClick={downloadPreviewExportParityReport} onMouseEnter={() => preload('parity')} onFocus={() => preload('parity')} disabled={tools.parity?.status === 'loading'} className="flex items-center gap-1.5 rounded-lg border border-orange-500/30 bg-orange-900/20 px-3 py-1.5 text-xs font-bold text-orange-200 hover:bg-orange-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-50">
+            <Download className="w-3.5 h-3.5" /> {tools.parity?.status === 'loading' ? 'Cargando paridad…' : 'Paridad preview/export'}
           </button>
           <button onClick={downloadUniversalAutoDigitizerProReport} className="flex items-center gap-1.5 rounded-lg border border-teal-500/30 bg-teal-900/20 px-3 py-1.5 text-xs font-bold text-teal-200 hover:bg-teal-900/30 transition-colors">
             <Download className="w-3.5 h-3.5" /> Auto Digitizer Pro
@@ -334,9 +262,15 @@ export default function CommandRuntimeForensicsPanel({
         </div>
       </div>
 
-      {activeAudit && (
-        <InlineTechnicalLoading label={activeAudit === 'coverage' ? 'Cargando auditoría de cobertura…' : activeAudit === 'parity' ? 'Cargando auditoría de paridad…' : 'Ejecutando benchmark de motores…'} />
-      )}
+      {Object.keys(TECHNICAL_AUDIT_NAMES).map((name) => (
+        <TechnicalToolStatus
+          key={name}
+          name={TECHNICAL_AUDIT_NAMES[name]}
+          state={tools[name]}
+          onRetry={() => name === 'coverage' ? downloadRegionCoverageReport() : name === 'parity' ? downloadPreviewExportParityReport() : downloadEngineProfileBenchmarkReport()}
+          onClose={() => close(name)}
+        />
+      ))}
 
       <div className="grid gap-2 sm:grid-cols-4">
         <Metric label="Comandos" value={audit.source.finalCommandCount} color="text-violet-300" />
