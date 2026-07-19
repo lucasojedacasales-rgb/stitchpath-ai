@@ -111,10 +111,12 @@ export function parseReferenceFile(buffer, filename = 'reference', options = {})
   const ext = (filename.split('.').pop() || '').toUpperCase();
   const format = ext === 'DSB' ? 'DSB' : 'DST';
   const parseWarnings = [];
-  const experimentalWilcomDsbSignMagnitudeFamilyDecode = options.experimentalWilcomDsbSignMagnitudeFamilyDecode === undefined
+  const experimentalWilcomDsbSignMagnitudeFamilyDecode = format === 'DSB' && (options.experimentalWilcomDsbSignMagnitudeFamilyDecode === undefined
     ? DEFAULT_DSB_FORMAT_CONFIG.experimentalWilcomDsbSignMagnitudeFamilyDecode
-    : options.experimentalWilcomDsbSignMagnitudeFamilyDecode === true;
-  const experimentalRawComplexityQualityNeutrality = options.experimentalRawComplexityQualityNeutrality === true;
+    : options.experimentalWilcomDsbSignMagnitudeFamilyDecode === true);
+  const experimentalRawComplexityQualityNeutrality = format === 'DSB' && (options.experimentalRawComplexityQualityNeutrality === undefined
+    ? DEFAULT_DSB_FORMAT_CONFIG.experimentalRawComplexityQualityNeutrality
+    : options.experimentalRawComplexityQualityNeutrality === true);
   const experimentalDSBAnalysisRequested = format === 'DSB' && (experimentalWilcomDsbSignMagnitudeFamilyDecode || experimentalRawComplexityQualityNeutrality);
   const structuralParsedDSB = experimentalDSBAnalysisRequested
     ? parseEngineV2DSBBinary(bytes, { experimentalWilcomDsbSignMagnitudeFamilyDecode: true })

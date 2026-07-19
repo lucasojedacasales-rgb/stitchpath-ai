@@ -1,4 +1,5 @@
 import { createDSBBinaryAcceptanceResultV2, createDSBBinaryRecordSpanV2, createDSBFormatAdaptationV2 } from './dsbFormatModel.js';
+import { DEFAULT_DSB_FORMAT_CONFIG } from './dsbFormatConfig.js';
 
 const issue = (code, path, message) => ({ code, path, message });
 const equalBytes = (left, right) => left?.length === right?.length && left.every((value, index) => value === right[index]);
@@ -44,7 +45,9 @@ export function collectDSBReferenceComplexityMetrics(parsedResult) {
 }
 
 export function assessDSBReferenceStructuralAcceptance({ parsedResult, rawMetrics = null, config = {} }) {
-  const experimentalEnabled = config.experimentalRawComplexityQualityNeutrality === true;
+  const experimentalEnabled = config.experimentalRawComplexityQualityNeutrality === undefined
+    ? DEFAULT_DSB_FORMAT_CONFIG.experimentalRawComplexityQualityNeutrality
+    : config.experimentalRawComplexityQualityNeutrality === true;
   const metrics = rawMetrics || collectDSBReferenceComplexityMetrics(parsedResult);
   if (!experimentalEnabled) {
     return Object.freeze({

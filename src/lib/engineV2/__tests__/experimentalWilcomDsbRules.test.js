@@ -57,6 +57,7 @@ function replaceRange(source, start, deleteCount, insert = []) {
 }
 
 let corpus;
+let knownGoodCorpus;
 let knownGoodDsbCorpus;
 beforeAll(() => {
   const entries = readZipEntries(fs.readFileSync(ZIP));
@@ -67,19 +68,20 @@ beforeAll(() => {
   });
   const knownGoodEntries = readZipEntries(fs.readFileSync(KNOWN_GOOD_ZIP));
   const inventory = JSON.parse(fs.readFileSync(KNOWN_GOOD_INVENTORY, 'utf8'));
-  knownGoodDsbCorpus = inventory.inventory.filter(member => member.detectedFormat === 'DSB').map(spec => {
+  knownGoodCorpus = inventory.inventory.map(spec => {
     const pair = [...knownGoodEntries].find(([name]) => name.endsWith(`/files/${spec.filename}`) || name.endsWith(`files/${spec.filename}`));
     if (!pair) throw new Error(`Missing immutable known-good fixture ${spec.filename}`);
     return { spec, bytes: pair[1] };
   });
+  knownGoodDsbCorpus = knownGoodCorpus.filter(({ spec }) => spec.detectedFormat === 'DSB');
 });
 
 describe('Phase 13B19S promoted Wilcom sign-magnitude family decoder', () => {
-  it('defaults Rule 2 true, leaves Rule 3 false, and keeps their kill switches independent', () => {
+  it('defaults Rules 2 and 3 true while keeping their kill switches independent', () => {
     expect(DEFAULT_DSB_FORMAT_CONFIG.experimentalWilcomDsbSignMagnitudeFamilyDecode).toBe(true);
-    expect(DEFAULT_DSB_FORMAT_CONFIG.experimentalRawComplexityQualityNeutrality).toBe(false);
-    expect(resolveDSBFormatConfig({ experimentalWilcomDsbSignMagnitudeFamilyDecode: false })).toMatchObject({ experimentalWilcomDsbSignMagnitudeFamilyDecode: false, experimentalRawComplexityQualityNeutrality: false });
-    expect(resolveDSBFormatConfig({ experimentalRawComplexityQualityNeutrality: true })).toMatchObject({ experimentalWilcomDsbSignMagnitudeFamilyDecode: true, experimentalRawComplexityQualityNeutrality: true });
+    expect(DEFAULT_DSB_FORMAT_CONFIG.experimentalRawComplexityQualityNeutrality).toBe(true);
+    expect(resolveDSBFormatConfig({ experimentalWilcomDsbSignMagnitudeFamilyDecode: false })).toMatchObject({ experimentalWilcomDsbSignMagnitudeFamilyDecode: false, experimentalRawComplexityQualityNeutrality: true });
+    expect(resolveDSBFormatConfig({ experimentalRawComplexityQualityNeutrality: false })).toMatchObject({ experimentalWilcomDsbSignMagnitudeFamilyDecode: true, experimentalRawComplexityQualityNeutrality: false });
   });
 
   it.each([
@@ -163,10 +165,10 @@ describe('Phase 13B19S promoted Wilcom sign-magnitude family decoder', () => {
   });
 });
 
-describe('Phase 13B19R raw-complexity quality neutrality', () => {
-  it('accepts all three structurally valid files with the promoted command decoder default', () => {
+describe('Phase 13B19S promoted raw-complexity quality neutrality', () => {
+  it('accepts all three structurally valid files with both promoted defaults', () => {
     corpus.forEach(({ spec, bytes }) => {
-      const result = parseReferenceFile(bytes, spec.filename, { experimentalRawComplexityQualityNeutrality: true });
+      const result = parseReferenceFile(bytes, spec.filename);
       expect(result.experimentalFeatureFlags).toEqual({ experimentalWilcomDsbSignMagnitudeFamilyDecode: true, experimentalRawComplexityQualityNeutrality: true });
       expect(result.structuralAcceptance.accepted, JSON.stringify(result.structuralAcceptance.errors)).toBe(true);
       expect(result.structuralAcceptance.rawComplexityAffectsAcceptance).toBe(false);
@@ -174,10 +176,47 @@ describe('Phase 13B19R raw-complexity quality neutrality', () => {
     });
   });
 
+  it('preserves explicit Rule 3 force-disable behavior and descriptive metrics', () => {
+    const { spec, bytes } = corpus[0];
+    const result = parseReferenceFile(bytes, spec.filename, { experimentalRawComplexityQualityNeutrality: false });
+    expect(result.experimentalFeatureFlags).toEqual({ experimentalWilcomDsbSignMagnitudeFamilyDecode: true, experimentalRawComplexityQualityNeutrality: false });
+    expect(result.structuralAcceptance).toBeNull();
+    expect(result.rawComplexityMetrics.totalRecordCount).toBe(spec.recordCount);
+    const parsed = parseEngineV2DSBBinary(bytes);
+    const first = assessDSBReferenceStructuralAcceptance({ parsedResult: parsed, config: { experimentalRawComplexityQualityNeutrality: false } });
+    const second = assessDSBReferenceStructuralAcceptance({ parsedResult: parsed, config: { experimentalRawComplexityQualityNeutrality: false } });
+    expect(second).toEqual(first);
+    expect(first).toMatchObject({ evaluated: false, accepted: null, experimentalRawComplexityQualityNeutrality: false });
+  });
+
+  it('keeps all 57 known-good CE01 files accepted at their applicable parser and evidence boundary', () => {
+    expect(knownGoodCorpus).toHaveLength(57);
+    const accepted = knownGoodCorpus.map(({ spec, bytes }) => {
+      expect(bytes.length).toBe(spec.byteSize);
+      expect(sha256(bytes)).toBe(spec.sha256);
+      const result = parseReferenceFile(bytes, spec.filename);
+      if (spec.detectedFormat === 'DST') {
+        expect(spec.repositoryParserResults.genericParser.valid).toBe(true);
+        expect(result.format).toBe('DST');
+        expect(result.commands.length).toBeGreaterThan(0);
+        return true;
+      }
+      expect(result.experimentalFeatureFlags).toEqual({ experimentalWilcomDsbSignMagnitudeFamilyDecode: true, experimentalRawComplexityQualityNeutrality: true });
+      expect(result.rawComplexityMetrics.totalRecordCount).toBe(spec.declaredRecordOrStitchCount);
+      expect(result.dsbStructuralParse.errors.map(error => error.code)).toEqual(['DSB_PARSER_EOF_MISSING']);
+      expect(result.structuralAcceptance.accepted).toBe(false);
+      expect(spec.exactFileCE01ImportAcceptance).toBe('user_attested_verified');
+      expect(spec.exactFileCE01OpenAcceptance).toBe('user_attested_verified');
+      expect(spec.exactFileCE01CompleteSewout).toBe('user_attested_verified');
+      return spec.evidenceClassification === 'verified_by_exact_ce01_operator_attested_complete_sewout';
+    });
+    expect(accepted.filter(Boolean)).toHaveLength(57);
+  });
+
   it('keeps high-information counts descriptive and quality-neutral', () => {
     const { bytes } = corpus[1];
     const parsed = parseEngineV2DSBBinary(bytes, { experimentalWilcomDsbSignMagnitudeFamilyDecode: true });
-    const acceptance = assessDSBReferenceStructuralAcceptance({ parsedResult: parsed, config: { experimentalRawComplexityQualityNeutrality: true } });
+    const acceptance = assessDSBReferenceStructuralAcceptance({ parsedResult: parsed });
     expect(acceptance).toMatchObject({ accepted: true, qualityFailure: false, rawComplexityAffectsAcceptance: false });
     expect(acceptance.metrics).toMatchObject({ totalRecordCount: 35155, jumpLikeMovementCount: 1311, E7ControlCount: 490, opaqueStateControlCount: 503, fileByteSize: 105978 });
   });
@@ -198,7 +237,7 @@ describe('Phase 13B19R raw-complexity quality neutrality', () => {
     ];
     mutations.forEach(mutation => {
       const parsed = parseEngineV2DSBBinary(mutation.bytes, { experimentalWilcomDsbSignMagnitudeFamilyDecode: true });
-      const acceptance = assessDSBReferenceStructuralAcceptance({ parsedResult: parsed, config: { experimentalRawComplexityQualityNeutrality: true } });
+      const acceptance = assessDSBReferenceStructuralAcceptance({ parsedResult: parsed });
       expect(acceptance.accepted, mutation.id).toBe(false);
       expect(parsed.errors.some(error => error.code === mutation.code), `${mutation.id}: ${JSON.stringify(parsed.errors)}`).toBe(true);
       expect(acceptance.metrics.totalRecordCount).toBeGreaterThan(0);
@@ -208,5 +247,6 @@ describe('Phase 13B19R raw-complexity quality neutrality', () => {
   it('contains no hash-specific production branch', () => {
     const source = `${assessDSBReferenceStructuralAcceptance}${parseReferenceFile}`;
     SPECS.forEach(spec => expect(source).not.toContain(spec.sha256));
+    [...SPECS, ...knownGoodCorpus.map(item => item.spec)].forEach(spec => expect(source).not.toContain(spec.filename));
   });
 });

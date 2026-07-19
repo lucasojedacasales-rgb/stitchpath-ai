@@ -17,7 +17,7 @@ export const DEFAULT_DSB_FORMAT_CONFIG = Object.freeze({
   preserveSourceOrder: true, preserveThreadBlockOrder: true, preserveThreadIds: true, preserveTrimLineage: true,
   allowPartialAdapterOutput: false, allowPartialBinaryOutput: false, invokeExistingDSBLowLevelEncoder: true,
   invokeDSTEncoder: false, invokeBase44: false, connectApplication: false, CE01ArtworkLogic: false, conservativeMode: true,
-  experimentalWilcomDsbSignMagnitudeFamilyDecode: true, experimentalRawComplexityQualityNeutrality: false,
+  experimentalWilcomDsbSignMagnitudeFamilyDecode: true, experimentalRawComplexityQualityNeutrality: true,
   extras: Object.freeze({}),
 });
 
