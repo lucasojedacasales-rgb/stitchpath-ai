@@ -1,4 +1,5 @@
 import { decodeDSBRecord } from '../../dsbEncoder.js';
+import { DEFAULT_DSB_FORMAT_CONFIG } from './dsbFormatConfig.js';
 
 const HEADER_SIZE = 512;
 const EOF_BYTE = 0x1A;
@@ -40,7 +41,7 @@ function parseWilcomHeader(bytes) {
   const text = headerText(bytes);
   const field = name => {
     const escaped = name.replace(/[+]/g, '\\+');
-    const match = text.match(new RegExp(`${escaped}:([+-])?\\s*(\\d+)`));
+    const match = text.match(new RegExp(`${escaped}:\\s*([+-])?\\s*(\\d+)`));
     if (!match) return null;
     return (match[1] === '-' ? -1 : 1) * Number.parseInt(match[2], 10);
   };
@@ -68,19 +69,22 @@ export function decodeWilcomDSBRecord(rawRecord) {
   const lowBits = control & 0x1F;
 
   if (WILCOM_MOVEMENT_LOW_BITS.has(lowBits)) {
-    const dxUnits = (control & 0x20 ? -1 : 1) * xMagnitude;
-    const dyUnits = (control & 0x40 ? -1 : 1) * yMagnitude;
+    const legacyEnginePayload = (control === 0x80 || control === 0x81) && (xMagnitude > 0x7F || yMagnitude > 0x7F);
+    const dxUnits = legacyEnginePayload ? (xMagnitude > 0x7F ? xMagnitude - 0x100 : xMagnitude) : (control & 0x20 ? -1 : 1) * xMagnitude;
+    const dyUnits = legacyEnginePayload ? (yMagnitude > 0x7F ? yMagnitude - 0x100 : yMagnitude) : (control & 0x40 ? -1 : 1) * yMagnitude;
     const type = lowBits === 0 ? 'stitch' : 'jump';
     return {
       command: control,
       type,
       dx: dxUnits,
       dy: dyUnits,
-      controlFamily: type === 'stitch' ? 'wilcom_sign_magnitude_sewn_like_movement' : 'wilcom_sign_magnitude_jump_like_movement',
+      controlFamily: legacyEnginePayload
+        ? `legacy_engine_v2_twos_complement_${type}_movement`
+        : type === 'stitch' ? 'wilcom_sign_magnitude_sewn_like_movement' : 'wilcom_sign_magnitude_jump_like_movement',
       literalControlValue: control,
       decodedDelta: Object.freeze({ xUnits: dxUnits, yUnits: dyUnits }),
       parserConfidence: 'high',
-      physicalSemanticStatus: 'movement_structure_resolved',
+      physicalSemanticStatus: legacyEnginePayload ? 'legacy_engine_v2_semantics_preserved' : 'movement_structure_resolved',
     };
   }
 
@@ -175,7 +179,9 @@ function frozenWilcomRecord({ index, offset, raw, decoded, xUnits, yUnits }) {
 }
 
 export function parseEngineV2DSBBinary(input, rawOptions = {}) {
-  const experimentalEnabled = rawOptions.experimentalWilcomDsbSignMagnitudeFamilyDecode === true;
+  const experimentalEnabled = rawOptions.experimentalWilcomDsbSignMagnitudeFamilyDecode === undefined
+    ? DEFAULT_DSB_FORMAT_CONFIG.experimentalWilcomDsbSignMagnitudeFamilyDecode
+    : rawOptions.experimentalWilcomDsbSignMagnitudeFamilyDecode === true;
   const bytes = input instanceof Uint8Array ? input : new Uint8Array();
   const errors = [];
   const warnings = [];

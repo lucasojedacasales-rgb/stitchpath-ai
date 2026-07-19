@@ -12,6 +12,8 @@ import { DEFAULT_DSB_FORMAT_CONFIG, resolveDSBFormatConfig } from '../formatAdap
 
 const REFERENCE_ROOT = process.env.STITCHPATH_PHASE13B19R_REFERENCE_ROOT || path.join(os.homedir(), 'Documents', 'StitchPath-References', 'yoshi-real-01');
 const ZIP = path.join(REFERENCE_ROOT, 'wilcom-yoshi-three-variant-reference-addendum-r1', 'wilcom-yoshi-three-variant-reference-addendum-r1.zip');
+const KNOWN_GOOD_ZIP = path.join(REFERENCE_ROOT, 'ce01-known-good-reference-corpus-r1', 'ce01-known-good-reference-corpus-r1.zip');
+const KNOWN_GOOD_INVENTORY = path.join(REFERENCE_ROOT, 'reference-region01-ce01-known-good-corpus-inventory.json');
 const SPECS = Object.freeze([
   { id: 'compact', filename: 'yoshi simple 2(3).DSB', sha256: '6556733f1873a586455a135abcb65c28e3b67c67e61967f9b52f288896164d74', byteSize: 42723, recordCount: 14070, bounds: { plusX: 724, minusX: 98, plusY: 247, minusY: 880 }, finalPosition: { xUnits: 541, yUnits: -441 }, E7: 15, state: 4 },
   { id: 'high-information', filename: 'yoshi simple(3).DSB', sha256: '37d3f95844eaba2ffb18cfbfb53721837c2394d5f6da645947b694a1957a6c7b', byteSize: 105978, recordCount: 35155, bounds: { plusX: 587, minusX: 235, plusY: 783, minusY: 344 }, finalPosition: { xUnits: 377, yUnits: 508 }, E7: 490, state: 503 },
@@ -55,6 +57,7 @@ function replaceRange(source, start, deleteCount, insert = []) {
 }
 
 let corpus;
+let knownGoodDsbCorpus;
 beforeAll(() => {
   const entries = readZipEntries(fs.readFileSync(ZIP));
   corpus = SPECS.map(spec => {
@@ -62,14 +65,21 @@ beforeAll(() => {
     if (!pair) throw new Error(`Missing immutable fixture ${spec.filename}`);
     return { spec, bytes: pair[1] };
   });
+  const knownGoodEntries = readZipEntries(fs.readFileSync(KNOWN_GOOD_ZIP));
+  const inventory = JSON.parse(fs.readFileSync(KNOWN_GOOD_INVENTORY, 'utf8'));
+  knownGoodDsbCorpus = inventory.inventory.filter(member => member.detectedFormat === 'DSB').map(spec => {
+    const pair = [...knownGoodEntries].find(([name]) => name.endsWith(`/files/${spec.filename}`) || name.endsWith(`files/${spec.filename}`));
+    if (!pair) throw new Error(`Missing immutable known-good fixture ${spec.filename}`);
+    return { spec, bytes: pair[1] };
+  });
 });
 
-describe('Phase 13B19R Wilcom sign-magnitude family decoder', () => {
-  it('defaults both DSB experimental flags false and keeps them independent', () => {
-    expect(DEFAULT_DSB_FORMAT_CONFIG.experimentalWilcomDsbSignMagnitudeFamilyDecode).toBe(false);
+describe('Phase 13B19S promoted Wilcom sign-magnitude family decoder', () => {
+  it('defaults Rule 2 true, leaves Rule 3 false, and keeps their kill switches independent', () => {
+    expect(DEFAULT_DSB_FORMAT_CONFIG.experimentalWilcomDsbSignMagnitudeFamilyDecode).toBe(true);
     expect(DEFAULT_DSB_FORMAT_CONFIG.experimentalRawComplexityQualityNeutrality).toBe(false);
-    expect(resolveDSBFormatConfig({ experimentalWilcomDsbSignMagnitudeFamilyDecode: true })).toMatchObject({ experimentalWilcomDsbSignMagnitudeFamilyDecode: true, experimentalRawComplexityQualityNeutrality: false });
-    expect(resolveDSBFormatConfig({ experimentalRawComplexityQualityNeutrality: true })).toMatchObject({ experimentalWilcomDsbSignMagnitudeFamilyDecode: false, experimentalRawComplexityQualityNeutrality: true });
+    expect(resolveDSBFormatConfig({ experimentalWilcomDsbSignMagnitudeFamilyDecode: false })).toMatchObject({ experimentalWilcomDsbSignMagnitudeFamilyDecode: false, experimentalRawComplexityQualityNeutrality: false });
+    expect(resolveDSBFormatConfig({ experimentalRawComplexityQualityNeutrality: true })).toMatchObject({ experimentalWilcomDsbSignMagnitudeFamilyDecode: true, experimentalRawComplexityQualityNeutrality: true });
   });
 
   it.each([
@@ -77,6 +87,11 @@ describe('Phase 13B19R Wilcom sign-magnitude family decoder', () => {
     [0x81, 'jump', 7, 5], [0xA1, 'jump', -7, 5], [0xC1, 'jump', 7, -5], [0xE1, 'jump', -7, -5],
   ])('decodes movement family 0x%s with its X/Y signs', (control, type, dx, dy) => {
     expect(decodeWilcomDSBRecord([control, 5, 7])).toMatchObject({ command: control, type, dx, dy, literalControlValue: control, decodedDelta: { xUnits: dx, yUnits: dy } });
+  });
+
+  it('preserves legacy Engine V2 two-complement payloads without changing the encoder', () => {
+    expect(decodeWilcomDSBRecord([0x80, 0xFF, 0xFE])).toMatchObject({ type: 'stitch', dx: -2, dy: -1, controlFamily: 'legacy_engine_v2_twos_complement_stitch_movement' });
+    expect(decodeWilcomDSBRecord([0x81, 0x80, 0x7F])).toMatchObject({ type: 'jump', dx: 127, dy: -128, controlFamily: 'legacy_engine_v2_twos_complement_jump_movement' });
   });
 
   it('preserves E7 without trim or cut semantics', () => {
@@ -91,10 +106,36 @@ describe('Phase 13B19R Wilcom sign-magnitude family decoder', () => {
 
   it('recognizes F8 as END', () => expect(decodeWilcomDSBRecord([0xF8, 0, 0])).toMatchObject({ type: 'end', controlFamily: 'end' }));
 
-  it('preserves exact flag-off parser behavior', () => {
+  it('makes default parsing identical to explicit flag-on while preserving exact flag-off behavior', () => {
     const { bytes } = corpus[0];
-    expect(parseEngineV2DSBBinary(bytes)).toEqual(parseEngineV2DSBBinary(bytes, { experimentalWilcomDsbSignMagnitudeFamilyDecode: false }));
-    expect(parseEngineV2DSBBinary(bytes).valid).toBe(false);
+    expect(parseEngineV2DSBBinary(bytes)).toEqual(parseEngineV2DSBBinary(bytes, { experimentalWilcomDsbSignMagnitudeFamilyDecode: true }));
+    const firstLegacy = parseEngineV2DSBBinary(bytes, { experimentalWilcomDsbSignMagnitudeFamilyDecode: false });
+    const secondLegacy = parseEngineV2DSBBinary(bytes, { experimentalWilcomDsbSignMagnitudeFamilyDecode: false });
+    expect(secondLegacy).toEqual(firstLegacy);
+    expect(firstLegacy.valid).toBe(false);
+  });
+
+  it('regresses all 11 immutable known-good DSB corpus files with exact reconstruction', () => {
+    expect(knownGoodDsbCorpus).toHaveLength(11);
+    knownGoodDsbCorpus.forEach(({ spec, bytes }) => {
+      expect(bytes.length).toBe(spec.byteSize);
+      expect(sha256(bytes)).toBe(spec.sha256);
+      const parsed = parseEngineV2DSBBinary(bytes);
+      expect(parsed).toEqual(parseEngineV2DSBBinary(bytes, { experimentalWilcomDsbSignMagnitudeFamilyDecode: true }));
+      expect(parsed.recordCount).toBe(spec.declaredRecordOrStitchCount);
+      expect(parsed.header.ST).toBe(spec.declaredRecordOrStitchCount);
+      expect(parsed.decodedBounds).toEqual({
+        plusX: spec.positiveAndNegativeExtents.positiveXExtentUnits,
+        minusX: spec.positiveAndNegativeExtents.negativeXExtentUnits,
+        plusY: spec.positiveAndNegativeExtents.positiveYExtentUnits,
+        minusY: spec.positiveAndNegativeExtents.negativeYExtentUnits,
+      });
+      expect(parsed.finalPosition).toEqual({ xUnits: parsed.header.AX, yUnits: parsed.header.AY });
+      expect(parsed.endRecordCount).toBe(1);
+      expect(parsed.records.at(-1)).toMatchObject({ type: 'end', rawControlByte: 0xF8 });
+      expect(parsed.records.every((record, index) => record.index === index && record.offset === 512 + index * 3)).toBe(true);
+      expect(parsed.errors).toEqual([{ code: 'DSB_PARSER_EOF_MISSING', path: 'bytes', message: 'Final EOF byte 0x1A is missing.' }]);
+    });
   });
 
   it('parses all three immutable files with exact reconstruction and control preservation', () => {
@@ -123,10 +164,10 @@ describe('Phase 13B19R Wilcom sign-magnitude family decoder', () => {
 });
 
 describe('Phase 13B19R raw-complexity quality neutrality', () => {
-  it('accepts all three structurally valid files without enabling the command decoder flag', () => {
+  it('accepts all three structurally valid files with the promoted command decoder default', () => {
     corpus.forEach(({ spec, bytes }) => {
       const result = parseReferenceFile(bytes, spec.filename, { experimentalRawComplexityQualityNeutrality: true });
-      expect(result.experimentalFeatureFlags).toEqual({ experimentalWilcomDsbSignMagnitudeFamilyDecode: false, experimentalRawComplexityQualityNeutrality: true });
+      expect(result.experimentalFeatureFlags).toEqual({ experimentalWilcomDsbSignMagnitudeFamilyDecode: true, experimentalRawComplexityQualityNeutrality: true });
       expect(result.structuralAcceptance.accepted, JSON.stringify(result.structuralAcceptance.errors)).toBe(true);
       expect(result.structuralAcceptance.rawComplexityAffectsAcceptance).toBe(false);
       expect(result.rawComplexityMetrics.totalRecordCount).toBe(spec.recordCount);

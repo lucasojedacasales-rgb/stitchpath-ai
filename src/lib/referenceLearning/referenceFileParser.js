@@ -20,6 +20,7 @@ import { decodeDSTRecord } from '@/lib/dstEncoder';
 import { decodeDSBRecord } from '@/lib/dsbEncoder';
 import { parseEngineV2DSBBinary } from '@/lib/engineV2/formatAdaptation/dsbBinaryParser';
 import { assessDSBReferenceStructuralAcceptance, collectDSBReferenceComplexityMetrics } from '@/lib/engineV2/formatAdaptation/dsbBinaryAcceptance';
+import { DEFAULT_DSB_FORMAT_CONFIG } from '@/lib/engineV2/formatAdaptation/dsbFormatConfig';
 
 const HEADER_SIZE = 512;
 const RECORD_SIZE = 3;
@@ -110,7 +111,9 @@ export function parseReferenceFile(buffer, filename = 'reference', options = {})
   const ext = (filename.split('.').pop() || '').toUpperCase();
   const format = ext === 'DSB' ? 'DSB' : 'DST';
   const parseWarnings = [];
-  const experimentalWilcomDsbSignMagnitudeFamilyDecode = options.experimentalWilcomDsbSignMagnitudeFamilyDecode === true;
+  const experimentalWilcomDsbSignMagnitudeFamilyDecode = options.experimentalWilcomDsbSignMagnitudeFamilyDecode === undefined
+    ? DEFAULT_DSB_FORMAT_CONFIG.experimentalWilcomDsbSignMagnitudeFamilyDecode
+    : options.experimentalWilcomDsbSignMagnitudeFamilyDecode === true;
   const experimentalRawComplexityQualityNeutrality = options.experimentalRawComplexityQualityNeutrality === true;
   const experimentalDSBAnalysisRequested = format === 'DSB' && (experimentalWilcomDsbSignMagnitudeFamilyDecode || experimentalRawComplexityQualityNeutrality);
   const structuralParsedDSB = experimentalDSBAnalysisRequested
