@@ -208,18 +208,22 @@ export function encodeDSTMove(dx, dy, flag = 'stitch') {
 // ─── Header builder (512 bytes, CR line breaks, 0x1A after PD) ──────────
 
 export function buildDSTHeader({ label, stitchCount, colorChanges, bounds, finalX, finalY }) {
+  const signed = (value) => {
+    const rounded = Math.round(value);
+    return `${rounded < 0 ? '-' : '+'}${String(Math.abs(rounded)).padStart(5, ' ')}`;
+  };
   const fields = [
     `LA:${(label || 'design').padEnd(16, ' ').substring(0, 16)}`,
-    `ST:${String(stitchCount).padStart(6, ' ')}`,
-    `CO:${String(colorChanges).padStart(4, ' ')}`,
-    `+X:${String(bounds.plusX).padStart(6, ' ')}`,
-    `-X:${String(bounds.minusX).padStart(6, ' ')}`,
-    `+Y:${String(bounds.plusY).padStart(6, ' ')}`,
-    `-Y:${String(bounds.minusY).padStart(6, ' ')}`,
-    `AX:${String(finalX).padStart(6, ' ')}`,
-    `AY:${String(finalY).padStart(6, ' ')}`,
-    `MX:${String(0).padStart(6, ' ')}`,
-    `MY:${String(0).padStart(6, ' ')}`,
+    `ST:${String(stitchCount).padStart(7, ' ')}`,
+    `CO:${String(colorChanges).padStart(3, ' ')}`,
+    `+X:${String(bounds.plusX).padStart(5, ' ')}`,
+    `-X:${String(bounds.minusX).padStart(5, ' ')}`,
+    `+Y:${String(bounds.plusY).padStart(5, ' ')}`,
+    `-Y:${String(bounds.minusY).padStart(5, ' ')}`,
+    `AX:${signed(finalX)}`,
+    `AY:${signed(finalY)}`,
+    `MX:${signed(0)}`,
+    `MY:${signed(0)}`,
     `PD:******`,
   ];
 
@@ -245,23 +249,42 @@ export function buildDSTHeader({ label, stitchCount, colorChanges, bounds, final
  * @param {boolean} params.ce01Strict — add EOF 0x1A at end
  * @returns {{ blob, bytes, meta }}
  */
-export function buildDSTFile({ label, stitchPoints, colorChanges = 0, ce01Strict = true }) {
+export function buildDSTFile({ label, stitchPoints = [], stitchPaths, colorChanges = 0, ce01Strict = true }) {
   const records = [];
   let prevX = 0, prevY = 0;
-  let minX = 0, maxX = 0, minY = 0, maxY = 0;
+  const paths = (stitchPaths || [stitchPoints])
+    .filter((path) => Array.isArray(path) && path.length > 0)
+    .map((path) => path.map(([x, y]) => [Math.round(x), Math.round(y)]));
 
-  for (const [absX, absY] of stitchPoints) {
-    const totalDx = Math.round(absX - prevX);
-    const totalDy = Math.round(absY - prevY);
-    const moveRecords = encodeDSTMove(totalDx, totalDy, 'stitch');
-    for (const rec of moveRecords) records.push(rec);
-    prevX = absX;
-    prevY = absY;
-    if (absX < minX) minX = absX;
-    if (absX > maxX) maxX = absX;
-    if (absY < minY) minY = absY;
-    if (absY > maxY) maxY = absY;
+  const appendTravel = (absX, absY) => {
+    const startX = prevX;
+    const startY = prevY;
+    const totalDx = absX - startX;
+    const totalDy = absY - startY;
+    if (totalDx === 0 && totalDy === 0) return;
+    const steps = Math.max(1, Math.ceil(Math.hypot(totalDx, totalDy) / 50));
+    for (let step = 1; step <= steps; step += 1) {
+      const nextX = Math.round(startX + totalDx * step / steps);
+      const nextY = Math.round(startY + totalDy * step / steps);
+      records.push(encodeDSTDelta(nextX - prevX, nextY - prevY, 'jump'));
+      prevX = nextX;
+      prevY = nextY;
+    }
+  };
+
+  records.push(encodeDSTDelta(0, 0, 'jump'), encodeDSTDelta(0, 0, 'jump'));
+
+  for (const path of paths) {
+    appendTravel(path[0][0], path[0][1]);
+    for (const [absX, absY] of path.slice(1)) {
+      const moveRecords = encodeDSTMove(absX - prevX, absY - prevY, 'stitch');
+      for (const rec of moveRecords) records.push(rec);
+      prevX = absX;
+      prevY = absY;
+    }
   }
+
+  appendTravel(0, 0);
 
   // END record
   records.push([0x00, 0x00, 0xF3]);
@@ -269,7 +292,7 @@ export function buildDSTFile({ label, stitchPoints, colorChanges = 0, ce01Strict
   // ST = total 3-byte records (including END)
   const recordCount = records.length;
   const stitchCount = recordCount; // includes END per CE01 convention
-  const bounds = { plusX: maxX, minusX: -minX, plusY: maxY, minusY: -minY };
+  let bounds;
 
   // ── Recalculate bounds from decoded records ──
   let cumX = 0, cumY = 0;
@@ -288,6 +311,7 @@ export function buildDSTFile({ label, stitchPoints, colorChanges = 0, ce01Strict
   const decodedBounds = {
     plusX: decMaxX, minusX: -decMinX, plusY: decMaxY, minusY: -decMinY,
   };
+  bounds = { ...decodedBounds };
 
   console.log('[dst-encoder] decoded bounds:', decodedBounds);
   console.log('[dst-encoder] header bounds:', bounds);
@@ -358,6 +382,10 @@ export function buildDSTFile({ label, stitchPoints, colorChanges = 0, ce01Strict
       finalY: prevY,
       fileSize: totalSize,
       colorChanges,
+      stitchRecordCount: records.filter((record) => decodeDSTRecord(record).flag === 'stitch').length,
+      jumpRecordCount: records.filter((record) => decodeDSTRecord(record).flag === 'jump').length,
+      endRecordCount: records.filter((record) => decodeDSTRecord(record).flag === 'end').length,
+      headerTerminatorOffset: 124,
     },
   };
 }
@@ -366,4 +394,11 @@ export function buildDSTFile({ label, stitchPoints, colorChanges = 0, ce01Strict
 // Re-export for backward compatibility. DSB is now a real Barudan encoder,
 // not a DST clone.
 
-export { buildDSBFile, encodeDSBRecord, decodeDSBRecord, compareDSBToWilcom } from './dsbEncoder';
+export {
+  buildDSBFile,
+  encodeDSBRecord,
+  encodeLegacyDSBRecord,
+  encodeCE01DSBRecord,
+  decodeDSBRecord,
+  compareDSBToWilcom,
+} from './dsbEncoder.js';

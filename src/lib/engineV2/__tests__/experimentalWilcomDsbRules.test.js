@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { encodeLegacyDSBRecord } from '../../dsbEncoder.js';
 import { parseReferenceFile } from '../../referenceLearning/referenceFileParser.js';
 import { assessDSBReferenceStructuralAcceptance } from '../formatAdaptation/dsbBinaryAcceptance.js';
 import { decodeWilcomDSBRecord, parseEngineV2DSBBinary } from '../formatAdaptation/dsbBinaryParser.js';
@@ -159,9 +159,11 @@ describe('Phase 13B19S promoted Wilcom sign-magnitude family decoder', () => {
     });
   });
 
-  it('leaves the DSB encoder byte-wise unchanged', () => {
-    const encoderPath = fileURLToPath(new URL('../../dsbEncoder.js', import.meta.url));
-    expect(sha256(fs.readFileSync(encoderPath))).toBe('cce83ef329786d40a53a7c243327def1ea60d8fdbb68d0b077f0f8859ea14c79');
+  it('preserves the legacy low-level DSB record contract used by the disconnected pipeline', () => {
+    expect(encodeLegacyDSBRecord(7, 5, 'stitch')).toEqual([0x80, 0x05, 0x07]);
+    expect(encodeLegacyDSBRecord(-7, -5, 'stitch')).toEqual([0x80, 0xFB, 0xF9]);
+    expect(encodeLegacyDSBRecord(-7, 5, 'jump')).toEqual([0x81, 0x05, 0xF9]);
+    expect(encodeLegacyDSBRecord(0, 0, 'end')).toEqual([0xF8, 0x00, 0x00]);
   });
 });
 

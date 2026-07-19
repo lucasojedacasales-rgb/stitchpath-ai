@@ -1,4 +1,4 @@
-import { buildDSBHeader, decodeDSBRecord, encodeDSBRecord } from '../../dsbEncoder.js';
+import { buildDSBHeader, decodeDSBRecord, encodeLegacyDSBRecord as encodeDSBRecord } from '../../dsbEncoder.js';
 
 const HEADER_SIZE = 512; const EOF_BYTE = 0x1A; const RECORD_SIZE = 3;
 const issue = (code, path, message) => ({ code, path, message });

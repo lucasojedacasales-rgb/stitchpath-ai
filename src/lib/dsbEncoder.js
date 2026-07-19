@@ -7,8 +7,9 @@
  *   - 512-byte ASCII header (LA, ST, CO, +X, -X, +Y, -Y, AX, AY, MX, MY, PD)
  *   - 0x1A after PD field, padded to 512 bytes
  *   - 3-byte records: [commandByte, yByte, xByte]
- *   - Y and X are signed bytes (two's complement), 0.1mm units, range ±127
- *   - commandByte: 0x80=stitch, 0x81=jump, 0x88=colorChange, 0xF8=end
+ *   - CE01 movement payloads are absolute magnitudes in 0.1mm units
+ *   - X/Y sign bits are carried by the 0x20/0x40 command families
+ *   - commandByte low bit: 0=stitch, 1=jump; 0x88=colorChange, 0xF8=end
  *   - END record: [0xF8, 0x00, 0x00]
  *   - File ends with 0x1A
  *
@@ -45,7 +46,7 @@ function fromSignedByte(byte) {
 // ─── Encoder ────────────────────────────────────────────────────────────
 
 /**
- * Encodes a single DSB delta (dx, dy) with the given type.
+ * Encodes a legacy Engine V2 two's-complement DSB delta.
  * Returns [commandByte, yByte, xByte].
  *
  * @param {number} dx — delta X in 0.1mm units, range ±127
@@ -53,7 +54,7 @@ function fromSignedByte(byte) {
  * @param {string} type — 'stitch' | 'jump' | 'colorChange' | 'end'
  * @returns {[number, number, number]}
  */
-export function encodeDSBRecord(dx, dy, type = 'stitch') {
+export function encodeLegacyDSBRecord(dx, dy, type = 'stitch') {
   if (type === 'end') {
     return [COMMANDS.end, 0x00, 0x00];
   }
@@ -69,6 +70,30 @@ export function encodeDSBRecord(dx, dy, type = 'stitch') {
   return [cmd, toSignedByte(rdy), toSignedByte(rdx)];
 }
 
+/**
+ * Encodes the CE01-confirmed Wilcom sign-magnitude DSB movement profile.
+ * Sign bits live in the command byte; payload bytes are absolute magnitudes.
+ */
+export function encodeCE01DSBRecord(dx, dy, type = 'stitch') {
+  if (type === 'end') return [COMMANDS.end, 0x00, 0x00];
+  if (type === 'colorChange') return [COMMANDS.colorChange, 0x00, 0x00];
+
+  const rdx = Math.round(dx);
+  const rdy = Math.round(dy);
+  if (Math.abs(rdx) > MAX_DELTA || Math.abs(rdy) > MAX_DELTA) {
+    throw new Error(`[dsb-encoder] CE01 delta fuera de rango: dx=${rdx} dy=${rdy} (max Â±${MAX_DELTA})`);
+  }
+
+  let command = type === 'jump' ? COMMANDS.jump : COMMANDS.stitch;
+  if (rdx < 0) command |= 0x20;
+  if (rdy < 0) command |= 0x40;
+  return [command, Math.abs(rdy), Math.abs(rdx)];
+}
+
+export function encodeDSBRecord(dx, dy, type = 'stitch') {
+  return encodeCE01DSBRecord(dx, dy, type);
+}
+
 // ─── Decoder ────────────────────────────────────────────────────────────
 
 /**
@@ -81,15 +106,30 @@ export function decodeDSBRecord(record) {
   const yByte = record[1];
   const xByte = record[2];
 
-  const dy = fromSignedByte(yByte);
-  const dx = fromSignedByte(xByte);
+  if (command === COMMANDS.end) return { command, dx: 0, dy: 0, type: 'end', movementFamily: 'control' };
+  if (command === COMMANDS.colorChange) {
+    return { command, dx: 0, dy: 0, type: 'colorChange', movementFamily: 'control' };
+  }
 
-  let type = 'stitch';
-  if (command === COMMANDS.end) type = 'end';
-  else if (command === COMMANDS.jump) type = 'jump';
-  else if (command === COMMANDS.colorChange) type = 'colorChange';
+  const signMagnitudeCommand = (command & 0x9E) === 0x80;
+  const signMagnitudePayload = xByte <= MAX_DELTA && yByte <= MAX_DELTA;
+  if (signMagnitudeCommand && signMagnitudePayload) {
+    return {
+      command,
+      dx: (command & 0x20) !== 0 ? -xByte : xByte,
+      dy: (command & 0x40) !== 0 ? -yByte : yByte,
+      type: (command & 0x01) !== 0 ? 'jump' : 'stitch',
+      movementFamily: 'Wilcom_sign_magnitude',
+    };
+  }
 
-  return { command, dx, dy, type };
+  return {
+    command,
+    dx: fromSignedByte(xByte),
+    dy: fromSignedByte(yByte),
+    type: command === COMMANDS.jump ? 'jump' : 'stitch',
+    movementFamily: 'legacy_engine_v2_twos_complement',
+  };
 }
 
 // ─── Roundtrip validation ───────────────────────────────────────────────
@@ -139,21 +179,43 @@ export function encodeDSBMove(dx, dy, type = 'stitch') {
   return records;
 }
 
+export function encodeCE01DSBMove(dx, dy, type = 'stitch') {
+  const rdx = Math.round(dx);
+  const rdy = Math.round(dy);
+  const steps = Math.max(
+    1,
+    Math.ceil(Math.abs(rdx) / MAX_DELTA),
+    Math.ceil(Math.abs(rdy) / MAX_DELTA)
+  );
+
+  const records = [];
+  for (let step = 1; step <= steps; step += 1) {
+    const stepDx = Math.round(rdx * step / steps) - Math.round(rdx * (step - 1) / steps);
+    const stepDy = Math.round(rdy * step / steps) - Math.round(rdy * (step - 1) / steps);
+    records.push(encodeCE01DSBRecord(stepDx, stepDy, type));
+  }
+  return records;
+}
+
 // ─── Header builder (512 bytes, CR line breaks, 0x1A after PD) ──────────
 
 export function buildDSBHeader({ label, stitchCount, colorChanges, bounds, finalX, finalY }) {
+  const signed = (value) => {
+    const rounded = Math.round(value);
+    return `${rounded < 0 ? '-' : '+'}${String(Math.abs(rounded)).padStart(5, ' ')}`;
+  };
   const fields = [
     `LA:${(label || 'design').padEnd(16, ' ').substring(0, 16)}`,
-    `ST:${String(stitchCount).padStart(6, ' ')}`,
-    `CO:${String(colorChanges).padStart(4, ' ')}`,
-    `+X:${String(bounds.plusX).padStart(6, ' ')}`,
-    `-X:${String(bounds.minusX).padStart(6, ' ')}`,
-    `+Y:${String(bounds.plusY).padStart(6, ' ')}`,
-    `-Y:${String(bounds.minusY).padStart(6, ' ')}`,
-    `AX:${String(finalX).padStart(6, ' ')}`,
-    `AY:${String(finalY).padStart(6, ' ')}`,
-    `MX:${String(0).padStart(6, ' ')}`,
-    `MY:${String(0).padStart(6, ' ')}`,
+    `ST:${String(stitchCount).padStart(7, ' ')}`,
+    `CO:${String(colorChanges).padStart(3, ' ')}`,
+    `+X:${String(bounds.plusX).padStart(5, ' ')}`,
+    `-X:${String(bounds.minusX).padStart(5, ' ')}`,
+    `+Y:${String(bounds.plusY).padStart(5, ' ')}`,
+    `-Y:${String(bounds.minusY).padStart(5, ' ')}`,
+    `AX:${signed(finalX)}`,
+    `AY:${signed(finalY)}`,
+    `MX:${signed(0)}`,
+    `MY:${signed(0)}`,
     `PD:******`,
   ];
 
@@ -173,32 +235,49 @@ export function buildDSBHeader({ label, stitchCount, colorChanges, bounds, final
  * @param {boolean} params.ce01Strict — add EOF 0x1A at end
  * @returns {{ blob, bytes, meta }}
  */
-export function buildDSBFile({ label, stitchPoints, colorChanges = 0, ce01Strict = true }) {
+export function buildDSBFile({ label, stitchPoints = [], stitchPaths, colorChanges = 0, ce01Strict = true }) {
   console.log('[dsb-encoder] enabled: true');
 
   const records = [];
   let prevX = 0, prevY = 0;
-  let minX = 0, maxX = 0, minY = 0, maxY = 0;
+  const paths = (stitchPaths || [stitchPoints])
+    .filter((path) => Array.isArray(path) && path.length > 0)
+    .map((path) => path.map(([x, y]) => [Math.round(x), Math.round(y)]));
 
-  for (const [absX, absY] of stitchPoints) {
-    const totalDx = Math.round(absX - prevX);
-    const totalDy = Math.round(absY - prevY);
-    const moveRecords = encodeDSBMove(totalDx, totalDy, 'stitch');
-    for (const rec of moveRecords) records.push(rec);
-    prevX = absX;
-    prevY = absY;
-    if (absX < minX) minX = absX;
-    if (absX > maxX) maxX = absX;
-    if (absY < minY) minY = absY;
-    if (absY > maxY) maxY = absY;
+  const appendTravel = (absX, absY) => {
+    const startX = prevX;
+    const startY = prevY;
+    const totalDx = absX - startX;
+    const totalDy = absY - startY;
+    if (totalDx === 0 && totalDy === 0) return;
+    const steps = Math.max(1, Math.ceil(Math.hypot(totalDx, totalDy) / 50));
+    for (let step = 1; step <= steps; step += 1) {
+      const nextX = Math.round(startX + totalDx * step / steps);
+      const nextY = Math.round(startY + totalDy * step / steps);
+      records.push(encodeCE01DSBRecord(nextX - prevX, nextY - prevY, 'jump'));
+      prevX = nextX;
+      prevY = nextY;
+    }
+  };
+
+  for (const path of paths) {
+    appendTravel(path[0][0], path[0][1]);
+    for (const [absX, absY] of path.slice(1)) {
+      const moveRecords = encodeCE01DSBMove(absX - prevX, absY - prevY, 'stitch');
+      for (const rec of moveRecords) records.push(rec);
+      prevX = absX;
+      prevY = absY;
+    }
   }
+
+  appendTravel(0, 0);
 
   // END record: [0xF8, 0x00, 0x00]
   records.push([COMMANDS.end, 0x00, 0x00]);
 
   const recordCount = records.length;
   const stitchCount = recordCount; // includes END per CE01 convention
-  const bounds = { plusX: maxX, minusX: -minX, plusY: maxY, minusY: -minY };
+  let bounds;
 
   // ── Recalculate bounds from decoded records ──
   let cumX = 0, cumY = 0;
@@ -222,6 +301,7 @@ export function buildDSBFile({ label, stitchPoints, colorChanges = 0, ce01Strict
   const decodedBounds = {
     plusX: decMaxX, minusX: -decMinX, plusY: decMaxY, minusY: -decMinY,
   };
+  bounds = { ...decodedBounds };
 
   console.log('[dsb-encoder] command distribution:', cmdDist);
   console.log('[dsb-encoder] header:', { stitchCount, colorChanges, bounds, finalX: prevX, finalY: prevY });
@@ -298,6 +378,12 @@ export function buildDSBFile({ label, stitchPoints, colorChanges = 0, ce01Strict
       fileSize: totalSize,
       colorChanges,
       commandDistribution: cmdDist,
+      stitchRecordCount: records.filter((record) => decodeDSBRecord(record).type === 'stitch').length,
+      jumpRecordCount: records.filter((record) => decodeDSBRecord(record).type === 'jump').length,
+      endRecordCount: records.filter((record) => decodeDSBRecord(record).type === 'end').length,
+      legacyMovementCount: records.filter((record) => decodeDSBRecord(record).movementFamily === 'legacy_engine_v2_twos_complement').length,
+      signMagnitudeMovementCount: records.filter((record) => decodeDSBRecord(record).movementFamily === 'Wilcom_sign_magnitude').length,
+      headerTerminatorOffset: 124,
     },
   };
 }
@@ -393,8 +479,8 @@ export function compareDSBToWilcom(referenceBuffer, generatedBuffer) {
 
       if (cmd === COMMANDS.end) { hasEnd = true; break; }
 
-      const dy = fromSignedByte(yByte);
-      const dx = fromSignedByte(xByte);
+      const decoded = decodeDSBRecord([cmd, yByte, xByte]);
+      const { dx, dy } = decoded;
       cumX += dx;
       cumY += dy;
       if (cumX < minX) minX = cumX;
@@ -402,9 +488,9 @@ export function compareDSBToWilcom(referenceBuffer, generatedBuffer) {
       if (cumY < minY) minY = cumY;
       if (cumY > maxY) maxY = cumY;
 
-      if (cmd === COMMANDS.stitch) stitches++;
-      else if (cmd === COMMANDS.jump) jumps++;
-      else if (cmd === COMMANDS.colorChange) colorChanges++;
+      if (decoded.type === 'stitch') stitches++;
+      else if (decoded.type === 'jump') jumps++;
+      else if (decoded.type === 'colorChange') colorChanges++;
     }
 
     return {
