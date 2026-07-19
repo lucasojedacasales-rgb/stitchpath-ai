@@ -7,7 +7,7 @@ export const DEFAULT_PHYSICAL_GENERATION_CONFIG = Object.freeze({
   maximumClosedRunningOverlapRatio: 0.35, blockUnsupportedGeometry: true, blockGeneratorFailure: true,
   blockPointLimitExceeded: true, generateCanonicalCommands: false, generateJumpCommands: false, generateTrimCommands: false,
   generateColorChangeCommands: false, machineAdaptation: false, encoding: false, conservativeMode: true,
-  experimentalPhysicalMmStitchLengthInvariant: false,
+  experimentalPhysicalMmStitchLengthInvariant: true,
 });
 const PROFILE_OVERRIDES = Object.freeze({ fast: { coordinatePrecisionDecimals: 5 }, balanced: {}, detailed: { coordinatePrecisionDecimals: 7 } });
 

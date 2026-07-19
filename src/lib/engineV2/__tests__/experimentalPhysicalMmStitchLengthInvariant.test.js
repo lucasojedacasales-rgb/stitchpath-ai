@@ -60,18 +60,25 @@ function probe(scale) {
   };
 }
 
-describe('Phase 13B19R experimental physical-mm stitch-length invariant', () => {
-  it('defaults false and remains independent', () => {
-    expect(DEFAULT_PHYSICAL_GENERATION_CONFIG.experimentalPhysicalMmStitchLengthInvariant).toBe(false);
-    const enabled = resolvePhysicalGenerationConfig({ experimentalPhysicalMmStitchLengthInvariant: true });
-    expect(enabled.experimentalPhysicalMmStitchLengthInvariant).toBe(true);
-    expect(enabled.encoding).toBe(false);
+describe('Phase 13B19S promoted physical-mm stitch-length invariant', () => {
+  it('defaults true and retains an independent force-disable kill switch', () => {
+    expect(DEFAULT_PHYSICAL_GENERATION_CONFIG.experimentalPhysicalMmStitchLengthInvariant).toBe(true);
+    const disabled = resolvePhysicalGenerationConfig({ experimentalPhysicalMmStitchLengthInvariant: false });
+    expect(disabled.experimentalPhysicalMmStitchLengthInvariant).toBe(false);
+    expect(disabled.encoding).toBe(false);
   });
 
   it('preserves exact flag-off output parity', () => {
+    const first = createTatamiPhysicalFixture({ config: { experimentalPhysicalMmStitchLengthInvariant: false } });
+    const second = createTatamiPhysicalFixture({ config: { experimentalPhysicalMmStitchLengthInvariant: false } });
+    expect(second.physicalPlan).toEqual(first.physicalPlan);
+    expect(stableHash(first.physicalPlan)).toBe('71160a8b8ff6d7ff053c40f35f130593405e01a93d074f2aee4e80e3d23b55fd');
+  });
+
+  it('makes implicit promoted behavior identical to explicit flag-on behavior', () => {
     const implicit = createTatamiPhysicalFixture();
-    const explicit = createTatamiPhysicalFixture({ config: { experimentalPhysicalMmStitchLengthInvariant: false } });
-    expect(explicit.physicalPlan).toEqual(implicit.physicalPlan);
+    const explicit = createTatamiPhysicalFixture({ config: { experimentalPhysicalMmStitchLengthInvariant: true } });
+    expect(implicit.physicalPlan).toEqual(explicit.physicalPlan);
   });
 
   it.each([
