@@ -4,6 +4,78 @@ const issue = (code, path, message) => ({ code, path, message });
 const equalBytes = (left, right) => left?.length === right?.length && left.every((value, index) => value === right[index]);
 const xorChecksum = bytes => bytes.reduce((checksum, byte) => checksum ^ byte, 0);
 
+function contiguousRunCount(records, predicate) {
+  let count = 0;
+  let active = false;
+  records.forEach(record => {
+    const matches = predicate(record);
+    if (matches && !active) count += 1;
+    active = matches;
+  });
+  return count;
+}
+
+export function collectDSBReferenceComplexityMetrics(parsedResult) {
+  const records = parsedResult?.records || [];
+  const movementRecords = records.filter(record => ['stitch', 'jump'].includes(record.type));
+  const edgeVisits = new Map();
+  let previous = { xUnits: 0, yUnits: 0 };
+  movementRecords.forEach(record => {
+    if (record.type === 'stitch') {
+      const current = `${record.xUnits},${record.yUnits}`;
+      const prior = `${previous.xUnits},${previous.yUnits}`;
+      const edge = [prior, current].sort().join('|');
+      edgeVisits.set(edge, (edgeVisits.get(edge) || 0) + 1);
+    }
+    previous = { xUnits: record.xUnits, yUnits: record.yUnits };
+  });
+  return Object.freeze({
+    totalRecordCount: records.length,
+    stitchLikeMovementCount: records.filter(record => record.type === 'stitch').length,
+    jumpLikeMovementCount: records.filter(record => record.type === 'jump').length,
+    E7ControlCount: records.filter(record => record.rawControlByte === 0xE7).length,
+    opaqueStateControlCount: records.filter(record => record.type === 'opaqueStateControl').length,
+    movementRunCount: contiguousRunCount(records, record => ['stitch', 'jump'].includes(record.type)),
+    sewnRunCount: contiguousRunCount(records, record => record.type === 'stitch'),
+    repeatedUndirectedEdgeCount: [...edgeVisits.values()].reduce((sum, visits) => sum + Math.max(0, visits - 1), 0),
+    fileByteSize: parsedResult?.bytesLength ?? 0,
+    classificationRole: 'descriptive_only_not_quality_evidence',
+  });
+}
+
+export function assessDSBReferenceStructuralAcceptance({ parsedResult, rawMetrics = null, config = {} }) {
+  const experimentalEnabled = config.experimentalRawComplexityQualityNeutrality === true;
+  const metrics = rawMetrics || collectDSBReferenceComplexityMetrics(parsedResult);
+  if (!experimentalEnabled) {
+    return Object.freeze({
+      evaluated: false,
+      accepted: null,
+      structuralValidity: null,
+      qualityFailure: null,
+      experimentalRawComplexityQualityNeutrality: false,
+      rawComplexityAffectsAcceptance: null,
+      metrics,
+      errors: Object.freeze([]),
+      warnings: Object.freeze([]),
+    });
+  }
+  const errors = (parsedResult?.errors || []).map(error => Object.freeze({ ...error }));
+  const structurallyValid = parsedResult?.valid === true && errors.length === 0;
+  return Object.freeze({
+    evaluated: true,
+    accepted: structurallyValid,
+    structuralValidity: structurallyValid,
+    qualityFailure: !structurallyValid,
+    experimentalRawComplexityQualityNeutrality: true,
+    rawComplexityAffectsAcceptance: false,
+    acceptedEvidenceClasses: Object.freeze(['valid_header_structure', 'exact_record_framing', 'single_final_end', 'final_eof', 'supported_critical_commands', 'bounds_and_final_position_reconstruction']),
+    neutralDescriptiveFields: Object.freeze(['totalRecordCount', 'jumpLikeMovementCount', 'E7ControlCount', 'opaqueStateControlCount', 'movementRunCount', 'repeatedUndirectedEdgeCount', 'fileByteSize']),
+    metrics,
+    errors: Object.freeze(errors),
+    warnings: Object.freeze([]),
+  });
+}
+
 function verifyRecord(plan, record) {
   if (!plan || !record) return false;
   const expectedY = plan.dyUnits < 0 ? plan.dyUnits + 256 : plan.dyUnits;

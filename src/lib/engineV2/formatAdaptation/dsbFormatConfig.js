@@ -3,6 +3,7 @@ const KNOWN_FIELDS = Object.freeze([
   'trimNoOutputAcknowledgement', 'requireFinalEnd', 'requireImplicitInitialColor', 'label', 'preserveSourceOrder',
   'preserveThreadBlockOrder', 'preserveThreadIds', 'preserveTrimLineage', 'allowPartialAdapterOutput', 'allowPartialBinaryOutput',
   'invokeExistingDSBLowLevelEncoder', 'invokeDSTEncoder', 'invokeBase44', 'connectApplication', 'CE01ArtworkLogic', 'conservativeMode',
+  'experimentalWilcomDsbSignMagnitudeFamilyDecode', 'experimentalRawComplexityQualityNeutrality',
 ]);
 
 export const DSB_ZERO_STITCH_POLICIES = Object.freeze(['encode_penetration', 'block']);
@@ -16,6 +17,7 @@ export const DEFAULT_DSB_FORMAT_CONFIG = Object.freeze({
   preserveSourceOrder: true, preserveThreadBlockOrder: true, preserveThreadIds: true, preserveTrimLineage: true,
   allowPartialAdapterOutput: false, allowPartialBinaryOutput: false, invokeExistingDSBLowLevelEncoder: true,
   invokeDSTEncoder: false, invokeBase44: false, connectApplication: false, CE01ArtworkLogic: false, conservativeMode: true,
+  experimentalWilcomDsbSignMagnitudeFamilyDecode: false, experimentalRawComplexityQualityNeutrality: false,
   extras: Object.freeze({}),
 });
 
@@ -44,5 +46,6 @@ export function validateDSBFormatConfig(input = {}) {
   requiredTrue.forEach(key => { if (config[key] !== true) errors.push(issue('DSB_CONSERVATIVE_INVARIANT_REQUIRED', key, `${key} must remain true.`)); });
   requiredFalse.forEach(key => { if (config[key] !== false) errors.push(issue('DSB_FORBIDDEN_OPTION_ENABLED', key, `${key} must remain false.`)); });
   if (typeof config.label !== 'string' || !config.label.trim()) errors.push(issue('DSB_LABEL_REQUIRED', 'label', 'A non-empty label is required.'));
+  ['experimentalWilcomDsbSignMagnitudeFamilyDecode', 'experimentalRawComplexityQualityNeutrality'].forEach(key => { if (typeof config[key] !== 'boolean') errors.push(issue('INVALID_DSB_EXPERIMENTAL_FEATURE_FLAG', key, `${key} must be boolean.`)); });
   return { valid: errors.length === 0, config, errors, warnings: [] };
 }

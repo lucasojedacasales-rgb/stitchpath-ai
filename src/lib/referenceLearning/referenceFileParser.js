@@ -18,6 +18,8 @@
 
 import { decodeDSTRecord } from '@/lib/dstEncoder';
 import { decodeDSBRecord } from '@/lib/dsbEncoder';
+import { parseEngineV2DSBBinary } from '@/lib/engineV2/formatAdaptation/dsbBinaryParser';
+import { assessDSBReferenceStructuralAcceptance, collectDSBReferenceComplexityMetrics } from '@/lib/engineV2/formatAdaptation/dsbBinaryAcceptance';
 
 const HEADER_SIZE = 512;
 const RECORD_SIZE = 3;
@@ -103,25 +105,45 @@ function iterateRecords(bytes, decodeFn) {
  * @param {string} filename
  * @returns {{ filename, format, commands, header, metadata, parseWarnings }}
  */
-export function parseReferenceFile(buffer, filename = 'reference') {
+export function parseReferenceFile(buffer, filename = 'reference', options = {}) {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   const ext = (filename.split('.').pop() || '').toUpperCase();
   const format = ext === 'DSB' ? 'DSB' : 'DST';
   const parseWarnings = [];
+  const experimentalWilcomDsbSignMagnitudeFamilyDecode = options.experimentalWilcomDsbSignMagnitudeFamilyDecode === true;
+  const experimentalRawComplexityQualityNeutrality = options.experimentalRawComplexityQualityNeutrality === true;
+  const experimentalDSBAnalysisRequested = format === 'DSB' && (experimentalWilcomDsbSignMagnitudeFamilyDecode || experimentalRawComplexityQualityNeutrality);
+  const structuralParsedDSB = experimentalDSBAnalysisRequested
+    ? parseEngineV2DSBBinary(bytes, { experimentalWilcomDsbSignMagnitudeFamilyDecode: true })
+    : null;
 
   if (bytes.length < HEADER_SIZE + RECORD_SIZE) {
-    return {
+    const result = {
       filename, format,
       commands: [],
       header: null,
       metadata: emptyMetadata(),
       parseWarnings: ['File too small to contain any stitch record.'],
     };
+    if (!experimentalDSBAnalysisRequested) return result;
+    const rawComplexityMetrics = collectDSBReferenceComplexityMetrics(structuralParsedDSB);
+    return {
+      ...result,
+      experimentalFeatureFlags: {
+        experimentalWilcomDsbSignMagnitudeFamilyDecode,
+        experimentalRawComplexityQualityNeutrality,
+      },
+      dsbStructuralParse: structuralParsedDSB,
+      rawComplexityMetrics,
+      structuralAcceptance: experimentalRawComplexityQualityNeutrality
+        ? assessDSBReferenceStructuralAcceptance({ parsedResult: structuralParsedDSB, rawMetrics: rawComplexityMetrics, config: { experimentalRawComplexityQualityNeutrality } })
+        : null,
+    };
   }
 
-  const header = parseAsciiHeader(bytes);
+  const header = experimentalWilcomDsbSignMagnitudeFamilyDecode ? structuralParsedDSB.header : parseAsciiHeader(bytes);
   const decodeFn = format === 'DSB' ? decodeDSBRecord : decodeDSTRecord;
-  const decodedRecords = iterateRecords(bytes, decodeFn);
+  const decodedRecords = experimentalWilcomDsbSignMagnitudeFamilyDecode ? structuralParsedDSB.records : iterateRecords(bytes, decodeFn);
 
   // Convert decoded deltas to absolute commands in mm
   const commands = [];
@@ -136,9 +158,26 @@ export function parseReferenceFile(buffer, filename = 'reference') {
       commands.push({ type: 'end', x: x * UNIT_MM, y: y * UNIT_MM, index: commands.length });
       break;
     }
+    if (flag === 'opaqueControl' || flag === 'opaqueStateControl' || flag === 'unknownCriticalControl') {
+      commands.push({
+        type: 'control',
+        controlType: flag,
+        x: x * UNIT_MM,
+        y: y * UNIT_MM,
+        index: commands.length,
+        rawControlByte: r.rawControlByte,
+        rawRecordBytes: r.rawRecordBytes,
+        controlFamily: r.controlFamily,
+        literalControlValue: r.literalControlValue,
+        decodedDelta: r.decodedDelta,
+        parserConfidence: r.parserConfidence,
+        physicalSemanticStatus: r.physicalSemanticStatus,
+      });
+      continue;
+    }
     // accumulate delta for every record (jumps also move the head)
-    x += r.dx;
-    y += r.dy;
+    x += r.dx ?? r.dxUnits;
+    y += r.dy ?? r.dyUnits;
     const absX = x * UNIT_MM;
     const absY = y * UNIT_MM;
     if (flag === 'jump') {
@@ -156,9 +195,26 @@ export function parseReferenceFile(buffer, filename = 'reference') {
   if (commands.length === 0) {
     parseWarnings.push('No stitch records decoded.');
   }
+  if (experimentalWilcomDsbSignMagnitudeFamilyDecode && !structuralParsedDSB.valid) {
+    structuralParsedDSB.errors.forEach(error => parseWarnings.push(`${error.code}: ${error.message}`));
+  }
 
   const metadata = extractMetadata(commands, header, bytes.length);
-  return { filename, format, commands, header, metadata, parseWarnings };
+  const result = { filename, format, commands, header, metadata, parseWarnings };
+  if (!experimentalDSBAnalysisRequested) return result;
+  const rawComplexityMetrics = collectDSBReferenceComplexityMetrics(structuralParsedDSB);
+  return {
+    ...result,
+    experimentalFeatureFlags: {
+      experimentalWilcomDsbSignMagnitudeFamilyDecode,
+      experimentalRawComplexityQualityNeutrality,
+    },
+    dsbStructuralParse: structuralParsedDSB,
+    rawComplexityMetrics,
+    structuralAcceptance: experimentalRawComplexityQualityNeutrality
+      ? assessDSBReferenceStructuralAcceptance({ parsedResult: structuralParsedDSB, rawMetrics: rawComplexityMetrics, config: { experimentalRawComplexityQualityNeutrality } })
+      : null,
+  };
 }
 
 // ─── Metadata extraction ───────────────────────────────────────────────────────
@@ -280,9 +336,9 @@ function countStitches(commands, start, end) {
  * @param {File} file
  * @returns {Promise<object>} — same shape as parseReferenceFile
  */
-export async function parseReferenceFileFromFile(file) {
+export async function parseReferenceFileFromFile(file, options = {}) {
   const buffer = await file.arrayBuffer();
-  return parseReferenceFile(buffer, file.name);
+  return parseReferenceFile(buffer, file.name, options);
 }
 
 export const PARSE_CONSTANTS = {

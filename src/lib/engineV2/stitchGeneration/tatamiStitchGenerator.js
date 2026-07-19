@@ -11,6 +11,26 @@ function compensate(point, direction, amount, outwardSign) {
   return { x: point.x + direction.x * amount * outwardSign, y: point.y + direction.y * amount * outwardSign, sourceType: 'compensation_adjusted_endpoint' };
 }
 
+function linearTransformComponents(transform) {
+  if (!transform || typeof transform !== 'object') return null;
+  const a = transform.a ?? transform.scaleX; const d = transform.d ?? transform.scaleY;
+  const b = transform.b ?? 0; const c = transform.c ?? 0;
+  return [a, b, c, d].every(Number.isFinite) ? { a, b, c, d } : null;
+}
+
+export function resolveTatamiSamplingStep({ targetPhysicalStepMm, localDirection, modelToPhysicalTransform = null, coordinatesAlreadyPhysicalMm = true, experimentalEnabled = false }) {
+  if (!Number.isFinite(targetPhysicalStepMm) || targetPhysicalStepMm <= 0) return { valid: false, modelStepMm: null, physicalScaleAlongDirection: null, compensationApplied: false, reason: 'INVALID_TARGET_PHYSICAL_STEP' };
+  if (!experimentalEnabled || coordinatesAlreadyPhysicalMm) return { valid: true, modelStepMm: targetPhysicalStepMm, physicalScaleAlongDirection: 1, compensationApplied: false, reason: coordinatesAlreadyPhysicalMm ? 'COORDINATES_ALREADY_PHYSICAL_MM' : 'EXPERIMENTAL_FLAG_DISABLED' };
+  const transform = linearTransformComponents(modelToPhysicalTransform);
+  const length = Math.hypot(localDirection?.x ?? 0, localDirection?.y ?? 0);
+  if (!transform || !(length > 0)) return { valid: false, modelStepMm: null, physicalScaleAlongDirection: null, compensationApplied: false, reason: !transform ? 'MODEL_TO_PHYSICAL_TRANSFORM_REQUIRED' : 'LOCAL_DIRECTION_REQUIRED' };
+  const ux = localDirection.x / length; const uy = localDirection.y / length;
+  const tx = transform.a * ux + transform.c * uy; const ty = transform.b * ux + transform.d * uy;
+  const scale = Math.hypot(tx, ty);
+  if (!(scale > 0) || !Number.isFinite(scale)) return { valid: false, modelStepMm: null, physicalScaleAlongDirection: scale, compensationApplied: false, reason: 'NON_INVERTIBLE_DIRECTION_SCALE' };
+  return { valid: true, modelStepMm: targetPhysicalStepMm / scale, physicalScaleAlongDirection: scale, compensationApplied: true, reason: 'DIRECTION_DEPENDENT_MODEL_STEP_RESOLVED' };
+}
+
 export function generateTatamiRows({ object, technicalSpecification, config, technique = 'tatami', spacingOverride = null, angleOverride = null, targetOverride = null, phase = 'top' }) {
   const parameters = technicalSpecification.stitchParameters; const angle = angleOverride ?? technicalSpecification.fillAnglePlan?.normalizedAngleDegrees; const spacing = spacingOverride ?? parameters.spacingMm;
   const bounds = calculatePathBounds(object.geometry); const scanlines = generateParallelScanlineOrigins({ bounds, angleDegrees: angle, spacingMm: spacing, maximumScanlines: config.maximumScanlinesPerObject });
@@ -31,9 +51,13 @@ export function generateTatamiRows({ object, technicalSpecification, config, tec
       }
       const reverse = rowIndex % 2 === 1; const raw = reverse ? [end, start] : [start, end];
       const staggerScale = phase === 'top' && rowIndex % 2 ? 1 + (parameters.staggerRatio ?? 0) * 0.1 : 1;
-      const sampled = resampleOpenPolyline(raw, { targetStitchLengthMm: (targetOverride ?? parameters.targetStitchLengthMm) * staggerScale, minimumStitchLengthMm: parameters.minimumStitchLengthMm ?? Math.min(0.5, targetOverride ?? 1), maximumStitchLengthMm: parameters.maximumStitchLengthMm ?? Math.max(4, targetOverride ?? 2), tolerance: config.comparisonToleranceMm });
+      const targetPhysicalStepMm = (targetOverride ?? parameters.targetStitchLengthMm) * staggerScale;
+      const coordinatesAlreadyPhysicalMm = technicalSpecification.coordinateSpaceId !== 'model_space_pre_physical_transform';
+      const samplingStep = resolveTatamiSamplingStep({ targetPhysicalStepMm, localDirection: { x: raw[1].x - raw[0].x, y: raw[1].y - raw[0].y }, modelToPhysicalTransform: technicalSpecification.modelToPhysicalTransform, coordinatesAlreadyPhysicalMm, experimentalEnabled: config.experimentalPhysicalMmStitchLengthInvariant });
+      if (!samplingStep.valid) { errors.push({ code: samplingStep.reason, rowIndex }); return; }
+      const sampled = resampleOpenPolyline(raw, { targetStitchLengthMm: samplingStep.modelStepMm, minimumStitchLengthMm: parameters.minimumStitchLengthMm ?? Math.min(0.5, targetOverride ?? 1), maximumStitchLengthMm: parameters.maximumStitchLengthMm ?? Math.max(4, targetOverride ?? 2), tolerance: config.comparisonToleranceMm });
       warnings.push(...sampled.warnings); errors.push(...sampled.errors);
-      if (sampled.valid) { subpaths.push({ phase, technique, points: sampled.points.map((point, index) => ({ ...point, sourceType: index === 0 ? (raw[0].sourceType ?? point.sourceType ?? 'scanline_intersection') : index === sampled.points.length - 1 ? (raw[1].sourceType ?? point.sourceType ?? 'scanline_intersection') : (point.sourceType ?? 'scanline_intersection') })), closed: false, continuous: true, sourceTechnicalComponent: { rowIndex, angleDegrees: angle, spacingMm: spacing } }); generatedIntervalCount += 1; intervalLengthTotal += safe.lengthMm; }
+      if (sampled.valid) { const sourceTechnicalComponent = { rowIndex, angleDegrees: angle, spacingMm: spacing, ...(config.experimentalPhysicalMmStitchLengthInvariant ? { targetPhysicalStepMm, modelSamplingStepMm: samplingStep.modelStepMm, physicalScaleAlongDirection: samplingStep.physicalScaleAlongDirection, physicalMmInvariantCompensationApplied: samplingStep.compensationApplied } : {}) }; subpaths.push({ phase, technique, points: sampled.points.map((point, index) => ({ ...point, sourceType: index === 0 ? (raw[0].sourceType ?? point.sourceType ?? 'scanline_intersection') : index === sampled.points.length - 1 ? (raw[1].sourceType ?? point.sourceType ?? 'scanline_intersection') : (point.sourceType ?? 'scanline_intersection') })), closed: false, continuous: true, sourceTechnicalComponent }); generatedIntervalCount += 1; intervalLengthTotal += safe.lengthMm; }
     });
   });
   const pointCount = subpaths.reduce((sum, item) => sum + item.points.length, 0);
