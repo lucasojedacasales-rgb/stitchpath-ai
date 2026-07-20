@@ -10,9 +10,6 @@ export function useDecisionEngine() {
 
   const reset = useCallback(() => {
     abortRef.current = true;
-    // Clear abort flag after a tick so any in-flight analyze sees it, but
-    // a subsequent analyze() call in the same user action isn't pre-aborted.
-    setTimeout(() => { abortRef.current = false; }, 0);
     setStatus('idle');
     setResult(null);
     setError(null);
@@ -26,15 +23,9 @@ export function useDecisionEngine() {
     setError(null);
     setResult(null);
 
-    // Track any object URL created for this analysis so we can revoke on abort/error
-    let blobUrl = null;
-    if (imageSource instanceof File) {
-      blobUrl = URL.createObjectURL(imageSource);
-    }
-
     try {
       // Cargar imagen en canvas para análisis local
-      const img = await loadImageSource(imageSource instanceof File ? blobUrl : imageSource);
+      const img = await loadImageSource(imageSource);
       if (abortRef.current) return null;
       setProgress(30);
 
@@ -72,13 +63,10 @@ export function useDecisionEngine() {
       return decisionResult;
 
     } catch (err) {
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
       if (abortRef.current) return null;
       setError(err.message || 'Error en análisis');
       setStatus('error');
       return null;
-    } finally {
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
     }
   }, []);
 
@@ -89,17 +77,19 @@ export function useDecisionEngine() {
 
 // ─── Cargar imagen desde File, URL o HTMLImageElement ─────────────────────────
 
-// Accepts string URL or HTMLImageElement only — File handling is done in analyze() above
 function loadImageSource(source) {
   return new Promise((resolve, reject) => {
     if (source instanceof HTMLImageElement && source.complete) {
-      resolve(source); return;
+      resolve(source);
+      return;
     }
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload  = () => resolve(img);
+    img.onload = () => resolve(img);
     img.onerror = () => reject(new Error('No se pudo cargar la imagen'));
-    if (typeof source === 'string') {
+    if (source instanceof File) {
+      img.src = URL.createObjectURL(source);
+    } else if (typeof source === 'string') {
       img.src = source;
     } else if (source instanceof HTMLImageElement) {
       img.src = source.src;

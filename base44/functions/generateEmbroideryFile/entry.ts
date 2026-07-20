@@ -77,7 +77,7 @@ Deno.serve(async (req) => {
       file_name: fileName,
       format: formatUpper,
       stitch_count: optimizedStitches.filter(s => s.type === 'stitch').length,
-      color_changes: optimizedStitches.filter(s => s.type === 'colorChange').length,
+      color_changes: optimizedStitches.filter(s => s.type === 'color_change').length,
       metadata: {
         machine: machine_name || 'StitchFlow',
         speed_rpm: speed_rpm,
@@ -142,7 +142,7 @@ function generateStitchData(regions, width_mm, height_mm) {
     const color = hexToRgb(region.color || '#000000');
     
     // Cambio de color
-    stitches.push({ type: 'colorChange', color });
+    stitches.push({ type: 'color_change', color });
 
     // Puntos de contorno
     const contourStitches = pointsToStitches(points, width_mm, height_mm, scale);
@@ -311,7 +311,7 @@ function optimizeStitchPath(stitches) {
       lastY = stitch.y;
     } else {
       optimized.push(stitch);
-      if (stitch.type === 'colorChange') {
+      if (stitch.type === 'color_change') {
         lastX = 0; lastY = 0; // Reset después de cambio de color
       }
     }
@@ -328,7 +328,7 @@ function generateDST(stitches, width_mm, height_mm, machine, speed) {
   const enc = new TextEncoder();
   
   const stitchCount = stitches.filter(s => s.type === 'stitch').length;
-  const colorChanges = stitches.filter(s => s.type === 'colorChange').length;
+  const colorChanges = stitches.filter(s => s.type === 'color_change').length;
   
   const headerLines = [
     `LA:${(machine || 'StitchFlow').padEnd(16, ' ')}`,
@@ -374,7 +374,7 @@ function generateDST(stitches, width_mm, height_mm, machine, speed) {
       dataBytes.push(b1, b2, b3);
       cx = s.x;
       cy = s.y;
-    } else if (s.type === 'colorChange') {
+    } else if (s.type === 'color_change') {
       dataBytes.push(0xC3, 0xC3, 0xC3);
     } else if (s.type === 'trim') {
       dataBytes.push(0xC3, 0xC3, 0xC3); // trim = color change en DST
@@ -473,7 +473,7 @@ function generatePECData(stitches, width_mm, height_mm) {
       }
       lastX = s.x;
       lastY = s.y;
-    } else if (s.type === 'colorChange') {
+    } else if (s.type === 'color_change') {
       stitchBytes.push(0xFE, 0xB0);
     } else if (s.type === 'end') {
       stitchBytes.push(0xFF);
@@ -500,7 +500,7 @@ function generateJEF(stitches, width_mm, height_mm, machine, regions) {
   
   const view = new DataView(header.buffer);
   view.setInt32(4, stitches.filter(s => s.type === 'stitch').length, true);
-  view.setInt32(8, stitches.filter(s => s.type === 'colorChange').length, true);
+  view.setInt32(8, stitches.filter(s => s.type === 'color_change').length, true);
   view.setInt32(12, Math.round(width_mm * SCALE), true);
   view.setInt32(16, Math.round(height_mm * SCALE), true);
   
@@ -512,7 +512,7 @@ function generateJEF(stitches, width_mm, height_mm, machine, regions) {
       stitchBytes.push(dx & 0xFF, dy & 0xFF);
       lastX = s.x;
       lastY = s.y;
-    } else if (s.type === 'colorChange') {
+    } else if (s.type === 'color_change') {
       stitchBytes.push(0x80, 0x01);
     } else if (s.type === 'end') {
       stitchBytes.push(0x80, 0x10);
@@ -548,7 +548,7 @@ function generateDSB(stitches, width_mm, height_mm, machine) {
       stitchBytes.push((dx >> 8) & 0xFF, dx & 0xFF, (dy >> 8) & 0xFF, dy & 0xFF, 0x00);
       lastX = s.x;
       lastY = s.y;
-    } else if (s.type === 'colorChange') {
+    } else if (s.type === 'color_change') {
       stitchBytes.push(0x00, 0x00, 0x00, 0x00, 0x01);
     } else if (s.type === 'end') {
       stitchBytes.push(0x00, 0x00, 0x00, 0x00, 0xFF);

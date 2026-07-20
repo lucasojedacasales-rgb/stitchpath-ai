@@ -52,7 +52,7 @@ function greedyTSP(regions, startPos = [0, 0]) {
 
 // ─── Métricas de una secuencia ────────────────────────────────────────────────
 
-function computeMetrics(sequence, speedSpm = 800, jumpSpeedMmS = 300, designWidthMm = 100, designHeightMm = 100) {
+function computeMetrics(sequence, speedSpm = 800, jumpSpeedMmS = 300) {
   let totalJumps = 0;
   let totalJumpDistanceMm = 0;
   let colorChanges = 0;
@@ -60,8 +60,8 @@ function computeMetrics(sequence, speedSpm = 800, jumpSpeedMmS = 300, designWidt
   let prevColor = null;
   let prevPos = [0, 0];
 
-  // Scale: normalized [0,1] coords → mm using actual design diagonal
-  const SCALE = Math.sqrt(designWidthMm ** 2 + designHeightMm ** 2) / Math.SQRT2;
+  // Scale factor: normalized coords → mm (assume 100mm design)
+  const SCALE = 100;
 
   for (const region of sequence) {
     const c = centroid(region);
@@ -101,66 +101,46 @@ function computeMetrics(sequence, speedSpm = 800, jumpSpeedMmS = 300, designWidt
 // ─── Optimizador principal ────────────────────────────────────────────────────
 
 export function optimizeTravelPath(regions, config = {}) {
-  const { speedSpm = 800, width_mm = 100, height_mm = 100 } = config;
+  const { speedSpm = 800 } = config;
 
-  // Layer-priority guard: travelOptimizer must not reorder fills below satins.
-  // Sort by priority ascending (fills=1-3, satins=5-6, runs=8-10) before proximity
-  // optimization so that the TSP only reorders within priority-cohesive groups.
-  const prioritySorted = [...regions]
-    .filter(r => r.path_points?.length >= 3 && r.visible !== false)
-    .sort((a, b) => (a.priority ?? 5) - (b.priority ?? 5));
-
-  const valid = prioritySorted;
+  const valid = regions.filter(r => r.path_points?.length >= 3 && r.visible !== false);
   if (valid.length === 0) return null;
 
   // ── Métricas ANTES ─────────────────────────────────────────────────────────
-  const metricsBefore = computeMetrics(valid, speedSpm, 300, width_mm, height_mm);
+  const metricsBefore = computeMetrics(valid, speedSpm);
 
-  // ── Paso 1: Agrupar por (priority_band × color) ───────────────────────────
-  // Priority bands: fill=0 (p≤4), satin=1 (p5-7), run=2 (p≥8).
-  // Grouping by band+color ensures color proximity optimization never swaps
-  // a fill region after a satin (which would cause thread coverage errors).
-  const bandOf = (r) => {
-    const p = r.priority ?? 5;
-    if (p <= 4) return 0;
-    if (p <= 7) return 1;
-    return 2;
-  };
-
+  // ── Paso 1: Agrupar por color ─────────────────────────────────────────────
   const colorMap = {};
   for (const r of valid) {
-    const key = `${bandOf(r)}__${r.color || '#000000'}`;
-    if (!colorMap[key]) colorMap[key] = { color: r.color || '#000000', band: bandOf(r), regs: [] };
-    colorMap[key].regs.push(r);
+    const c = r.color || '#000000';
+    if (!colorMap[c]) colorMap[c] = [];
+    colorMap[c].push(r);
   }
 
-  // ── Paso 2: TSP dentro de cada grupo, ordenar grupos por band↑ luego área↓ ──
-  const colorGroups = Object.values(colorMap)
-    .sort((a, b) => a.band - b.band || b.regs.reduce((s, r) => s + (r.area_mm2 || 0), 0) - a.regs.reduce((s, r) => s + (r.area_mm2 || 0), 0))
-    .map(({ color, regs }) => {
-      const totalArea = regs.reduce((s, r) => s + (r.area_mm2 || 0), 0);
-      const optimizedRegs = greedyTSP(regs);
-      return { color, regs: optimizedRegs, totalArea };
-    });
+  // ── Paso 2: TSP dentro de cada grupo de color ─────────────────────────────
+  const colorGroups = Object.entries(colorMap).map(([color, regs]) => {
+    const totalArea = regs.reduce((s, r) => s + (r.area_mm2 || 0), 0);
+    const optimizedRegs = greedyTSP(regs);
+    return { color, regs: optimizedRegs, totalArea };
+  });
 
   // ── Paso 3: Ordenar grupos por cercanía (TSP de grupos) ───────────────────
-  // Attach pre-computed centroid to each group so greedyTSP can use it directly
-  // (group objects have no path_points, so centroid() would return [0.5, 0.5]).
-  const groupsWithCentroid = colorGroups.map(g => {
+  const groupCentroids = colorGroups.map(g => {
     const cs = g.regs.map(r => centroid(r));
-    const gc = [
+    return [
       cs.reduce((s, c) => s + c[0], 0) / cs.length,
       cs.reduce((s, c) => s + c[1], 0) / cs.length,
     ];
-    return { ...g, centroid: gc };
   });
 
-  const groupOrder = greedyTSP(groupsWithCentroid);
+  const groupOrder = greedyTSP(
+    colorGroups.map((g, i) => ({ ...g, centroid: groupCentroids[i] }))
+  );
 
   const optimizedSequence = groupOrder.flatMap(g => g.regs);
 
   // ── Métricas DESPUÉS ───────────────────────────────────────────────────────
-  const metricsAfter = computeMetrics(optimizedSequence, speedSpm, 300, width_mm, height_mm);
+  const metricsAfter = computeMetrics(optimizedSequence, speedSpm);
 
   // ── Cálculo de ahorro ──────────────────────────────────────────────────────
   const savings = {
@@ -181,7 +161,7 @@ export function optimizeTravelPath(regions, config = {}) {
   );
 
   return {
-    optimizedSequence,   // regions in optimized order (fills → satins → runs, then proximity)
+    optimizedSequence,   // regiones en orden optimizado
     before: metricsBefore,
     after:  metricsAfter,
     savings,

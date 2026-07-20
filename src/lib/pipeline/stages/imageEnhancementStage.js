@@ -9,9 +9,8 @@ import { getModeStrategy } from '../../digitizeModes.js';
 import { base44 } from '@/api/base44Client';
 
 export async function runImageEnhancement(ctx) {
-  const effectiveProfile = ctx.effectiveProfile || ctx.config?.effectiveProfile || null;
-  const strategy = getModeStrategy(effectiveProfile?.effectiveBaseEngine || ctx.config.mode || 'hybrid');
-  const settings = effectiveProfile?.effectivePreprocessSettings || strategy.preprocess || {};
+  const strategy = getModeStrategy(ctx.config.mode || 'hybrid');
+  const settings = strategy.preprocess || {};
 
   if (!settings.enabled) {
     ctx.enhanced = {
@@ -25,33 +24,10 @@ export async function runImageEnhancement(ctx) {
     return;
   }
 
-  let result;
-  try {
-    result = await preprocessImage(ctx.imageUrl, settings);
-  } catch (err) {
-    // Canvas tainted (CORS) or toBlob failed — fallback to original image
-    console.warn('[image_enhancement] preprocesado falló, usando imagen original:', err.message);
-    ctx.enhanced = {
-      originalUrl:     ctx.imageUrl,
-      enhancedUrl:     ctx.imageUrl,
-      blob:            null,
-      width:           ctx.analysis?.imageWidth  || 0,
-      height:          ctx.analysis?.imageHeight || 0,
-      appliedSettings: settings,
-    };
-    return;
-  }
+  const result = await preprocessImage(ctx.imageUrl, settings);
 
-  // Upload enhanced image so backend/Claude can access it.
-  // Convert Blob → File so the SDK serializes multipart correctly (raw Blob → empty object bug).
-  let file_url;
-  try {
-    const file = new File([result.blob], 'enhanced.png', { type: 'image/png' });
-    ({ file_url } = await base44.integrations.Core.UploadFile({ file }));
-  } catch (err) {
-    console.warn('[image_enhancement] subida falló, usando URL local del blob:', err.message);
-    file_url = result.url; // fallback to blob object URL
-  }
+  // Upload enhanced image so backend/Claude can access it
+  const { file_url } = await base44.integrations.Core.UploadFile({ file: result.blob });
 
   ctx.enhanced = {
     originalUrl:     ctx.imageUrl,

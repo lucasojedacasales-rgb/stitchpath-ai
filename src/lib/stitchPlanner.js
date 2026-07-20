@@ -11,8 +11,6 @@
  * - Score de viabilidad
  */
 
-import { computeStitchCount } from './stitchCount.js';
-
 // ─── Constantes de decisión ───────────────────────────────────────────────────
 
 const STITCH_RULES = {
@@ -43,18 +41,6 @@ const LAYER_ORDER = {
   satin:           2,
   fill:            3,
   detail:          4,
-};
-
-// ─── Region class → layer order (used when region_class is set) ───────────────
-// Ensures embroidery order: fills → micro_fills → details → inner outlines → outer outline
-const CLASS_LAYER_ORDER = {
-  fill:              3,  // large fills first
-  micro_fill:        4,  // small closed details after large fills
-  detail_run:        5,  // mouth, facial lines — on top of fills
-  detail_satin:      5,  // narrow satin details
-  decorative_detail: 5,  // other preserved details
-  inner_outline:     6,  // inner borders after details
-  outer_outline:     7,  // outer silhouette last — maximum definition
 };
 
 // ─── Clasificador de región ───────────────────────────────────────────────────
@@ -153,31 +139,34 @@ function isLightColor(hex) {
 }
 
 // ─── Secuenciación de color (min. saltos) ─────────────────────────────────────
-// Layer-first ordering: fills before satins before running — within each layer,
-// group by color to minimize thread changes. This preserves EIE travelOrder intent
-// (fills are background, satins are midground, run is detail/outline).
 
 function optimizeColorSequence(regionPlans) {
-  // Sort by layer first (fill=3 < satin=2 < run=1), then by EIE travelOrder when available,
-  // then group same-layer same-color together to minimize changes.
-  const layerSorted = [...regionPlans].sort((a, b) => {
-    // Use layerOrder from the plan (respects region_class when available)
-    const la = a.layerOrder || LAYER_ORDER[a.stitchType] || 0;
-    const lb = b.layerOrder || LAYER_ORDER[b.stitchType] || 0;
-    if (la !== lb) return la - lb; // base layers first
-    // Within same layer: group by color to minimize thread changes
-    if (a.color !== b.color) return a.color.localeCompare(b.color);
-    return 0;
-  });
-
-  // Count actual color changes in this sequence
-  let colorChanges = 0;
-  const uniqueColors = new Set(layerSorted.map(r => r.color)).size;
-  for (let i = 1; i < layerSorted.length; i++) {
-    if (layerSorted[i].color !== layerSorted[i - 1].color) colorChanges++;
+  // Agrupar por color, luego ordenar grupos por área descendente
+  const colorGroups = {};
+  for (const rp of regionPlans) {
+    const c = rp.color;
+    if (!colorGroups[c]) colorGroups[c] = [];
+    colorGroups[c].push(rp);
   }
 
-  return { sequenced: layerSorted, colorChanges, uniqueColors };
+  const groups = Object.entries(colorGroups)
+    .map(([color, plans]) => ({
+      color,
+      plans,
+      totalArea: plans.reduce((s, p) => s + (p.areaMm2 || 0), 0),
+    }))
+    .sort((a, b) => b.totalArea - a.totalArea);
+
+  // Dentro de cada grupo: ordenar por layer_order
+  const sequenced = [];
+  let colorChanges = 0;
+  for (const group of groups) {
+    group.plans.sort((a, b) => (LAYER_ORDER[a.stitchType] || 0) - (LAYER_ORDER[b.stitchType] || 0));
+    if (sequenced.length > 0) colorChanges++;
+    sequenced.push(...group.plans);
+  }
+
+  return { sequenced, colorChanges, uniqueColors: groups.length };
 }
 
 // ─── Advertencias de producción ───────────────────────────────────────────────
@@ -277,16 +266,7 @@ export function generateStitchPlan(regions, config = {}) {
   const regionPlans = regions
     .filter(r => r.path_points?.length >= 3)
     .map(region => {
-      // When region_class is set (by regionClassifier.js), use it directly
-      // for layer ordering instead of re-classifying by stitch type.
-      const classification = region.region_class
-        ? {
-            type:       region.stitch_type,
-            reason:     region.classification_reason || `Class: ${region.region_class}`,
-            confidence: 0.95,
-            class:      region.region_class,
-          }
-        : classifyRegion(region);
+      const classification = classifyRegion(region);
 
       // Angle: trust Adaptive Engine / contourTracer PCA, fallback to recompute
       const angle = resolveAngle(region);
@@ -305,24 +285,19 @@ export function generateStitchPlan(regions, config = {}) {
       const stitchLenMm = region.stitch_length_mm
         || (classification.type === 'satin' ? region.mean_width_mm || 3.0 : 3.0);
 
-      // Estimate stitches — canonical physical model matching regionBuilder.js
-      // Fill:   rows = area / (rowSpacing × stitchLength); stitchLength nominal 2.4mm
-      // Satin:  columns = (perim/2) / density — each pass = one needle penetration
-      // Run:    one stitch per 1.8mm of perimeter
+      // Estimate stitches using canonical formula (matches hybridDigitize)
       const area  = region.area_mm2     || 0;
       const perim = region.perimeter_mm || 1;
       let estimatedStitches = region.stitch_count || 0;
       if (!estimatedStitches) {
-        estimatedStitches = computeStitchCount(
-          { ...region, stitch_type: classification.type, area_mm2: area, perimeter_mm: perim, density },
-          density
-        );
+        if (classification.type === 'fill') {
+          estimatedStitches = Math.round(area * 2.5 * (1 / Math.max(0.25, density)));
+        } else if (classification.type === 'satin') {
+          estimatedStitches = Math.round(perim * 2 * (area / Math.max(1, perim)));
+        } else {
+          estimatedStitches = Math.round(perim / 1.5);
+        }
       }
-
-      // Layer order: prefer region_class mapping (new system) over stitch type
-      const layerOrder = classification.class
-        ? (CLASS_LAYER_ORDER[classification.class] || 3)
-        : (LAYER_ORDER[classification.type] || 0);
 
       return {
         regionId:          region.id,
@@ -338,7 +313,7 @@ export function generateStitchPlan(regions, config = {}) {
         pullCompensation:  region.pull_compensation || 0,
         underlay,
         estimatedStitches,
-        layerOrder,
+        layerOrder:        LAYER_ORDER[classification.type] || 0,
         adaptive:          region.adaptive || false,
       };
     });

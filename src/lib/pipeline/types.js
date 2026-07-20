@@ -248,7 +248,6 @@ export const PIPELINE_STAGES = [
   'image_analysis',
   'image_enhancement',
   'contour_engine',
-  'semantic_segmentation',
   'vector_engine',
   'region_builder',
   'stitch_planner',

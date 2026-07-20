@@ -14,20 +14,18 @@
  * 10. Auto gap closing (merge nearby contour endpoints)
  * 11. Noise removal (minimum area threshold)
  * 12. Geometric metrics (area, perimeter, compactness, PCA angle, inertia ratio)
- * 13. NUEVO: Polygon validation + auto-repair (closure, gaps, self-intersections)
  */
-
-import { validatePolygon, scorePolygonQuality } from '@/lib/contourValidation';
 
 const DEFAULTS = {
   analysisSize:       1024,   // px — higher = more sub-pixel accuracy
   minSegmentPx:       4.0,    // px — remove segments shorter than this
-  cornerAngleDeg:     130,    // deg — real sharp corners
-  rdpBaseEpsilon:     1.2,    // px — slightly tighter for small details
-  rdpCornerFactor:    0.25,   // multiplier — tighter epsilon near corners
-  chaikinPasses:      3,      // iterations of Chaikin subdivision
-  gapCloseThreshold:  12.0,   // px — auto-close gaps
-  minAreaPx:          60,     // px² — reduced: captures eyes, small details (was 180)
+  cornerAngleDeg:     150,    // deg — angle below this threshold = corner
+  rdpBaseEpsilon:     1.2,    // px — base RDP simplification tolerance (raised: was 0.9, caused micro-fragments)
+  rdpCornerFactor:    0.3,    // multiplier — tighter epsilon near corners
+  chaikinPasses:      2,      // iterations of Chaikin subdivision
+  gapCloseThreshold:  8.0,    // px — auto-close gaps smaller than this
+  minAreaPx:          120,    // px² — minimum blob area (raised from 48: filters JPEG noise blobs)
+  maxBgCoverage:      0.40,   // fraction — blob touching all 4 borders + covering >40% = background → drop
 };
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -50,40 +48,36 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
   cx.drawImage(img, 0, 0, W, H);
   const { data: pixels } = cx.getImageData(0, 0, W, H);
 
-  // 1. K-means++ quantization with perceptual Lab color space
+  // 1. K-means++ quantization
   const samples = [];
   for (let i = 0; i < W * H; i++) {
     if (pixels[i * 4 + 3] < 128) continue;
-    samples.push(rgbToLab(pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]));
+    samples.push([pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]]);
   }
   const k = Math.min(maxColors, Math.max(1, samples.length));
-  const paletteLab = kMeansPP(samples, k, 30); // more iterations for better convergence
-  // Convert palette back to RGB for downstream use
-  const palette = paletteLab.map(labToRgb);
+  const palette = kMeansPP(samples, k, 24);
 
-  // 2. Label map using Lab distance for perceptually accurate assignment
+  // 2. Label map (pixel → palette index, -1 = transparent)
   const labels = new Int32Array(W * H);
   for (let i = 0; i < W * H; i++) {
     if (pixels[i * 4 + 3] < 128) { labels[i] = -1; continue; }
-    const lab = rgbToLab(pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]);
-    labels[i] = nearestIdx(lab, paletteLab);
+    labels[i] = nearestIdx([pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]], palette);
   }
 
-  // 2b. Morphological closing per-color: fill 1-pixel gaps within same-color areas
-  // This prevents over-segmentation where JPEG noise splits a single shape (e.g. cheek)
-  // into multiple fragments. Dilate then erode each color mask by 1px.
-  morphologicalClose(labels, W, H, palette.length);
-
-  // Relative floor: 0.00015 of image area — at 1024px ≈ 157px minimum.
-  // Low enough to capture eyes (≈200–400px at 1024) and small details like nose.
-  // The minAreaPx absolute floor (60px) handles tiny designs at lower resolutions.
-  const minPixels = Math.max(cfg.minAreaPx, Math.floor(W * H * 0.00015));
+  // Relative floor raised to 0.0003 (was 0.00005) — prevents micro-blobs from JPEG artifacts
+  const minPixels = Math.max(cfg.minAreaPx, Math.floor(W * H * 0.0003));
   const regions = [];
 
   for (let ci = 0; ci < palette.length; ci++) {
     const blobs = findBlobs(labels, W, H, ci, minPixels);
 
     for (const blob of blobs) {
+      // Drop background blobs: k-means merges a near-black outline with the dark
+      // image background into one giant blob covering the whole frame. Detect by
+      // bbox touching all 4 borders + high coverage, and skip it — otherwise it
+      // renders as a huge dashed rectangle that obscures the real design.
+      if (isBackgroundBlob(blob, W, H, cfg.maxBgCoverage)) continue;
+
       // 3. Moore-neighbor integer trace
       let pts = mooreTrace(blob.mask, W, H);
       if (pts.length < 6) continue;
@@ -121,28 +115,22 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
         normalized.push([...first]);
       }
 
-      // 13. NUEVO: Validación de polígono con auto-repair (FASE 1)
-      // Esto garantiza closure, cierra gaps, detecta y repara intersecciones
-      const validation = validatePolygon(normalized, { autoRepair: true, tolerance: 0.005 });
-      const repairedPath = validation.repaired;
-      const qualityScore = scorePolygonQuality(repairedPath);
-
-      // 12. Geometric metrics (sobre polígono reparado para métricas fiables)
-      const areaNorm    = shoelaceArea(repairedPath);
+      // 12. Geometric metrics
+      const areaNorm    = shoelaceArea(normalized);
       let   perimNorm   = 0;
-      for (let i = 0; i < repairedPath.length - 1; i++) {
+      for (let i = 0; i < normalized.length - 1; i++) {
         perimNorm += Math.hypot(
-          repairedPath[i+1][0] - repairedPath[i][0],
-          repairedPath[i+1][1] - repairedPath[i][1],
+          normalized[i+1][0] - normalized[i][0],
+          normalized[i+1][1] - normalized[i][1],
         );
       }
       const compacidad    = perimNorm > 0 ? (4 * Math.PI * areaNorm) / (perimNorm ** 2) : 0;
-      const inertia_ratio = computeInertiaRatio(repairedPath);
-      const fill_angle    = computePCAAngle(repairedPath);
+      const inertia_ratio = computeInertiaRatio(normalized);
+      const fill_angle    = computePCAAngle(normalized);
       const bw            = (blob.bbox.maxX - blob.bbox.minX) / W;
       const bh            = (blob.bbox.maxY - blob.bbox.minY) / H;
-      const centroidX     = repairedPath.reduce((s, p) => s + p[0], 0) / repairedPath.length;
-      const centroidY     = repairedPath.reduce((s, p) => s + p[1], 0) / repairedPath.length;
+      const centroidX     = normalized.reduce((s, p) => s + p[0], 0) / normalized.length;
+      const centroidY     = normalized.reduce((s, p) => s + p[1], 0) / normalized.length;
 
       regions.push({
         hex:            rgbToHex(palette[ci]),
@@ -157,15 +145,10 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
         bbox_aspect:    bh > 0 ? bw / bh : 1,
         fill_angle,
         centroid:       [centroidX, centroidY],
-        path_points:    repairedPath,  // FASE 1: usar polígono validado
+        path_points:    normalized,
         bezier_handles: bezierHandles,
         corner_count:   smoothCorners.size,
         bbox:           blob.bbox,
-        _validation: {
-          isValid: validation.isValid,
-          errors: validation.errors,
-          qualityScore,  // 0-10: mayor = mejor para tatami/satin
-        }
       });
     }
   }
@@ -173,16 +156,10 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
   // 10. Auto gap closing across same-color regions
   autoCloseGaps(regions, cfg.gapCloseThreshold / Math.max(W, H));
 
-  // 11b. Background detection — remove the largest region that touches image borders.
-  // The background (fabric/tela) is NOT an embroidery region and must not generate stitches.
-  // Detection criteria: touches ≥3 of 4 image edges AND is the largest region, OR
-  // covers >35% of image AND touches ≥2 edges.
-  const filtered = removeBackgroundRegions(regions, W, H);
-
   // Sort largest first
-  filtered.sort((a, b) => b.pixelCount - a.pixelCount);
+  regions.sort((a, b) => b.pixelCount - a.pixelCount);
 
-  return { regions: filtered, imageWidth: img.width, imageHeight: img.height, analysisW: W, analysisH: H };
+  return { regions, imageWidth: img.width, imageHeight: img.height, analysisW: W, analysisH: H };
 }
 
 // ─── Step 4: Sub-pixel refinement ────────────────────────────────────────────
@@ -295,33 +272,17 @@ function chaikinClosed(pts, passes) {
 /**
  * Douglas-Peucker with adaptive epsilon: tighter near corners (preserves detail),
  * looser on smooth sections (reduces point count).
- *
- * Improvement: corner proximity is now checked with a ±2 index window on both sides,
- * catching compound curves where the peak deviation is slightly offset from the
- * detected corner. This prevents jagged artefacts on curved letters and petals.
- *
- * Impact: measurable — reduces "staircase" artefacts on circular/elliptical shapes
- * by ~60% in tests on logo text without increasing total point count.
  */
 function rdpAdaptive(pts, baseEps, cornerFactor) {
   if (pts.length <= 2) return pts;
 
+  // Re-detect corners on (possibly smoothed) point set for adaptive epsilon
   const corners = detectCorners(pts, 150);
-  const n = pts.length;
 
-  // Precompute a boolean mask: true if index is within 2 steps of a corner
-  const nearCornerMask = new Uint8Array(n);
-  for (const ci of corners) {
-    for (let d = -2; d <= 2; d++) {
-      const idx = (ci + d + n) % n;
-      nearCornerMask[idx] = 1;
-    }
-  }
-
-  const keep = new Uint8Array(n);
+  const keep = new Uint8Array(pts.length);
   keep[0] = 1;
-  keep[n - 1] = 1;
-  const stack = [[0, n - 1]];
+  keep[pts.length - 1] = 1;
+  const stack = [[0, pts.length - 1]];
 
   while (stack.length > 0) {
     const [s, e] = stack.pop();
@@ -330,7 +291,7 @@ function rdpAdaptive(pts, baseEps, cornerFactor) {
       const d = ptSegDist(pts[i], pts[s], pts[e]);
       if (d > maxDist) { maxDist = d; maxIdx = i; }
     }
-    const nearCorner = nearCornerMask[maxIdx] || nearCornerMask[s] || nearCornerMask[e];
+    const nearCorner = corners.has(maxIdx) || corners.has(s) || corners.has(e);
     const eps = nearCorner ? baseEps * cornerFactor : baseEps;
     if (maxDist > eps) {
       keep[maxIdx] = 1;
@@ -367,14 +328,11 @@ function removeShortSegments(pts, minPx) {
  */
 function computeBezierHandles(pts, corners) {
   const n = pts.length;
+  const tension = 0.3;
   return pts.map((pt, i) => {
     if (corners.has(i)) return null;
     const prev = pts[(i - 1 + n) % n];
     const next = pts[(i + 1) % n];
-    // Adaptive tension: shorter segments → tighter handles to avoid overshoot
-    const dPrev = Math.hypot(pt[0]-prev[0], pt[1]-prev[1]);
-    const dNext = Math.hypot(next[0]-pt[0], next[1]-pt[1]);
-    const tension = Math.max(0.15, Math.min(0.35, 0.25 / (1 + (dPrev + dNext) * 0.05)));
     const tx = (next[0] - prev[0]) * tension;
     const ty = (next[1] - prev[1]) * tension;
     return {
@@ -428,14 +386,16 @@ function autoCloseGaps(regions, maxGapNorm) {
 
 // ─── Moore-neighbor contour tracer ────────────────────────────────────────────
 
-/**
- * Traces a single contour boundary starting from a given pixel.
- * Used by mooreTraceAll to trace outer + inner (hole) contours.
- */
-function mooreTraceSingle(mask, W, H, startIdx) {
+function mooreTrace(mask, W, H) {
+  let start = -1;
+  for (let i = 0; i < mask.length; i++) {
+    if (mask[i]) { start = i; break; }
+  }
+  if (start === -1) return [];
+
   const dirs = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
   const contour = [];
-  let cx = startIdx % W, cy = Math.floor(startIdx / W);
+  let cx = start % W, cy = Math.floor(start / W);
   const sx = cx, sy = cy;
   let dir = 0;
 
@@ -456,127 +416,27 @@ function mooreTraceSingle(mask, W, H, startIdx) {
   return contour;
 }
 
-/**
- * Traces the outer boundary of a blob mask. Returns the outer contour only.
- * (Inner hole contours are detected separately in findBlobs and handled by
- * the pipeline as independent regions, which is correct for embroidery —
- * holes become separate satin/running regions sewn over the fill.)
- *
- * Impact: replacing the old single-contour trace with this named function
- * makes the intent explicit and prepares the codebase for future inner-contour
- * export (PES/DST hole handling) without breaking existing callers.
- */
-function mooreTrace(mask, W, H) {
-  // Find topmost-leftmost boundary pixel (guaranteed to be on outer boundary)
-  for (let i = 0; i < mask.length; i++) {
-    if (mask[i]) return mooreTraceSingle(mask, W, H, i);
-  }
-  return [];
-}
-
-// ─── Morphological closing (gap filling) ──────────────────────────────────────
-
-/**
- * Per-color morphological close (dilate 1px → erode 1px) on the label map.
- * Fills single-pixel gaps within same-color areas without merging different colors.
- * Prevents over-segmentation from JPEG noise / quantization artifacts.
- */
-function morphologicalClose(labels, W, H, numColors) {
-  // Dilate: for each pixel, if it's unassigned (-1) but has ≥2 same-color neighbors,
-  // assign it to that color. This fills 1px gaps.
-  const dilated = new Int32Array(labels);
-  for (let y = 1; y < H - 1; y++) {
-    for (let x = 1; x < W - 1; x++) {
-      const idx = y * W + x;
-      if (labels[idx] !== -1) continue;
-      // Count neighbor colors
-      const counts = {};
-      const ns = [labels[idx-1], labels[idx+1], labels[idx-W], labels[idx+W]];
-      for (const n of ns) {
-        if (n >= 0) counts[n] = (counts[n] || 0) + 1;
-      }
-      // Assign to color with ≥2 neighbors
-      for (const [c, cnt] of Object.entries(counts)) {
-        if (cnt >= 2) { dilated[idx] = parseInt(c); break; }
-      }
-    }
-  }
-  // Erode: for each pixel that was originally unassigned but got filled by dilation,
-  // check if it still has ≥2 same-color neighbors. If not, revert to -1.
-  for (let y = 1; y < H - 1; y++) {
-    for (let x = 1; x < W - 1; x++) {
-      const idx = y * W + x;
-      if (labels[idx] !== -1) continue; // only check newly filled pixels
-      const c = dilated[idx];
-      if (c < 0) continue;
-      const ns = [dilated[idx-1], dilated[idx+1], dilated[idx-W], dilated[idx+W]];
-      const cnt = ns.filter(n => n === c).length;
-      if (cnt < 2) dilated[idx] = -1; // revert — not enough support
-    }
-  }
-  labels.set(dilated);
-}
-
-// ─── Background detection ──────────────────────────────────────────────────────
-
-/**
- * Detects and removes background regions (fabric/tela that is NOT embroidery).
- * A region is background if:
- *   - Its bounding box touches ≥3 of 4 image edges AND it's the largest region, OR
- *   - It covers >35% of the image AND touches ≥2 edges
- * Returns the filtered region list (background removed).
- */
-function removeBackgroundRegions(regions, W, H) {
-  if (regions.length === 0) return regions;
-
-  const edgeMargin = 3; // px tolerance for "touching" an edge
-  // Compute the true largest region by pixel count — the old check compared
-  // identity with regions[0] (the first blob of the first color), which only
-  // worked when the largest region happened to be processed first.
-  let maxPixelCount = 0;
-  for (const r of regions) maxPixelCount = Math.max(maxPixelCount, r.pixelCount || 0);
-
-  const result = [];
-
-  for (const r of regions) {
-    const bb = r.bbox;
-    if (!bb) { result.push(r); continue; }
-
-    const touchesLeft   = bb.minX <= edgeMargin;
-    const touchesRight  = bb.maxX >= W - edgeMargin;
-    const touchesTop    = bb.minY <= edgeMargin;
-    const touchesBottom = bb.maxY >= H - edgeMargin;
-    const edgeCount = (touchesLeft ? 1 : 0) + (touchesRight ? 1 : 0) + (touchesTop ? 1 : 0) + (touchesBottom ? 1 : 0);
-
-    const coverage = r.pixelCount / (W * H);
-
-    // Background criteria
-    const isLargestAndBorders = (r.pixelCount === maxPixelCount) && maxPixelCount > 0 && edgeCount >= 3;
-    const isLargeAndBorders = coverage > 0.35 && edgeCount >= 2;
-
-    if (isLargestAndBorders || isLargeAndBorders) {
-      r._isBackground = true;
-      // Skip — don't include in result
-      continue;
-    }
-
-    result.push(r);
-  }
-
-  return result;
-}
-
 // ─── Connected-component blob detection ───────────────────────────────────────
 
+/**
+ * A background blob: its bbox touches all 4 image borders AND it covers a large
+ * fraction of the frame. This catches the k-means artifact where a near-black
+ * outline merges with the dark background into one frame-spanning mega-blob.
+ */
+function isBackgroundBlob(blob, W, H, maxCoverage) {
+  const coverage = blob.pixelCount / (W * H);
+  // Any single blob covering >55% of the frame is background, regardless of
+  // border contact (a hoop-filling color is never a real design region).
+  if (coverage > 0.55) return true;
+  const touchesAllBorders =
+    blob.bbox.minX <= 1 && blob.bbox.maxX >= W - 2 &&
+    blob.bbox.minY <= 1 && blob.bbox.maxY >= H - 2;
+  return touchesAllBorders && coverage > maxCoverage;
+}
+
 function findBlobs(labels, W, H, colorIdx, minPixels) {
-  // 4-connectivity: only cardinal neighbours. This correctly separates spatially
-  // disjoint regions of the same colour (e.g. left eye vs right eye, both black)
-  // that would otherwise merge under 8-connectivity via a single diagonal pixel.
-  // JPEG quantization gaps are handled upstream by K-means smoothing at the
-  // analysis resolution, so 4-connectivity is safe here.
   const visited = new Uint8Array(W * H);
   const blobs   = [];
-  const DIRS4   = [[-1,0],[1,0],[0,-1],[0,1]];
 
   for (let start = 0; start < W * H; start++) {
     if (labels[start] !== colorIdx || visited[start]) continue;
@@ -593,12 +453,10 @@ function findBlobs(labels, W, H, colorIdx, minPixels) {
       const x = idx % W, y = Math.floor(idx / W);
       if (x < minX) minX = x; if (x > maxX) maxX = x;
       if (y < minY) minY = y; if (y > maxY) maxY = y;
-
-      for (const [dx, dy] of DIRS4) {
-        const nx = x + dx, ny = y + dy;
-        if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
-        stack.push(ny * W + nx);
-      }
+      if (x > 0)     stack.push(idx - 1);
+      if (x < W - 1) stack.push(idx + 1);
+      if (y > 0)     stack.push(idx - W);
+      if (y < H - 1) stack.push(idx + W);
     }
 
     if (count >= minPixels) blobs.push({ mask, pixelCount: count, bbox: { minX, maxX, minY, maxY } });
@@ -608,28 +466,13 @@ function findBlobs(labels, W, H, colorIdx, minPixels) {
 
 // ─── K-means++ quantization ───────────────────────────────────────────────────
 
-/**
- * Deterministic K-means++ using a fixed LCG seed derived from the sample count
- * and mean Lab values. Same image → same palette across re-runs.
- * Impact: eliminates color region flapping between digitizations on the same image.
- */
 function kMeansPP(samples, k, iterations) {
   if (!samples.length) return [];
-
-  // Deterministic seed: derived from sample statistics (not Math.random)
-  // LCG parameters from Numerical Recipes
-  let seed = samples.length;
-  for (let i = 0; i < Math.min(samples.length, 64); i++) {
-    seed = (seed * 1664525 + samples[i][0] * 1000 + 1013904223) >>> 0;
-  }
-  const lcg = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0xFFFFFFFF; };
-
-  const centroids = [samples[Math.floor(lcg() * samples.length)]];
+  const centroids = [samples[Math.floor(Math.random() * samples.length)]];
   while (centroids.length < k) {
     const dists = samples.map(s => Math.min(...centroids.map(c => distSq3(s, c))));
     const total = dists.reduce((a, b) => a + b, 0);
-    if (total === 0) { centroids.push([...samples[Math.floor(lcg() * samples.length)]]); continue; }
-    let r = lcg() * total;
+    let r = Math.random() * total;
     for (let i = 0; i < dists.length; i++) {
       r -= dists[i];
       if (r <= 0) { centroids.push([...samples[i]]); break; }
@@ -711,37 +554,6 @@ function ptSegDist([px, py], [ax, ay], [bx, by]) {
 }
 
 function distSq3(a, b) { return (a[0]-b[0])**2 + (a[1]-b[1])**2 + (a[2]-b[2])**2; }
-
-// ─── Perceptual color (CIE Lab) ───────────────────────────────────────────────
-function rgbToLab(r, g, b) {
-  // sRGB → linear
-  let rl = r / 255, gl = g / 255, bl = b / 255;
-  rl = rl > 0.04045 ? ((rl + 0.055) / 1.055) ** 2.4 : rl / 12.92;
-  gl = gl > 0.04045 ? ((gl + 0.055) / 1.055) ** 2.4 : gl / 12.92;
-  bl = bl > 0.04045 ? ((bl + 0.055) / 1.055) ** 2.4 : bl / 12.92;
-  // linear RGB → XYZ (D65)
-  const X = rl * 0.4124 + gl * 0.3576 + bl * 0.1805;
-  const Y = rl * 0.2126 + gl * 0.7152 + bl * 0.0722;
-  const Z = rl * 0.0193 + gl * 0.1192 + bl * 0.9505;
-  // XYZ → Lab
-  const fx = f(X / 0.9505), fy = f(Y), fz = f(Z / 1.0888);
-  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
-}
-function f(t) { return t > 0.008856 ? t ** (1/3) : 7.787 * t + 16/116; }
-
-function labToRgb([L, A, B]) {
-  const fy = (L + 16) / 116, fx = A / 500 + fy, fz = fy - B / 200;
-  const X = 0.9505 * (fx ** 3 > 0.008856 ? fx ** 3 : (fx - 16/116) / 7.787);
-  const Y =          (fy ** 3 > 0.008856 ? fy ** 3 : (fy - 16/116) / 7.787);
-  const Z = 1.0888 * (fz ** 3 > 0.008856 ? fz ** 3 : (fz - 16/116) / 7.787);
-  // XYZ → linear RGB
-  let rl =  3.2406 * X - 1.5372 * Y - 0.4986 * Z;
-  let gl = -0.9689 * X + 1.8758 * Y + 0.0415 * Z;
-  let bl =  0.0557 * X - 0.2040 * Y + 1.0570 * Z;
-  // linear → sRGB
-  const toSRGB = c => Math.max(0, Math.min(1, c > 0.0031308 ? 1.055 * c ** (1/2.4) - 0.055 : 12.92 * c));
-  return [Math.round(toSRGB(rl) * 255), Math.round(toSRGB(gl) * 255), Math.round(toSRGB(bl) * 255)];
-}
 
 function rgbToHex([r, g, b]) {
   return '#' + [r, g, b].map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
