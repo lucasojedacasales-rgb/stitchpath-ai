@@ -27,21 +27,64 @@ function polygonIntervals(polygon, origin, direction, tolerance) {
   return intervals;
 }
 
-function subtractHole(segments, hole, holeIndex, tolerance) {
-  const result = [];
-  segments.forEach(segment => {
-    if (hole.endU <= segment.startU + tolerance || hole.startU >= segment.endU - tolerance) { result.push(segment); return; }
-    if (hole.startU > segment.startU + tolerance) result.push({ ...segment, endU: hole.startU, endBoundaryType: 'hole', endHoleIndex: holeIndex });
-    if (hole.endU < segment.endU - tolerance) result.push({ ...segment, startU: hole.endU, startBoundaryType: 'hole', startHoleIndex: holeIndex });
-  });
-  return result;
+function uniqueBreakpoints(intervalGroups, tolerance) {
+  return intervalGroups
+    .flatMap(group => group.intervals.flatMap(interval => [interval.startU, interval.endU]))
+    .sort((a, b) => a - b)
+    .filter((value, index, values) => !index || Math.abs(value - values[index - 1]) > tolerance);
+}
+
+function containsU(intervals, u, tolerance) {
+  return intervals.some(interval => u > interval.startU + tolerance && u < interval.endU - tolerance);
+}
+
+function boundaryAt(intervalGroups, u, materialOnPositiveSide, tolerance) {
+  const candidates = [];
+  intervalGroups.forEach(group => group.intervals.forEach(interval => {
+    if (Math.abs(interval.startU - u) <= tolerance) candidates.push({ ...group, side: 'start' });
+    if (Math.abs(interval.endU - u) <= tolerance) candidates.push({ ...group, side: 'end' });
+  }));
+  const holes = candidates.filter(candidate => candidate.type === 'hole').sort((a, b) => a.holeIndex - b.holeIndex || a.side.localeCompare(b.side));
+  if (holes.length) return { boundaryType: 'hole', holeIndex: holes[0].holeIndex };
+  const outer = candidates.find(candidate => candidate.type === 'outer');
+  if (outer) return { boundaryType: 'outer', holeIndex: null };
+  return { boundaryType: materialOnPositiveSide ? 'outer' : 'outer', holeIndex: null };
+}
+
+function compoundMaterialIntervals(outerIntervals, holeIntervalsByIndex, tolerance) {
+  const groups = [
+    { type: 'outer', holeIndex: null, intervals: outerIntervals },
+    ...holeIntervalsByIndex.map((intervals, holeIndex) => ({ type: 'hole', holeIndex, intervals })),
+  ];
+  const breakpoints = uniqueBreakpoints(groups, tolerance);
+  const material = [];
+  for (let index = 0; index + 1 < breakpoints.length; index += 1) {
+    const startU = breakpoints[index]; const endU = breakpoints[index + 1];
+    if (endU - startU <= tolerance) continue;
+    const midpointU = (startU + endU) / 2;
+    const insideOuter = containsU(outerIntervals, midpointU, tolerance);
+    const insideHoleUnion = holeIntervalsByIndex.some(intervals => containsU(intervals, midpointU, tolerance));
+    if (!insideOuter || insideHoleUnion) continue;
+    const startBoundary = boundaryAt(groups, startU, true, tolerance);
+    const endBoundary = boundaryAt(groups, endU, false, tolerance);
+    material.push({
+      startU,
+      endU,
+      startBoundaryType: startBoundary.boundaryType,
+      endBoundaryType: endBoundary.boundaryType,
+      startHoleIndex: startBoundary.holeIndex,
+      endHoleIndex: endBoundary.holeIndex,
+    });
+  }
+  return material;
 }
 
 export function clipScanlineToRegion({ outerPolygon = [], holes = [], lineOrigin, lineDirection, tolerance = 1e-6 }) {
   const errors = []; const direction = normalizeDirection(lineDirection);
   if (!direction || !finitePhysicalPoint(lineOrigin) || outerPolygon.length < 3 || outerPolygon.some(point => !finitePhysicalPoint(point)) || holes.some(hole => hole.length < 3 || hole.some(point => !finitePhysicalPoint(point)))) return { valid: false, intervals: [], errors: [{ code: 'INVALID_SCANLINE_CLIP_GEOMETRY' }], warnings: [] };
-  let segments = polygonIntervals(outerPolygon, lineOrigin, direction, tolerance).map(interval => ({ ...interval, startBoundaryType: 'outer', endBoundaryType: 'outer', startHoleIndex: null, endHoleIndex: null }));
-  holes.forEach((hole, holeIndex) => polygonIntervals(hole, lineOrigin, direction, tolerance).forEach(interval => { segments = subtractHole(segments, interval, holeIndex, tolerance); }));
+  const outerIntervals = polygonIntervals(outerPolygon, lineOrigin, direction, tolerance);
+  const holeIntervalsByIndex = holes.map(hole => polygonIntervals(hole, lineOrigin, direction, tolerance));
+  const segments = compoundMaterialIntervals(outerIntervals, holeIntervalsByIndex, tolerance);
   const intervals = segments.filter(segment => segment.endU - segment.startU > tolerance).sort((a, b) => a.startU - b.startU).map(segment => {
     const start = world(segment.startU, lineOrigin, direction); const end = world(segment.endU, lineOrigin, direction);
     return Object.freeze({ start, end, startBoundaryType: segment.startBoundaryType, endBoundaryType: segment.endBoundaryType, startHoleIndex: segment.startHoleIndex, endHoleIndex: segment.endHoleIndex, lengthMm: distanceBetweenPoints(start, end) });
