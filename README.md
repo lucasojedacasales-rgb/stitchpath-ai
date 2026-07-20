@@ -68,6 +68,10 @@ After pushing your changes to git, open the Base44 dashboard and publish the app
 base44 dashboard open
 ```
 
+## Changelog
+
+- Detector universal de contornos oscuros estabilizado con suite runtime 5/5 PASS. Ver `CHECKPOINT_5_PASS_UNIVERSAL_CONTOURS.md`.
+
 ## Docs & Support
 
 Documentation: [https://docs.base44.com/Integrations/Using-GitHub](https://docs.base44.com/Integrations/Using-GitHub)

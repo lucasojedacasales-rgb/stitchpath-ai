@@ -17,8 +17,16 @@ export async function runStitchPlanner(ctx) {
     return;
   }
 
-  // Generate stitch plan (types, angles, underlays)
-  ctx.plan = generateStitchPlan(ctx.regions, ctx.config);
+  // Filter to regions with valid geometry — prevents getCentroid crashes downstream
+  const validRegions = ctx.regions.filter(r => r.path_points && r.path_points.length >= 3);
+
+  // Generate stitch plan using only valid regions (was incorrectly using all regions before)
+  ctx.plan = generateStitchPlan(validRegions, ctx.config);
+
+  if (validRegions.length === 0) {
+    ctx.pathMetrics = null;
+    return;
+  }
 
   // Optimize needle path considering priority and position
   const pathConfig = {
@@ -27,5 +35,5 @@ export async function runStitchPlanner(ctx) {
     speed_spm: ctx.config.machine_speed || 800,
   };
 
-  ctx.pathMetrics = optimizeNeedlePath(ctx.regions, pathConfig);
+  ctx.pathMetrics = optimizeNeedlePath(validRegions, pathConfig);
 }

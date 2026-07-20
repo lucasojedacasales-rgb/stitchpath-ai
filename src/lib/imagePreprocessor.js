@@ -67,8 +67,12 @@ export async function preprocessImage(imageUrl, options = {}) {
     applyUnsharpMask(ctx, W, H, sharpenStrength);
   }
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error('canvas.toBlob devolvió null — posible canvas tainted por CORS'));
+        return;
+      }
       const url = URL.createObjectURL(blob);
       resolve({ url, blob, width: W, height: H });
     }, 'image/png', 0.95);

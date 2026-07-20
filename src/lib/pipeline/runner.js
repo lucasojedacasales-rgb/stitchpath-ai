@@ -16,6 +16,7 @@ import { runContourEngine }          from './stages/contourEngineStage.js';
 import { runSemanticSegmentation }   from './stages/semanticSegmentationStage.js';
 import { runVectorEngine }           from './stages/vectorEngineStage.js';
 import { runRegionBuilder }          from './stages/regionBuilderStage.js';
+import { cleanCartoonSegmentationRegions } from '../cartoonSegmentationCleanup.js';
 import { runStitchPlanner }          from './stages/stitchPlannerStage.js';
 import { runStitchOptimizer }        from './stages/stitchOptimizerStage.js';
 
@@ -28,6 +29,7 @@ const CLIENT_STAGES = [
   { id: 'semantic_segmentation', fn: runSemanticSegmentation, weight: 50 }, // LLM Vision objects
   { id: 'vector_engine',         fn: runVectorEngine,         weight: 65 }, // backend call
   { id: 'region_builder',        fn: runRegionBuilder,        weight: 82 },
+  { id: 'quality_phase_1_input_segmentation_cleanup', fn: runQualityPhase1InputSegmentationCleanup, weight: 87 },
   { id: 'stitch_planner',        fn: runStitchPlanner,        weight: 92 },
   { id: 'stitch_optimizer',      fn: runStitchOptimizer,      weight: 100 },
 ];
@@ -45,6 +47,17 @@ const CLIENT_STAGES = [
  * @param {Object}   [opts.initialCtx] - partial context to inject (e.g. pre-analyzed contours)
  * @returns {Promise<PipelineContext>}
  */
+async function runQualityPhase1InputSegmentationCleanup(ctx) {
+  if (!ctx.regions || ctx.regions.length === 0) return;
+  const { regions, report } = cleanCartoonSegmentationRegions(ctx.regions, {
+    ...ctx.config,
+    darkStroke: ctx.darkStroke,
+    inputAudit: ctx.inputAudit,
+  });
+  ctx.regions = regions;
+  ctx.qualityPhase1Report = report;
+}
+
 export async function runPipeline(imageUrl, config, opts = {}) {
   const { onProgress, skipStages = [], initialCtx = {} } = opts;
 
@@ -92,6 +105,7 @@ export async function runStages(ctx, stageIds, opts = {}) {
     } catch (err) {
       logStage(ctx, stage.id, performance.now() - t0, false);
       console.error(`[Pipeline] Stage "${stage.id}" failed:`, err);
+      ctx.stageLog[ctx.stageLog.length - 1].error = err.message;
     }
   }
 

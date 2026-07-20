@@ -42,9 +42,9 @@ export async function traceImageContours(imageUrl, maxColors = 8) {
   }
 
   // 3. For each color, find connected blobs
-  // Minimum blob size: raised to 0.05% of image area (was 0.01% — too many noise fragments)
-  // At 800px: 640000 * 0.0005 = 320px minimum — still captures eye-sized details
-  const minPixels = Math.max(64, Math.floor(W * H * 0.0005));
+  // Minimum blob size: raised to 0.08% of image area (was 0.05%) — stronger noise filter.
+  // At 800px: 640000 * 0.0008 = 512px minimum — filters JPEG artifacts while keeping real details.
+  const minPixels = Math.max(120, Math.floor(W * H * 0.0008));
   const regions = [];
 
   for (let ci = 0; ci < palette.length; ci++) {
@@ -170,6 +170,9 @@ function nearestColor(rgb, palette) {
 // ─── Blob Detection ───────────────────────────────────────────────────────────
 
 function findBlobs(labels, W, H, colorIdx, minPixels) {
+  // 8-connectivity: merges same-color regions connected diagonally.
+  // JPEG quantization inserts single-pixel color gaps that split coherent
+  // shapes under 4-connectivity. 8-connectivity preserves geometric coherence.
   const visited = new Uint8Array(W * H);
   const blobs = [];
 
@@ -191,10 +194,17 @@ function findBlobs(labels, W, H, colorIdx, minPixels) {
       const x = idx % W, y = Math.floor(idx / W);
       if (x < minX) minX = x; if (x > maxX) maxX = x;
       if (y < minY) minY = y; if (y > maxY) maxY = y;
-      if (x > 0) stack.push(idx - 1);
-      if (x < W - 1) stack.push(idx + 1);
-      if (y > 0) stack.push(idx - W);
-      if (y < H - 1) stack.push(idx + W);
+      // 8-neighbour scan (includes diagonals)
+      for (let dy = -1; dy <= 1; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= H) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          if (nx < 0 || nx >= W) continue;
+          stack.push(ny * W + nx);
+        }
+      }
     }
 
     if (count >= minPixels) {

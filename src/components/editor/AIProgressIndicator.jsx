@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, Brain } from 'lucide-react';
+import { Brain } from 'lucide-react';
 
 const MESSAGES = [
   'Analizando imagen...',

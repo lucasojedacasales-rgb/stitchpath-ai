@@ -1,80 +1,112 @@
-// ── Tatami Fill Generator ─────────────────────────────────────────────────────
-// Full-row continuous algorithm for professional machine embroidery.
-//
-// Key properties:
-//   - Each ROW has a single index that drives both direction (boustrophedon)
-//     and tatami brick offset — never incremented inside per-span loops.
-//   - Multi-span rows (complex concave polygons) are handled per-span but
-//     share the same row direction, then connected by a jump.
-//   - Brick offset uses a 4-cycle phase (0, ¼, ½, ¾ of stitch pitch) so
-//     no two adjacent rows share the same needle alignment → authentic tatami.
-//   - The last needle of each row connects to the first needle of the next
-//     row by traversing the rotated polygon edge (no random jumps).
-//
-// Output: { stitches: [[x0,y0,x1,y1], ...], totalStitches: number }
-// Each element is ONE stitch segment (two consecutive needle penetrations).
+/**
+ * tatamiFill.js — Production-grade scanline fill for embroidery canvas preview.
+ *
+ * Generates dense parallel stitch rows (tatami/fill pattern) clipped to a polygon.
+ *
+ * ALGORITHM:
+ *  1. Rotate polygon so fill rows are horizontal (angle-agnostic)
+ *  2. Scanline from top to bottom at rowSpacing intervals
+ *  3. For each row: compute polygon edge intersections → inside spans
+ *  4. Place needle points across each span at stitchPitch intervals
+ *  5. Alternate direction (boustrophedon) + tatami 4-phase brick offset
+ *  6. Rotate needle points back to world space
+ *  7. Output: ordered [x0,y0,x1,y1] segments forming a continuous polyline
+ *
+ * VISUAL RESULT: Dense parallel lines covering the entire polygon area,
+ * rendering as solid hatching with clear thread-like rows.
+ */
 
-const TATAMI_PHASE = [0, 0.25, 0.5, 0.75]; // brick offset as fraction of stitch pitch
+const TATAMI_PHASES = [0, 0.25, 0.5, 0.75];
 
 /**
- * @param {Array<[number,number]>} polygon   - canvas px coords [[x,y],...]
- * @param {number} densityMm   - row spacing in mm  (typical: 0.35–0.5)
- * @param {number} stitchLenMm - stitch length in mm (typical: 2.5–4.0)
- * @param {number} angleDeg    - fill angle in degrees (0 = horizontal)
+ * @param {Array<[number,number]>} polygon   - canvas px coords [[x,y],...] (centered at 0,0)
+ * @param {number} densityMm   - row spacing in mm (0.35–0.6)
+ * @param {number} stitchLenMm - stitch length in mm (2.0–4.0)
+ * @param {number} angleDeg    - fill angle in degrees
  * @param {number} pxPerMm     - canvas pixels per mm
+ * @returns {{ stitches: number[][], totalStitches: number }}
  */
-export function generateTatamiFill(polygon, densityMm = 0.4, stitchLenMm = 3.0, angleDeg = 0, pxPerMm = 4) {
+export function generateTatamiFill(polygon, densityMm = 0.4, stitchLenMm = 3.0, angleDeg = 0, pxPerMm = 5) {
   if (!polygon || polygon.length < 3) return { stitches: [], totalStitches: 0 };
 
-  const rowSpacingPx  = Math.max(1.5, densityMm * pxPerMm);
-  const stitchPitchPx = Math.max(rowSpacingPx * 2, stitchLenMm * pxPerMm);
+  const safePx = Math.max(1.0, pxPerMm);
 
-  // ── Rotation helpers ─────────────────────────────────────────────────────────
-  const angleRad = (angleDeg * Math.PI) / 180;
-  const cosF = Math.cos(-angleRad), sinF = Math.sin(-angleRad); // world → fill space
-  const cosB = Math.cos(angleRad),  sinB = Math.sin(angleRad);  // fill space → world
+  // Row spacing in px: physical density → pixels.
+  // Minimum 2px — below this, sub-pixel aliasing creates moiré at zoom=1.
+  // At pxPerMm=5.25, densityMm=0.4 → 2.1px → clamped to 2.0px.
+  const rowSpacingPx = Math.max(2.0, densityMm * safePx);
 
-  const toFill  = ([x, y]) => [ x * cosF - y * sinF,  x * sinF + y * cosF];
-  const toWorld = ([x, y]) => [ x * cosB - y * sinB,  x * sinB + y * cosB];
+  // Stitch pitch: physical length → pixels.
+  // Cap at 8× row spacing to prevent visual moiré from long stitches crossing many rows.
+  const rawPitchPx = Math.max(2.0, stitchLenMm * safePx);
+  const pitchPx    = Math.min(rawPitchPx, rowSpacingPx * 8);
 
-  // Rotate polygon into fill-angle space so scan rows are horizontal
-  const rotPoly = polygon.map(toFill);
+  // ── Rotation to fill-space (rows become horizontal) ───────────────────────────
+  const rad  = (angleDeg * Math.PI) / 180;
+  const cF   = Math.cos(-rad), sF = Math.sin(-rad);
+  const cB   = Math.cos( rad), sB = Math.sin( rad);
+  const toF  = (x, y) => [ x*cF - y*sF,  x*sF + y*cF ];
+  const toW  = (x, y) => [ x*cB - y*sB,  x*sB + y*cB ];
 
-  const minY = Math.min(...rotPoly.map(p => p[1]));
-  const maxY = Math.max(...rotPoly.map(p => p[1]));
+  // Rotate polygon
+  const rp = polygon.map(([x, y]) => toF(x, y));
+  const minY = Math.min(...rp.map(p => p[1]));
+  const maxY = Math.max(...rp.map(p => p[1]));
+  const minX = Math.min(...rp.map(p => p[0]));
+  const maxX = Math.max(...rp.map(p => p[0]));
+
+  // Guard: needs at least one scanline row and one stitch
+  if (maxY - minY < 0.5 || maxX - minX < 0.5) {
+    return { stitches: [], totalStitches: 0 };
+  }
 
   const stitches = [];
-
-  // ── Main loop: one iteration = one full row ──────────────────────────────────
   let rowIdx = 0;
 
-  for (let ry = minY + rowSpacingPx * 0.5; ry <= maxY; ry += rowSpacingPx) {
-    const xs = scanlineIntersections(rotPoly, ry);
+  // ── Scanline loop ─────────────────────────────────────────────────────────────
+  for (let ry = minY + rowSpacingPx * 0.5; ry < maxY; ry += rowSpacingPx) {
+
+    // Intersections of horizontal line Y=ry with polygon edges
+    const xs = edgeIntersections(rp, ry);
     if (xs.length < 2) { rowIdx++; continue; }
     xs.sort((a, b) => a - b);
 
-    // Row-level attributes — computed ONCE per row, never inside span loop
-    const forward     = (rowIdx % 2) === 0;
-    const brickPhase  = TATAMI_PHASE[rowIdx % 4];
-    const brickOffset = brickPhase * stitchPitchPx;
-
-    // Collect all spans for this row, in traversal order
-    // A span = [xLeft, xRight] clipped inside the polygon
+    // Build inside spans (even-odd: pair 0-1 inside, 2-3 inside, ...)
     const spans = [];
-    for (let si = 0; si < xs.length - 1; si += 2) {
-      const xL = xs[si], xR = xs[si + 1];
-      if (xR - xL < stitchPitchPx * 0.3) continue; // skip hairline spans
+    for (let i = 0; i + 1 < xs.length; i += 2) {
+      const xL = xs[i], xR = xs[i + 1];
+      if (xR - xL < 1.0) continue; // skip degenerate spans
       spans.push([xL, xR]);
     }
     if (spans.length === 0) { rowIdx++; continue; }
 
-    // Reverse span order when travelling right-to-left so the machine
-    // always enters the first span at the "current cursor" side
+    // Boustrophedon: alternate direction each row
+    const forward  = (rowIdx % 2) === 0;
+    const brickOff = TATAMI_PHASES[rowIdx % 4] * pitchPx;
+
     if (!forward) spans.reverse();
 
+    let lastX = null, lastY = null;
+
     for (const [xL, xR] of spans) {
-      const needles = buildNeedlePoints(xL, xR, stitchPitchPx, brickOffset, forward);
-      emitStitches(stitches, needles, ry, toWorld);
+      const needles = placeNeedles(xL, xR, pitchPx, brickOff, forward);
+      if (needles.length < 2) continue;
+
+      // Travel stitch connecting end of previous span to start of this span
+      if (lastX !== null) {
+        const [nx, ny] = toW(needles[0], ry);
+        stitches.push([lastX, lastY, nx, ny]);
+      }
+
+      // Emit all stitches across this span
+      for (let i = 0; i < needles.length - 1; i++) {
+        const [ax, ay] = toW(needles[i],     ry);
+        const [bx, by] = toW(needles[i + 1], ry);
+        stitches.push([ax, ay, bx, by]);
+      }
+
+      const last = needles[needles.length - 1];
+      [lastX, lastY] = toW(last, ry);
     }
 
     rowIdx++;
@@ -83,55 +115,49 @@ export function generateTatamiFill(polygon, densityMm = 0.4, stitchLenMm = 3.0, 
   return { stitches, totalStitches: stitches.length };
 }
 
-// ── Needle point builder ───────────────────────────────────────────────────────
-// Places needle penetration points across [xL, xR] with the brick offset applied.
-// Always starts at the edge that corresponds to travel direction so the path
-// reads left→right (forward) or right→left (backward) continuously.
+// ── Needle placer ─────────────────────────────────────────────────────────────
+// Places needles at [xL, xR] boundary + interior points at `pitch` intervals.
+// `brickOff` shifts the interior grid (tatami pattern).
+// Returns array of X values in traversal order.
 
-function buildNeedlePoints(xL, xR, pitch, brickOffset, forward) {
-  // First interior needle = edge + phase offset (mod pitch keeps it in 0..pitch range)
-  const phase = ((brickOffset % pitch) + pitch) % pitch;
+function placeNeedles(xL, xR, pitch, brickOff, forward) {
+  const phase = ((brickOff % pitch) + pitch) % pitch;
 
-  // Build from left regardless; reverse at end if travelling backward
   const needles = [xL];
 
-  // First aligned needle after xL respecting the brick phase
-  let firstN = xL + phase;
-  // If phase pushes firstN past xL already, keep it; otherwise clamp to just past xL
-  if (firstN <= xL + 0.5) firstN += pitch;
+  // First interior needle after xL, offset by tatami phase
+  let nx = xL + phase;
+  if (nx <= xL + 0.5) nx += pitch;
 
-  for (let nx = firstN; nx < xR - 0.5; nx += pitch) {
+  while (nx < xR - 0.5) {
     needles.push(nx);
+    nx += pitch;
   }
+
   needles.push(xR);
 
-  if (!forward) needles.reverse();
-  return needles;
-}
-
-// ── Stitch emitter ────────────────────────────────────────────────────────────
-// Converts an ordered array of X needle positions at a constant fill-space Y
-// into world-space stitch segments [x0,y0,x1,y1].
-
-function emitStitches(stitches, needles, ry, toWorld) {
-  for (let i = 0; i < needles.length - 1; i++) {
-    const [wx0, wy0] = toWorld([needles[i],     ry]);
-    const [wx1, wy1] = toWorld([needles[i + 1], ry]);
-    stitches.push([wx0, wy0, wx1, wy1]);
+  // Deduplicate points closer than 0.5px
+  const out = [needles[0]];
+  for (let i = 1; i < needles.length; i++) {
+    if (needles[i] - out[out.length - 1] > 0.5) out.push(needles[i]);
   }
+
+  return forward ? out : out.reverse();
 }
 
-// ── Scanline intersection ─────────────────────────────────────────────────────
-// Returns sorted X intercepts of the polygon at fill-space Y = ry.
+// ── Edge intersection (even-odd scanline) ────────────────────────────────────
+// Returns all X coordinates where Y=ry crosses a polygon edge.
+// Top-inclusive rule prevents double-counting shared vertices.
 
-function scanlineIntersections(poly, ry) {
+function edgeIntersections(poly, ry) {
   const xs = [];
-  const n = poly.length;
+  const n  = poly.length;
   for (let i = 0; i < n; i++) {
-    const a = poly[i], b = poly[(i + 1) % n];
-    if ((a[1] <= ry && b[1] > ry) || (b[1] <= ry && a[1] > ry)) {
-      const t = (ry - a[1]) / (b[1] - a[1]);
-      xs.push(a[0] + t * (b[0] - a[0]));
+    const [ax, ay] = poly[i];
+    const [bx, by] = poly[(i + 1) % n];
+    if ((ay <= ry && by > ry) || (by <= ry && ay > ry)) {
+      const t = (ry - ay) / (by - ay);
+      xs.push(ax + t * (bx - ax));
     }
   }
   return xs;

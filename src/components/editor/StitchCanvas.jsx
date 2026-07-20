@@ -1,37 +1,41 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { ZoomIn, ZoomOut, Maximize2, Download, Layers, AlignJustify } from 'lucide-react';
 import { generateTatamiFill } from '@/lib/tatamiFill';
+import { drawRunning, drawSatinContour, drawSatinFill, drawOutline } from '@/lib/contourRenderer';
+import { drawContourLayer } from '@/lib/contourLayerRenderer';
 
-// ── Contour detection helpers ─────────────────────────────────────────────────
+// ── Region classification helpers ─────────────────────────────────────────────
 
-// Near-black / very dark colors are outlines in embroidery — detect by luminance,
-// not exact hex match. #090406 (the merged outline+background blob) has L≈6.
-function isContourColor(hex) {
-  const h = (hex || '').toLowerCase();
-  if (!h.startsWith('#') || h.length < 7) return false;
-  const r = parseInt(h.slice(1, 3), 16);
-  const g = parseInt(h.slice(3, 5), 16);
-  const b = parseInt(h.slice(5, 7), 16);
-  if (isNaN(r) || isNaN(g) || isNaN(b)) return false;
-  return (0.299 * r + 0.587 * g + 0.114 * b) < 30;
-}
+/**
+ * Determines the effective render type for a region.
+ * Returns: 'fill' | 'satin_contour' | 'satin_fill' | 'running'
+ *
+ * Priority order:
+ *  1. Explicit is_auto_contour flag → satin_contour
+ *  2. Explicit stitch_type from pipeline (running_stitch, satin, fill)
+ *  3. Geometric heuristic for very thin/elongated shapes → satin_contour
+ */
+function getEffectiveRenderType(region) {
+  if (!region) return 'fill';
 
-// A thin outline: narrow mean width, or low area-to-perimeter² ratio (ring/line).
-// Used to classify contours by GEOMETRY, not color — solid dark fills (Mickey's
-// head, Yoshi's body) are NOT thin, so they stay as fill and render correctly.
-function isThinOutline(region) {
-  if (region.mean_width_mm > 0 && region.mean_width_mm < 2.5) return true;
-  if (region.area_mm2 && region.perimeter_mm) {
-    return (region.area_mm2 / (region.perimeter_mm * region.perimeter_mm)) < 0.05;
+  // Type-first classification — safe mode sets explicit type on every object.
+  if (region.type === 'contour') {
+    if (region.stitch_type === 'satin') return 'satin_contour';
+    return 'running';
   }
-  return false;
-}
 
-function isContourRegion(region) {
-  if (!region) return false;
-  if ((region.name || '').toLowerCase().includes('contour_')) return true;
-  // Thin shapes (narrow width or low area-to-perimeter²) are outlines.
-  return isThinOutline(region);
+  if (region.type === 'fill') {
+    return 'fill';
+  }
+
+  // Fallback by stitch_type for legacy regions without explicit type
+  const type = region.stitch_type;
+  if (type === 'fill') return 'fill';
+  if (type === 'running_stitch') return 'running';
+  if (type === 'satin') return 'satin_fill';
+
+  // Default: fill. No geometric satin_contour conversion for narrow fills.
+  return 'fill';
 }
 
 function getDrawSize(imageEl, W, H) {
@@ -46,39 +50,85 @@ function getDrawSize(imageEl, W, H) {
 // stitchCache: Map<regionId, {stitches, drawW, drawH, angle, density}>
 
 function drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCache) {
-  const color = region.color || '#ffffff';
-  const angleDeg = region.angle || 0;
-  const densityMm = region.tatami_density || region.density_mm || 0.4;
+  const color       = region.color || '#ffffff';
+  const angleDeg    = region.angle ?? region.fill_angle ?? 0;
+  const densityMm   = region.tatami_density || region.density || 0.4;
+  const stitchLenMm = region.stitch_length_mm || 2.5;
 
-  // Cache key: recompute only if drawSize or region params change
   const cacheKey = region.id;
   let cached = stitchCache.get(cacheKey);
-  if (!cached || cached.drawW !== drawW || cached.drawH !== drawH || cached.angleDeg !== angleDeg || cached.densityMm !== densityMm) {
-    // Convert normalized path_points → canvas px
+  if (
+    !cached ||
+    cached.drawW !== drawW || cached.drawH !== drawH ||
+    cached.angleDeg !== angleDeg || cached.densityMm !== densityMm ||
+    cached.stitchLenMm !== stitchLenMm
+  ) {
+    // Convert normalized path_points → canvas pixels
     const polygon = pts.map(p => [(p[0] - 0.5) * drawW, (p[1] - 0.5) * drawH]);
-    // pxPerMm: drawW spans 100mm by default
-    const pxPerMm = drawW / 100;
-    const { stitches, totalStitches } = generateTatamiFill(polygon, densityMm, 2.5, angleDeg, pxPerMm);
-    cached = { stitches, totalStitches, drawW, drawH, angleDeg, densityMm };
+
+    // pxPerMm: how many canvas pixels = 1mm.
+    // The design fills ~75% of the canvas (getDrawSize uses 0.75 factor).
+    // Design dimensions come from region metadata if available, else assume 100mm.
+    const designW = 100; // mm — standard assumption matching config
+    const pxPerMm = drawW / designW;
+
+    const { stitches, totalStitches } = generateTatamiFill(
+      polygon, densityMm, stitchLenMm, angleDeg, pxPerMm
+    );
+    cached = { stitches, totalStitches, drawW, drawH, angleDeg, densityMm, stitchLenMm };
     stitchCache.set(cacheKey, cached);
-    // Surface real stitch count back onto the region object for the panel
-    region._computed_stitches = totalStitches;
   }
 
   const { stitches } = cached;
   if (!stitches.length) return;
 
-  ctx.globalAlpha = alpha * 0.92;
+  // Thread width: 40wt polyester thread is physically ~0.35mm diameter.
+  // We render it at its physical size in canvas pixels, clamped for readability.
+  // This gives crisp individual thread lines with clear separation between rows.
+  const pxPerMm  = drawW / 100;
+  // Physical thread in px, scaled by zoom. 0.35mm * pxPerMm gives the real size.
+  // At zoom=1 on a 100mm design: 0.35 * 5.25 ≈ 1.84px — good but slightly heavy.
+  // 0.32mm gives a clear, readable thread line at zoom=1 (≈1.68px at 5.25px/mm)
+  // that is clearly thinner than the 2.5px row gap, producing distinct thread rows.
+  const threadPx = Math.max(0.7, (0.32 * pxPerMm) / zoom);
+
+  ctx.save();
+  ctx.globalAlpha = alpha; // full opacity — partial alpha washes out light-coloured threads
   ctx.strokeStyle = color;
-  ctx.lineWidth = Math.max(0.8, 1.5 / zoom);
-  ctx.lineCap = 'round';
+  ctx.lineWidth   = threadPx;
+  ctx.lineCap     = 'round';
+  ctx.lineJoin    = 'round';
+
+  // ── Draw each row as a separate path so row gaps are visible ─────────────────
+  // We group stitches by row (detecting row changes by Y coordinate jump).
+  // Each row is drawn as a single polyline. This preserves the visual gap
+  // between adjacent rows that makes the fill look like parallel thread rows
+  // rather than a solid filled area.
+
+  // Detect row changes: consecutive segments whose start Y differs by > rowThreshold
+  // are on different rows. We use a simple heuristic: if x0,y0 of segment[i]
+  // equals x1,y1 of segment[i-1] → same row; otherwise → new row.
+
+  const EPS = 0.5; // px tolerance for endpoint matching
+
+  let inPath = false;
+  let px = 0, py = 0; // previous segment endpoint
 
   ctx.beginPath();
   for (const [x0, y0, x1, y1] of stitches) {
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(x1, y1);
+    const sameChain = inPath && Math.abs(x0 - px) < EPS && Math.abs(y0 - py) < EPS;
+    if (sameChain) {
+      ctx.lineTo(x1, y1);
+    } else {
+      // Start new sub-path at x0,y0 then draw to x1,y1
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+      inPath = true;
+    }
+    px = x1; py = y1;
   }
   ctx.stroke();
+  ctx.restore();
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -101,8 +151,17 @@ export default function StitchCanvas({
   // Toggle: 'fill' = show full tatami fills | 'outline' = contours only
   const [viewMode, setViewMode]       = useState('fill');
   const imageRef     = useRef(null);
+  const mouseMoveRaf = useRef(null);
+  const pendingMouseEvent = useRef(null);
   // Cache: Map<regionId, {stitches, drawW, drawH, angleDeg, densityMm}>
   const stitchCache  = useRef(new Map());
+  const regionSignature = useMemo(() => JSON.stringify((regions || []).map(r => ({ id: r.id, density: r.density, angle: r.angle, stitch_length_mm: r.stitch_length_mm, path_points: r.path_points }))), [regions]);
+  const regionBounds = useMemo(() => (regions || []).map(region => {
+    const pts = region.path_points || [];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of pts) { minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]); minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]); }
+    return { region, minX, maxX, minY, maxY };
+  }), [regionSignature]);
 
   useEffect(() => {
     const obs = new ResizeObserver(() => resizeAll());
@@ -132,7 +191,11 @@ export default function StitchCanvas({
   }, [imageUrl]);
 
   useEffect(() => { drawImageLayer(); }, [zoom, offset, imageOpacity]);
-  useEffect(() => { drawStitchLayer(); }, [regions, zoom, offset, stitchOpacity, showFill, showContour, viewMode]);
+  useEffect(() => {
+    stitchCache.current.clear();
+    drawStitchLayer();
+  }, [regionSignature]);
+  useEffect(() => { drawStitchLayer(); }, [zoom, offset, stitchOpacity, showFill, showContour, viewMode]);
   useEffect(() => { drawOverlayLayer(); }, [selectedRegionId, hoveredRegion, zoom, offset, regions]);
 
   // ── LAYER 1: Image ──────────────────────────────────────────────────────────
@@ -143,8 +206,13 @@ export default function StitchCanvas({
     const W = canvas.width, H = canvas.height;
 
     ctx.clearRect(0, 0, W, H);
-    // Dark grey background so any thread color is visible
-    ctx.fillStyle = '#2a2a2a';
+    // Fabric-neutral background: #4a4040 (warm dark, like dark linen/cotton).
+    // Provides enough contrast for white thread (lightens) and black thread (darkens)
+    // while looking like a real embroidery backing cloth.
+    // Neutral mid-grey: #4a4a4a — dark enough for light UI but light enough
+    // that white/cream thread (panza, eyes) is clearly visible.
+    // This matches the Wilcom EmbroideryStudio default canvas tone.
+    ctx.fillStyle = '#4a4a4a';
     ctx.fillRect(0, 0, W, H);
 
     if (!imageRef.current || imageOpacity <= 0) return;
@@ -161,6 +229,7 @@ export default function StitchCanvas({
 
   // ── LAYER 2: Stitches ───────────────────────────────────────────────────────
   const drawStitchLayer = useCallback(() => {
+    const drawStart = performance.now();
     const canvas = stitchCanvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -175,80 +244,111 @@ export default function StitchCanvas({
     ctx.translate(offset.x + W / 2, offset.y + H / 2);
     ctx.scale(zoom, zoom);
 
+    const canvasArea = drawW * drawH;
+    const validRegions = regions.filter(r => (r.area_mm2 || 0) <= canvasArea * 0.9);
+
     const outlineOnly = viewMode === 'outline';
     const alpha = stitchOpacity / 100;
 
-    // Painter's algorithm: sort by area descending so the largest region (background)
-    // is painted first and smaller detail regions are painted on top.
-    // Without this, a large background region drawn later covers everything (black blob).
-    // Fallback: compute area from path_points bbox if area_mm2 is missing (un-enriched regions).
-    const sortKey = (r) => {
-      if (r.area_mm2 && r.area_mm2 > 0) return r.area_mm2;
-      if (r.path_points && r.path_points.length >= 3) {
-        const xs = r.path_points.map(p => p[0]);
-        const ys = r.path_points.map(p => p[1]);
-        return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
-      }
-      return 0;
-    };
-    const sortedRegions = [...regions]
-      .filter(r => r.path_points && r.path_points.length >= 3)
-      .sort((a, b) => sortKey(b) - sortKey(a));
+    // ── Separate fill vs contour regions for correct draw order ──────────────
+    // Fill regions are drawn first (base layer), then contour/satin on top.
+    // This matches real machine order: fill first, border stitches last.
+    const fillRegions    = validRegions.filter(r => getEffectiveRenderType(r) === 'fill');
+    const contourRegions = validRegions.filter(r => getEffectiveRenderType(r) !== 'fill');
+    const hasStandaloneContours = contourRegions.length > 0;
 
-    for (const region of sortedRegions) {
-      if (!region.visible) continue;
-      const pts = region.path_points;
-      if (!pts || pts.length < 3) continue;
+    // ── PASS 1: Fill regions (clipped to polygon) ────────────────────────────
+    if (showFill) {
+      for (const region of fillRegions) {
+        if (region.visible === false) continue;
+        const pts = region.path_points;
+        if (!pts || pts.length < 3) continue;
+        const color = region.color || '#ffffff';
 
-      // Stale stored regions: a solid dark fill may have been reclassified to
-      // running_stitch by an older regionBuilder. Restore it to fill so it
-      // renders as a solid area instead of empty dashes (missing details).
-      const isStaleDarkFill = region.stitch_type === 'running_stitch' &&
-        isContourColor(region.color) && !isThinOutline(region);
-      const effectiveType = isContourRegion(region)
-        ? 'running_stitch'
-        : (isStaleDarkFill ? 'fill' : region.stitch_type);
+        ctx.save();
+        // Clip fill inside polygon
+        ctx.beginPath();
+        ctx.moveTo((pts[0][0] - 0.5) * drawW, (pts[0][1] - 0.5) * drawH);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo((pts[i][0] - 0.5) * drawW, (pts[i][1] - 0.5) * drawH);
+        ctx.closePath();
+        ctx.clip();
 
-      if (effectiveType === 'fill' && !showFill) continue;
-      if ((effectiveType === 'running_stitch' || effectiveType === 'satin') && !showContour) continue;
-
-      const color = region.color || '#ffffff';
-
-      // Clip to region polygon
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo((pts[0][0] - 0.5) * drawW, (pts[0][1] - 0.5) * drawH);
-      for (let i = 1; i < pts.length; i++) {
-        ctx.lineTo((pts[i][0] - 0.5) * drawW, (pts[i][1] - 0.5) * drawH);
-      }
-      ctx.closePath();
-      ctx.clip();
-
-      if (effectiveType === 'fill') {
         if (outlineOnly) {
-          // Outline-only mode: just draw filled polygon silhouette
           ctx.globalAlpha = alpha * 0.35;
           ctx.fillStyle = color;
           ctx.fill();
-          ctx.globalAlpha = alpha;
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 1.5 / zoom;
-          ctx.stroke();
         } else {
-          // Full fill: tatami engine — real stitches, cached per region
           drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCache.current);
         }
-      } else if (effectiveType === 'satin') {
-        drawSatinLines(ctx, pts, region, drawW, drawH, zoom, color, alpha);
-      } else {
-        drawRunningStitch(ctx, pts, region, drawW, drawH, zoom, color, alpha);
+        ctx.restore();
       }
+    }
 
-      ctx.restore();
+    // ── PASS 2: Satin fill regions (wide satin bodies, clipped) ─────────────
+    const satinFillRegions = validRegions.filter(r => getEffectiveRenderType(r) === 'satin_fill');
+    if (showContour || showFill) {
+      for (const region of satinFillRegions) {
+        if (region.visible === false) continue;
+        const pts = region.path_points;
+        if (!pts || pts.length < 3) continue;
+        const color = region.color || '#ffffff';
+
+        ctx.save();
+        // Clip satin fill inside polygon
+        ctx.beginPath();
+        ctx.moveTo((pts[0][0] - 0.5) * drawW, (pts[0][1] - 0.5) * drawH);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo((pts[i][0] - 0.5) * drawW, (pts[i][1] - 0.5) * drawH);
+        ctx.closePath();
+        ctx.clip();
+
+        if (outlineOnly) {
+          drawOutline(ctx, pts, drawW, drawH, zoom, color, alpha);
+        } else {
+          drawSatinFill(ctx, pts, region, drawW, drawH, zoom, color, alpha);
+        }
+        ctx.restore();
+      }
+    }
+
+    // ── PASS 2b: Contour fallback — only when no standalone contour objects exist
+    // If separateFillsAndContoursSafe produced standalone contour objects (in
+    // contourRegions), they are drawn in Pass 3. This fallback is only used
+    // when contour regions are absent (non-safe mode or legacy data).
+    if (showContour && !hasStandaloneContours) {
+      for (const region of fillRegions) {
+        if (region.visible === false) continue;
+        if (!region.contour) continue;
+        drawContourLayer(ctx, region, drawW, drawH, zoom, alpha, outlineOnly);
+      }
+    }
+
+    // ── PASS 3: Contour regions — NO clip, drawn over fills ──────────────────
+    // Satin contours and running stitches draw on top of fills.
+    // CRITICAL: do NOT clip contours — half the stroke falls outside the polygon
+    // and clipping would erase it, making contours invisible on the outer edge.
+    if (showContour) {
+      for (const region of contourRegions) {
+        if (region.visible === false) continue;
+        const pts = region.path_points;
+        if (!pts || pts.length < 3) continue;
+        const color  = region.color || '#ffffff';
+        const rtype  = getEffectiveRenderType(region);
+
+        if (outlineOnly) {
+          drawOutline(ctx, pts, drawW, drawH, zoom, color, alpha);
+        } else if (rtype === 'satin_contour') {
+          drawSatinContour(ctx, pts, region, drawW, drawH, zoom, color, alpha);
+        } else {
+          // running
+          drawRunning(ctx, pts, region, drawW, drawH, zoom, color, alpha);
+        }
+      }
     }
 
     ctx.restore();
     drawZoomBadge(ctx, W, H, zoom);
+    console.log('[PERF] stitchCanvasDrawMs', Math.round(performance.now() - drawStart));
+    console.log('[PERF] stitchCanvasTatamiCacheHitRate', `${Math.round((stitchCache.current.size / Math.max(1, fillRegions.length)) * 100)}%`);
   }, [regions, zoom, offset, stitchOpacity, showFill, showContour, viewMode]);
 
   // ── LAYER 3: Selection / hover overlay ─────────────────────────────────────
@@ -293,54 +393,6 @@ export default function StitchCanvas({
     ctx.restore();
   }, [regions, selectedRegionId, hoveredRegion, zoom, offset]);
 
-  // ── Stitch helpers ──────────────────────────────────────────────────────────
-
-  function drawSatinLines(ctx, pts, region, drawW, drawH, zoom, color, alpha) {
-    const angle = ((region.angle || 45) * Math.PI) / 180;
-    const density = region.density || 0.8;
-    const spacing = Math.max(1.5, 6 / density) / zoom;
-
-    ctx.globalAlpha = alpha * 0.85;
-    const xs = pts.map(p => (p[0] - 0.5) * drawW);
-    const ys = pts.map(p => (p[1] - 0.5) * drawH);
-    const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
-    const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
-    const diagLen = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) + spacing * 2;
-
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(angle);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 0.9 / zoom;
-    ctx.lineCap = 'round';
-    for (let y = -diagLen; y < diagLen; y += spacing) {
-      ctx.beginPath();
-      ctx.moveTo(-diagLen, y);
-      ctx.lineTo(diagLen, y);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  function drawRunningStitch(ctx, pts, region, drawW, drawH, zoom, color, alpha) {
-    if (pts.length < 2) return;
-    const dashLen = Math.max(1.5, 3.0 / zoom);
-    const gapLen  = Math.max(1.0, 2.0 / zoom);
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.2 / zoom;
-    ctx.lineCap = 'round';
-    ctx.setLineDash([dashLen, gapLen]);
-    ctx.beginPath();
-    ctx.moveTo((pts[0][0] - 0.5) * drawW, (pts[0][1] - 0.5) * drawH);
-    for (let i = 1; i < pts.length; i++) ctx.lineTo((pts[i][0] - 0.5) * drawW, (pts[i][1] - 0.5) * drawH);
-    ctx.closePath();
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.restore();
-  }
-
   function drawZoomBadge(ctx, W, H, zoom) {
     const text = `${Math.round(zoom * 100)}%`;
     ctx.save();
@@ -379,7 +431,13 @@ export default function StitchCanvas({
     if (isDragging && dragStart) {
       setOffset({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
     }
-    updateTooltip(e);
+    pendingMouseEvent.current = e;
+    if (!mouseMoveRaf.current) {
+      mouseMoveRaf.current = requestAnimationFrame(() => {
+        mouseMoveRaf.current = null;
+        if (pendingMouseEvent.current) updateTooltip(pendingMouseEvent.current);
+      });
+    }
   };
 
   const handleMouseUp = () => { setIsDragging(false); setDragStart(null); };
@@ -395,14 +453,10 @@ export default function StitchCanvas({
     const ny = ((my - offset.y - H / 2) / zoom) / drawH + 0.5;
 
     let found = null;
-    for (const region of regions) {
-      if (!region.visible || !region.path_points) continue;
-      const pts = region.path_points;
-      const minX = Math.min(...pts.map(p => p[0]));
-      const maxX = Math.max(...pts.map(p => p[0]));
-      const minY = Math.min(...pts.map(p => p[1]));
-      const maxY = Math.max(...pts.map(p => p[1]));
-      if (nx >= minX && nx <= maxX && ny >= minY && ny <= maxY) { found = region; break; }
+    for (const b of regionBounds) {
+      const region = b.region;
+      if (region.visible === false || !region.path_points) continue;
+      if (nx >= b.minX && nx <= b.maxX && ny >= b.minY && ny <= b.maxY) { found = region; break; }
     }
     setHoveredRegion(found?.id || null);
     setTooltip(found ? { region: found, x: e.clientX - rect.left, y: e.clientY - rect.top } : null);
@@ -508,7 +562,7 @@ export default function StitchCanvas({
                 tooltip.region.stitch_type === 'fill' ? 'badge-fill' :
                 tooltip.region.stitch_type === 'satin' ? 'badge-satin' : 'badge-run'
               }`}>{tooltip.region.stitch_type}</span>
-              <span>{(tooltip.region._computed_stitches || tooltip.region.stitch_count || 0).toLocaleString()} ptos</span>
+              <span>{(stitchCache.current.get(tooltip.region.id)?.totalStitches || tooltip.region.stitch_count || 0).toLocaleString()} ptos</span>
             </div>
           </div>
         )}

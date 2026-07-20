@@ -6,14 +6,13 @@
  * Only runs when the mode strategy enables travelOptimize.
  */
 
-import { optimizeTravelPath } from '../../travelOptimizer.js';
+import { optimizeStitchSequence } from '../../stitchSequenceOptimizer.js';
 import { getModeStrategy } from '../../digitizeModes.js';
 
 export async function runStitchOptimizer(ctx) {
   const strategy = getModeStrategy(ctx.config.mode || 'hybrid');
 
   if (!strategy.stitchStrategy?.travelOptimize) {
-    // Skip optimizer — keep regions as-is, populate minimal optimized wrapper
     ctx.optimized = null;
     return;
   }
@@ -23,10 +22,16 @@ export async function runStitchOptimizer(ctx) {
     return;
   }
 
-  ctx.optimized = optimizeTravelPath(ctx.regions, ctx.config);
+  const result = optimizeStitchSequence(ctx.regions, {
+    width_mm:  ctx.config.width_mm  || 100,
+    height_mm: ctx.config.height_mm || 100,
+    speed_spm: ctx.config.machine_speed || 800,
+  });
 
-  // Apply optimized order back to ctx.regions so downstream stages use it
-  if (ctx.optimized?.optimizedSequence?.length > 0) {
-    ctx.regions = ctx.optimized.optimizedSequence;
+  // Store full result for downstream consumers (NeedlePathPanel, metrics bar)
+  ctx.optimized = result;
+
+  if (Array.isArray(result.optimizedSequence) && result.optimizedSequence.length > 0) {
+    ctx.regions = result.optimizedSequence;
   }
 }

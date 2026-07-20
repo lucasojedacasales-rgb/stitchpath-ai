@@ -1,434 +1,108 @@
 /**
- * adaptiveEngine.js
- * ─────────────────────────────────────────────────────────────────────────────
- * Adaptive Embroidery Engine
+ * adaptiveEngine.js — Thin adapter over the Embroidery Intelligence Engine (EIE)
  *
- * No hay parámetros fijos. Cada región recibe su configuración óptima
- * calculada a partir de sus propias métricas geométricas:
+ * Legacy API surface preserved for backward compatibility with regionBuilder.js.
+ * All computation now delegates to stitchIntelligence.js (EIE v2.0).
  *
- *   adaptStitchType()      → fill | satin | running_stitch
- *   adaptDensity()         → mm entre filas / columnas (0.25–0.55)
- *   adaptStitchLength()    → longitud en mm de cada puntada (1.5–6.0)
- *   adaptCompensation()    → pull compensation en mm (0.0–0.6)
- *   adaptUnderlay()        → { enabled, type, density, angle }
- *   adaptDirection()       → ángulo de relleno en grados [0,180)
- *   adaptPriority()        → entero [1,10]
- *   adaptRegion()          → todos los parámetros anteriores en un objeto
+ * New code should import from stitchIntelligence.js directly.
  */
 
-// ─── Constantes de calibración ────────────────────────────────────────────────
+import {
+  eieAnalyzeRegion,
+  eieStitchType,
+  eieDensity,
+  eieFillAngle,
+  eiePullCompensation,
+  eiePushCompensation,
+  eieUnderlay,
+  eiePriority,
+  FABRIC_MODEL,
+} from './stitchIntelligence.js';
 
-// Fabric-specific pull compensation multipliers (empirically derived)
-const FABRIC_PULL = {
-  'Lycra':    0.60,
-  'Mezcla':   0.38,
-  'Algodón':  0.28,
-  'Denim':    0.22,
-  'Lino':     0.20,
-  'Poliéster':0.15,
-  'Seda':     0.10,
-  'Otro':     0.28,
-};
+// Re-export EIE constants for legacy consumers
+export { FABRIC_MODEL };
 
-// Satin is only practical up to this width; beyond it puckers the fabric
-const SATIN_MAX_WIDTH_MM = 8.0;
+// ─── Legacy shim functions (thin wrappers) ────────────────────────────────────
 
-// Below this area threshold shapes are too tiny for tatami fill
-const MIN_FILL_AREA_MM2 = 10;
-
-// Thread diameter constants (mm) — physical 40wt thread
-const THREAD_D_FILL    = 0.38;
-const THREAD_D_SATIN   = 0.35;
-const THREAD_D_RUNNING = 0.25;
-
-
-// ─── 1. Stitch Type ───────────────────────────────────────────────────────────
-
-/**
- * Selects stitch type using a multi-signal decision tree.
- * Signals (in priority order):
- *   1. Filiform (hairline): running_stitch
- *   2. Too small for fill/satin: running_stitch
- *   3. Narrow elongated shape within satin limits: satin
- *   4. Default: fill
- *
- * Returns { type, confidence [0–1], rationale }
- */
 export function adaptStitchType(geo) {
-  const { area_mm2, mean_width_mm, max_width_mm, skeleton_length_mm, convexity, concavity, complexity } = geo;
-
-  // Signal 1 — hairline / filiform
-  const elongationRatio = skeleton_length_mm / Math.max(0.1, mean_width_mm);
-  if (mean_width_mm < 1.2 && elongationRatio > 4) {
-    return { type: 'running_stitch', confidence: 0.97,
-      rationale: `Filiform: ancho medio ${mean_width_mm.toFixed(1)}mm, elongación ${elongationRatio.toFixed(1)}× → running stitch.` };
-  }
-
-  // Signal 2 — micro area
-  if (area_mm2 < 3.5) {
-    return { type: 'running_stitch', confidence: 0.93,
-      rationale: `Micro-área ${area_mm2.toFixed(1)}mm²; solo running stitch es viable.` };
-  }
-
-  // Signal 3 — satin zone: narrow enough AND convex enough AND not too complex
-  const isSatinWidth  = max_width_mm <= SATIN_MAX_WIDTH_MM && mean_width_mm <= 6.5;
-  const isSatinShape  = convexity > 0.50 && complexity.score < 0.65;
-  const isElongated   = elongationRatio > 1.6 || mean_width_mm < 5.5;
-
-  if (isSatinWidth && isSatinShape && isElongated && area_mm2 >= 3.5) {
-    const conf = Math.min(0.95, 0.60 + (1 - max_width_mm / SATIN_MAX_WIDTH_MM) * 0.35);
-    return { type: 'satin', confidence: +conf.toFixed(2),
-      rationale: `Satin: max_w=${max_width_mm.toFixed(1)}mm≤8, convexity=${convexity.toFixed(2)}, elongación=${elongationRatio.toFixed(1)}×.` };
-  }
-
-  // Signal 4 — fill (tatami)
-  const conf = Math.min(0.95, 0.55 + (area_mm2 / 500) * 0.3 + convexity * 0.15);
-  return { type: 'fill', confidence: +conf.toFixed(2),
-    rationale: `Fill tatami: área=${area_mm2.toFixed(1)}mm², ancho_medio=${mean_width_mm.toFixed(1)}mm, convexity=${convexity.toFixed(2)}.` };
+  const r = eieStitchType(geo);
+  return { type: r.stitch_type || r.type, confidence: r.confidence, rationale: r.rationale };
 }
 
-
-// ─── 2. Density ───────────────────────────────────────────────────────────────
-
-/**
- * Computes row/column spacing in mm.
- *
- * Fill ranges   : 0.3 (dense/badges) → 0.4–0.5 (standard) → 0.6+ (light fabrics)
- * Satin ranges  : 0.3 (dense/elevated) → 0.4 (standard) → 0.5 (light)
- * Running stitch: not applicable (returns 0)
- *
- * Returns density in mm (lower → denser).
- */
 export function adaptDensity(geo, stitchType, fabricType = 'Algodón') {
-  const { area_mm2, mean_width_mm, complexity, convexity, mean_curvature } = geo;
-
-  if (stitchType === 'running_stitch') return 0;
-
-  if (stitchType === 'satin') {
-    // Standard satin: 0.4mm. Dense (narrow/elevated): 0.3mm. Light (wide): 0.5mm.
-    let d = 0.40;
-    if (mean_width_mm < 3)  d = 0.30; // dense — small elevated column
-    if (mean_width_mm > 6)  d = 0.50; // light — wide satin risks separation
-    // Stretch fabrics need denser satin to compensate distortion
-    if (fabricType === 'Lycra' || fabricType === 'Mezcla') d = Math.min(d, 0.35);
-    return +d.toFixed(2);
-  }
-
-  // Fill — 0.4mm standard base
-  let d = 0.40;
-
-  // Dense fill for small/detail regions (badges, patches effect)
-  if (area_mm2 < 30)  d = 0.32;
-  else if (area_mm2 < 80) d = 0.36;
-
-  // Complex / highly curved shapes need more coverage
-  d -= complexity.score * 0.06;
-  d -= (1 - convexity) * 0.04;
-  d -= Math.min(0.04, mean_curvature * 0.03);
-
-  // Light fill for large simple areas on fine fabrics
-  if (area_mm2 > 300 && complexity.level === 'simple') d += 0.06;
-  if (area_mm2 > 600 && complexity.level === 'simple') d += 0.04;
-  if (fabricType === 'Seda' || fabricType === 'Lino')  d = Math.max(d, 0.50); // light on delicate fabrics
-
-  // Dense for stretch fabrics (must lock threads tightly)
-  if (fabricType === 'Lycra') d = Math.min(d, 0.32);
-
-  return +Math.max(0.28, Math.min(0.65, d)).toFixed(3);
+  return eieDensity(geo, stitchType, fabricType).density_mm;
 }
 
-
-// ─── 3. Stitch Length ─────────────────────────────────────────────────────────
-
-/**
- * Computes individual stitch length in mm.
- * Shorter stitches = more precise, higher quality on curves.
- * Longer stitches = faster, better for large flat areas.
- *
- * Returns length in mm [1.5–6.0].
- */
 export function adaptStitchLength(geo, stitchType) {
-  const { area_mm2, mean_curvature, complexity, convexity, skeleton_length_mm, mean_width_mm } = geo;
-
+  const { area_mm2, mean_curvature, complexity, convexity, mean_width_mm } = geo;
   if (stitchType === 'running_stitch') {
-    // Running stitch: shorter on curves, longer on straight edges
     const base = 2.5;
-    const curvAdj = -Math.min(1.0, mean_curvature * 0.8);
+    const curvAdj = -Math.min(1.0, (mean_curvature || 0) * 0.8);
     return +Math.max(1.5, Math.min(4.0, base + curvAdj)).toFixed(2);
   }
-
   if (stitchType === 'satin') {
-    // Satin length = width of the shape (perpendicular span)
-    // Clamp to practical machine limits
-    return +Math.max(1.5, Math.min(SATIN_MAX_WIDTH_MM, mean_width_mm * 1.05)).toFixed(2);
+    return +Math.max(1.5, Math.min(8.0, (mean_width_mm || 4) * 1.05)).toFixed(2);
   }
-
-  // Fill — tatami stitch length
-  let len = 3.0; // professional standard
-
-  // Shorter for highly curved / complex shapes
-  len -= complexity.score * 0.8;
-  len -= Math.min(0.5, mean_curvature * 0.4);
-
-  // Shorter for small, detail-heavy regions
+  let len = 3.0;
+  len -= (complexity?.score || 0) * 0.8;
+  len -= Math.min(0.5, (mean_curvature || 0) * 0.4);
   if (area_mm2 < 20) len = Math.min(len, 2.0);
   else if (area_mm2 < 60) len = Math.min(len, 2.5);
-
-  // Longer for large, flat regions (efficiency)
-  if (area_mm2 > 200 && convexity > 0.80 && complexity.level === 'simple') len = Math.max(len, 3.5);
-
+  if (area_mm2 > 200 && (convexity || 0) > 0.80 && complexity?.level === 'simple') len = Math.max(len, 3.5);
   return +Math.max(1.5, Math.min(5.0, len)).toFixed(2);
 }
 
-
-// ─── 4. Pull Compensation ─────────────────────────────────────────────────────
-
-/**
- * Computes pull compensation in mm.
- * Compensates for thread tension pulling the fabric inward.
- * Driven by fabric elasticity, stitch type, and shape width.
- *
- * Returns compensation in mm [0.0–0.6].
- */
 export function adaptCompensation(geo, stitchType, fabricType = 'Algodón') {
-  if (stitchType === 'running_stitch') return 0;
-
-  const { mean_width_mm, area_mm2, skeleton_length_mm, complexity } = geo;
-  const ff = FABRIC_PULL[fabricType] || 0.28;
-
-  let comp = 0;
-
-  if (stitchType === 'satin') {
-    // Pull compensation formula: +0.15mm @ 2mm width, +0.30mm @ 7mm width
-    // Interpolated linearly; scaled by fabric elasticity factor
-    const widthBase = 0.15 + ((mean_width_mm - 2) / 5) * 0.15; // 0.15–0.30 across 2–7mm
-    comp = Math.max(0.10, widthBase) * (1 + ff);
-    // Denim: minimal compensation (low stretch)
-    if (fabricType === 'Denim') comp *= 0.6;
-    // Lycra/stretch: maximum compensation
-    if (fabricType === 'Lycra' || fabricType === 'Mezcla') comp *= 1.4;
-  } else {
-    // Fill: base from fabric, scaled by area and complexity
-    comp = ff * 0.8; // fills distort less than satin
-    if (area_mm2 > 200) comp += 0.05;
-    if (area_mm2 > 500) comp += 0.04;
-    comp += complexity.score * 0.06;
-    // Push compensation for long satin-like fill columns
-    if (skeleton_length_mm > 20) comp -= 0.03; // shorten long columns slightly
-  }
-
-  return +Math.max(0, Math.min(0.60, comp)).toFixed(3);
+  return eiePullCompensation(geo, stitchType, fabricType).compensation_mm;
 }
 
-
-// ─── 5. Underlay ─────────────────────────────────────────────────────────────
-
-/**
- * Decides underlay type and parameters.
- * Underlay stabilizes the fabric before the top stitching.
- *
- * Returns { enabled, type, density_mm, angle_deg, rationale }
- */
 export function adaptUnderlay(geo, stitchType, fabricType = 'Algodón') {
-  const { area_mm2, mean_width_mm, complexity } = geo;
-
-  if (stitchType === 'running_stitch') {
-    return { enabled: false, type: null, density_mm: 0, angle_deg: 0,
-      rationale: 'Running stitch no requiere underlay.' };
-  }
-
-  // Pile fabrics (fleece-like) need full coverage underlay regardless of size
-  const isPileFabric = fabricType === 'Otro'; // proxy for terry/fleece until fabric types expand
-
-  if (stitchType === 'satin') {
-    if (mean_width_mm < 2.5) {
-      // Thin satin: centre walk — 1 central line prevents sinking
-      return { enabled: true, type: 'centre_walk', density_mm: 0, angle_deg: 0,
-        rationale: `Satin estrecho (${mean_width_mm.toFixed(1)}mm): centre walk central.` };
-    }
-    if (mean_width_mm > 5) {
-      // Wide satin: zigzag underlay for lateral stability
-      const d = +(mean_width_mm * 0.22).toFixed(2);
-      return { enabled: true, type: 'zigzag', density_mm: d, angle_deg: 90,
-        rationale: `Satin ancho (${mean_width_mm.toFixed(1)}mm): zigzag underlay, densidad ${d}mm.` };
-    }
-    // Standard satin: centre walk
-    return { enabled: true, type: 'centre_walk', density_mm: 0, angle_deg: 0,
-      rationale: `Satin ${mean_width_mm.toFixed(1)}mm: centre walk estándar.` };
-  }
-
-  // Fill underlay
-  if (area_mm2 < 12) {
-    return { enabled: false, type: null, density_mm: 0, angle_deg: 0,
-      rationale: 'Fill micro (<12mm²): underlay omitido.' };
-  }
-
-  // Pile/texture fabrics: full coverage underlay to flatten nap
-  if (isPileFabric && area_mm2 > 30) {
-    const d = +(THREAD_D_FILL * 1.8).toFixed(2);
-    return { enabled: true, type: 'full_coverage', density_mm: d, angle_deg: 45,
-      rationale: `Tejido de pelo: full coverage underlay, densidad ${d}mm.` };
-  }
-
-  // Large or complex fills: zigzag underlay (flattens fabric, perpendicular to fill)
-  if (area_mm2 > 120 || (complexity.level === 'alta' && area_mm2 > 40)) {
-    const d = +(THREAD_D_FILL * 2.5).toFixed(2);
-    return { enabled: true, type: 'zigzag', density_mm: d, angle_deg: 90,
-      rationale: `Fill grande/complejo (${area_mm2.toFixed(0)}mm²): zigzag underlay 90°, densidad ${d}mm.` };
-  }
-
-  // Medium fills: edge walk (complements pull compensation around perimeter)
-  if (area_mm2 > 30) {
-    return { enabled: true, type: 'edge_walk', density_mm: 0, angle_deg: 0,
-      rationale: `Fill mediano (${area_mm2.toFixed(0)}mm²): edge walk perimetral.` };
-  }
-
-  // Small fills: edge walk minimal
-  return { enabled: true, type: 'edge_walk', density_mm: 0, angle_deg: 0,
-    rationale: 'Fill pequeño: edge walk mínimo.' };
+  const u = eieUnderlay(geo, stitchType, fabricType);
+  return {
+    enabled:     !!u.type,
+    type:        u.type,
+    density_mm:  u.density_mm,
+    angle_deg:   u.angle_deg,
+    rationale:   u.rationale,
+  };
 }
 
-
-// ─── 6. Direction ─────────────────────────────────────────────────────────────
-
-/**
- * Computes optimal fill angle in degrees [0, 180).
- * Uses PCA orientation as primary signal, then applies corrections
- * for elongation, curvature patterns, and layer context.
- *
- * Returns angle in degrees.
- */
 export function adaptDirection(geo, stitchType) {
-  const { orientation, skeleton_length_mm, mean_width_mm, mean_curvature, convexity } = geo;
-
-  if (stitchType === 'running_stitch') return orientation; // follows contour
-
-  if (stitchType === 'satin') {
-    // Satin columns are always perpendicular to the shape's main axis
-    return (orientation + 90) % 180;
-  }
-
-  // Fill — start from PCA orientation
-  let angle = orientation;
-
-  // For highly elongated shapes, stitches should run perpendicular to the long axis
-  const elongation = skeleton_length_mm / Math.max(0.1, mean_width_mm);
-  if (elongation > 3) {
-    angle = (orientation + 90) % 180;
-  }
-
-  // Traditional 45° correction for near-horizontal/vertical shapes
-  // (avoids long unsupported stitches parallel to fabric grain)
-  if ((angle < 20 || angle > 160) && convexity > 0.7) {
-    angle = 45;
-  }
-
-  // Highly curved shapes benefit from a diagonal that bisects the main curvature
-  if (mean_curvature > 0.8) {
-    angle = (angle + 45) % 180;
-  }
-
-  return Math.round(angle);
+  return eieFillAngle(geo).angle_deg;
 }
 
-
-// ─── 7. Priority ─────────────────────────────────────────────────────────────
-
-/**
- * Computes build priority [1, 10].
- * Low priority = drawn first (background/base layers).
- * High priority = drawn last (foreground details, outlines).
- *
- * Multi-signal: area, stitch type, complexity, concavity (details = higher prio).
- */
 export function adaptPriority(geo, stitchType, existingPriority = null) {
-  // Always respect an explicit backend-assigned priority
-  if (existingPriority != null && existingPriority > 0) return existingPriority;
-
-  const { area_mm2, complexity, concavity, mean_width_mm } = geo;
-
-  // Running stitch outlines/details always on top
-  if (stitchType === 'running_stitch') return 9;
-
-  // Satin details: above fills but below running outlines
-  if (stitchType === 'satin') {
-    // Very thin satin = detail element → higher priority
-    if (mean_width_mm < 3) return 8;
-    return 6;
-  }
-
-  // Fill: larger = earlier (base layer), smaller = later (detail layer)
-  if (area_mm2 > 600) return 1;
-  if (area_mm2 > 300) return 2;
-  if (area_mm2 > 120) return 3;
-  if (area_mm2 > 50)  return 4;
-  if (area_mm2 > 20)  return 5;
-
-  // Small complex fills = fine details → near top
-  if (complexity.level === 'alta') return 7;
-  return 6;
+  return eiePriority(geo, stitchType, existingPriority).priority;
 }
 
+// ─── Master adapter (used by regionBuilder.js) ────────────────────────────────
 
-// ─── 8. Master adapter ───────────────────────────────────────────────────────
-
-/**
- * adaptRegion(geo, overrides, fabricType)
- *
- * Given the geometric metrics object (from regionBuilder/enrichRegion),
- * returns a complete adaptive parameter set for that region.
- *
- * overrides: { stitch_type?, angle?, density?, pull_compensation? }
- *   — explicit user overrides from the pipeline (hybridDigitize labels)
- *   — each override is respected; only missing values are computed adaptively.
- *
- * Returns:
- * {
- *   stitch_type, stitch_confidence, stitch_rationale,
- *   density, stitch_length_mm, pull_compensation,
- *   underlay, fill_angle, priority,
- *   adaptive: true   ← marker so consumers know this was adaptive
- * }
- */
 export function adaptRegion(geo, overrides = {}, fabricType = 'Algodón') {
-  // --- Stitch type ---
-  const stitchResult = adaptStitchType(geo);
-  const stitch_type  = overrides.stitch_type || stitchResult.type;
+  const eie = eieAnalyzeRegion(geo, fabricType, {
+    existingPriority: overrides.priority ?? null,
+  }, overrides);
 
-  // --- Density ---
-  const density = overrides.density != null
-    ? overrides.density
-    : adaptDensity(geo, stitch_type, fabricType);
-
-  // --- Stitch length ---
-  const stitch_length_mm = adaptStitchLength(geo, stitch_type);
-
-  // --- Pull compensation ---
-  const pull_compensation = overrides.pull_compensation != null
-    ? overrides.pull_compensation
-    : adaptCompensation(geo, stitch_type, fabricType);
-
-  // --- Underlay ---
-  const underlay = adaptUnderlay(geo, stitch_type, fabricType);
-
-  // --- Direction ---
-  const fill_angle = overrides.angle != null
-    ? overrides.angle
-    : adaptDirection(geo, stitch_type);
-
-  // --- Priority ---
-  const priority = adaptPriority(geo, stitch_type, overrides.priority ?? null);
+  const stitch_length_mm = adaptStitchLength(geo, eie.stitch_type);
 
   return {
-    stitch_type,
-    stitch_confidence:  stitchResult.confidence,
-    stitch_rationale:   stitchResult.rationale,
-    density:            +density.toFixed(3),
+    stitch_type:         eie.stitch_type,
+    stitch_confidence:   eie.stitch_confidence,
+    stitch_rationale:    eie.stitch_rationale,
+    density:             eie.density_mm,
     stitch_length_mm,
-    pull_compensation,
-    underlay,
-    fill_angle,
-    priority,
-    adaptive:           true,
+    pull_compensation:   eie.pull_compensation_mm,
+    push_compensation:   eie.push_compensation_mm,
+    underlay: {
+      enabled:     !!eie.underlay?.type,
+      type:        eie.underlay?.type,
+      density_mm:  eie.underlay?.density_mm,
+      angle_deg:   eie.underlay?.angle_deg,
+      rationale:   eie.underlay_rationale,
+    },
+    fill_angle:          eie.fill_angle,
+    priority:            eie.priority,
+    overall_confidence:  eie.overall_confidence,
+    eie_version:         eie.eie_version,
+    adaptive:            true,
   };
 }

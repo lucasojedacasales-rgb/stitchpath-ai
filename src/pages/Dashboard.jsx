@@ -33,8 +33,12 @@ export default function Dashboard() {
   };
 
   const createProject = async () => {
-    const p = await base44.entities.Project.create({ name: 'Nuevo diseño', step: 1, status: 'draft' });
-    navigate(`/editor/${p.id}`);
+    try {
+      const p = await base44.entities.Project.create({ name: 'Nuevo diseño', step: 1, status: 'draft' });
+      navigate(`/editor/${p.id}`);
+    } catch (e) {
+      console.error('createProject:', e);
+    }
   };
 
   const deleteProject = async (e, id) => {
@@ -64,12 +68,28 @@ export default function Dashboard() {
               <p className="text-[11px] text-slate-500">Motor de digitalización avanzado</p>
             </div>
           </div>
-          <button
-            onClick={createProject}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold transition-colors"
-          >
-            <Plus className="w-4 h-4" /> Nuevo proyecto
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate('/reference-learning')}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161a23] border border-[#2a2d3a] hover:border-violet-500 text-slate-300 text-sm font-medium transition-colors"
+              title="Aprendizaje de referencias profesionales"
+            >
+              ✨ Aprendizaje de referencias
+            </button>
+            <button
+              onClick={() => navigate('/regression')}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161a23] border border-[#2a2d3a] hover:border-violet-500 text-slate-300 text-sm font-medium transition-colors"
+              title="Abrir suite de regresión"
+            >
+              🧪 Abrir regresión
+            </button>
+            <button
+              onClick={createProject}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold transition-colors"
+            >
+              <Plus className="w-4 h-4" /> Nuevo proyecto
+            </button>
+          </div>
         </div>
       </div>
 
@@ -82,6 +102,17 @@ export default function Dashboard() {
             value={search} onChange={e => setSearch(e.target.value)}
             className="w-full max-w-sm bg-[#161a23] border border-[#2a2d3a] rounded-lg pl-9 pr-4 py-2.5 text-sm text-slate-300 placeholder-slate-600 focus:outline-none focus:border-violet-500"
           />
+        </div>
+
+        <div className="mb-6 rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-4 text-sm text-slate-300">
+          <div className="mb-2 font-bold text-emerald-300">Prueba recomendada:</div>
+          <ol className="list-decimal space-y-1 pl-5">
+            <li>Exporta primero DSB.</li>
+            <li>Si DSB no abre, prueba DST.</li>
+            <li>Haz foto de la pantalla de la máquina.</li>
+            <li>Comprueba si la máquina muestra tamaño, colores y puntadas.</li>
+            <li>No bordar todavía si visualmente ves líneas peligrosas; primero confirmar que lo acepta.</li>
+          </ol>
         </div>
 
         {loading ? (
