@@ -27,8 +27,13 @@ export {
 export { createEngineV2FoundationDiagnostic } from './diagnostics.js';
 
 export {
+  CONTOUR_LAST_ASSOCIATION_LIMIT,
+  CONTOUR_LAST_ASSOCIATION_METHOD,
+  CONTOUR_LAST_RULE_ID,
   DEFAULT_HATCH_EVIDENCE_PROFILE,
   DEFAULT_HATCH_EVIDENCE_RULE_FLAGS,
+  DEFAULT_HATCH_OVERLAP_PROFILE,
+  DEFAULT_HATCH_OVERLAP_RULE_FLAGS,
   HATCH_EVIDENCE_PHASES,
   HATCH_EVIDENCE_PROFILES,
   HATCH_EVIDENCE_REGISTRY,
@@ -36,16 +41,23 @@ export {
   HATCH_EVIDENCE_RULES,
   HATCH_HOLE_EVIDENCE_LIMITS,
   HATCH_HOLE_MEASUREMENT_TOLERANCES,
+  HATCH_OVERLAP_CONFIG_FIELDS,
+  HATCH_OVERLAP_PROFILES,
+  HATCH_OVERLAP_RULE_IDS,
   HATCH_MASTER_EVIDENCE_SOURCE,
   HATCH_WIDTH_EVIDENCE_LIMITS,
   analyzeHatchLocalWidthProfile,
   evaluateHatchHoleProtection,
   evaluateHatchWidthTechniqueCandidate,
+  evaluateContourLastProposalGuard,
   getHatchEvidenceRules,
   hatchEvidenceRuleEnabled,
+  hatchOverlapRuleEnabled,
   measureHoleMinimumSpanMm,
   resolveHatchEvidenceIntegrationConfig,
+  resolveHatchOverlapIntegrationConfig,
   validateHatchEvidenceIntegrationConfig,
+  validateHatchOverlapIntegrationConfig,
   validateHatchEvidenceRegistry,
 } from './rules/hatchEvidence/index.js';
 
@@ -144,11 +156,27 @@ export {
 export { evaluateOutlineEligibility } from './planning/outlineEligibility.js';
 export { planEmbroideryRoleForRegion } from './planning/embroideryRolePlanner.js';
 export {
+  CONTOUR_DEPENDENCY_ASSOCIATION_LIMIT,
+  CONTOUR_DEPENDENCY_ASSOCIATION_METHOD,
+  CONTOUR_DEPENDENCY_CONTRACT_VERSION,
+  CONTOUR_DEPENDENCY_RULE_ID,
+  CONTOUR_INTEGRATION_MARKER_VERSION,
   buildEmbroideryProposalDependencies,
+  createContourIntegrationMarker,
+  deriveCanonicalContourDependencyContract,
+  deriveProposalExecutionLayers,
   getProposalAncestors,
   getProposalDescendants,
   getProposalExecutionLayers,
+  normalizeCanonicalSemanticResult,
+  validateProposalDependencyIntegrity,
 } from './planning/dependencyPlanner.js';
+export {
+  createFlatErrorReference,
+  mergeFlatErrors,
+  propagateFlatErrors,
+  stableErrorIdentity,
+} from './errorPropagation.js';
 export { buildEmbroideryObjectProposalPlan } from './planning/objectPlanningPipeline.js';
 export {
   validateEmbroideryObjectProposalPlan,

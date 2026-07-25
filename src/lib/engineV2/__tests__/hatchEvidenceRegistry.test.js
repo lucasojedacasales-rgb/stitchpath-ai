@@ -92,8 +92,14 @@ describe('Hatch A-F evidence registry', () => {
     });
   });
 
-  it('keeps C-F and lettering inactive', () => {
-    expect(HATCH_EVIDENCE_RULES.filter(rule => ['C_Solapes', 'D_Técnicas', 'E_Telas', 'F_Escalado'].includes(rule.phase)).every(rule => rule.activatedInProfiles.length === 0)).toBe(true);
+  it('keeps only CONTOUR-LAST partially integrated in C while D-F and lettering remain inactive', () => {
+    const cRules = HATCH_EVIDENCE_RULES.filter(rule => rule.phase === 'C_Solapes');
+    expect(cRules.find(rule => rule.id === 'CONTOUR-LAST-001').activatedInProfiles)
+      .toEqual(['hatch-c-experimental']);
+    expect(cRules.filter(rule => rule.id !== 'CONTOUR-LAST-001')
+      .every(rule => rule.activatedInProfiles.length === 0)).toBe(true);
+    expect(HATCH_EVIDENCE_RULES.filter(rule => ['D_Técnicas', 'E_Telas', 'F_Escalado'].includes(rule.phase))
+      .every(rule => rule.activatedInProfiles.length === 0)).toBe(true);
     expect(HATCH_EVIDENCE_REGISTRY.letteringIncluded).toBe(false);
     expect(HATCH_EVIDENCE_REGISTRY.reviewedClosedOverlapAudit).toMatchObject({ phaseRemainsClosed: true, technicalDataModified: false });
   });
