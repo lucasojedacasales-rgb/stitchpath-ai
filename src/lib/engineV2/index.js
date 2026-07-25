@@ -27,6 +27,29 @@ export {
 export { createEngineV2FoundationDiagnostic } from './diagnostics.js';
 
 export {
+  DEFAULT_HATCH_EVIDENCE_PROFILE,
+  DEFAULT_HATCH_EVIDENCE_RULE_FLAGS,
+  HATCH_EVIDENCE_PHASES,
+  HATCH_EVIDENCE_PROFILES,
+  HATCH_EVIDENCE_REGISTRY,
+  HATCH_EVIDENCE_RULE_IDS,
+  HATCH_EVIDENCE_RULES,
+  HATCH_HOLE_EVIDENCE_LIMITS,
+  HATCH_HOLE_MEASUREMENT_TOLERANCES,
+  HATCH_MASTER_EVIDENCE_SOURCE,
+  HATCH_WIDTH_EVIDENCE_LIMITS,
+  analyzeHatchLocalWidthProfile,
+  evaluateHatchHoleProtection,
+  evaluateHatchWidthTechniqueCandidate,
+  getHatchEvidenceRules,
+  hatchEvidenceRuleEnabled,
+  measureHoleMinimumSpanMm,
+  resolveHatchEvidenceIntegrationConfig,
+  validateHatchEvidenceIntegrationConfig,
+  validateHatchEvidenceRegistry,
+} from './rules/hatchEvidence/index.js';
+
+export {
   DEFAULT_GEOMETRY_TOLERANCES,
   canonicalizeHoles,
   canonicalizePolygon,
@@ -107,6 +130,7 @@ export {
 
 export {
   DEFAULT_OBJECT_PLANNING_CONFIG,
+  LEGACY_SATIN_MINIMUM_ASPECT_RATIO,
   resolveObjectPlanningConfig,
   validateObjectPlanningConfig,
 } from './planning/planningConfig.js';

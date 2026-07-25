@@ -42,10 +42,16 @@ function summaryFor(regions, proposals, dependencyResult) {
   };
 }
 
-export function buildEmbroideryObjectProposalPlan({ regions, graph, semanticResult, config = {} }) {
+export function buildEmbroideryObjectProposalPlan({
+  regions,
+  graph,
+  semanticResult,
+  config = {},
+  technicalConfig,
+}) {
   const sourceRegions = Array.isArray(regions) ? regions : [];
   const before = snapshot({ regions: sourceRegions, graph, semanticResult });
-  const configValidation = validateObjectPlanningConfig(config);
+  const configValidation = validateObjectPlanningConfig(config, { technicalConfig });
   const resolvedConfig = resolveObjectPlanningConfig(config);
   const proposals = [...sourceRegions].sort((a, b) => String(a.id).localeCompare(String(b.id))).map(region => {
     const assessment = semanticResult?.byRegionId?.[region.id]
@@ -55,6 +61,7 @@ export function buildEmbroideryObjectProposalPlan({ regions, graph, semanticResu
       colorFeatures: assessment.colorFeatures || analyzeArtworkColor(region.visualColor),
       geometryFeatures: assessment.geometryFeatures || analyzeRegionGeometryFeatures(region, graph),
       config: resolvedConfig,
+      technicalConfig,
     });
   });
   const dependencyResult = buildEmbroideryProposalDependencies(proposals, sourceRegions, graph, semanticResult, resolvedConfig);

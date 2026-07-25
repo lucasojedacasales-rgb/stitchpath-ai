@@ -1,3 +1,5 @@
+import { validateHatchEvidenceIntegrationConfig } from '../rules/hatchEvidence/profiles.js';
+
 export const DEFAULT_OBJECT_PLANNING_CONFIG = Object.freeze({
   designWidthMm: 100, designHeightMm: 100, includeBackground: false,
   generateSyntheticOutlines: false, allowExplicitOutlineRegions: true,
@@ -7,20 +9,31 @@ export const DEFAULT_OBJECT_PLANNING_CONFIG = Object.freeze({
   maximumRunningDetailWidthMm: 1.6, smallDetailAreaMm2: 5, conservativeMode: true,
 });
 
+export const LEGACY_SATIN_MINIMUM_ASPECT_RATIO = 1.5;
+
 const issue = (code, path, message) => ({ code, path, message });
+const plainObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 export function resolveObjectPlanningConfig(config = {}) {
-  const source = config && typeof config === 'object' && !Array.isArray(config) ? config : {};
+  const source = plainObject(config) ? config : {};
   const known = new Set(Object.keys(DEFAULT_OBJECT_PLANNING_CONFIG));
   const resolved = { ...DEFAULT_OBJECT_PLANNING_CONFIG };
   known.forEach(key => { if (Object.hasOwn(source, key)) resolved[key] = source[key]; });
-  resolved.extras = Object.fromEntries(Object.entries(source).filter(([key]) => !known.has(key)));
+  const nestedExtras = plainObject(source.extras) ? source.extras : {};
+  const topLevelExtras = Object.fromEntries(
+    Object.entries(source).filter(([key]) => key !== 'extras' && !known.has(key)),
+  );
+  // Explicit top-level fields deterministically override values from a reused resolved config.
+  resolved.extras = { ...nestedExtras, ...topLevelExtras };
   return resolved;
 }
 
-export function validateObjectPlanningConfig(config = {}) {
+export function validateObjectPlanningConfig(config = {}, options = {}) {
   const resolved = resolveObjectPlanningConfig(config);
-  const errors = [];
+  const errors = [...validateHatchEvidenceIntegrationConfig(config, options).errors];
+  if (Object.hasOwn(config || {}, 'extras') && !plainObject(config.extras)) {
+    errors.push(issue('INVALID_OBJECT_PLANNING_EXTRAS', 'extras', 'extras must be an object when provided.'));
+  }
   ['designWidthMm', 'designHeightMm'].forEach(field => {
     if (!Number.isFinite(resolved[field]) || resolved[field] <= 0) errors.push(issue('INVALID_DESIGN_DIMENSION', field, `${field} must be finite and greater than zero.`));
   });
