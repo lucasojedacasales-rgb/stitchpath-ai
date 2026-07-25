@@ -30,6 +30,11 @@ export {
   CONTOUR_LAST_ASSOCIATION_LIMIT,
   CONTOUR_LAST_ASSOCIATION_METHOD,
   CONTOUR_LAST_RULE_ID,
+  COLOR_GROUP_HEURISTIC_CONTRACT_VERSION,
+  COLOR_GROUP_HEURISTIC_EVALUATION_VERSION,
+  COLOR_GROUP_HEURISTIC_MARKER_VERSION,
+  COLOR_GROUP_HEURISTIC_RULE_ID,
+  COLOR_GROUP_HEURISTIC_TRACE_VERSION,
   DEFAULT_HATCH_EVIDENCE_PROFILE,
   DEFAULT_HATCH_EVIDENCE_RULE_FLAGS,
   DEFAULT_HATCH_OVERLAP_PROFILE,
@@ -50,6 +55,9 @@ export {
   evaluateHatchHoleProtection,
   evaluateHatchWidthTechniqueCandidate,
   evaluateContourLastProposalGuard,
+  createColorGroupHeuristicIntegrationMarker,
+  deriveCanonicalColorGroupHeuristicContract,
+  evaluateColorGroupHeuristicGuard,
   getHatchEvidenceRules,
   hatchEvidenceRuleEnabled,
   hatchOverlapRuleEnabled,
@@ -59,6 +67,7 @@ export {
   validateHatchEvidenceIntegrationConfig,
   validateHatchOverlapIntegrationConfig,
   validateHatchEvidenceRegistry,
+  validateColorGroupHeuristicPlanState,
 } from './rules/hatchEvidence/index.js';
 
 export {
