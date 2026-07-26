@@ -26,6 +26,7 @@ import {
   evaluateContourLastProposalGuard,
 } from '../rules/hatchEvidence/contourLast.js';
 import { COLOR_GROUP_HEURISTIC_RULE_ID } from '../rules/hatchEvidence/colorGroupHeuristic.js';
+import { MULTILAYER_DEPENDENCY_RULE_ID } from '../rules/hatchEvidence/multilayerDependency.js';
 import {
   DEFAULT_HATCH_OVERLAP_PROFILE,
   DEFAULT_HATCH_OVERLAP_RULE_FLAGS,
@@ -216,10 +217,12 @@ describe('Hatch C independent profile', () => {
     expect(HATCH_OVERLAP_RULE_IDS).toEqual([
       CONTOUR_LAST_RULE_ID,
       COLOR_GROUP_HEURISTIC_RULE_ID,
+      MULTILAYER_DEPENDENCY_RULE_ID,
     ]);
     expect(DEFAULT_HATCH_OVERLAP_RULE_FLAGS).toEqual({
       [CONTOUR_LAST_RULE_ID]: false,
       [COLOR_GROUP_HEURISTIC_RULE_ID]: false,
+      [MULTILAYER_DEPENDENCY_RULE_ID]: false,
     });
     expect(resolveHatchOverlapIntegrationConfig()).toEqual({
       profile: 'legacy',
@@ -318,9 +321,13 @@ describe('Hatch C independent profile', () => {
 });
 
 describe('Hatch C partial registry integration', () => {
-  it('registers only the independently gated C1 and C2 rules in hatch-c-experimental', () => {
+  it('registers only the independently gated C1, C2 and C3 rules in hatch-c-experimental', () => {
     expect(getHatchEvidenceRules({ profile: 'hatch-c-experimental' }).map(rule => rule.id))
-      .toEqual([CONTOUR_LAST_RULE_ID, COLOR_GROUP_HEURISTIC_RULE_ID]);
+      .toEqual([
+        CONTOUR_LAST_RULE_ID,
+        COLOR_GROUP_HEURISTIC_RULE_ID,
+        MULTILAYER_DEPENDENCY_RULE_ID,
+      ]);
     expect(HATCH_EVIDENCE_REGISTRY.activeIntegration).toEqual({
       profile: 'hatch-a-f-experimental',
       phases: ['A_Anchuras', 'B_Huecos'],
@@ -337,10 +344,15 @@ describe('Hatch C partial registry integration', () => {
     expect(HATCH_EVIDENCE_REGISTRY.partialIntegrations).toEqual([{
       profile: 'hatch-c-experimental',
       phase: 'C_Solapes',
-      ruleIds: [CONTOUR_LAST_RULE_ID, COLOR_GROUP_HEURISTIC_RULE_ID],
+      ruleIds: [
+        CONTOUR_LAST_RULE_ID,
+        COLOR_GROUP_HEURISTIC_RULE_ID,
+        MULTILAYER_DEPENDENCY_RULE_ID,
+      ],
       defaultRuleFlags: {
         [CONTOUR_LAST_RULE_ID]: false,
         [COLOR_GROUP_HEURISTIC_RULE_ID]: false,
+        [MULTILAYER_DEPENDENCY_RULE_ID]: false,
       },
       independentlyConfigurable: true,
       defaultEnabled: false,
@@ -349,11 +361,12 @@ describe('Hatch C partial registry integration', () => {
     expect(HATCH_EVIDENCE_REGISTRY.inactivePhases).toEqual(['D_Técnicas', 'E_Telas', 'F_Escalado']);
   });
 
-  it('keeps the other six C rules inactive and rejects unauthorized C activation', () => {
+  it('keeps the other five C rules inactive and rejects unauthorized C activation', () => {
     const cRules = HATCH_EVIDENCE_RULES.filter(rule => rule.phase === 'C_Solapes');
     expect(cRules.filter(rule => ![
       CONTOUR_LAST_RULE_ID,
       COLOR_GROUP_HEURISTIC_RULE_ID,
+      MULTILAYER_DEPENDENCY_RULE_ID,
     ].includes(rule.id))
       .every(rule => rule.activatedInProfiles.length === 0)).toBe(true);
     const alteredRules = HATCH_EVIDENCE_REGISTRY.rules.map(rule => rule.id === 'OVERLAP-CUTOUT-001'

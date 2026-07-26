@@ -35,6 +35,13 @@ export {
   COLOR_GROUP_HEURISTIC_MARKER_VERSION,
   COLOR_GROUP_HEURISTIC_RULE_ID,
   COLOR_GROUP_HEURISTIC_TRACE_VERSION,
+  MULTILAYER_DEPENDENCY_CLAIM_BOUNDARY,
+  MULTILAYER_DEPENDENCY_CONTRACT_VERSION,
+  MULTILAYER_DEPENDENCY_CORE_ROLES,
+  MULTILAYER_DEPENDENCY_EVALUATION_VERSION,
+  MULTILAYER_DEPENDENCY_MARKER_VERSION,
+  MULTILAYER_DEPENDENCY_RULE_ID,
+  MULTILAYER_DEPENDENCY_TRACE_VERSION,
   DEFAULT_HATCH_EVIDENCE_PROFILE,
   DEFAULT_HATCH_EVIDENCE_RULE_FLAGS,
   DEFAULT_HATCH_OVERLAP_PROFILE,
@@ -57,7 +64,10 @@ export {
   evaluateContourLastProposalGuard,
   createColorGroupHeuristicIntegrationMarker,
   deriveCanonicalColorGroupHeuristicContract,
+  createMultilayerDependencyIntegrationMarker,
+  deriveCanonicalMultilayerDependencyContract,
   evaluateColorGroupHeuristicGuard,
+  evaluateMultilayerDependencyGuard,
   getHatchEvidenceRules,
   hatchEvidenceRuleEnabled,
   hatchOverlapRuleEnabled,
@@ -68,6 +78,7 @@ export {
   validateHatchOverlapIntegrationConfig,
   validateHatchEvidenceRegistry,
   validateColorGroupHeuristicPlanState,
+  validateMultilayerDependencyPlanState,
 } from './rules/hatchEvidence/index.js';
 
 export {
