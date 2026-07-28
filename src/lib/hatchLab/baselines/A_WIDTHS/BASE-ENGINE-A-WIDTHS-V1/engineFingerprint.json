@@ -1,0 +1,42 @@
+{
+  "baselineId": "BASE-ENGINE-A-WIDTHS-V1",
+  "capturedAt": "2026-07-28",
+  "git": {
+    "commit": "9df0e5ceb0f74c8677e6116647840b635c231e78",
+    "clean": false,
+    "dirtyNote": "The working tree contains the Hatch Lab additions of this task (baselines/** and tests/hatchLab/**). No productive engine file was modified; see productiveFileHashes."
+  },
+  "package": { "name": "base44-app", "version": "0.0.0" },
+  "runner": { "module": "src/lib/pipeline/runner.js", "entry": "runPipeline", "stageCount": 9 },
+  "hashAlgorithm": "SHA-256",
+  "productiveFileHashes": {
+    "src/lib/pipeline/runner.js": { "bytes": 5014, "sha256": "78CA663D5BA2657D4409939953D340449663448F31EF517E7443FB76BC1DDB54" },
+    "src/lib/pipeline/stages/regionBuilderStage.js": { "bytes": 13896, "sha256": "7F2C94D20371C5CCB4B293879CE90C13EBA735448ACD74CB725AF2F7FE2181E9" },
+    "src/lib/pipeline/stages/stitchPlannerStage.js": { "bytes": 1272, "sha256": "CD803D6E7CCFE05EE46134410137A23520B521FD4E7A8B08D88898D7AFDFE152" },
+    "src/lib/pipeline/stages/stitchOptimizerStage.js": { "bytes": 1066, "sha256": "A49B0E6B14202631681B4689C82EF2B56570FD45AD25133D5B0C101C9FA51FB8" },
+    "src/lib/regionBuilder.js": { "bytes": 21044, "sha256": "90BE0020A18E2372BE0FB16E77795BC9DF65657F6B7504334405B0E4C083A7F4" },
+    "src/lib/adaptiveEngine.js": { "bytes": 3741, "sha256": "AF6D3545D364D1CA4F4502623334CA243446A8898DD4BF02CED17F290DE3F97F" },
+    "src/lib/stitchIntelligence.js": { "bytes": 31225, "sha256": "A49BB6D475A73961D7FAD4F23E2351499FE6B09E200383892219A0FB5FE38CE6" },
+    "src/lib/stitchPlanner.js": { "bytes": 17234, "sha256": "6D28D1B2CD421DE62F425B098111D4FBB879F70DC323BB4BE9872C76D9340B26" },
+    "src/lib/stitchSequenceOptimizer.js": { "bytes": 19389, "sha256": "DBD9FC28EAF1329ABC8DD63DF2304BE717030CF55153009C592AAB02FC227587" },
+    "src/lib/contourEngine.js": { "bytes": 36802, "sha256": "7C2A39A5D219F6261022279616D102BBBECE8BBF0E8AA13B786559A158053638" },
+    "src/lib/embroideryEngineProfiles.js": { "bytes": 18720, "sha256": "12A75EBB1D8D4A406AA5276B41CD9A9C5F26CA12022D10195716D68AA48180B1" }
+  },
+  "missingPaths": [],
+  "pipelineStageOrder": [
+    "image_analysis",
+    "image_enhancement",
+    "contour_engine",
+    "semantic_segmentation",
+    "vector_engine",
+    "region_builder",
+    "quality_phase_1_input_segmentation_cleanup",
+    "stitch_planner",
+    "stitch_optimizer"
+  ],
+  "notes": [
+    "Hashes were read from the productive files without modifying them; this baseline never edits the engine.",
+    "src/lib/embroideryEngineProfiles.js is included because the current Editor flow derives its effective pipeline config from resolveEffectiveEmbroideryProfile, and the baseline reproduces that same flow.",
+    "The engine version is identified by this commit plus these file hashes; no separate engine version string exists in the codebase."
+  ]
+}

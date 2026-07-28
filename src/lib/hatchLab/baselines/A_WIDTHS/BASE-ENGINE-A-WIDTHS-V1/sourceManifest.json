@@ -1,0 +1,53 @@
+{
+  "baselineId": "BASE-ENGINE-A-WIDTHS-V1",
+  "phase": "A_WIDTHS",
+  "baselineSchemaVersion": "1.0.0",
+  "verifiedAt": "2026-07-28",
+  "sourcePackage": {
+    "fileName": "A_Anchuras_parte_01.zip",
+    "bytes": 17478735,
+    "sha256": "70FA19522EEC70D058151E930FD5443904207252BA16680299B31E1FA0AAEF46",
+    "sha256MatchesSeedManifest": true,
+    "entryCount": 25
+  },
+  "sourceImage": {
+    "packageRelativePath": "00_Fuentes/Imagenes/HATCH-A-WIDTHS-EXACT-100x80mm-300dpi.png",
+    "fileName": "HATCH-A-WIDTHS-EXACT-100x80mm-300dpi.png",
+    "bytes": 46432,
+    "sha256": "4CB26E42A48E7D9F9D763CC644DA7B2FDB95A2022A65CDE50C05745619C12005",
+    "format": "PNG",
+    "pngSignatureValid": true,
+    "widthPx": 1181,
+    "heightPx": 945,
+    "dpi": 300,
+    "modified": false
+  },
+  "hashVerification": {
+    "algorithm": "SHA-256",
+    "expectedFromSeedManifest": "4CB26E42A48E7D9F9D763CC644DA7B2FDB95A2022A65CDE50C05745619C12005",
+    "expectedFromEvidenceIndex": "4CB26E42A48E7D9F9D763CC644DA7B2FDB95A2022A65CDE50C05745619C12005",
+    "computedFromExtractedFile": "4CB26E42A48E7D9F9D763CC644DA7B2FDB95A2022A65CDE50C05745619C12005",
+    "match": true,
+    "seedManifestPath": "src/lib/hatchLab/seed/real/A_WIDTHS/seedManifest.json",
+    "evidenceIndexPath": "src/lib/hatchLab/seed/real/A_WIDTHS/evidenceIndex.json"
+  },
+  "rejectedAlternatives": [
+    "00_Fuentes/Imagenes/HATCH-A-WIDTHS-GUIDE-100x80mm-300dpi.png (GUIDE image, not the exact sheet)",
+    "00_Fuentes/Vectores/HATCH-A-WIDTHS-EXACT-100x80mm.svg (vector source, would require rasterization)",
+    "02_Capturas/** (78 screenshots, not the source sheet)",
+    "any resized, optimized, re-exported or reconstructed variant"
+  ],
+  "localCopy": {
+    "intendedPath": "src/lib/hatchLab/baselines/A_WIDTHS/source/HATCH-A-WIDTHS-EXACT-100x80mm-300dpi.png",
+    "stored": false,
+    "reason": "The build tooling can only persist text files; a byte-identical binary copy cannot be written into the app source tree. The image is therefore referenced by its verified SHA-256 and consumed at capture time from an app-hosted URL of the very same file.",
+    "integrityPolicy": "The capture harness recomputes the SHA-256 of the bytes it actually fetches and refuses to run the engine unless it equals the expected hash above."
+  },
+  "readiness": {
+    "expectedResultDefined": false,
+    "benchmarkReady": false,
+    "motorIntegrationReady": false,
+    "physicalValidationAvailable": false,
+    "rulesApplied": false
+  }
+}
