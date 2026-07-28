@@ -691,6 +691,17 @@ export default function Editor() {
     setPreparedTool(null);
     setActiveTab(tab);
   }, []);
+
+  // "Más..." menu: close on outside click / Escape (visual behavior only)
+  const moreTabsRef = useRef(null);
+  useEffect(() => {
+    if (!showMoreTabs) return;
+    const onDown = (e) => { if (moreTabsRef.current && !moreTabsRef.current.contains(e.target)) setShowMoreTabs(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setShowMoreTabs(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [showMoreTabs]);
   useEffect(() => {
     if (!TECHNICAL_TABS.has(activeTab)) {
       setPreparedTool(activeTab);
@@ -798,32 +809,35 @@ export default function Editor() {
   return (
     <div className="h-screen bg-[#0d0f14] flex flex-col overflow-hidden text-white">
       <div className="flex-shrink-0 border-b border-[#1e2130] bg-[#0d0f14]">
-        <div className="flex items-center gap-3 px-4 py-2.5">
-          <Link to="/" className="p-1.5 rounded-lg hover:bg-[#1e2130] text-slate-500 hover:text-white transition-colors"><ArrowLeft className="w-4 h-4" /></Link>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 sm:px-4 py-2.5">
+          <Link to="/" aria-label="Volver al panel de proyectos" className="p-1.5 rounded-lg hover:bg-[#1e2130] text-slate-500 hover:text-white transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500"><ArrowLeft className="w-4 h-4" /></Link>
           <div className="w-px h-4 bg-[#2a2d3a]" />
           <ProjectNameInput name={project?.name || 'Sin título'} onSave={handleRename} />
           <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
           <span className="text-xs text-slate-400">{config.mode || 'hybrid'}</span>
-          <div className="flex-1 flex justify-center"><StepPipeline currentStep={step} /></div>
+          <div className="flex-1 min-w-[160px] overflow-x-auto"><div className="w-max mx-auto"><StepPipeline currentStep={step} /></div></div>
           <div className="flex items-center gap-1 rounded-lg border border-[#2a2d3a] bg-[#11141c] p-1">
             <button
               onClick={() => setEditorUiMode('simple')}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${editorUiMode === 'simple' ? 'bg-violet-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+              title="Vista limpia"
+              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors whitespace-nowrap focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-400 ${editorUiMode === 'simple' ? 'bg-violet-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
             >
-              Vista limpia
+              <span className="sm:hidden">Limpia</span><span className="hidden sm:inline">Vista limpia</span>
             </button>
             <button
               onClick={() => setEditorUiMode('lab')}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${editorUiMode === 'lab' ? 'bg-cyan-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+              title="Herramientas técnicas"
+              className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors whitespace-nowrap focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400 ${editorUiMode === 'lab' ? 'bg-cyan-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}
             >
-              Herramientas técnicas
+              <span className="sm:hidden">Técnicas</span><span className="hidden sm:inline">Herramientas técnicas</span>
             </button>
           </div>
           <button
             onClick={() => focusMode ? setFocusMode(false) : (setFocusMode(true), setActiveTab('finallook'))}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${focusMode ? 'bg-emerald-600 text-white' : 'bg-[#161a23] border border-[#2a2d3a] text-slate-400 hover:text-white hover:bg-[#1e2130]'}`}
+            title={focusMode ? 'Salir de modo enfoque' : 'Modo enfoque'}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 ${focusMode ? 'bg-emerald-600 text-white' : 'bg-[#161a23] border border-[#2a2d3a] text-slate-400 hover:text-white hover:bg-[#1e2130]'}`}
           >
-            {focusMode ? 'Salir de enfoque' : 'Modo enfoque'}
+            <span className="sm:hidden">{focusMode ? 'Salir' : 'Enfoque'}</span><span className="hidden sm:inline">{focusMode ? 'Salir de enfoque' : 'Modo enfoque'}</span>
           </button>
           <AIProgressIndicator active={processing} elapsed={processingElapsed} />
           <div className="flex items-center gap-1.5">
@@ -833,8 +847,8 @@ export default function Editor() {
           </div>
         </div>
         {!focusMode && (
-          <div className="flex items-center justify-between px-4 py-1.5 border-t border-[#1a1d27]">
-            <div className="flex items-center gap-1 relative">
+          <div className="flex flex-wrap items-center justify-between gap-y-1.5 px-3 sm:px-4 py-1.5 border-t border-[#1a1d27]">
+            <div className="flex flex-wrap items-center gap-1">
               {visibleTabs.map(({ id, label }) =>
                 <button key={id} onClick={() => { switchEditorTab(id); setShowMoreTabs(false); }} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeTab === id ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>
                   {label}
@@ -843,18 +857,25 @@ export default function Editor() {
               {isLabMode && (
                 <>
                   <button onClick={handleOpenExport} className="px-3 py-1 rounded text-xs font-medium text-slate-500 hover:text-slate-300 transition-colors">Exportar</button>
-                  <button onClick={() => setShowMoreTabs((v) => !v)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${activeInMore ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}>Más...</button>
-                  {showMoreTabs && (
-                    <div className="absolute top-8 left-56 z-30 w-44 rounded-xl border border-[#2a2d3a] bg-[#11141c] p-2 shadow-2xl">
-                      {labMoreTabs.map(({ id, label }) => (
-                        <button key={id} onClick={() => { switchEditorTab(id); setShowMoreTabs(false); }} className={`block w-full rounded-lg px-3 py-2 text-left text-xs transition-colors ${activeTab === id ? 'bg-violet-900/30 text-violet-200' : 'text-slate-400 hover:bg-[#1e2130] hover:text-white'}`}>{label}</button>
-                      ))}
-                    </div>
-                  )}
+                  <div className="relative" ref={moreTabsRef}>
+                    <button
+                      onClick={() => setShowMoreTabs((v) => !v)}
+                      aria-haspopup="menu"
+                      aria-expanded={showMoreTabs}
+                      className={`px-3 py-1 rounded text-xs font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-400 ${activeInMore ? 'text-violet-300 bg-violet-900/20 border border-violet-500/30' : 'text-slate-500 hover:text-slate-300'}`}
+                    >Más...</button>
+                    {showMoreTabs && (
+                      <div role="menu" className="absolute top-full mt-1 right-0 z-30 w-44 max-w-[calc(100vw-16px)] rounded-xl border border-[#2a2d3a] bg-[#11141c] p-2 shadow-2xl">
+                        {labMoreTabs.map(({ id, label }) => (
+                          <button key={id} role="menuitem" onClick={() => { switchEditorTab(id); setShowMoreTabs(false); }} className={`block w-full rounded-lg px-3 py-2 text-left text-xs transition-colors ${activeTab === id ? 'bg-violet-900/30 text-violet-200' : 'text-slate-400 hover:bg-[#1e2130] hover:text-white'}`}>{label}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
             </div>
-            <div className="flex items-center gap-4 text-[11px]">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
               <span className="text-slate-600">Puntadas <span className="text-violet-400 font-bold">{unifiedMetrics.stitchCount.toLocaleString()}</span></span>
               <span className="text-slate-600">Colores <span className="text-cyan-400 font-bold">{colorsUsed}</span></span>
               <span className="text-slate-600">Tamaño <span className="text-emerald-400 font-bold">{config.width_mm}×{config.height_mm}mm</span></span>
@@ -1306,7 +1327,7 @@ function ProjectNameInput({ name, onSave }) {
 }
 
 function NavButton({ onClick, icon: Icon, label, accent, disabled }) {
-  return <button onClick={onClick} disabled={disabled} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${accent ? 'bg-violet-600 hover:bg-violet-500 text-white' : 'bg-[#161a23] border border-[#2a2d3a] text-slate-400 hover:text-white hover:bg-[#1e2130]'}`}><Icon className="w-3.5 h-3.5" /> {label}</button>;
+  return <button onClick={onClick} disabled={disabled} aria-label={label} title={label} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-400 ${accent ? 'bg-violet-600 hover:bg-violet-500 text-white' : 'bg-[#161a23] border border-[#2a2d3a] text-slate-400 hover:text-white hover:bg-[#1e2130]'}`}><Icon className="w-3.5 h-3.5" /> <span className="hidden sm:inline">{label}</span></button>;
 }
 
 function LazyLabTool({ title, open, onToggle, children }) {

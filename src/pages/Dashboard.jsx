@@ -57,35 +57,37 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-[#0d0f14] text-white">
       {/* Header */}
-      <div className="border-b border-[#1e2130] px-8 py-5">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center">
+      <div className="border-b border-[#1e2130] px-4 sm:px-8 py-4 sm:py-5">
+        <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center flex-shrink-0">
               <span className="text-base">🧵</span>
             </div>
-            <div>
-              <h1 className="text-lg font-bold tracking-tight">StitchFlow IA</h1>
-              <p className="text-[11px] text-slate-500">Motor de digitalización avanzado</p>
+            <div className="min-w-0">
+              <h1 className="text-lg font-bold tracking-tight truncate">StitchFlow IA</h1>
+              <p className="text-[11px] text-slate-500 truncate">Motor de digitalización avanzado</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => navigate('/reference-learning')}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161a23] border border-[#2a2d3a] hover:border-violet-500 text-slate-300 text-sm font-medium transition-colors"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161a23] border border-[#2a2d3a] hover:border-violet-500 text-slate-300 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500"
               title="Aprendizaje de referencias profesionales"
+              aria-label="Aprendizaje de referencias profesionales"
             >
-              ✨ Aprendizaje de referencias
+              ✨<span className="hidden md:inline"> Aprendizaje de referencias</span>
             </button>
             <button
               onClick={() => navigate('/regression')}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161a23] border border-[#2a2d3a] hover:border-violet-500 text-slate-300 text-sm font-medium transition-colors"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161a23] border border-[#2a2d3a] hover:border-violet-500 text-slate-300 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500"
               title="Abrir suite de regresión"
+              aria-label="Abrir suite de regresión"
             >
-              🧪 Abrir regresión
+              🧪<span className="hidden md:inline"> Abrir regresión</span>
             </button>
             <button
               onClick={createProject}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold transition-colors"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold transition-colors whitespace-nowrap focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-300"
             >
               <Plus className="w-4 h-4" /> Nuevo proyecto
             </button>
@@ -93,7 +95,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-8 py-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-8 py-6 sm:py-8">
         {/* Search */}
         <div className="relative mb-6">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600" />

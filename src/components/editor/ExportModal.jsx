@@ -565,12 +565,12 @@ export default function ExportModal({ project, config: editorConfig, regions: in
   const blockingErrors = pipelineResult.blockingErrors || [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm">
-      <div className="bg-[#161a23] border border-[#2a2d3a] rounded-xl shadow-2xl flex flex-col"
-           style={{ width: step === 'preflight' ? 480 : step === 'wizard' ? 460 : showAdaptiveReport ? 560 : (debugMode ? 640 : 400), maxHeight: '90vh' }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-3">
+      <div className="bg-[#161a23] border border-[#2a2d3a] rounded-xl shadow-2xl flex flex-col overflow-hidden"
+           style={{ width: step === 'preflight' ? 480 : step === 'wizard' ? 460 : showAdaptiveReport ? 560 : (debugMode ? 640 : 400), maxWidth: 'calc(100vw - 24px)', maxHeight: 'calc(100dvh - 24px)' }}>
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#1e2130] flex-shrink-0">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-[#1e2130] flex-shrink-0">
           <div>
             <div className="flex items-center gap-2">
               {step === 'preflight'
@@ -598,7 +598,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
               </div>
             ))}
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-[#2a2d3a] text-slate-500 hover:text-white transition-colors">
+          <button onClick={onClose} aria-label="Cerrar" title="Cerrar" className="p-2 rounded-lg hover:bg-[#2a2d3a] text-slate-500 hover:text-white transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-400">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -645,7 +645,7 @@ export default function ExportModal({ project, config: editorConfig, regions: in
               />
             </div>
           ) : (
-            <div className="p-6 space-y-5">
+            <div className="p-4 sm:p-6 space-y-5">
               {/* ── UI_EXPORT_CENTER_CLEANUP_V1: mode toggle ── */}
               <div className="flex items-center gap-2 bg-[#0d0f14] border border-[#1e2130] rounded-lg p-2">
                 <span className="text-[11px] text-slate-500 uppercase tracking-wider mr-1">Modo</span>
