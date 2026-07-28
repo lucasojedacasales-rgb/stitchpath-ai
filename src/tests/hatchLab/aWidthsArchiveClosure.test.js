@@ -89,7 +89,7 @@ export function runAWidthsArchiveClosureTests() {
 
   check('the earlier ambiguous wording is corrected, not deleted', () => {
     ok(closure.reclassification.previousWording.length > 0, 'previousWording recorded');
-    ok(/not stored inside the repository/i.test(closure.reclassification.correctedStatement), 'correctedStatement must state the files are not in the repository');
+    ok(/(?:\b(?:is|are)\s+not\s+stored\s+inside\s+the\s+repository\b|\bneither\s+json\s+is\s+stored\s+inside\s+the\s+repository\b)/i.test(closure.reclassification.correctedStatement), 'correctedStatement must state the files are not in the repository');
   });
 
   check('limitations stay declared, including host dependency and IndexedDB scope', () => {
