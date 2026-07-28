@@ -1056,12 +1056,14 @@ export default function Editor() {
             <div className="flex-1 flex overflow-hidden">
               <div className="flex-1 flex flex-col overflow-hidden">
                 <FinalLookSimulator
-                  regions={regions}
                   config={config}
                   machineSettings={editorMachineSettings}
                   detailReport={detailReport}
                   finalCommands={finalEmbroideryCommands.commands}
                   finalObjects={finalEmbroideryCommands.objects}
+                  regions={regions}
+                  imageUrl={imageUrl}
+                  originalImageUrl={originalImageUrl}
                 />
               </div>
             </div>
