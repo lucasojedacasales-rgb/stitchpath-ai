@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hatch Lab · Baseline A_WIDTHS (una sola ejecución)</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#0d0f14; color:#e2e8f0; font:14px/1.5 ui-sans-serif,system-ui,sans-serif; padding:24px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .sub { color:#64748b; font-size:12px; margin-bottom:20px; }
+  .card { max-width:820px; border:1px solid #1e2130; background:#11141c; border-radius:12px; padding:16px; margin-bottom:16px; }
+  .row { display:flex; justify-content:space-between; gap:12px; padding:6px 0; border-bottom:1px solid #171a24; font-size:13px; }
+  .row:last-child { border-bottom:0; }
+  .k { color:#64748b; }
+  .v { font-weight:700; text-align:right; word-break:break-all; }
+  .ok { color:#34d399; } .bad { color:#f87171; } .warn { color:#fbbf24; } .mut { color:#94a3b8; }
+  button { font:inherit; font-weight:700; border-radius:10px; padding:14px 20px; border:1px solid #7c3aed; background:#7c3aed; color:#fff; cursor:pointer; }
+  button:disabled { background:#1a1d27; border-color:#2a2d3a; color:#64748b; cursor:not-allowed; }
+  .dl { background:#0e7490; border-color:#0e7490; padding:10px 14px; font-size:13px; }
+  .note { font-size:12px; color:#94a3b8; margin-top:10px; }
+  pre { background:#0a0c12; border:1px solid #1e2130; border-radius:10px; padding:12px; font-size:11px; max-height:340px; overflow:auto; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+  <h1>Baseline del motor base · A_WIDTHS</h1>
+  <div class="sub">BASE-ENGINE-A-WIDTHS-V1 · una única ejecución real · sin exportación, sin reglas Hatch, sin guardar proyecto.</div>
+
+  <div class="card" id="status">Cargando…</div>
+
+  <div class="card">
+    <button id="run" disabled>EJECUTAR BASELINE UNA VEZ</button>
+    <div class="note" id="runNote"></div>
+    <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
+      <button class="dl" id="dlFull" disabled>DESCARGAR CAPTURA JSON COMPLETA</button>
+      <button class="dl" id="dlSummary" disabled>DESCARGAR RESUMEN</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="k" style="margin-bottom:8px;">Vista previa</div>
+    <pre id="preview">Sin captura todavía.</pre>
+  </div>
+
+<script type="module">
+import { A_WIDTHS_SOURCE_IMAGE_URL } from '/src/tests/hatchLab/aWidthsSourceImageUrl.js';
+import { captureAWidthsBaseline, inspectCaptureReadiness, restoreArchivedCapture, getPipelineInvocationCount } from '/src/tests/hatchLab/aWidthsBaselineCapture.js';
+import { BASELINE_ID, SOURCE_IMAGE } from '/src/lib/hatchLab/baselines/A_WIDTHS/baselineSchema.js';
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+const rows = list => list.map(([k, v, cls]) => `<div class="row"><span class="k">${esc(k)}</span><span class="v ${cls || 'mut'}">${esc(v)}</span></div>`).join('');
+
+let stage = '—';
+let imageCheck = null;
+let capture = null;
+
+async function checkImage() {
+  try {
+    const res = await fetch(A_WIDTHS_SOURCE_IMAGE_URL);
+    if (!res.ok) return { reachable: false, reason: `HTTP ${res.status}` };
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    const sha256 = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+    const view = new DataView(bytes.buffer);
+    return {
+      reachable: true, bytes: bytes.length, sha256,
+      widthPx: view.getUint32(16), heightPx: view.getUint32(20),
+      pngSignatureValid: [...bytes.slice(0, 8)].map(b => b.toString(16).padStart(2, '0')).join('') === '89504e470d0a1a0a',
+      hashMatches: sha256 === SOURCE_IMAGE.sha256,
+    };
+  } catch (error) {
+    return { reachable: false, reason: error.message };
+  }
+}
+
+function render(readiness) {
+  const img = imageCheck || {};
+  const verified = !!(img.reachable && img.hashMatches && img.pngSignatureValid);
+  const parity = readiness.editorParityAudit;
+  const st = readiness.persistentState;
+  const allowed = verified && readiness.runAllowed;
+
+  $('status').innerHTML = rows([
+    ['Baseline', BASELINE_ID],
+    ['Imagen verificada', verified ? 'sí' : 'no', verified ? 'ok' : 'bad'],
+    ['SHA-256 obtenido', img.sha256 || (img.reason || '—'), img.hashMatches ? 'ok' : 'bad'],
+    ['SHA-256 exigido', SOURCE_IMAGE.sha256],
+    ['Bytes / píxeles', img.reachable ? `${img.bytes} · ${img.widthPx}×${img.heightPx}` : '—', img.hashMatches ? 'ok' : 'bad'],
+    ['Bytes / píxeles exigidos', `${SOURCE_IMAGE.bytes} · ${SOURCE_IMAGE.widthPx}×${SOURCE_IMAGE.heightPx}`],
+    ['Paridad con el Editor', parity.parityStatus, parity.runAllowed ? 'ok' : 'bad'],
+    ['Motivo de la paridad', parity.parityReason],
+    ['Estado de la captura', capture ? capture.status : st.state, capture?.status?.includes('COMPLETED') ? 'ok' : (capture ? 'warn' : 'mut')],
+    ['pipelineInvocationCount', String(capture?.pipelineInvocationCount ?? getPipelineInvocationCount())],
+    ['Etapa actual', stage],
+    ['Regiones', capture?.regionsSummary ? String(capture.regionsSummary.length) : '—'],
+    ['Conclusión del evaluador', capture?.evaluationReport?.conclusion || '—'],
+    ['Bloqueo persistente', readiness.blockingReason || 'ninguno (listo)', readiness.blockingReason ? 'warn' : 'ok'],
+  ]);
+
+  $('run').disabled = !allowed || !!capture;
+  $('runNote').textContent = capture
+    ? 'La única ejecución permitida ya se consumió.'
+    : allowed
+      ? 'Se ejecutará una sola vez. No hay reintento ni reinicio.'
+      : !verified
+        ? 'Botón bloqueado: los bytes servidos no son la hoja exacta (hash distinto). No se acepta ninguna imagen sustituta.'
+        : (readiness.blockingReason || 'Botón bloqueado: la paridad con el Editor no está demostrada.');
+}
+
+function download(name, json) {
+  const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+function wireDownloads(result) {
+  const full = result?.downloads?.full;
+  const summary = result?.downloads?.summary;
+  if (full) { $('dlFull').disabled = false; $('dlFull').onclick = () => download('BASE-ENGINE-A-WIDTHS-V1.capture.json', full.json); }
+  if (summary) { $('dlSummary').disabled = false; $('dlSummary').onclick = () => download('BASE-ENGINE-A-WIDTHS-V1.summary.json', summary.json); }
+  if (full) download('BASE-ENGINE-A-WIDTHS-V1.capture.json', full.json);
+  if (summary) download('BASE-ENGINE-A-WIDTHS-V1.summary.json', summary.json);
+  const json = full?.json || JSON.stringify(result, null, 2);
+  $('preview').textContent = json.length > 200000
+    ? json.slice(0, 200000) + '\n\n… Esta es una vista previa. El JSON descargado contiene el resultado completo.'
+    : json;
+}
+
+async function boot() {
+  imageCheck = await checkImage();
+  let readiness = inspectCaptureReadiness();
+  const restored = await restoreArchivedCapture().catch(() => ({ record: null }));
+  if (restored.record) {
+    $('dlFull').disabled = false;
+    $('dlFull').onclick = () => download('BASE-ENGINE-A-WIDTHS-V1.capture.json', restored.record.json);
+    $('preview').textContent = restored.record.json.slice(0, 200000) + (restored.record.json.length > 200000 ? '\n\n… Esta es una vista previa. El JSON descargado contiene el resultado completo.' : '');
+    capture = { status: restored.record.status, pipelineInvocationCount: 1 };
+  }
+  render(readiness);
+
+  $('run').onclick = async () => {
+    $('run').disabled = true;
+    stage = 'iniciando';
+    render(inspectCaptureReadiness());
+    capture = await captureAWidthsBaseline({
+      imageUrl: A_WIDTHS_SOURCE_IMAGE_URL,
+      onStatus: label => { stage = label; render(inspectCaptureReadiness()); },
+    });
+    stage = 'terminado';
+    render(inspectCaptureReadiness());
+    wireDownloads(capture);
+  };
+}
+
+boot();
+</script>
+</body>
+</html>
