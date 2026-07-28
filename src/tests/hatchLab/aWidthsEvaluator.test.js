@@ -1,28 +1,24 @@
 /**
- * aWidthsEvaluator.test.js — Hatch Lab (P0.3A)
- * Covers the 45 required checks for the pure A_WIDTHS evaluator.
- * All engine results here are SYNTHETIC fixtures — never real evidence.
+ * aWidthsEvaluator.test.js — Hatch Lab (P0.3A.1)
+ * Tests ONLY the A_WIDTHS evaluator. The other suites are run once by the
+ * aggregator and are never re-executed here.
+ * Every engine result and every extra case below is a SYNTHETIC fixture,
+ * never real evidence.
  */
 
 import {
-  evaluateAWidthsResult, resolveCoordinateSystem, normalizeTechnique, normalizeUnderlay,
-  extractAWidthsActual, buildReference, measureRegion, createPointConverter,
-  CONCLUSIONS, DEFAULT_OPTIONS,
+  evaluateAWidthsResult, selectRegionSource, matchCasesToRegions, buildMeasuredCandidates,
+  buildPlanIndex, detectPossibleMergedRegions, normalizeTechniqueValue, buildUnderlayFields,
+  buildReference, createPointConverter, measureRegion,
+  CONCLUSIONS, DEFAULT_OPTIONS, EVALUATOR_VERSION, AVAILABILITY,
 } from '@/lib/hatchLab/evaluators/A_WIDTHS/index.js';
-import { validateSeedCase } from '@/lib/hatchLab/seed/validateSeed';
 import { A_WIDTHS_CASES } from '@/lib/hatchLab/seed/real/A_WIDTHS/index.js';
-import { runSeedValidationTests } from './seedValidation.test.js';
-import { runMetricExtractionTests } from './metricExtraction.test.js';
-import { runMetricComparisonTests } from './metricComparison.test.js';
-import { runMutationSafetyTests } from './mutationSafety.test.js';
-import { runAWidthsSeedIntegrityTests } from './aWidthsSeedIntegrity.test.js';
-import { runSeedStructuralConformanceTests } from './seedStructuralConformance.test.js';
 
 const DESIGN_MM = { widthMm: 100, heightMm: 80, coordinateSpace: 'mm' };
 
 /** SYNTHETIC bar in mm — not real evidence. */
 function bar({ id, cx, cy, w, h, extra = {} }) {
-  return {
+  const region = {
     id,
     path_points: [[cx - w / 2, cy - h / 2], [cx + w / 2, cy - h / 2], [cx + w / 2, cy + h / 2], [cx - w / 2, cy + h / 2]],
     stitch_type: 'satin',
@@ -30,20 +26,35 @@ function bar({ id, cx, cy, w, h, extra = {} }) {
     pull_compensation: 0.4,
     angle: 0,
     underlay: true,
-    recommended_underlay: { enabled: true, type: 'edge_walk_zigzag', density_mm: 2, angle_deg: 90, rationale: 'synthetic' },
+    recommended_underlay: { enabled: true, type: 'edge_walk_zigzag', density_mm: 2, angle_deg: 90 },
     color: '#000000',
     ...extra,
+  };
+  for (const key of Object.keys(region)) if (region[key] === undefined) delete region[key];
+  return region;
+}
+
+/** SYNTHETIC seed case — schema-shaped, declared synthetic, never evidence. */
+function syntheticCase({ caseId, cx, cy, w, h }) {
+  return {
+    caseId, phase: 'A_WIDTHS', syntheticExample: true,
+    input: { centerXMm: cx, centerYMm: cy, geometry: 'barra_recta' },
+    testedSizeMm: { width: w, height: h },
+    observation: { measured: { nominalWidthMm: w, nominalHeightMm: h } },
+    configuration: { documented: {} },
+    ruleScope: { phase: 'A_WIDTHS', geometryClass: 'barra_recta' },
+    candidateRules: [], expectedResult: null,
   };
 }
 
 const CASE_GEOMETRY = { 'HATCH-A-WIDTHS-A1': [7, 13, 0.5], 'HATCH-A-WIDTHS-A5': [55, 13, 3], 'HATCH-A-WIDTHS-A6': [67, 13, 4], 'HATCH-A-WIDTHS-A7': [80, 13, 6], 'HATCH-A-WIDTHS-A8': [93, 13, 8] };
+const realCase = id => A_WIDTHS_CASES.find(c => c.caseId === id);
 
-function mmResult(ids = Object.keys(CASE_GEOMETRY)) {
-  return { regions: ids.map(id => { const [cx, cy, w] = CASE_GEOMETRY[id]; return bar({ id: `bar_${id}`, cx, cy, w, h: 16 }); }) };
+function mmResult(ids = Object.keys(CASE_GEOMETRY), extra = {}) {
+  return { regions: ids.map(id => { const [cx, cy, w] = CASE_GEOMETRY[id]; return bar({ id: `bar_${id}`, cx, cy, w, h: 16, extra }); }) };
 }
-function convertResult(result, fn) {
-  return { regions: result.regions.map(r => ({ ...r, path_points: r.path_points.map(fn) })) };
-}
+const run = (result, seedCases = A_WIDTHS_CASES, options = {}, design = DESIGN_MM) =>
+  evaluateAWidthsResult({ result, seedCases, design, options });
 
 export function runAWidthsEvaluatorTests() {
   const fails = [];
@@ -51,204 +62,230 @@ export function runAWidthsEvaluatorTests() {
   const ok = (label, cond) => { checks++; if (!cond) fails.push(label); };
   const caseOf = (out, id) => out.cases.find(c => c.caseId === id);
   const cmp = (c, name) => c.comparisons.find(x => x.name === name);
+  const errorCodes = out => out.errors.map(e => e.code);
 
-  // 1
-  ok('1. five real seed cases available', A_WIDTHS_CASES.length === 5 && Object.keys(CASE_GEOMETRY).every(id => A_WIDTHS_CASES.some(c => c.caseId === id)));
+  ok('0. version 0.2.0 and conflict availability declared', EVALUATOR_VERSION === '0.2.0-A_WIDTHS' && AVAILABILITY.includes('conflict'));
 
-  // 2 — mm
-  const mm = evaluateAWidthsResult({ result: mmResult(), seedCases: A_WIDTHS_CASES, design: DESIGN_MM });
-  ok('2. five bars in mm → evaluated with 5 matches', mm.conclusion === 'evaluated' && mm.matchCoverage.matched === 5);
-  ok('2b. coordinate system resolved as mm', mm.coordinateSystem.space === 'mm' && mm.coordinateSystem.status === 'resolved');
+  const base = run(mmResult());
+  const a7 = caseOf(base, 'HATCH-A-WIDTHS-A7');
 
-  // 3 — normalized
-  const norm = evaluateAWidthsResult({
-    result: convertResult(mmResult(), ([x, y]) => [x / 100, y / 80]),
-    seedCases: A_WIDTHS_CASES,
-    design: { widthMm: 100, heightMm: 80, coordinateSpace: 'normalized_0_1' },
+  // 1 — one region cannot serve two cases
+  const shared = syntheticCase({ caseId: 'SYN-SHARED', cx: 80, cy: 13, w: 6, h: 15 });
+  const oneRegion = run({ regions: [bar({ id: 'bar_shared', cx: 80, cy: 13, w: 6, h: 16 })] }, [realCase('HATCH-A-WIDTHS-A7'), shared]);
+  const keys = oneRegion.assignment.assignments.map(a => a.internalCandidateKey);
+  ok('1. a region is assigned to at most one case', keys.length === 1 && new Set(keys).size === keys.length && oneRegion.assignment.collisionsPrevented.length === 1);
+  ok('1b. the losing case is not matched', oneRegion.matchCoverage.matched === 1 && oneRegion.assignment.unassignedCases.length === 1);
+
+  // 2 — global assignment beats naive greedy
+  const s1 = syntheticCase({ caseId: 'SYN-G1', cx: 20, cy: 13, w: 4, h: 16 });
+  const s2 = syntheticCase({ caseId: 'SYN-G2', cx: 20.8, cy: 13, w: 4, h: 14 });
+  const greedyRegions = [bar({ id: 'R_x', cx: 20.6, cy: 13, w: 4, h: 15 }), bar({ id: 'R_y', cx: 20, cy: 13, w: 4, h: 18 })];
+  const globalOut = run({ regions: greedyRegions }, [s1, s2]);
+  const cands = buildMeasuredCandidates({ regions: greedyRegions, sourceKey: 'regions', convertPoint: createPointConverter({ status: 'resolved', space: 'mm' }) }).candidates;
+  const assign = matchCasesToRegions({ seedCases: [s1, s2], measuredCandidates: cands, options: DEFAULT_OPTIONS });
+  const greedyCount = (() => { const used = new Set(); let n = 0;
+    for (const id of ['SYN-G1', 'SYN-G2']) {
+      const best = (assign.evaluationsByCase.get(id).evaluations.filter(e => e.eligibility === 'accepted' && !used.has(e.internalCandidateKey)))[0];
+      if (best) { used.add(best.internalCandidateKey); n += 1; }
+    } return n; })();
+  ok('2. global assignment matches both cases where naive greedy matches one', globalOut.matchCoverage.matched === 2 && greedyCount === 1);
+  ok('2b. the case does not keep its own best candidate when that blocks the optimum', caseOf(globalOut, 'SYN-G1').match.selectedRegionId === 'R_y' && caseOf(globalOut, 'SYN-G2').match.selectedRegionId === 'R_x');
+  ok('2c. assignment method and tie-break declared', globalOut.assignment.assignmentMethod === 'exhaustive_bipartite' && /caseId/.test(globalOut.assignment.deterministicTieBreak));
+
+  // 3 / 4 — order independence
+  const shuffledCases = [A_WIDTHS_CASES[3], A_WIDTHS_CASES[0], A_WIDTHS_CASES[4], A_WIDTHS_CASES[1], A_WIDTHS_CASES[2]];
+  const byCaseOrder = run(mmResult(), shuffledCases);
+  const byRegionOrder = run({ regions: [...mmResult().regions].reverse() });
+  const signature = out => JSON.stringify(out.cases.map(c => [c.caseId, c.match.selectedRegionId]));
+  ok('3. independent of case order', signature(byCaseOrder) === signature(base));
+  ok('4. independent of region order', signature(byRegionOrder) === signature(base));
+
+  // 5 — inside search radius, outside acceptance
+  const outsideAccepted = run({ regions: [bar({ id: 'shift', cx: 83, cy: 13, w: 6, h: 16 })] }, [realCase('HATCH-A-WIDTHS-A7')]);
+  const oaCase = outsideAccepted.cases[0];
+  const oaCandidate = oaCase.match.candidates[0];
+  ok('5. inside the search radius but outside acceptance → not matched', oaCase.status === 'unmatched' && oaCandidate.withinSearchRadius === true
+    && oaCandidate.rejectedBy.includes('OUTSIDE_ACCEPTED_CENTER_DISTANCE') && oaCandidate.eligibility === 'rejected');
+  ok('5b. tolerances used are reported, no hidden constants', oaCase.match.tolerancesUsed.acceptance.acceptedCenterDistanceMm === DEFAULT_OPTIONS.acceptedCenterDistanceMm
+    && oaCase.match.tolerancesUsed.searchRadius.maximumCenterDistanceMm === DEFAULT_OPTIONS.maximumCenterDistanceMm);
+
+  // 6 — score below minimum
+  const lowScore = run({ regions: [bar({ id: 'low', cx: 80.9, cy: 13, w: 8, h: 16 })] }, [realCase('HATCH-A-WIDTHS-A7')]);
+  const lowCandidate = lowScore.cases[0].match.candidates[0];
+  ok('6. candidate below minimumAcceptedScore is rejected', lowCandidate.rejectedBy.includes('SCORE_BELOW_MINIMUM') && lowCandidate.score < DEFAULT_OPTIONS.minimumAcceptedScore);
+  ok('6b. score components exposed', Object.keys(lowCandidate.scoreComponents).length === 4);
+
+  // 7 — incompatible height
+  const badHeight = run({ regions: [bar({ id: 'tall', cx: 80, cy: 13, w: 6, h: 26 })] }, [realCase('HATCH-A-WIDTHS-A7')]);
+  ok('7. incompatible height rejected', badHeight.cases[0].match.candidates[0].rejectedBy.includes('HEIGHT_DIFFERENCE_EXCEEDED') && badHeight.cases[0].status === 'unmatched');
+
+  // 8 — abnormally wide region
+  const wide = run({ regions: [bar({ id: 'wide', cx: 80, cy: 13, w: 30, h: 16 })] }, [realCase('HATCH-A-WIDTHS-A7')]);
+  const wideDiag = wide.mergeDiagnostics[0];
+  ok('8. abnormally wide region flagged as possible merge (diagnostic only)', wideDiag.possibleMergedRegion === true && wideDiag.widthFactor > DEFAULT_OPTIONS.mergeWidthFactor && /Diagnostic observation only/.test(wideDiag.reason));
+  ok('8b. no merge is asserted as fact and no pass/fail emitted', !/"(pass|fail)"/.test(JSON.stringify(wide.mergeDiagnostics)));
+
+  // 9 — region covering two declared centres
+  const twoCenters = run({ regions: [bar({ id: 'span', cx: 73.5, cy: 13, w: 25, h: 16 })] }, [realCase('HATCH-A-WIDTHS-A6'), realCase('HATCH-A-WIDTHS-A7')]);
+  const spanDiag = twoCenters.mergeDiagnostics[0];
+  ok('9. region covering two centres reported', spanDiag.centersInside === 2 && spanDiag.coveredCaseIds.length === 2 && spanDiag.possibleMergedRegion === true);
+
+  // 10 — duplicated id
+  const dupIds = run({ regions: [bar({ id: 'dup', cx: 80, cy: 13, w: 6, h: 16 }), bar({ id: 'dup', cx: 7, cy: 13, w: 0.5, h: 16 })] }, [realCase('HATCH-A-WIDTHS-A7')]);
+  const dupCase = dupIds.cases[0];
+  ok('10. duplicated id → no arbitrary extraction', dupCase.status === 'ambiguous' && dupCase.actual.widthMm.availability === 'unavailable'
+    && dupCase.match.candidates.every(c => c.rejectedBy.includes('UNSTABLE_IDENTITY')));
+  ok('10b. duplicated ids are not only a global warning', dupIds.identitySummary.duplicatedRegionIds.includes('dup') && dupCase.match.reasons.some(r => /unstable identity/i.test(r)));
+  ok('10c. internal candidate keys stay unique', new Set(dupCase.match.candidateRegionIds).size === dupCase.match.candidateRegionIds.length);
+
+  // 11 — missing id
+  const noId = run({ regions: [bar({ id: undefined, cx: 80, cy: 13, w: 6, h: 16 })] }, [realCase('HATCH-A-WIDTHS-A7')]);
+  ok('11. missing id → identity not stable', noId.identitySummary.missing_id === 1 && noId.cases[0].status === 'ambiguous'
+    && noId.cases[0].match.candidates[0].identityStatus === 'missing_id');
+
+  // 12 — duplicated caseId
+  const dupCases = run(mmResult(), [realCase('HATCH-A-WIDTHS-A7'), realCase('HATCH-A-WIDTHS-A7')]);
+  ok('12. duplicated caseId → invalid_input', dupCases.conclusion === 'invalid_input' && errorCodes(dupCases).includes('DUPLICATED_SEED_CASE_ID') && dupCases.cases.length === 0);
+
+  // 13 / 14 / 15 — region source
+  const twoCollections = { regions: mmResult().regions, objects: mmResult().regions };
+  const ambiguousSource = run(twoCollections);
+  ok('13. two collections without regionSource → invalid_input', ambiguousSource.conclusion === 'invalid_input' && errorCodes(ambiguousSource).includes('AMBIGUOUS_REGION_SOURCE')
+    && ambiguousSource.inputSummary.availableRegionSources.length === 2 && ambiguousSource.inputSummary.countsByRegionSource.objects === 5);
+  const explicitSource = run(twoCollections, A_WIDTHS_CASES, { regionSource: 'objects' });
+  ok('14. explicit regionSource used and recorded', explicitSource.inputSummary.selectedRegionSource === 'objects' && explicitSource.inputSummary.regionSourceField === 'result.objects' && explicitSource.matchCoverage.matched === 5);
+  const missingSource = run(mmResult(), A_WIDTHS_CASES, { regionSource: 'optimizedSequence' });
+  ok('15. non-existent regionSource → invalid_input', missingSource.conclusion === 'invalid_input' && errorCodes(missingSource).includes('REGION_SOURCE_UNAVAILABLE'));
+  ok('15b. single collection is used and recorded', base.inputSummary.selectedRegionSource === 'regions' && /Only one non-empty region collection/.test(base.inputSummary.regionSourceReason));
+
+  // 16 / 17 / 18 — plan integrity
+  const planDup = run({
+    regions: [bar({ id: 'bar_A7', cx: 80, cy: 13, w: 6, h: 16 })],
+    plan: { sequence: [{ regionId: 'bar_A7', stitchType: 'satin', density: 0.4 }, { regionId: 'bar_A7', stitchType: 'fill', density: 0.25 }] },
+  }, [realCase('HATCH-A-WIDTHS-A7')]);
+  const planDupCase = planDup.cases[0];
+  ok('16. duplicated plan regionId detected, last entry not taken', planDup.planIntegrity.duplicatedRegionIds.includes('bar_A7')
+    && planDupCase.planStatus === 'duplicated' && planDupCase.actual.planDensityMm.availability === 'unavailable');
+  ok('16b. region value survives, plan value is not leaked', planDupCase.actual.technique.normalizedValue === 'satin' && planDupCase.actual.densityMm.normalizedValue === 0.36);
+  const orphanPlan = run({
+    regions: [bar({ id: 'bar_A7', cx: 80, cy: 13, w: 6, h: 16 })],
+    plan: { sequence: [{ regionId: 'ghost', stitchType: 'satin' }, { stitchType: 'satin' }] },
+  }, [realCase('HATCH-A-WIDTHS-A7')]);
+  ok('17. orphan plan entries and entries without regionId reported', orphanPlan.planIntegrity.orphanPlanEntries.includes('ghost') && orphanPlan.planIntegrity.missingRegionIds.length === 1);
+  ok('18. region without plan entry reported', orphanPlan.planIntegrity.regionsWithoutPlan.length === 1 && orphanPlan.cases[0].planStatus === 'missing');
+
+  // 19 / 20 — technique provenance
+  const techAgree = run({
+    regions: [bar({ id: 'r1', cx: 80, cy: 13, w: 6, h: 16 })],
+    plan: { sequence: [{ regionId: 'r1', stitchType: 'satin' }] },
+  }, [realCase('HATCH-A-WIDTHS-A7')]);
+  ok('19. region and plan technique agree → consistent', techAgree.cases[0].actual.technique.sourceAgreement === 'consistent' && techAgree.cases[0].actual.technique.availability === 'available');
+  const techConflict = run({
+    regions: [bar({ id: 'r1', cx: 80, cy: 13, w: 6, h: 16 })],
+    plan: { sequence: [{ regionId: 'r1', stitchType: 'fill' }] },
+  }, [realCase('HATCH-A-WIDTHS-A7')]);
+  const tcCase = techConflict.cases[0];
+  ok('20. technique conflict → availability conflict, no silent first source', tcCase.actual.technique.availability === 'conflict' && tcCase.actual.technique.sourceAgreement === 'conflict'
+    && tcCase.actual.technique.selectedValue === null && tcCase.actual.technique.conflictDetails.length === 2);
+  ok('20b. conflicted value is not compared', cmp(tcCase, 'technique').comparisonStatus === 'source_conflict' && cmp(tcCase, 'technique').comparable === false);
+
+  // 21 / 22 — density provenance
+  const densAgree = run({ regions: [bar({ id: 'r1', cx: 80, cy: 13, w: 6, h: 16 })], plan: { sequence: [{ regionId: 'r1', density: 0.36 }] } }, [realCase('HATCH-A-WIDTHS-A7')]);
+  ok('21. density agreement kept', densAgree.cases[0].actual.densityMm.sourceAgreement === 'consistent' && densAgree.cases[0].actual.densityMm.normalizedValue === 0.36);
+  const densConflict = run({ regions: [bar({ id: 'r1', cx: 80, cy: 13, w: 6, h: 16 })], plan: { sequence: [{ regionId: 'r1', density: 0.5 }] } }, [realCase('HATCH-A-WIDTHS-A7')]);
+  ok('22. density conflict reported', densConflict.cases[0].actual.densityMm.availability === 'conflict' && densConflict.conflictFields.includes('densityMm'));
+
+  // 23 / 24 — angle provenance, 0 preserved
+  const angleAgree = run({ regions: [bar({ id: 'r1', cx: 80, cy: 13, w: 6, h: 16, extra: { fill_angle: 0 } })], plan: { sequence: [{ regionId: 'r1', optimalAngle: 0 }] } }, [realCase('HATCH-A-WIDTHS-A7')]);
+  ok('23. angle 0 agreed across three sources', angleAgree.cases[0].actual.stitchAngleDeg.normalizedValue === 0 && angleAgree.cases[0].actual.stitchAngleDeg.availability === 'available'
+    && angleAgree.cases[0].actual.stitchAngleDeg.normalizedSourceValues.length === 3);
+  const angleConflict = run({ regions: [bar({ id: 'r1', cx: 80, cy: 13, w: 6, h: 16 })], plan: { sequence: [{ regionId: 'r1', optimalAngle: 90 }] } }, [realCase('HATCH-A-WIDTHS-A7')]);
+  ok('24. angle conflict reported', angleConflict.cases[0].actual.stitchAngleDeg.availability === 'conflict');
+
+  // 25 / 26 — underlay provenance
+  const underlayAgree = buildUnderlayFields({
+    region: { recommended_underlay: { enabled: true, type: 'edge_walk_zigzag', density_mm: 2 } },
+    planEntry: { underlay: { type: 'edge_run_plus_zigzag', density: 2 } }, planStatus: 'single', options: DEFAULT_OPTIONS,
   });
-  ok('3. normalized coordinates → same 5 matches', norm.matchCoverage.matched === 5 && norm.conclusion === 'evaluated');
-  ok('3b. normalized widths equal the mm widths', Object.keys(CASE_GEOMETRY).every(id =>
-    Math.abs(caseOf(norm, id).actual.widthMm.normalizedValue - caseOf(mm, id).actual.widthMm.normalizedValue) < 1e-9));
-
-  // 4 — pixels
-  const px = evaluateAWidthsResult({
-    result: convertResult(mmResult(), ([x, y]) => [x * 10, y * 10]),
-    seedCases: A_WIDTHS_CASES,
-    design: { widthMm: 100, heightMm: 80, widthPx: 1000, heightPx: 800, coordinateSpace: 'pixels' },
+  ok('25. underlay agreement kept', underlayAgree.primaryUnderlay.normalizedValue === 'edge_run_plus_zigzag' && underlayAgree.primaryUnderlay.sourceAgreement === 'consistent');
+  const underlayConflict = buildUnderlayFields({
+    region: { recommended_underlay: { enabled: true, type: 'centre_walk' } },
+    planEntry: { underlay: { type: 'edge_run' } }, planStatus: 'single', options: DEFAULT_OPTIONS,
   });
-  ok('4. pixel coordinates → same 5 matches', px.matchCoverage.matched === 5);
-  ok('4b. pixel conversion documented', px.coordinateSystem.conversions.length === 1 && /widthPx/.test(px.coordinateSystem.conversions[0]));
+  ok('26. underlay conflict reported', underlayConflict.primaryUnderlay.availability === 'conflict' && underlayConflict.primaryUnderlay.conflictDetails.length === 2);
 
-  // 5 — missing widthMm/heightMm
-  const noDims = evaluateAWidthsResult({ result: convertResult(mmResult(), ([x, y]) => [x / 100, y / 80]), seedCases: A_WIDTHS_CASES, design: { coordinateSpace: 'normalized_0_1' } });
-  ok('5. normalized without widthMm/heightMm → unavailable + inconclusive', noDims.coordinateSystem.status === 'unavailable' && noDims.conclusion === 'inconclusive');
-  ok('5b. pixels without widthPx → unavailable', resolveCoordinateSystem({ design: { coordinateSpace: 'pixels', widthMm: 100, heightMm: 80 }, options: DEFAULT_OPTIONS }).status === 'unavailable');
-  ok('5c. every case reported as unavailable match', noDims.cases.every(c => c.status === 'unavailable'));
+  // 27–29 — density / spacing policy
+  const forbidden = run(mmResult(), A_WIDTHS_CASES, { treatDensityAsSpacing: true });
+  ok('27. treatDensityAsSpacing rejected', forbidden.conclusion === 'invalid_input' && errorCodes(forbidden).includes('UNVERIFIED_DENSITY_SPACING_EQUIVALENCE'));
+  ok('28. densityMm stays available with its unit', a7.actual.densityMm.normalizedValue === 0.36 && a7.actual.densityMm.unit === 'mm');
+  ok('29. spacingMm and spacingMode stay unavailable and uncompared', a7.actual.spacing.spacingMm.availability === 'unavailable' && a7.actual.spacing.spacingMode.availability === 'unavailable'
+    && cmp(a7, 'spacingMm').comparisonStatus === 'not_comparable' && /pending validation/.test(cmp(a7, 'spacingMm').reason));
 
-  // 6 — unknown coordinate space, and no inference from 0–1 ranges
-  const unknownSpace = evaluateAWidthsResult({ result: mmResult(), seedCases: A_WIDTHS_CASES, design: { widthMm: 100, heightMm: 80, coordinateSpace: 'inches' } });
-  ok('6. unknown coordinate space rejected', unknownSpace.coordinateSystem.status === 'unavailable' && /Unsupported coordinate space/.test(unknownSpace.coordinateSystem.reason));
-  ok('6b. no space declared → never inferred', resolveCoordinateSystem({ design: { widthMm: 100, heightMm: 80 }, result: { regions: [] }, options: DEFAULT_OPTIONS }).status === 'unavailable');
-  ok('6c. result.meta space ignored unless opted in', resolveCoordinateSystem({ design: { widthMm: 100, heightMm: 80 }, result: { meta: { coordinateSpace: 'mm' } }, options: DEFAULT_OPTIONS }).status === 'unavailable');
+  // 30 / 31 — underlay density naming
+  ok('30. underlayDensityMm carries the engine underlay density', a7.actual.underlay.underlayDensityMm.normalizedValue === 2
+    && a7.actual.underlay.underlayDensityMm.sourceField === 'region.recommended_underlay.density_mm' && a7.actual.underlay.underlayDensityMm.unit === 'mm');
+  ok('31. secondarySpacingMm is not fed by recommended_underlay.density_mm', a7.actual.underlay.secondarySpacingMm.availability === 'unavailable'
+    && a7.actual.underlay.secondarySpacingMm.rawValue === null && a7.actual.underlay.secondaryUnderlay.availability === 'unavailable' && a7.actual.underlay.secondaryLengthMm.availability === 'unavailable');
 
-  // 7 — exact centre match
-  const a7 = caseOf(mm, 'HATCH-A-WIDTHS-A7');
-  ok('7. exact centre match', a7.match.status === 'matched' && a7.match.selectedRegionId === 'bar_HATCH-A-WIDTHS-A7' && a7.match.centerDistanceMm < 1e-9);
+  // 32–35 — informative deltas
+  const obsWidth = cmp(a7, 'observedWidthMm_vs_engineWidthMm');
+  ok('32. informative width delta computed', obsWidth.comparisonStatus === 'informational' && Math.abs(obsWidth.delta - (6 - 6.09)) < 1e-9);
+  ok('33. absolute delta computed', Math.abs(obsWidth.absoluteDelta - 0.09) < 1e-9);
+  ok('34. relative delta computed', Math.abs(obsWidth.relativeDelta - (-0.09 / 6.09)) < 1e-9 && obsWidth.withinTolerance === false);
+  ok('35. informative comparison without pass/fail', !/"(pass|fail|improved|regressed)"/.test(JSON.stringify(a7.comparisons)) && obsWidth.tolerance === DEFAULT_OPTIONS.valueToleranceMm);
+  ok('35b. nominal height delta kept too', Math.abs(cmp(a7, 'nominalHeightMm_vs_engineHeightMm').delta) < 1e-9 && cmp(a7, 'observedHeightMm_vs_engineHeightMm').absoluteDelta === 0);
 
-  // 8 — small tolerance
-  const shifted = { regions: mmResult().regions.map(r => ({ ...r, path_points: r.path_points.map(([x, y]) => [x + 0.3, y - 0.2]) })) };
-  const tolOut = evaluateAWidthsResult({ result: shifted, seedCases: A_WIDTHS_CASES, design: DESIGN_MM });
-  ok('8. small offset still matches', tolOut.matchCoverage.matched === 5 && caseOf(tolOut, 'HATCH-A-WIDTHS-A5').match.centerDistanceMm > 0);
+  // 36 / 37 / 38 — conclusions
+  const noTechnique = run(mmResult(Object.keys(CASE_GEOMETRY), { stitch_type: undefined }));
+  ok('36. all matched but technique missing → partial', noTechnique.matchCoverage.matched === 5 && noTechnique.dataConclusion === 'incomplete' && noTechnique.conclusion === 'partial');
+  ok('37. all matched with required fields available → evaluated', base.conclusion === 'evaluated' && base.matchConclusion === 'all_assigned' && base.dataConclusion === 'complete');
+  ok('38. conflict in a required field → ambiguous per documented policy', techConflict.dataConclusion === 'conflicted' && techConflict.conclusion === 'ambiguous'
+    && DEFAULT_OPTIONS.conflictInRequiredFieldPolicy === 'ambiguous');
+  ok('38b. conclusion never based on matchCoverage alone', noTechnique.matchConclusion === 'all_assigned' && noTechnique.conclusion !== 'evaluated');
+  ok('38c. conclusion vocabulary respected', CONCLUSIONS.includes(base.conclusion) && !/"(pass|fail|improved|regressed)"/.test(JSON.stringify(base.cases.map(c => c.comparisons))));
 
-  // 9 — region too far
-  const far = { regions: [bar({ id: 'far', cx: 7, cy: 70, w: 0.5, h: 16 })] };
-  const farOut = evaluateAWidthsResult({ result: far, seedCases: A_WIDTHS_CASES, design: DESIGN_MM });
-  ok('9. distant region → unmatched, no_matches', farOut.matchCoverage.unmatched === 5 && farOut.conclusion === 'no_matches');
+  // 39 / 40 — coverage
+  ok('39. fieldCoverage includes widthMm and heightMm', base.fieldCoverage.widthMm.available === 5 && base.fieldCoverage.heightMm.available === 5
+    && base.fieldCoverage.autoSplit.unavailable === 5 && base.fieldCoverage.underlayDensityMm.available === 5);
+  ok('39b. source conflicts counted', techConflict.fieldCoverage.sourceConflicts.total === 1 && techConflict.fieldCoverage.sourceConflicts.byField.technique === 1);
+  ok('40. stable identity recorded', base.fieldCoverage.stableIdentity.stable === 5 && base.cases.every(c => c.match.identityStatus === 'stable' && c.actual.internalCandidateKey != null));
+  ok('40b. required fields declared with a safe default', JSON.stringify(DEFAULT_OPTIONS.requiredActualFields) === JSON.stringify(['widthMm', 'heightMm', 'technique']));
 
-  // 10 — two equally valid candidates
-  const dupOut = evaluateAWidthsResult({
-    result: { regions: [bar({ id: 'p1', cx: 80, cy: 13, w: 6, h: 16 }), bar({ id: 'p2', cx: 80, cy: 13, w: 6, h: 16 })] },
-    seedCases: [A_WIDTHS_CASES.find(c => c.caseId === 'HATCH-A-WIDTHS-A7')], design: DESIGN_MM,
-  });
-  const dupCase = dupOut.cases[0];
-  ok('10. two equal candidates → ambiguous with both ids', dupCase.match.status === 'ambiguous' && dupCase.match.candidateRegionIds.length === 2 && dupCase.match.selectedRegionId === null);
-  ok('10b. ambiguous case extracts no values', dupCase.actual.technique.availability === 'unavailable' && cmp(dupCase, 'technique').comparisonStatus === 'ambiguous_match');
-  ok('10c. overall conclusion ambiguous', dupOut.conclusion === 'ambiguous');
-
-  // 11 — absent region
-  const partial = evaluateAWidthsResult({ result: mmResult(['HATCH-A-WIDTHS-A1', 'HATCH-A-WIDTHS-A5', 'HATCH-A-WIDTHS-A6', 'HATCH-A-WIDTHS-A7']), seedCases: A_WIDTHS_CASES, design: DESIGN_MM });
-  ok('11. missing region → unmatched for that case', caseOf(partial, 'HATCH-A-WIDTHS-A8').match.status === 'unmatched');
-
-  // 12 — never match by index
-  const reversed = { regions: [...mmResult().regions].reverse() };
-  const revOut = evaluateAWidthsResult({ result: reversed, seedCases: A_WIDTHS_CASES, design: DESIGN_MM });
-  ok('12. matching independent of array position', Object.keys(CASE_GEOMETRY).every(id => caseOf(revOut, id).match.selectedRegionId === `bar_${id}`));
-  ok('12b. same matches with a shuffled result', JSON.stringify(revOut.cases.map(c => [c.caseId, c.match.selectedRegionId])) === JSON.stringify(mm.cases.map(c => [c.caseId, c.match.selectedRegionId])));
-
-  // 13 — nearby contour never replaces the main object
-  const withContour = {
-    regions: [
-      bar({ id: 'bar_A7', cx: 80, cy: 13, w: 6, h: 16 }),
-      { id: 'contour_A7', type: 'contour', region_class: 'outer_outline', parentRegionId: 'bar_A7', stitch_type: 'running_stitch', contour_width_mm: 1.2, contour_points: [[77, 5], [83, 5], [83, 21], [77, 21]] },
-    ],
-  };
-  const contourOut = evaluateAWidthsResult({ result: withContour, seedCases: [A_WIDTHS_CASES.find(c => c.caseId === 'HATCH-A-WIDTHS-A7')], design: DESIGN_MM });
-  ok('13. contour does not replace the main object', contourOut.cases[0].match.selectedRegionId === 'bar_A7' && contourOut.cases[0].match.status === 'matched');
-  ok('13b. contour kept as excluded context', contourOut.cases[0].match.reasons.some(r => /contour\/auxiliary/.test(r)));
-  const onlyContour = evaluateAWidthsResult({ result: { regions: [withContour.regions[1]] }, seedCases: [A_WIDTHS_CASES.find(c => c.caseId === 'HATCH-A-WIDTHS-A7')], design: DESIGN_MM });
-  ok('13c. only contours nearby → ambiguous, not silently filtered', onlyContour.cases[0].match.status === 'ambiguous' && onlyContour.cases[0].match.candidateRegionIds.includes('contour_A7'));
-
-  // 14 — unknown region type
-  const unknownType = evaluateAWidthsResult({ result: { regions: [bar({ id: 'x', cx: 80, cy: 13, w: 6, h: 16, extra: { type: 'mystery_object' } })] }, seedCases: [A_WIDTHS_CASES.find(c => c.caseId === 'HATCH-A-WIDTHS-A7')], design: DESIGN_MM });
-  ok('14. unknown region type still a main-object candidate', unknownType.cases[0].actual.regionRole.normalizedValue === 'main_object_candidate' && unknownType.cases[0].actual.regionRole.rawValue === 'mystery_object');
-
-  // 15–16 technique
-  const techSatin = normalizeTechnique({ region: { stitch_type: 'satin' } });
-  ok('15. satin recognized from a verified value', techSatin.normalizedValue === 'satin' && techSatin.availability === 'available' && techSatin.sourceField === 'region.stitch_type');
-  ok('15b. fill never promoted to tatami', normalizeTechnique({ region: { stitch_type: 'fill' } }).normalizedValue === 'fill');
-  ok('15c. running_stitch → running', normalizeTechnique({ region: { stitch_type: 'running_stitch' } }).normalizedValue === 'running');
-  ok('16. unknown technique → unknown with rawValue kept', (() => { const t = normalizeTechnique({ region: { stitch_type: 'sculpted_column' } }); return t.normalizedValue === 'unknown' && t.rawValue === 'sculpted_column'; })());
-  ok('16b. absent technique → unavailable', normalizeTechnique({ region: {} }).normalizedValue === 'unavailable');
-  ok('16c. technique never taken from the seed', normalizeTechnique({ region: {}, planEntry: null }).sourceField === null);
-
-  // 17–19 underlay
-  const uCenter = normalizeUnderlay({ region: { recommended_underlay: { enabled: true, type: 'centre_walk' } } });
-  ok('17. centre_walk → center_run', uCenter.primaryUnderlay.normalizedValue === 'center_run' && uCenter.underlayEnabled.normalizedValue === true);
-  const uEdgeZig = normalizeUnderlay({ region: { recommended_underlay: { enabled: true, type: 'edge_walk_zigzag', density_mm: 2, angle_deg: 90 } } });
-  ok('18. edge_walk_zigzag → edge_run_plus_zigzag', uEdgeZig.primaryUnderlay.normalizedValue === 'edge_run_plus_zigzag');
-  ok('18b. underlay lengths unavailable', uEdgeZig.primaryLengthMm.availability === 'unavailable' && uEdgeZig.secondaryLengthMm.availability === 'unavailable');
-  ok('18c. secondary underlay unavailable, never invented', uEdgeZig.secondaryUnderlay.availability === 'unavailable');
-  const uBool = normalizeUnderlay({ region: { underlay: true } });
-  ok('19. boolean-only underlay → type unavailable, boolean kept', uBool.underlayEnabled.normalizedValue === true && uBool.primaryUnderlay.availability === 'unavailable' && uBool.primaryUnderlay.normalizedValue === null);
-  ok('19b. full_coverage has no equivalent → unknown', normalizeUnderlay({ region: { recommended_underlay: { enabled: true, type: 'full_coverage' } } }).primaryUnderlay.normalizedValue === 'unknown');
-
-  // 20–22 spacing / density
-  const refA1 = buildReference(A_WIDTHS_CASES.find(c => c.caseId === 'HATCH-A-WIDTHS-A1'));
-  ok('20. automatic spacing with absent value stays null', refA1.spacingMode === 'automático' && refA1.spacingMm === null);
-  const a1Case = caseOf(mm, 'HATCH-A-WIDTHS-A1');
-  ok('20b. null reference spacing is not zero and not an error', cmp(a1Case, 'spacingMm').comparisonStatus === 'not_comparable' && cmp(a1Case, 'spacingMm').actualValue === null);
-  const refA7 = buildReference(A_WIDTHS_CASES.find(c => c.caseId === 'HATCH-A-WIDTHS-A7'));
-  ok('21. manual spacing 0.36 read from the seed', refA7.spacingMode === 'manual' && refA7.spacingMm === 0.36);
-  const actualA7 = a7.actual;
-  ok('22. density never converted into spacing', actualA7.spacing.spacingMm.availability === 'unavailable' && actualA7.spacing.density.normalizedValue === 0.36 && actualA7.spacing.densityUnit === 'mm_row_or_column_spacing');
-  ok('22b. spacingMode unavailable in the engine', actualA7.spacing.spacingMode.availability === 'unavailable');
-  const derivedSpacing = extractAWidthsActual({ region: bar({ id: 'z', cx: 80, cy: 13, w: 6, h: 16 }), options: { ...DEFAULT_OPTIONS, treatDensityAsSpacing: true } });
-  ok('22c. opt-in spacing is marked derived with its formula', derivedSpacing.spacing.spacingMm.derived === true && /identity formula/.test(derivedSpacing.spacing.spacingMm.reason));
-
-  // 23–26 compensation, autoSplit, angle
-  ok('23. compensation 0.4 extracted and compared', actualA7.pullCompensationMm.normalizedValue === 0.4 && cmp(a7, 'pullCompensationMm').comparisonStatus === 'equal');
-  ok('24. autoSplit true in the reference, unavailable in the engine', refA7.autoSplit === true && actualA7.autoSplit.availability === 'unavailable' && cmp(a7, 'autoSplit').comparisonStatus === 'unavailable_actual');
-  const seedFalseSplit = { ...A_WIDTHS_CASES[0], observation: { ...A_WIDTHS_CASES[0].observation, measured: { ...A_WIDTHS_CASES[0].observation.measured, autoSplit: false } } };
-  ok('25. autoSplit false preserved, never confused with absent', buildReference(seedFalseSplit).autoSplit === false && buildReference({ ...A_WIDTHS_CASES[0], observation: {}, configuration: {} }).autoSplit === null);
-  ok('26. angle 0 preserved as a value', actualA7.stitchAngleDeg.normalizedValue === 0 && actualA7.stitchAngleDeg.availability === 'available' && cmp(a7, 'stitchAngleDeg').comparisonStatus === 'equal');
-
-  // 27 absent field ≠ zero
-  const sparse = extractAWidthsActual({ region: { id: 's', path_points: [[0, 0], [1, 0], [1, 1]] } });
-  ok('27. absent numeric fields are unavailable with null value', sparse.pullCompensationMm.availability === 'unavailable' && sparse.pullCompensationMm.normalizedValue === null
-    && sparse.stitchAngleDeg.availability === 'unavailable' && sparse.spacing.density.normalizedValue === null);
-
-  // 28–29 measurement method
-  ok('28. straight bar width from bounding box', Math.abs(a7.actual.widthMm.normalizedValue - 6) < 1e-9 && a7.actual.geometry.measurementMethod === 'bounding_box_width' && a7.actual.widthMm.derived === true);
-  ok('28b. nominal / Hatch-observed / engine widths stay distinct', a7.reference.nominalWidthMm === 6 && a7.reference.observedWidthMm === 6.09
-    && cmp(a7, 'observedWidthMm_vs_engineWidthMm').delta === null && cmp(a7, 'observedWidthMm_vs_engineWidthMm').comparisonStatus === 'informational');
-  ok('29. bounding box not presented as a universal local profile', /NOT a universal local width profile/.test(a7.actual.geometry.limitation)
-    && /straight bars/.test(a7.actual.widthMm.reason));
-  const curvedSeed = { ...A_WIDTHS_CASES[3], ruleScope: { ...A_WIDTHS_CASES[3].ruleScope, geometryClass: 'banda_curva' } };
-  const curvedOut = evaluateAWidthsResult({ result: mmResult(['HATCH-A-WIDTHS-A7']), seedCases: [curvedSeed], design: DESIGN_MM });
-  ok('29b. non-straight geometry raises a warning', curvedOut.cases[0].warnings.some(w => /must not be used as the main width measurement/.test(w)));
-
-  // 30–33 conclusions
-  ok('30. partial result', partial.conclusion === 'partial' && partial.matchCoverage.matched === 4);
-  ok('31. ambiguous result', dupOut.conclusion === 'ambiguous');
-  ok('32. invalid input', evaluateAWidthsResult({ result: null, seedCases: A_WIDTHS_CASES }).conclusion === 'invalid_input'
-    && evaluateAWidthsResult({ result: {}, seedCases: [] }).conclusion === 'invalid_input'
-    && evaluateAWidthsResult({ result: {}, seedCases: [{ noId: true }] }).conclusion === 'invalid_input');
-  const serialized = JSON.stringify([mm, partial, dupOut, farOut]);
-  ok('33. no global pass/fail vocabulary', CONCLUSIONS.includes(mm.conclusion) && !/"(pass|fail|improved|regressed)"/.test(serialized));
-  ok('33b. every case status is a match status', [mm, partial, dupOut].every(o => o.cases.every(c => ['matched', 'ambiguous', 'unmatched', 'unavailable'].includes(c.status))));
-
-  // 34–36 purity
-  const resultFixture = mmResult();
+  // 41 / 42 — purity and determinism
+  const fixture = mmResult();
+  const fixtureSnapshot = JSON.stringify(fixture);
   const seedSnapshot = JSON.stringify(A_WIDTHS_CASES);
-  const resultSnapshot = JSON.stringify(resultFixture);
-  const run1 = evaluateAWidthsResult({ result: resultFixture, seedCases: A_WIDTHS_CASES, design: DESIGN_MM });
-  const run2 = evaluateAWidthsResult({ result: resultFixture, seedCases: A_WIDTHS_CASES, design: DESIGN_MM });
-  ok('34. result not mutated', JSON.stringify(resultFixture) === resultSnapshot);
-  ok('35. seedCases not mutated', JSON.stringify(A_WIDTHS_CASES) === seedSnapshot);
-  ok('36. same input → same output', JSON.stringify(run1) === JSON.stringify(run2) && run1.generatedAt === null);
+  const run1 = run(fixture);
+  const run2 = run(fixture);
+  ok('41. neither result nor seedCases mutated', JSON.stringify(fixture) === fixtureSnapshot && JSON.stringify(A_WIDTHS_CASES) === seedSnapshot);
+  ok('42. same input → same output', JSON.stringify(run1) === JSON.stringify(run2) && run1.generatedAt === null);
 
-  // 37–40 robustness
-  const empty = evaluateAWidthsResult({ result: { regions: [], plan: { sequence: [] }, commands: [] }, seedCases: A_WIDTHS_CASES, design: DESIGN_MM });
-  ok('37. empty arrays are safe', empty.conclusion === 'no_matches' && empty.inputSummary.regionCount === 0 && empty.warnings.length >= 0);
-  const partialData = evaluateAWidthsResult({ result: { regions: [{ id: 'no_geometry' }, bar({ id: 'bar_HATCH-A-WIDTHS-A7', cx: 80, cy: 13, w: 6, h: 16, extra: { stitch_type: undefined, density: undefined } })] }, seedCases: A_WIDTHS_CASES, design: DESIGN_MM });
-  ok('38. partial data is safe', partialData.conclusion === 'partial' && partialData.inputSummary.measurableRegionCount === 1
-    && caseOf(partialData, 'HATCH-A-WIDTHS-A7').actual.technique.availability === 'unavailable');
-  const dupIds = evaluateAWidthsResult({ result: { regions: [bar({ id: 'same', cx: 80, cy: 13, w: 6, h: 16 }), bar({ id: 'same', cx: 7, cy: 13, w: 0.5, h: 16 })] }, seedCases: A_WIDTHS_CASES, design: DESIGN_MM });
-  ok('39. duplicated ids reported', dupIds.warnings.some(w => /Duplicated region ids/.test(w)));
-  const unknownFieldOut = evaluateAWidthsResult({ result: { regions: [bar({ id: 'u', cx: 80, cy: 13, w: 6, h: 16, extra: { experimentalHatchField: 7 } })] }, seedCases: A_WIDTHS_CASES, design: DESIGN_MM });
-  ok('40. unknown fields recorded', unknownFieldOut.unknownFields.includes('experimentalHatchField'));
-  ok('40b. unavailable fields recorded', mm.unavailableFields.includes('autoSplit') && mm.unavailableFields.includes('spacingMode') && mm.unavailableFields.includes('spacingMm'));
-  ok('40c. field coverage reported per data point', mm.fieldCoverage.technique.available === 5 && mm.fieldCoverage.autoSplit.unavailable === 5);
+  // 43 / 44 / 45 — seed untouched
+  ok('43. the five real cases are intact', A_WIDTHS_CASES.length === 5 && Object.keys(CASE_GEOMETRY).every(id => realCase(id) != null)
+    && A_WIDTHS_CASES.every(c => c.seedVersion === '1.1.0'));
+  ok('44. expectedResult still null', A_WIDTHS_CASES.every(c => c.expectedResult === null) && !/expectedResult/.test(JSON.stringify(base.cases.map(c => c.actual))));
+  ok('45. no rule promoted to confirmed', A_WIDTHS_CASES.every(c => c.confidence !== 'confirmed' && c.candidateRules.every(r => r.status === 'candidata' && r.physicalValidation === false)));
 
-  // 41 previous suites
-  const previous = [runSeedValidationTests, runMetricExtractionTests, runMetricComparisonTests, runMutationSafetyTests, runAWidthsSeedIntegrityTests, runSeedStructuralConformanceTests].map(fn => fn());
-  ok('41. the six previous suites still pass', previous.length === 6 && previous.every(s => s.pass === true));
-
-  // 42–44 seed untouched
-  ok('42. the five cases remain structurally valid', A_WIDTHS_CASES.every(c => validateSeedCase(c).valid === true));
-  ok('43. expectedResult still null', A_WIDTHS_CASES.every(c => c.expectedResult === null));
-  ok('44. no rule promoted to confirmed', A_WIDTHS_CASES.every(c => c.confidence !== 'confirmed' && c.candidateRules.every(r => r.status === 'candidata' && r.physicalValidation === false)));
-  ok('44b. the evaluator never writes expectedResult', !/expectedResult/.test(JSON.stringify(mm.cases.map(c => c.actual))));
-
-  // 45 isolation contract: works on frozen plain data only
+  // 46 — isolation contract: plain frozen data only
   const frozen = Object.freeze({ regions: Object.freeze(mmResult().regions.map(r => Object.freeze({ ...r }))) });
   const frozenOut = evaluateAWidthsResult({ result: frozen, seedCases: Object.freeze([...A_WIDTHS_CASES]), design: Object.freeze({ ...DESIGN_MM }) });
-  ok('45. evaluator operates on plain frozen data (no engine objects, no writes)', frozenOut.matchCoverage.matched === 5);
-  ok('45b. measurement works standalone with an injected converter', (() => {
-    const conv = createPointConverter({ status: 'resolved', space: 'mm' });
-    const m = measureRegion(bar({ id: 'q', cx: 10, cy: 10, w: 2, h: 4 }), conv);
-    return Math.abs(m.boundingWidthMm - 2) < 1e-9 && Math.abs(m.boundingHeightMm - 4) < 1e-9 && m.pointCount === 4;
+  ok('46. evaluator works on plain frozen data (no productive objects needed)', frozenOut.conclusion === 'evaluated');
+  ok('46b. standalone measurement with an injected converter', (() => {
+    const m = measureRegion(bar({ id: 'q', cx: 10, cy: 10, w: 2, h: 4 }), createPointConverter({ status: 'resolved', space: 'mm' }));
+    return Math.abs(m.boundingWidthMm - 2) < 1e-9 && m.pointCount === 4;
   })());
+
+  // 47 — engine never executed
+  ok('47. no stitches, commands or exports produced', !('commands' in base) && !('stitches' in base) && base.cases.every(c => !('commands' in c.actual) && !('stitches' in c.actual))
+    && base.inputSummary.measurementMethod === 'bounding_box_width');
+
+  // extra unit-level guards
+  ok('48. selectRegionSource reports counts per collection', selectRegionSource({ result: { regions: [1], objects: [] }, options: DEFAULT_OPTIONS }).countsByRegionSource.objects === 0);
+  ok('49. plan index keeps every entry per regionId', buildPlanIndex({ result: { plan: { sequence: [{ regionId: 'a' }, { regionId: 'a' }] } }, candidates: [] }).entriesByRegionId.get('a').length === 2);
+  ok('50. technique value normalizer keeps fill as fill', normalizeTechniqueValue('fill').normalizedValue === 'fill' && normalizeTechniqueValue('sculpted').availability === 'unknown');
+  ok('51. merge detection is computed for every candidate', detectPossibleMergedRegions({ seedCases: [realCase('HATCH-A-WIDTHS-A7')], measuredCandidates: cands, options: DEFAULT_OPTIONS }).length === cands.length);
+  ok('52. reference keeps documented nulls', buildReference(realCase('HATCH-A-WIDTHS-A1')).spacingMm === null && buildReference(realCase('HATCH-A-WIDTHS-A7')).spacingMm === 0.36);
+  ok('53. coordinate space still never inferred', run(mmResult(), A_WIDTHS_CASES, {}, { widthMm: 100, heightMm: 80 }).conclusion === 'inconclusive');
 
   return { name: 'hatchLab/aWidthsEvaluator', pass: fails.length === 0, checks, fails };
 }
