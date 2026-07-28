@@ -95,3 +95,65 @@ export const EVALUATOR_OPTIONS = Object.freeze({
 });
 
 export const REQUIRED_EVALUATOR_VERSION = '0.2.1-A_WIDTHS';
+
+// ─── P0.3B.0 · parity with the productive Editor call ────────────────────────
+
+/**
+ * Real contract of the productive call, obtained by READ-ONLY inspection of
+ * src/lib/pipeline/runner.js (lines 61-86) and src/pages/Editor.jsx
+ * (startProcessing, lines 534-554). Nothing here is invented.
+ */
+export const EDITOR_RUNPIPELINE_CONTRACT = Object.freeze({
+  signature: 'runPipeline(imageUrl, config, opts = { onProgress, skipStages = [], initialCtx = {} })',
+  callSite: 'src/pages/Editor.jsx startProcessing (lines 545-554)',
+  processingUrlPolicy: 'The FIRST argument is the current imageUrl (the *_masked.png when a mask was applied); the original upload is used only for darkStroke. The baseline has no mask, so processingUrl === the verified source image URL.',
+  progressCallbackContract: 'runPipeline accepts opts.onProgress(pct, stageId), but the Editor does NOT pass it. The harness therefore passes no callback and reports progress only from ctx.stageLog after the run.',
+  configShape: '{ ...configRef.current, ...processingProfile.pipelineConfig, effectiveProfile: processingProfile }',
+  profileCall: 'resolveEffectiveEmbroideryProfile(configRef.current, preprocessSettings, editorMachineSettings)',
+  initialCtxKeys: Object.freeze(['darkStroke', 'inputAudit', 'effectiveProfile']),
+  optionalInitialCtxKeys: Object.freeze(['aiStrategy']),
+  skipStages: Object.freeze([]),
+  darkStrokeBuilder: 'buildStrictDarkStrokeContextFromOriginalImage(darkStrokeSourceUrl, pickMotorConfig(config)) — src/lib/rawDarkStrokeTest.js',
+  inputAuditFields: Object.freeze(['originalUploadUrl', 'imageUrl', 'processedImageUrl', 'maskedImageUrl', 'darkStrokeSourceUrl', 'isUsingMaskedForDarkStroke']),
+  inputAuditBuilder: 'buildInputSegmentationAudit — module-local helper in src/pages/Editor.jsx (lines 74-85), NOT exported',
+});
+
+export const PARITY_STATUSES = Object.freeze(['exact', 'equivalent', 'mismatch', 'unavailable']);
+export const PARITY_STATUSES_ALLOWING_RUN = Object.freeze(['exact', 'equivalent']);
+
+// ─── P0.3B.0 · persistent single-execution guard ─────────────────────────────
+
+export const CAPTURE_STATE_KEY = 'HATCH_LAB_BASE_ENGINE_A_WIDTHS_V1_CAPTURE_STATE';
+export const CAPTURE_STATES = Object.freeze(['ready', 'invoked', 'completed', 'failed']);
+export const CAPTURE_STATES_BLOCKING_RUN = Object.freeze(['invoked', 'completed', 'failed']);
+export const CAPTURE_STATE_FIELDS = Object.freeze([
+  'baselineId', 'state', 'invocationId', 'pipelineInvocationCount',
+  'invokedAt', 'completedAt', 'failedAt', 'sourceSha256', 'resultSha256', 'reason',
+]);
+
+// ─── P0.3B.0 · full-result archive (IndexedDB) ───────────────────────────────
+
+export const CAPTURE_ARCHIVE_DB = 'hatch_lab_baselines';
+export const CAPTURE_ARCHIVE_STORE = 'a_widths_captures';
+export const CAPTURE_ARCHIVE_FIELDS = Object.freeze([
+  'baselineId', 'invocationId', 'status', 'json', 'sizeBytes', 'sha256',
+]);
+
+export const CAPTURE_FILE_NAMES = Object.freeze({
+  full: 'BASE-ENGINE-A-WIDTHS-V1.capture.json',
+  summary: 'BASE-ENGINE-A-WIDTHS-V1.summary.json',
+});
+
+/** Sections the downloaded full capture must contain, in order. */
+export const FULL_CAPTURE_SECTIONS = Object.freeze([
+  'status', 'pipelineInvocationCount', 'source', 'engineInputAudit', 'editorParityAudit',
+  'baselineConfig', 'regionSourceResolution', 'coordinateDeclaration', 'stageLog',
+  'pipelineSnapshot', 'omittedFields', 'missingContextKeys', 'preservedRegionFieldReport',
+  'regionsSummary', 'evaluationReport', 'readiness', 'resultSha256',
+]);
+
+export const PREVIEW_CHARACTER_LIMIT = 200000;
+export const PREVIEW_TRUNCATION_NOTICE = 'Vista previa truncada; el archivo descargado contiene el resultado completo.';
+
+/** The ONLY module allowed to import the base engine inside Hatch Lab. */
+export const ENGINE_IMPORT_ALLOWLIST = Object.freeze(['src/tests/hatchLab/aWidthsBaselineCapture.js']);

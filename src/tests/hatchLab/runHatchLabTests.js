@@ -11,10 +11,11 @@ import { runMutationSafetyTests } from './mutationSafety.test.js';
 import { runAWidthsSeedIntegrityTests } from './aWidthsSeedIntegrity.test.js';
 import { runSeedStructuralConformanceTests } from './seedStructuralConformance.test.js';
 import { runAWidthsEvaluatorTests } from './aWidthsEvaluator.test.js';
+import { runAWidthsBaselineHarnessTests } from './aWidthsBaselineHarness.test.js';
 
 export function runHatchLabTests() {
   const suites = [];
-  for (const fn of [runSeedValidationTests, runMetricExtractionTests, runMetricComparisonTests, runMutationSafetyTests, runAWidthsSeedIntegrityTests, runSeedStructuralConformanceTests, runAWidthsEvaluatorTests]) {
+  for (const fn of [runSeedValidationTests, runMetricExtractionTests, runMetricComparisonTests, runMutationSafetyTests, runAWidthsSeedIntegrityTests, runSeedStructuralConformanceTests, runAWidthsEvaluatorTests, runAWidthsBaselineHarnessTests]) {
     try {
       suites.push(fn());
     } catch (e) {

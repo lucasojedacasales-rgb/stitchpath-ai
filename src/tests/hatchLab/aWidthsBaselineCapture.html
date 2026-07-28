@@ -10,8 +10,9 @@
     .card { border: 1px solid #1e2130; background: #11141c; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
     label { display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px; }
     input { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #2a2d3a; background: #0a0c12; color: #e2e8f0; font-family: ui-monospace, monospace; font-size: 11px; }
-    button { margin-top: 10px; padding: 8px 14px; border-radius: 8px; border: 0; background: #7c3aed; color: #fff; font-weight: 700; cursor: pointer; }
-    button:disabled { opacity: .4; cursor: not-allowed; }
+    button { margin: 10px 8px 0 0; padding: 8px 14px; border-radius: 8px; border: 0; background: #7c3aed; color: #fff; font-weight: 700; cursor: pointer; }
+    button.alt { background: #0e7490; }
+    button:disabled { opacity: .35; cursor: not-allowed; }
     .k { color: #64748b; }
     .v { color: #a78bfa; font-weight: 700; }
     .ok { color: #34d399; } .bad { color: #f87171; } .warn { color: #fbbf24; }
@@ -22,76 +23,147 @@
   <h1>Captura de baseline A_WIDTHS · BASE-ENGINE-A-WIDTHS-V1</h1>
   <div class="sub">
     Laboratorio aislado · fuera del router · el motor se ejecuta EXACTAMENTE UNA VEZ ·
-    sin exportación, sin guardado de proyecto, sin reglas de Hatch, sin pass/fail.
+    protección persistente sin reinicio · sin exportación, sin guardado de proyecto, sin reglas de Hatch, sin pass/fail.
   </div>
 
   <div class="card">
-    <label for="imageUrl">URL de la imagen fuente exacta (SHA-256 4CB26E42…C12005, 1181 × 945 px)</label>
+    <label for="imageUrl">URL pública de la imagen fuente exacta (SHA-256 4CB26E42…C12005, 1181 × 945 px)</label>
     <input id="imageUrl" placeholder="https://…/HATCH-A-WIDTHS-EXACT-100x80mm-300dpi.png" />
-    <button id="run">Ejecutar captura (una sola vez)</button>
+    <button id="run" disabled>Ejecutar captura (una sola vez)</button>
+    <button id="dlFull" class="alt" disabled>Descargar captura JSON completa</button>
+    <button id="dlSummary" class="alt" disabled>Descargar resumen de captura</button>
     <div class="sub" style="margin:8px 0 0">
-      Si el SHA-256 de los bytes descargados no coincide, el motor no se ejecuta.
+      El botón se habilita solo con URL + paridad aprobada + estado persistente «ready».
+      Si el SHA-256 de los bytes descargados no coincide, el motor no se ejecuta y el estado sigue en «ready».
+      No hay botón de reinicio: otra ejecución exigiría un baselineId distinto en una tarea separada.
     </div>
   </div>
 
   <div class="card">
-    <div><span class="k">Estado:</span> <span class="v" id="status">esperando</span></div>
+    <div><span class="k">Estado de la captura:</span> <span class="v" id="status">esperando</span></div>
+    <div><span class="k">Estado persistente:</span> <span class="v" id="pstate">—</span></div>
     <div><span class="k">pipelineInvocationCount:</span> <span class="v" id="count">0</span></div>
-    <div><span class="k">Etapa actual:</span> <span class="v" id="stage">—</span></div>
+    <div><span class="k">Paridad con el Editor:</span> <span class="v" id="parity">—</span></div>
     <div><span class="k">Regiones:</span> <span class="v" id="regions">—</span></div>
-    <div><span class="k">Entradas del plan:</span> <span class="v" id="plan">—</span></div>
     <div><span class="k">Conclusión del evaluador:</span> <span class="v" id="conclusion">—</span></div>
+    <div><span class="k">SHA-256 del resultado:</span> <span class="v" id="rhash">—</span></div>
   </div>
 
   <div class="card">
-    <div class="k" style="margin-bottom:6px">stageLog</div>
+    <div class="k" style="margin-bottom:6px">editorParityAudit</div>
+    <pre id="parityAudit">—</pre>
+  </div>
+
+  <div class="card">
+    <div class="k" style="margin-bottom:6px">stageLog (única fuente de progreso: se llena después de la ejecución)</div>
     <pre id="stageLog">—</pre>
   </div>
 
   <div class="card">
-    <div class="k" style="margin-bottom:6px">Resultado completo (publicado en window.__HATCH_LAB_A_WIDTHS_BASELINE_V1__)</div>
+    <div class="k" style="margin-bottom:6px" id="previewLabel">Vista previa del resultado</div>
     <pre id="out">—</pre>
   </div>
 
   <script type="module">
-    import { captureAWidthsBaseline, getPipelineInvocationCount, LAB_RESULT_KEY }
-      from '/src/tests/hatchLab/aWidthsBaselineCapture.js';
+    import {
+      captureAWidthsBaseline, inspectCaptureReadiness, restoreArchivedCapture,
+      getPipelineInvocationCount, LAB_RESULT_KEY,
+    } from '/src/tests/hatchLab/aWidthsBaselineCapture.js';
+    import { PREVIEW_CHARACTER_LIMIT, PREVIEW_TRUNCATION_NOTICE, CAPTURE_FILE_NAMES }
+      from '/src/lib/hatchLab/baselines/A_WIDTHS/baselineSchema.js';
 
     const el = id => document.getElementById(id);
     const set = (id, text, cls) => { const n = el(id); n.textContent = text; if (cls) n.className = cls; };
+    let downloads = null;
 
-    // Reload guard: a completed capture is never repeated automatically.
-    if (window[LAB_RESULT_KEY]?.status === 'A_WIDTHS_BASELINE_CAPTURE_COMPLETED') {
-      set('status', 'captura ya completada en esta sesión — no se reejecuta', 'v ok');
-      el('run').disabled = true;
-    }
+    const download = (fileName, json) => {
+      const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+      const a = document.createElement('a');
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    const showPreview = (json) => {
+      const truncated = json.length > PREVIEW_CHARACTER_LIMIT;
+      set('previewLabel', truncated
+        ? `Vista previa del resultado — ${PREVIEW_TRUNCATION_NOTICE}`
+        : 'Vista previa del resultado (completa)');
+      set('out', truncated ? json.slice(0, PREVIEW_CHARACTER_LIMIT) : json);
+    };
+
+    const readiness = inspectCaptureReadiness();
+    set('pstate', readiness.persistentState.state, readiness.persistentState.state === 'ready' ? 'v' : 'v warn');
+    set('parity', `${readiness.editorParityAudit.parityStatus} — ${readiness.editorParityAudit.parityReason}`,
+      readiness.editorParityAudit.runAllowed ? 'v ok' : 'v bad');
+    set('parityAudit', JSON.stringify(readiness.editorParityAudit, null, 2));
+    set('count', String(readiness.pipelineInvocationCount));
+    if (readiness.blockingReason) set('status', readiness.blockingReason, 'v warn');
+
+    const refreshRunButton = () => {
+      el('run').disabled = !(readiness.runAllowed && el('imageUrl').value.trim().length > 0);
+    };
+    el('imageUrl').addEventListener('input', refreshRunButton);
+    refreshRunButton();
+
+    // Reload path: recover the archived capture, never re-run the engine.
+    restoreArchivedCapture().then(({ persistentState, record }) => {
+      set('pstate', persistentState.state, persistentState.state === 'completed' ? 'v ok' : 'v warn');
+      set('count', String(persistentState.pipelineInvocationCount));
+      if (!record) return;
+      downloads = { full: { fileName: CAPTURE_FILE_NAMES.full, json: record.json }, summary: null };
+      el('dlFull').disabled = false;
+      set('status', `captura recuperada del archivo local (${record.status})`, 'v ok');
+      set('rhash', record.sha256);
+      showPreview(record.json);
+      try {
+        const parsed = JSON.parse(record.json);
+        set('stageLog', JSON.stringify(parsed.stageLog || [], null, 2));
+        set('regions', String(parsed.regionsSummary?.length ?? '—'));
+        set('conclusion', parsed.evaluationReport?.conclusion || '—');
+        if (parsed.editorParityAudit) set('parityAudit', JSON.stringify(parsed.editorParityAudit, null, 2));
+      } catch { /* the raw JSON is still downloadable */ }
+    }).catch(error => console.warn('[hatch-lab-baseline] archive read failed:', error));
+
+    el('dlFull').addEventListener('click', () => downloads?.full && download(downloads.full.fileName, downloads.full.json));
+    el('dlSummary').addEventListener('click', () => downloads?.summary && download(downloads.summary.fileName, downloads.summary.json));
 
     el('run').addEventListener('click', async () => {
-      const imageUrl = el('imageUrl').value.trim();
-      if (!imageUrl) { set('status', 'falta la URL de la imagen', 'v bad'); return; }
       el('run').disabled = true;
-      set('status', 'ejecutando el motor una vez…', 'v warn');
+      set('status', 'ejecutando…', 'v warn');
 
       let result;
       try {
         result = await captureAWidthsBaseline({
-          imageUrl,
-          onStage: (pct, stageId) => { set('stage', `${stageId} (${pct}%)`); set('count', String(getPipelineInvocationCount())); },
+          imageUrl: el('imageUrl').value.trim(),
+          onStatus: label => set('status', label, 'v warn'),
         });
       } catch (error) {
-        result = { status: 'A_WIDTHS_BASELINE_CAPTURE_FAILED', harnessError: error?.message || String(error), stack: error?.stack || null, pipelineInvocationCount: getPipelineInvocationCount() };
+        result = {
+          status: 'A_WIDTHS_BASELINE_CAPTURE_FAILED',
+          harnessError: error?.message || String(error), stack: error?.stack || null,
+          pipelineInvocationCount: getPipelineInvocationCount(),
+        };
       }
 
       window[LAB_RESULT_KEY] = result;
       const good = result.status === 'A_WIDTHS_BASELINE_CAPTURE_COMPLETED';
-      set('status', result.status, good ? 'v ok' : 'v bad');
+      set('status', result.status + (result.blockedReason ? ` — ${result.blockedReason}` : ''), good ? 'v ok' : 'v bad');
+      set('pstate', result.persistentState?.state || '—', good ? 'v ok' : 'v warn');
       set('count', String(result.pipelineInvocationCount ?? getPipelineInvocationCount()));
-      set('stage', result.runStatus || '—');
-      set('regions', String(result.pipelineSnapshot?.regions?.length ?? '—'));
-      set('plan', String(result.pipelineSnapshot?.plan?.sequence?.length ?? '—'));
-      set('conclusion', result.evaluationReport?.conclusion || result.blockedReason || '—');
+      set('regions', String(result.regionsSummary?.length ?? '—'));
+      set('conclusion', result.evaluationReport?.conclusion || '—');
+      set('rhash', result.resultSha256 || '—');
       set('stageLog', JSON.stringify(result.stageLog || [], null, 2));
-      set('out', JSON.stringify(result, null, 2).slice(0, 200000));
+      if (result.editorParityAudit) set('parityAudit', JSON.stringify(result.editorParityAudit, null, 2));
+
+      if (result.downloads) {
+        downloads = result.downloads;
+        el('dlFull').disabled = false;
+        el('dlSummary').disabled = false;
+        showPreview(result.downloads.full.json);
+      } else {
+        showPreview(JSON.stringify(result, null, 2));
+      }
       console.log('[hatch-lab-baseline]', result);
     });
   </script>

@@ -41,11 +41,19 @@ The hash equals the value registered in `seedManifest.json` **and** in
 `evidenceIndex.json`. The GUIDE image, the SVG, the 78 screenshots and any
 resized, optimized, re-exported or reconstructed variant are rejected.
 
-**Binary copy.** `source/HATCH-A-WIDTHS-EXACT-100x80mm-300dpi.png` could not be
-stored: the build tooling only persists text files. Instead the harness fetches
-the image at capture time and **recomputes its SHA-256**, refusing to run the
-engine unless the bytes are identical to the hash above. No substitute image is
-ever accepted.
+**Where the image actually is.** The real situation, consistent with
+`sourceManifest.json` (`localCopy.stored: false`):
+
+* the image was extracted from the package and **verified in the sandbox**;
+* its SHA-256 is **confirmed** against the seed manifest and the evidence index;
+* the binary copy is **NOT stored in the repository** (the build tooling only
+  persists text files);
+* the harness therefore requires a **public URL serving those same bytes**;
+* before running the engine the harness **recomputes the SHA-256** of the bytes
+  it fetched and refuses to continue unless it equals the hash above.
+
+No substitute, resized or re-exported image is ever accepted, and no text in this
+repository claims the image is stored locally.
 
 ## Isolation
 
@@ -82,17 +90,99 @@ scanning both keys and string values of the exact object handed to the engine.
 Full provenance per field: `CONFIG_PROVENANCE` in the harness, mirrored into
 `baselineConfig.json`.
 
-## Single execution
+## Parity with the productive Editor call
 
-`pipelineInvocationCount` starts at 0, is checked before the run, becomes 1, and
-a second invocation throws. There are no automatic retries and the HTML has a
-reload guard so a completed capture is never repeated.
+The harness reproduces `Editor.startProcessing` (lines 545-554), not an
+approximation. `editorParityAudit` reports it field by field and the run button
+stays disabled unless `parityStatus` is `exact` or `equivalent`:
 
-Failure policy: an exception **before** a context is returned produces
-`captureFailure.json` and `A_WIDTHS_BASELINE_CAPTURE_FAILED`, with no synthetic
-evaluation. A returned context with failing stages keeps the context and the
-`stageLog` and is marked `runStatus: "completed_with_stage_errors"` — stage
+* real signature — `runPipeline(imageUrl, config, opts = { onProgress, skipStages = [], initialCtx = {} })`;
+* `config` — `{ ...baseConfig, ...profile.pipelineConfig, effectiveProfile }`, with
+  the profile resolved by the same `resolveEffectiveEmbroideryProfile(config, DEFAULT_PREPROCESS, machineSettings)` call;
+* `initialCtx` — `{ darkStroke, inputAudit, effectiveProfile }`, exactly the
+  Editor keys (`aiStrategy` is absent because the Editor omits it when the user
+  presses “Procesar” without AI);
+* `darkStroke` — built with the **same productive function**,
+  `buildStrictDarkStrokeContextFromOriginalImage(url, pickMotorConfig(config))`;
+* **no `onProgress`** — the Editor passes none, so the harness passes none and the
+  page shows no progress bar; progress is read from `stageLog` after the run;
+* no skipped stage.
+
+Current status: **`equivalent`**, because `buildInputSegmentationAudit` and
+`pickMotorConfig` are module-local helpers in `Editor.jsx` and are not exported;
+the harness reimplements them field for field (verifiable at lines 74-85 and
+119-130). Every equivalence is listed in `editorParityAudit.equivalences`.
+
+## Single execution — persistent
+
+Two barriers. The first is persistent under
+`HATCH_LAB_BASE_ENGINE_A_WIDTHS_V1_CAPTURE_STATE`, storing `baselineId`, `state`,
+`invocationId`, `pipelineInvocationCount`, `invokedAt`, `completedAt`, `failedAt`,
+`sourceSha256`, `resultSha256` and `reason`. States: `ready` → `invoked` →
+`completed` | `failed`.
+
+* Pre-run refusals — wrong hash, unreachable URL, invalid input audit, parity not
+  demonstrated — **never** move the state away from `ready`.
+* Immediately before `runPipeline`: the state must be `ready`; it becomes
+  `invoked` with `pipelineInvocationCount: 1`, an `invocationId` and `invokedAt`.
+* After a context is returned: `completed`. If `runPipeline` throws: `failed`.
+* After a reload, `invoked` / `completed` / `failed` all keep the button disabled
+  and the persisted state is displayed.
+* There is **no reset button** and the UI cannot erase the guard. Another run
+  would require a different `baselineId` in a separate task.
+
+The in-memory `pipelineInvocationCount` remains as the second barrier.
+
+Failure policy: an exception **before** a context is returned yields
+`A_WIDTHS_BASELINE_CAPTURE_FAILED` with the full `captureFailure`, and no
+synthetic evaluation. A returned context with failing stages keeps the context and
+the `stageLog` and is marked `runStatus: "completed_with_stage_errors"` — stage
 failures are never hidden.
+
+## The full result is preserved
+
+`window.__HATCH_LAB_A_WIDTHS_BASELINE_V1__` is a convenience only. After a
+completed **or** failed capture the harness:
+
+1. builds the canonical, **untruncated** full JSON with every required section
+   (`status`, `pipelineInvocationCount`, `source`, `engineInputAudit`,
+   `editorParityAudit`, `baselineConfig`, `regionSourceResolution`,
+   `coordinateDeclaration`, `stageLog`, `pipelineSnapshot`, `omittedFields`,
+   `missingContextKeys`, `preservedRegionFieldReport`, `regionsSummary`,
+   `evaluationReport`, `readiness`, `resultSha256`);
+2. computes its size in bytes and its SHA-256;
+3. stores `{ baselineId, invocationId, status, json, sizeBytes, sha256 }` in
+   IndexedDB (`hatch_lab_baselines` / `a_widths_captures`);
+4. only **then** marks the persistent state `completed` (or `failed`, including
+   when the archive write itself failed).
+
+Two buttons appear: **Descargar captura JSON completa** →
+`BASE-ENGINE-A-WIDTHS-V1.capture.json`, and **Descargar resumen de captura** →
+`BASE-ENGINE-A-WIDTHS-V1.summary.json`. The on-screen preview may be cut at
+200 000 characters and then says explicitly “Vista previa truncada; el archivo
+descargado contiene el resultado completo.” The downloaded file is never cut.
+
+After a reload, if a record exists in IndexedDB the engine is **not** run: the
+record is recovered and only the download buttons are re-enabled.
+
+## Delivery flow after the run
+
+Base44 cannot recover an object living only in `window`. The real flow is:
+
+1. the user runs the capture once in the browser;
+2. the browser downloads `BASE-ENGINE-A-WIDTHS-V1.capture.json`;
+3. the user attaches that JSON to this same Base44 chat;
+4. a later task converts it into `pipelineSnapshot.json`, `runManifest.json`,
+   `baselineConfig.json`, `engineInputAudit.json`, `stageLog.json`,
+   `regionsSummary.json`, `regionsSummary.csv`, `evaluatorInput.json`,
+   `evaluationReport.json`, `evaluationReport.md` and `snapshotHashes.json`;
+5. that later task never runs the engine again.
+
+## Harness path
+
+Open `/src/tests/hatchLab/aWidthsBaselineCapture.html` in the preview (same
+mechanism as the existing `/src/tests/hatchLab/hatchLabTests.html`: Vite serves
+HTML entries from the project root and rewrites the `/src/...` module imports).
 
 ## Region source and coordinates
 
