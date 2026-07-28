@@ -188,7 +188,16 @@ export function cleanCartoonSegmentationRegions(regions = [], config = {}) {
     const areaRatio = r._q1.areaRatio;
     const pointCount = r.path_points?.length || 0;
     const unsupported = r.supported === false || r.darkSupport === 0;
-    const important = r._q1.important;
+    // Trazo de dibujo (line art): región negra alargada/estrecha respecto a su
+    // caja. Son la fosa nasal, la boca, la separación de brazos, los dedos y las
+    // líneas de las botas: deben conservarse aunque su área sea mínima.
+    const bb = bbox(r.path_points || []);
+    const diag2 = bb.w * bb.w + bb.h * bb.h;
+    const darkLineArt = (family === 'black' || r.is_dark_outline === true)
+      && diag2 > 0.0009
+      && areaRatio / diag2 < 0.12;
+    const important = r._q1.important || darkLineArt;
+    if (darkLineArt) r._q1.important = true;
     const edgeTouch = r._q1.edgeTouch;
     const blackClass = family === 'black' ? classifyBlackRegion(r, areaRatio, edgeTouch) : null;
 
@@ -221,12 +230,15 @@ export function cleanCartoonSegmentationRegions(regions = [], config = {}) {
 
   let contours = survivors.filter(isContourRegion);
   const nonContours = survivors.filter(r => !isContourRegion(r));
-  if (contours.length > 15) {
+  // Límite de contornos: el dibujo lineal necesita más de 15 trazos para
+  // conservar los detalles interiores (boca, dedos, líneas de las botas).
+  const contourLimit = contours.some(r => r._q1.important) ? 40 : 15;
+  if (contours.length > contourLimit) {
     const sorted = contours
       .map(r => ({ r, score: (r._q1.important ? 100 : 0) + (r._q1.areaRatio * 10000) + ((r.perimeter_mm || 0) * 0.05) }))
       .sort((a, b) => b.score - a.score);
-    rejectedNoiseCount += Math.max(0, sorted.length - 15);
-    contours = sorted.slice(0, 15).map(x => x.r);
+    rejectedNoiseCount += Math.max(0, sorted.length - contourLimit);
+    contours = sorted.slice(0, contourLimit).map(x => x.r);
   }
 
   const palette = buildPalette([...nonContours, ...contours], Math.min(6, config.color_count || 6));

@@ -54,6 +54,8 @@ export async function runContourEngine(ctx) {
     if (tuning.noisePasses != null)       modeOpts.noisePasses = clamp(Math.round(tuning.noisePasses), 0, 3);
     if (tuning.minAreaFactor != null)     modeOpts.minAreaFactor = clamp(tuning.minAreaFactor, 0.25, 3);
     if (tuning.detectDarkOutline != null) modeOpts.detectDarkOutline = !!tuning.detectDarkOutline;
+    if (tuning.darkOutlineL != null)      modeOpts.darkOutlineL = clamp(tuning.darkOutlineL, 20, 70);
+    if (tuning.darkDetailFactor != null)  modeOpts.darkDetailFactor = clamp(tuning.darkDetailFactor, 0.03, 1);
     console.log('[ContourEngine] vectorTuning aplicado:', JSON.stringify(tuning));
   }
 

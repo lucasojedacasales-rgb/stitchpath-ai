@@ -33,7 +33,12 @@ const DEFAULTS = {
   noisePasses:        1,      // pasadas de filtro de mayoría 3×3 sobre el mapa de etiquetas
   minAreaFactor:      1,      // multiplicador del área mínima (menor = conserva más detalles)
   detectDarkOutline:  true,   // garantiza un clúster oscuro para contornos negros
+  darkOutlineL:       42,     // L* máximo para forzar un píxel al clúster oscuro (línea negra)
+  darkDetailFactor:   0.12,   // área mínima relativa para blobs oscuros (detalles finos)
 };
+
+// Un centroide es "oscuro" (línea de contorno) por debajo de este L*.
+const DARK_CENTROID_L = 38;
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -74,13 +79,21 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
   // Convert palette back to RGB for downstream use
   const palette = paletteLab.map(labToRgb);
 
-  // 2. Label map using Lab distance for perceptually accurate assignment
+  // 2. Label map using Lab distance for perceptually accurate assignment.
+  // Los píxeles realmente oscuros (línea de dibujo) se fuerzan al clúster oscuro:
+  // sin esto, el antialiasing reparte la línea entre el negro y el color vecino y
+  // los trazos finos (fosa nasal, boca, separación de brazos, dedos, líneas de las
+  // botas) se adelgazan hasta desaparecer.
+  const darkIdx = cfg.detectDarkOutline ? darkestCentroidIdx(paletteLab) : -1;
+  let darkForced = 0;
   const labels = new Int32Array(W * H);
   for (let i = 0; i < W * H; i++) {
     if (pixels[i * 4 + 3] < 128) { labels[i] = -1; continue; }
     const lab = rgbToLab(pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]);
+    if (darkIdx >= 0 && lab[0] < cfg.darkOutlineL) { labels[i] = darkIdx; darkForced++; continue; }
     labels[i] = nearestIdx(lab, paletteLab);
   }
+  if (darkIdx >= 0) console.log(`[ContourEngine] capa de línea oscura: ${darkForced} px forzados (L<${cfg.darkOutlineL})`);
 
   // 2a-bis. Filtro de mayoría: elimina astillas de antialiasing y píxeles
   // sueltos mal etiquetados, sin erosionar líneas reales de 1px.
@@ -98,9 +111,22 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
   const regions = [];
 
   for (let ci = 0; ci < palette.length; ci++) {
-    const blobs = findBlobs(labels, W, H, ci, minPixels);
+    // Los trazos oscuros son finos por definición: se les aplica un área mínima
+    // mucho menor para no perder los detalles interiores del dibujo.
+    const isDarkLayer = paletteLab[ci] && paletteLab[ci][0] < DARK_CENTROID_L;
+    const minForColor = isDarkLayer
+      ? Math.max(8, Math.round(minPixels * (cfg.darkDetailFactor || 0.12)))
+      : minPixels;
+    const blobs = findBlobs(labels, W, H, ci, minForColor);
 
     for (const blob of blobs) {
+      // Filtro de ruido para la capa oscura: descarta motas compactas de JPEG,
+      // conserva cualquier trazo con extensión real (línea o detalle dibujado).
+      if (isDarkLayer) {
+        const bw0 = blob.bbox.maxX - blob.bbox.minX + 1;
+        const bh0 = blob.bbox.maxY - blob.bbox.minY + 1;
+        if (Math.hypot(bw0, bh0) < 5) continue;
+      }
       // 3. Moore-neighbor integer trace
       let pts = mooreTrace(blob.mask, W, H);
       if (pts.length < 6) continue;
@@ -114,12 +140,14 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
       // 6. Chaikin smoothing (splits at corners, smooths between them)
       pts = chaikinSmooth(pts, corners, cfg.chaikinPasses);
 
-      // 7. Adaptive RDP — re-detects corners on smoothed pts
-      pts = rdpAdaptive(pts, cfg.rdpBaseEpsilon, cfg.rdpCornerFactor);
+      // 7. Adaptive RDP — re-detects corners on smoothed pts.
+      // En la capa oscura se simplifica menos: los trazos son estrechos y una
+      // épsilon normal los aplana o los cierra sobre sí mismos.
+      pts = rdpAdaptive(pts, isDarkLayer ? cfg.rdpBaseEpsilon * 0.5 : cfg.rdpBaseEpsilon, cfg.rdpCornerFactor);
       if (pts.length < 3) continue;
 
       // 8. Remove short segments
-      pts = removeShortSegments(pts, cfg.minSegmentPx);
+      pts = removeShortSegments(pts, isDarkLayer ? cfg.minSegmentPx * 0.5 : cfg.minSegmentPx);
       if (pts.length < 3) continue;
 
       // 9. Cubic Bézier handles for smooth sections
@@ -162,6 +190,7 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
       const centroidY     = repairedPath.reduce((s, p) => s + p[1], 0) / repairedPath.length;
 
       regions.push({
+        is_dark_outline: isDarkLayer,
         hex:            rgbToHex(palette[ci]),
         rgb:            palette[ci],
         coverage:       blob.pixelCount / (W * H),
@@ -556,6 +585,15 @@ function mergeSimilarCentroids(cents, deltaE) {
     merged.push([sum[0] / cnt, sum[1] / cnt, sum[2] / cnt]);
   }
   return merged;
+}
+
+/** Índice del centroide más oscuro si es lo bastante oscuro para ser línea. */
+function darkestCentroidIdx(cents) {
+  let idx = -1, best = Infinity;
+  for (let i = 0; i < cents.length; i++) {
+    if (cents[i][0] < best) { best = cents[i][0]; idx = i; }
+  }
+  return best < DARK_CENTROID_L ? idx : -1;
 }
 
 /**
