@@ -39,6 +39,24 @@ export async function runContourEngine(ctx) {
 
   const modeOpts = { ...(MODE_OPTIONS[strategy.id] || MODE_OPTIONS.hybrid) };
 
+  // ── Ajustes del usuario (panel «Separación de colores») ─────────────────
+  // Sobrescriben los presets del modo con límites seguros. Sin vectorTuning,
+  // el comportamiento es idéntico al anterior.
+  const tuning = ctx.config?.vectorTuning || null;
+  let effColorCount = colorCount;
+  if (tuning) {
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    if (tuning.colorCount != null)        effColorCount = clamp(Math.round(tuning.colorCount), 2, 16);
+    if (tuning.minAreaPx != null)         modeOpts.minAreaPx = clamp(tuning.minAreaPx, 10, 2000);
+    if (tuning.chaikinPasses != null)     modeOpts.chaikinPasses = clamp(Math.round(tuning.chaikinPasses), 0, 5);
+    if (tuning.gapCloseThreshold != null) modeOpts.gapCloseThreshold = clamp(tuning.gapCloseThreshold, 0, 40);
+    if (tuning.colorMergeDeltaE != null)  modeOpts.colorMergeDeltaE = clamp(tuning.colorMergeDeltaE, 0, 30);
+    if (tuning.noisePasses != null)       modeOpts.noisePasses = clamp(Math.round(tuning.noisePasses), 0, 3);
+    if (tuning.minAreaFactor != null)     modeOpts.minAreaFactor = clamp(tuning.minAreaFactor, 0.25, 3);
+    if (tuning.detectDarkOutline != null) modeOpts.detectDarkOutline = !!tuning.detectDarkOutline;
+    console.log('[ContourEngine] vectorTuning aplicado:', JSON.stringify(tuning));
+  }
+
   // Adaptive RDP epsilon: denser edges → tighter epsilon to preserve detail.
   // edgeDensityMap is a 2D grid of Sobel density [0,1]. Compute the mean.
   if (ctx.analysis?.edgeDensityMap) {
@@ -51,7 +69,7 @@ export async function runContourEngine(ctx) {
     modeOpts.rdpBaseEpsilon = +(modeOpts.rdpBaseEpsilon * Math.max(0.85, Math.min(1.15, edgeFactor))).toFixed(3);
   }
 
-  ctx.contours = await traceContoursProf(sourceUrl, colorCount, modeOpts);
+  ctx.contours = await traceContoursProf(sourceUrl, effColorCount, modeOpts);
   const contourRegions = ctx.contours?.regions || [];
   console.log(`[ContourEngine] Contornos detectados: ${contourRegions.length}`);
 

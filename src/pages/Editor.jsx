@@ -8,6 +8,7 @@ import StitchCanvas from '@/components/editor/StitchCanvas';
 import ConfigPanel from '@/components/editor/ConfigPanel';
 import TechnicalToolLoading from '@/components/editor/TechnicalToolLoading';
 import PreprocessingPanel, { DEFAULT_PREPROCESS } from '@/components/editor/PreprocessingPanel';
+import { useRegionsHistory } from '@/hooks/useRegionsHistory';
 
 import { runPipeline } from '@/lib/pipeline/runner';
 import { resolveEffectiveEmbroideryProfile } from '@/lib/embroideryEngineProfiles.js';
@@ -30,6 +31,8 @@ import { cleanCartoonSegmentationRegions } from '@/lib/cartoonSegmentationCleanu
 // ═══ Decision Engine — SIEMPRE ACTIVADO ═══
 import { useDecisionEngine } from '@/hooks/useDecisionEngine.js';
 const RegionsPanel = lazy(() => import('@/components/editor/RegionsPanel'));
+const SequencePanel = lazy(() => import('@/components/editor/SequencePanel'));
+const VectorizePreviewModal = lazy(() => import('@/components/editor/VectorizePreviewModal'));
 const SubpixelMetricsPanel = lazy(() => import('@/components/editor/SubpixelMetricsPanel.jsx'));
 const QualityAnalysisPanel = lazy(() => import('@/components/editor/QualityAnalysisPanel.jsx'));
 const StitchPlannerPanel = lazy(() => import('@/components/editor/StitchPlannerPanel.jsx'));
@@ -187,6 +190,10 @@ export default function Editor() {
   const [centerlineReport, setCenterlineReport] = useState(null);
   const [outlineReport, setOutlineReport] = useState(null);
   const [darkStroke, setDarkStroke] = useState(null);
+  const [showVectorize, setShowVectorize] = useState(false);
+  const [isolatedRegionId, setIsolatedRegionId] = useState(null);
+  const [seqPanelOpen, setSeqPanelOpen] = useState(false);
+  const regionsHistory = useRegionsHistory();
   const timerRef = useRef(null);
   const finalCommandCacheRef = useRef({ key: null, value: null });
   const darkStrokeCacheRef = useRef({ key: null, value: null });
@@ -558,6 +565,8 @@ export default function Editor() {
 
       if (ctx.enhanced?.enhancedUrl) setPreprocessedUrl(ctx.enhanced.enhancedUrl);
 
+      if (regionsRef.current.length > 0) regionsHistory.push(regionsRef.current);
+      setIsolatedRegionId(null);
       setRegions(enrichedRegions);
       setPathMetrics(ctx.pathMetrics || null);
       setDetailReport(ctx.detailReport || null);
@@ -658,6 +667,67 @@ export default function Editor() {
     const updated = await base44.entities.Project.update(id, { name: name.trim() });
     setProject(updated);
   }, [id]);
+
+  // ── Secuencia de regiones: cambios con historial + persistencia ──────────
+  const handleSequenceChange = useCallback((next, persist = true) => {
+    const incoming = Array.isArray(next) ? next : [];
+    const valid = filterValidVisualRegions(incoming);
+    if (valid.length === 0 && incoming.length > 0) {
+      console.warn('[sequence] update rejected: no valid visual regions');
+      return;
+    }
+    regionsHistory.push(regionsRef.current);
+    setRegions(incoming);
+    if (persist && project) {
+      saveProject({
+        regions: incoming,
+        total_stitches: incoming.reduce((s, r) => s + (r.stitch_count || 0), 0),
+        color_count: new Set(incoming.map((r) => r.color)).size,
+      });
+    }
+  }, [project, saveProject, regionsHistory]);
+
+  const restoreRegionsSnapshot = useCallback((snap) => {
+    if (!snap) return;
+    setRegions(snap);
+    if (project) {
+      saveProject({
+        regions: snap,
+        total_stitches: snap.reduce((s, r) => s + (r.stitch_count || 0), 0),
+        color_count: new Set(snap.map((r) => r.color)).size,
+      });
+    }
+  }, [project, saveProject]);
+
+  const handleUndoRegions = useCallback(() => restoreRegionsSnapshot(regionsHistory.undo(regionsRef.current)), [regionsHistory, restoreRegionsSnapshot]);
+  const handleRedoRegions = useCallback(() => restoreRegionsSnapshot(regionsHistory.redo(regionsRef.current)), [regionsHistory, restoreRegionsSnapshot]);
+
+  // ── Nueva vectorización con parámetros confirmados en la vista previa ────
+  const handleApplyVectorTuning = (tuning) => {
+    const nextConfig = {
+      ...configRef.current,
+      vectorTuning: tuning,
+      color_count: tuning.colorCount || configRef.current.color_count,
+    };
+    configRef.current = nextConfig;
+    setConfig(nextConfig);
+    setShowVectorize(false);
+    startProcessing();
+  };
+
+  const sequencePanelProps = {
+    regions,
+    selectedId: selectedRegionId,
+    onSelect: setSelectedRegionId,
+    onChange: handleSequenceChange,
+    canUndo: regionsHistory.canUndo,
+    canRedo: regionsHistory.canRedo,
+    onUndo: handleUndoRegions,
+    onRedo: handleRedoRegions,
+    isolatedId: isolatedRegionId,
+    onIsolate: setIsolatedRegionId,
+    onOpenVectorize: imageUrl ? () => setShowVectorize(true) : null,
+  };
 
   const totalStitches = useMemo(() => regions.reduce((s, r) => s + (r.stitch_count || 0), 0), [regions]);
   const colorsUsed = useMemo(() => new Set(regions.map((r) => r.color)).size, [regions]);
@@ -1198,7 +1268,7 @@ export default function Editor() {
             </div>
           </div> :
           <div className="flex-1 overflow-hidden">
-              <StitchCanvas imageUrl={imageUrl} regions={regions} selectedRegionId={selectedRegionId} onRegionClick={handleRegionClick} imageOpacity={imageOpacity} stitchOpacity={stitchOpacity} showFill={showFill} showContour={showContour} />
+              <StitchCanvas imageUrl={imageUrl} regions={regions} selectedRegionId={selectedRegionId} onRegionClick={handleRegionClick} imageOpacity={imageOpacity} stitchOpacity={stitchOpacity} showFill={showFill} showContour={showContour} isolatedRegionId={isolatedRegionId} />
             </div>
           }
 
@@ -1282,6 +1352,23 @@ export default function Editor() {
           </Suspense>
           </div>
 
+          {!focusMode && isCleanMode && regions.length > 0 && (
+            seqPanelOpen ? (
+              <>
+                <div className="fixed inset-0 z-30 bg-black/60 lg:hidden" onClick={() => setSeqPanelOpen(false)} aria-hidden="true" />
+                <div className="fixed inset-y-0 right-0 z-40 w-80 max-w-[85vw] border-l border-[#1e2130] bg-[#0d0f14] flex flex-col lg:static lg:z-auto lg:w-72 lg:max-w-none lg:flex-shrink-0">
+                  <Suspense fallback={<TechnicalToolLoading label="Cargando secuencia…" />}>
+                    <SequencePanel {...sequencePanelProps} onClose={() => setSeqPanelOpen(false)} />
+                  </Suspense>
+                </div>
+              </>
+            ) : (
+              <div className="w-12 flex-shrink-0 border-l border-[#1e2130] bg-[#0a0c12] p-2">
+                <button onClick={() => setSeqPanelOpen(true)} aria-label="Abrir secuencia de regiones" title="Secuencia de regiones" className="h-full w-full rounded-lg border border-[#2a2d3a] text-[10px] font-bold text-slate-500 hover:text-white hover:bg-[#161a23] [writing-mode:vertical-rl] rotate-180 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500">Secuencia</button>
+              </div>
+            )
+          )}
+
           {isLabMode && !focusMode && (
           <div className="w-64 flex-shrink-0 border-l border-[#1e2130] overflow-hidden flex flex-col">
             {/* Right panel tab switcher */}
@@ -1295,11 +1382,12 @@ export default function Editor() {
                   config={config}
                   onUpdate={handleRegionsUpdate}
                   onSelect={setSelectedRegionId}
+                  seqProps={sequencePanelProps}
                 />
               );
             })() : (
               <div className="flex-1 overflow-hidden min-h-0">
-                <RegionsPanel regions={regions} selectedId={selectedRegionId} onSelect={setSelectedRegionId} onUpdate={handleRegionsUpdate} config={config} />
+                <SequencePanel {...sequencePanelProps} />
               </div>
             )}
             </Suspense>
@@ -1314,6 +1402,17 @@ export default function Editor() {
           <ExportModal project={project} config={configWithDarkStroke} regions={regions} darkStroke={darkStroke} canonicalFinalCommands={finalEmbroideryCommands.commands} canonicalFinalObjects={finalEmbroideryCommands.objects} canonicalCommandMeta={finalEmbroideryCommands.meta} finalCommands={finalEmbroideryCommands.commands} finalObjects={finalEmbroideryCommands.objects} finalMeta={finalEmbroideryCommands.meta} commandVersion={commandVersion} onClose={() => setShowExport(false)} />
         </Suspense>
       ))}
+
+      {showVectorize && (
+        <Suspense fallback={<TechnicalToolLoading label="Cargando vectorización…" overlay />}>
+          <VectorizePreviewModal
+            imageUrl={originalImageUrl || imageUrl}
+            config={config}
+            onApply={handleApplyVectorTuning}
+            onClose={() => setShowVectorize(false)}
+          />
+        </Suspense>
+      )}
     </div>);
 
 }
@@ -1351,9 +1450,10 @@ function FilterToggle({ label, active, onChange, color }) {
   return <button onClick={() => onChange(!active)} className={`text-[10px] px-2 py-1 rounded border transition-colors font-medium ${active ? accent : 'border-[#2a2d3a] text-slate-600 hover:text-slate-400'}`}>{label}</button>;
 }
 
-function RightPanelTabs({ region, regions, config, onUpdate, onSelect }) {
-  const [tab, setTab] = useState('regions');
+function RightPanelTabs({ region, regions, config, onUpdate, onSelect, seqProps }) {
+  const [tab, setTab] = useState('seq');
   const TABS = [
+    { id: 'seq',     label: 'Secuencia' },
     { id: 'regions', label: 'Regiones' },
     { id: 'eie',     label: '🧠 EIE' },
     { id: 'sub',     label: 'Métricas' },
@@ -1377,6 +1477,9 @@ function RightPanelTabs({ region, regions, config, onUpdate, onSelect }) {
       </div>
       <div className="flex-1 overflow-y-auto min-h-0">
         <Suspense fallback={<TechnicalToolLoading label="Cargando panel…" />}>
+        {tab === 'seq' && seqProps && (
+          <SequencePanel {...seqProps} />
+        )}
         {tab === 'regions' && (
           <RegionsPanel regions={regions} selectedId={region?.id} onSelect={onSelect} onUpdate={onUpdate} config={config} />
         )}

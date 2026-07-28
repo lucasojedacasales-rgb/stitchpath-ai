@@ -38,6 +38,16 @@ function getEffectiveRenderType(region) {
   return 'fill';
 }
 
+// Ray-casting point-in-polygon test on normalized [0,1] coordinates.
+function pointInPolygon(nx, ny, pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i][0], yi = pts[i][1], xj = pts[j][0], yj = pts[j][1];
+    if ((yi > ny) !== (yj > ny) && nx < ((xj - xi) * (ny - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
 function getDrawSize(imageEl, W, H) {
   if (!imageEl) return { drawW: W * 0.75, drawH: H * 0.75 };
   const iw = imageEl.width, ih = imageEl.height;
@@ -135,7 +145,7 @@ function drawFillStitches(ctx, pts, region, drawW, drawH, zoom, alpha, stitchCac
 
 export default function StitchCanvas({
   imageUrl, regions, selectedRegionId, onRegionClick,
-  imageOpacity, stitchOpacity, showFill, showContour
+  imageOpacity, stitchOpacity, showFill, showContour, isolatedRegionId = null
 }) {
   const imgCanvasRef     = useRef(null);
   const stitchCanvasRef  = useRef(null);
@@ -160,7 +170,7 @@ export default function StitchCanvas({
     const pts = region.path_points || [];
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const p of pts) { minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]); minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]); }
-    return { region, minX, maxX, minY, maxY };
+    return { region, minX, maxX, minY, maxY, area: Math.max(0, (maxX - minX) * (maxY - minY)) };
   }), [regionSignature]);
 
   useEffect(() => {
@@ -195,7 +205,7 @@ export default function StitchCanvas({
     stitchCache.current.clear();
     drawStitchLayer();
   }, [regionSignature]);
-  useEffect(() => { drawStitchLayer(); }, [zoom, offset, stitchOpacity, showFill, showContour, viewMode]);
+  useEffect(() => { drawStitchLayer(); }, [zoom, offset, stitchOpacity, showFill, showContour, viewMode, isolatedRegionId]);
   useEffect(() => { drawOverlayLayer(); }, [selectedRegionId, hoveredRegion, zoom, offset, regions]);
 
   // ── LAYER 1: Image ──────────────────────────────────────────────────────────
@@ -245,7 +255,7 @@ export default function StitchCanvas({
     ctx.scale(zoom, zoom);
 
     const canvasArea = drawW * drawH;
-    const validRegions = regions.filter(r => (r.area_mm2 || 0) <= canvasArea * 0.9);
+    const validRegions = regions.filter(r => (r.area_mm2 || 0) <= canvasArea * 0.9 && (!isolatedRegionId || r.id === isolatedRegionId));
 
     const outlineOnly = viewMode === 'outline';
     const alpha = stitchOpacity / 100;
@@ -349,7 +359,7 @@ export default function StitchCanvas({
     drawZoomBadge(ctx, W, H, zoom);
     console.log('[PERF] stitchCanvasDrawMs', Math.round(performance.now() - drawStart));
     console.log('[PERF] stitchCanvasTatamiCacheHitRate', `${Math.round((stitchCache.current.size / Math.max(1, fillRegions.length)) * 100)}%`);
-  }, [regions, zoom, offset, stitchOpacity, showFill, showContour, viewMode]);
+  }, [regions, zoom, offset, stitchOpacity, showFill, showContour, viewMode, isolatedRegionId]);
 
   // ── LAYER 3: Selection / hover overlay ─────────────────────────────────────
   const drawOverlayLayer = useCallback(() => {
@@ -452,11 +462,16 @@ export default function StitchCanvas({
     const nx = ((mx - offset.x - W / 2) / zoom) / drawW + 0.5;
     const ny = ((my - offset.y - H / 2) / zoom) / drawH + 0.5;
 
-    let found = null;
+    // Detección real dentro del polígono (no solo bounding box).
+    // Entre varias coincidencias gana la región más pequeña (detalle sobre fondo).
+    let found = null, foundArea = Infinity;
     for (const b of regionBounds) {
       const region = b.region;
       if (region.visible === false || !region.path_points) continue;
-      if (nx >= b.minX && nx <= b.maxX && ny >= b.minY && ny <= b.maxY) { found = region; break; }
+      if (isolatedRegionId && region.id !== isolatedRegionId) continue;
+      if (nx < b.minX || nx > b.maxX || ny < b.minY || ny > b.maxY) continue;
+      if (!pointInPolygon(nx, ny, region.path_points)) continue;
+      if (b.area < foundArea) { foundArea = b.area; found = region; }
     }
     setHoveredRegion(found?.id || null);
     setTooltip(found ? { region: found, x: e.clientX - rect.left, y: e.clientY - rect.top } : null);

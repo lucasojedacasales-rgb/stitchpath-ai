@@ -28,6 +28,11 @@ const DEFAULTS = {
   chaikinPasses:      3,      // iterations of Chaikin subdivision
   gapCloseThreshold:  12.0,   // px — auto-close gaps
   minAreaPx:          60,     // px² — reduced: captures eyes, small details (was 180)
+  // ── Separación de colores configurable (panel «Separación de colores») ──
+  colorMergeDeltaE:   12,     // ΔE Lab — fusiona centroides casi duplicados (antialiasing/sombras)
+  noisePasses:        1,      // pasadas de filtro de mayoría 3×3 sobre el mapa de etiquetas
+  minAreaFactor:      1,      // multiplicador del área mínima (menor = conserva más detalles)
+  detectDarkOutline:  true,   // garantiza un clúster oscuro para contornos negros
 };
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -57,7 +62,15 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
     samples.push(rgbToLab(pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]));
   }
   const k = Math.min(maxColors, Math.max(1, samples.length));
-  const paletteLab = kMeansPP(samples, k, 30); // more iterations for better convergence
+  let paletteLab = kMeansPP(samples, k, 30); // more iterations for better convergence
+  // Fusión perceptual: centroides más cercanos que ΔE (Lab) se combinan.
+  // Elimina tonos casi duplicados creados por antialiasing/sombras sin
+  // fusionar colores realmente distintos.
+  paletteLab = mergeSimilarCentroids(paletteLab, cfg.colorMergeDeltaE);
+  // Protección de contornos oscuros: si hay suficientes píxeles muy oscuros
+  // pero ningún centroide oscuro, se añade uno para que las líneas negras
+  // no sean absorbidas por colores vecinos.
+  if (cfg.detectDarkOutline) paletteLab = ensureDarkCentroid(paletteLab, samples);
   // Convert palette back to RGB for downstream use
   const palette = paletteLab.map(labToRgb);
 
@@ -69,6 +82,10 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
     labels[i] = nearestIdx(lab, paletteLab);
   }
 
+  // 2a-bis. Filtro de mayoría: elimina astillas de antialiasing y píxeles
+  // sueltos mal etiquetados, sin erosionar líneas reales de 1px.
+  if (cfg.noisePasses > 0) majoritySmooth(labels, W, H, cfg.noisePasses);
+
   // 2b. Morphological closing per-color: fill 1-pixel gaps within same-color areas
   // This prevents over-segmentation where JPEG noise splits a single shape (e.g. cheek)
   // into multiple fragments. Dilate then erode each color mask by 1px.
@@ -77,7 +94,7 @@ export async function traceContoursProf(imageUrl, maxColors = 8, options = {}) {
   // Relative floor: 0.00015 of image area — at 1024px ≈ 157px minimum.
   // Low enough to capture eyes (≈200–400px at 1024) and small details like nose.
   // The minAreaPx absolute floor (60px) handles tiny designs at lower resolutions.
-  const minPixels = Math.max(cfg.minAreaPx, Math.floor(W * H * 0.00015));
+  const minPixels = Math.max(10, Math.round(Math.max(cfg.minAreaPx, Math.floor(W * H * 0.00015)) * (cfg.minAreaFactor || 1)));
   const regions = [];
 
   for (let ci = 0; ci < palette.length; ci++) {
@@ -515,6 +532,79 @@ function morphologicalClose(labels, W, H, numColors) {
     }
   }
   labels.set(dilated);
+}
+
+// ─── Configurable color-separation helpers ────────────────────────────────────
+
+/** Fusiona centroides Lab más cercanos que deltaE en su media. */
+function mergeSimilarCentroids(cents, deltaE) {
+  if (!deltaE || deltaE <= 0 || cents.length < 2) return cents;
+  const used = new Array(cents.length).fill(false);
+  const merged = [];
+  for (let i = 0; i < cents.length; i++) {
+    if (used[i]) continue;
+    const sum = [...cents[i]];
+    let cnt = 1;
+    for (let j = i + 1; j < cents.length; j++) {
+      if (used[j]) continue;
+      if (Math.sqrt(distSq3(cents[i], cents[j])) < deltaE) {
+        used[j] = true;
+        sum[0] += cents[j][0]; sum[1] += cents[j][1]; sum[2] += cents[j][2];
+        cnt++;
+      }
+    }
+    merged.push([sum[0] / cnt, sum[1] / cnt, sum[2] / cnt]);
+  }
+  return merged;
+}
+
+/**
+ * Garantiza un centroide oscuro cuando la imagen contiene suficientes píxeles
+ * muy oscuros (L < 25). Sin esto, los contornos negros finos se absorben en
+ * el clúster de tono medio más cercano y desaparecen como regiones propias.
+ */
+function ensureDarkCentroid(cents, samples) {
+  if (cents.some(c => c[0] < 30)) return cents;
+  let n = 0, sl = 0, sa = 0, sb = 0;
+  for (const s of samples) {
+    if (s[0] < 25) { n++; sl += s[0]; sa += s[1]; sb += s[2]; }
+  }
+  if (n < samples.length * 0.003) return cents; // demasiado pocos: no hay contorno real
+  return [...cents, [sl / n, sa / n, sb / n]];
+}
+
+/**
+ * Filtro de mayoría 3×3 sobre el mapa de etiquetas. Un píxel solo cambia a la
+ * etiqueta dominante con apoyo fuerte (≥6 de 8 vecinos): las líneas reales de
+ * 1px sobreviven (sus vecinos se reparten 3/3), pero las astillas de
+ * antialiasing y los píxeles aislados se limpian.
+ */
+function majoritySmooth(labels, W, H, passes) {
+  for (let p = 0; p < passes; p++) {
+    const out = new Int32Array(labels);
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const idx = y * W + x;
+        const cur = labels[idx];
+        if (cur < 0) continue;
+        const counts = new Map();
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const l = labels[(y + dy) * W + (x + dx)];
+            if (l < 0) continue;
+            counts.set(l, (counts.get(l) || 0) + 1);
+          }
+        }
+        let bestL = cur, bestC = 0;
+        for (const [l, c] of counts) {
+          if (c > bestC) { bestC = c; bestL = l; }
+        }
+        if (bestL !== cur && bestC >= 6) out[idx] = bestL;
+      }
+    }
+    labels.set(out);
+  }
 }
 
 // ─── Background detection ──────────────────────────────────────────────────────
