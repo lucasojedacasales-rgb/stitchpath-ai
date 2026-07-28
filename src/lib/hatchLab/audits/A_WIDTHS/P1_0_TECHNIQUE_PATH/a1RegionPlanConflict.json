@@ -1,0 +1,51 @@
+{
+  "auditId": "P1.0-A_WIDTHS-A1-REGION-PLAN-CONFLICT",
+  "readOnly": true,
+  "runPipelineExecuted": false,
+  "caseId": "HATCH-A-WIDTHS-A1",
+  "regionId": "r_zbgef31",
+  "sourceIndex": 22,
+  "measuredGeometryMm": { "width": 0.489, "height": 16 },
+  "conflict": {
+    "declaredInBaseline": true,
+    "declaredAt": "BASE-ENGINE-A-WIDTHS-V1/evaluationReport.json → cases[caseId='HATCH-A-WIDTHS-A1'].conflictFields",
+    "fieldCount": 3,
+    "comparedByEvaluator": false,
+    "note": "the evaluator declared these three fields and then refused to compare them, which is why the stored baseline shows no verdict for them"
+  },
+  "explanation": {
+    "cause": "two independent producers write the same field names for the same shape and are never reconciled",
+    "producerA": {
+      "name": "region",
+      "writtenBy": "enrichAllRegions (src/lib/regionBuilder.js) then overwritten by separateFillsAndContoursSafe (src/lib/contourSafeMode.js:151-163)",
+      "semantics": "parameters of a clipped scanline fill",
+      "storedIn": "ctx.regions[].density / .angle / .stitch_type"
+    },
+    "producerB": {
+      "name": "plan",
+      "writtenBy": "generateStitchPlan / classifyStitchType (src/lib/stitchPlanner.js:86,95)",
+      "semantics": "parameters of the technique the planner believes the shape needs, satin included",
+      "storedIn": "ctx.stitchPlan.sequence[].stitchType / .density"
+    },
+    "whyNotReconciled": "no stage merges plan back into regions. exportPipeline.js does not import stitchPlanner, and buildFinalCommands never receives ctx.stitchPlan. The only merge path is manual: the user pressing Apply in StitchPlannerPanel (src/pages/Editor.jsx onApplyPlan), which writes stitch_type, angle and underlay onto the regions.",
+    "consequence": "for the same shape, region.density = 0 while plan density = 0.4; the two numbers describe different techniques and cannot be compared as if they were one quantity"
+  },
+  "resolutionForP1": {
+    "decision": "region is the authoritative producer for evaluation and for any future rule",
+    "reasoning": [
+      "region.stitch_type is the value every command consumer actually reads (buildFinalCommands, canvas, Final Look, export)",
+      "plan is advisory and unreachable from the command path without manual user action, so treating it as authoritative would evaluate something the machine never sews",
+      "the baseline already selected regions as its region source (pipelineSnapshot.json → selectedRegionSource = 'regions'); keeping that choice preserves comparability with BASE-ENGINE-A-WIDTHS-V1"
+    ],
+    "planRole": "kept as a declared, separate observation — never merged silently, never used to fill an unavailable field",
+    "appliesTo": "evaluation and P1 rule design only; no productive code was changed by this decision"
+  },
+  "fieldSourceRule": {
+    "technique": "region.stitch_type",
+    "density": "region.density",
+    "angle": "region.angle",
+    "underlay": "region.underlay*",
+    "planFields": "recorded under an explicit plan namespace when present, and reported as a separate observation",
+    "forbidden": "substituting a plan value for a missing region value, or averaging the two"
+  }
+}
