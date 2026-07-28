@@ -1,0 +1,72 @@
+{
+  "immutableBaseline": true,
+  "storagePolicy": "Structural extract. The full snapshot (26 regions × ~200 path points, plus the contour and analysis stage payloads) is 3.14 MB and stays in the raw capture identified by raw/rawSourceReference.json. Nothing here is invented: every field below was read from that file.",
+  "selectedRegionSource": "regions",
+  "regionSourceResolution": {
+    "selectedRegionSource": "regions",
+    "declaredCollections": ["regions"],
+    "countsByCollection": { "regions": 26, "objects": null, "optimizedRegions": null, "optimizedSequence": null },
+    "stitchOptimizerRan": true,
+    "justification": "stitch_optimizer writes the final production order back into ctx.regions; optimized.optimizedSequence is a report of the same objects, so ctx.regions is the canonical final collection."
+  },
+  "coordinateDeclaration": {
+    "design": { "widthMm": 100, "heightMm": 80, "widthPx": 1181, "heightPx": 945, "coordinateSpace": "normalized_0_1" },
+    "justification": "normalizeRegionForPipeline (src/lib/pipeline/regionNormalize.js) normalizes region.path_points to the [0,1]² space before region_builder, and no later stage converts them back to mm or pixels. The declaration comes from that stage contract, not from observing values between 0 and 1.",
+    "regionSource": "regions"
+  },
+  "regions": {
+    "count": 26,
+    "storedAs": "regionsSummary.json + regionsSummary.csv (one row per region, all scalar engine fields)",
+    "fieldKeysPresentPerRegion": [
+      "id", "type", "stitch_type", "path_points", "centroid", "color", "hex",
+      "area_mm2", "area_norm", "perimeter_mm", "orientation", "convexity", "concavity",
+      "mean_width_mm", "max_width_mm", "min_width_mm", "skeleton_length_mm", "mean_curvature",
+      "complexity", "holes", "density", "angle", "fill_angle", "stitch_length_mm",
+      "pull_compensation", "underlay", "recommended_underlay", "recommended_thread",
+      "stitch_type_rationale:stitch_rationale", "stitch_confidence", "adaptive",
+      "priority", "travelOrder", "travel_score", "stitch_count", "estimatedTime", "estimatedThread",
+      "quality_score", "quality_issues", "is_dark_outline", "qualityPhase1", "_validation",
+      "bbox", "bbox_aspect", "area_px", "pixelCount", "coverage", "compacidad",
+      "inertia_ratio", "corner_count", "bezier_handles"
+    ]
+  },
+  "plan": {
+    "present": true,
+    "sequenceLength": 26,
+    "summary": {
+      "totalRegions": 26,
+      "fillCount": 26,
+      "satinCount": 0,
+      "runCount": 0,
+      "withUnderlay": 26,
+      "uniqueColors": 1,
+      "colorChanges": 0,
+      "designSizeMm": "100×80",
+      "fabricType": "Algodón"
+    },
+    "warningCodes": ["TINY_REGIONS", "FILL_SMALL_AREA"],
+    "perEntryFields": ["regionId", "regionName", "color", "areaMm2", "stitchType", "reason", "confidence", "optimalAngle", "density", "stitchLenMm", "pullCompensation", "underlay", "estimatedStitches", "layerOrder", "adaptive"],
+    "note": "plan.sequence[].stitchType is \"fill\" for all 26 entries while plan.sequence[].reason still narrates the EIE satin decision — see semanticAudit.md, finding A."
+  },
+  "optimized": {
+    "present": true,
+    "note": "optimized.optimizedSequence mirrors ctx.regions in final order; the optimizer stage ran in 0.1 ms and did not change the collection identity."
+  },
+  "stageLog": { "storedAs": "stageLog.json", "stageCount": 9, "allOk": true },
+  "availableReports": {
+    "qualityPhase1Report": "present (per-region qualityPhase1 markers, applied: true)",
+    "detailReport": "null — experimentalDetailPreservation OFF",
+    "classReport": "null — experimentalDetailPreservation OFF",
+    "centerlineReport": "null — experimentalDetailPreservation OFF",
+    "outlineReport": "null — experimentalOutlineGenerator OFF"
+  },
+  "sanitisation": {
+    "omittedFieldsCount": 27,
+    "omittedExamples": [
+      { "path": "enhanced.blob", "reason": "Blob / File (binary, not serializable)" },
+      { "path": "contours.regions[n].rgb", "reason": "circular reference" }
+    ],
+    "missingContextKeys": "recorded in the raw capture; no key was replaced by a fabricated value",
+    "preservedRegionFieldReport": "present in the raw capture: it lists which required region fields survived sanitisation"
+  }
+}

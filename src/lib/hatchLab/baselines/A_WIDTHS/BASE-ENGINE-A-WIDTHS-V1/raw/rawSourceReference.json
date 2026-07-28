@@ -1,0 +1,35 @@
+{
+  "immutableBaseline": true,
+  "note": "The two raw files produced by the single authorised execution are identified here by name, size and SHA-256. The full capture is 3 140 114 bytes of mostly geometry (26 regions × ~200 path points, plus contour and analysis stages); it is NOT inlined in the repository because a single source file of that size is not maintainable. Nothing was rewritten: every derived artefact in this folder was extracted from the bytes described below, and the extraction was verified by reproducing the embedded canonical hash and the exact byte length of the attachment.",
+  "files": [
+    {
+      "name": "BASE-ENGINE-A-WIDTHS-V1.capture.json",
+      "role": "full capture, untruncated, 17 sections",
+      "sizeBytes": 3140114,
+      "sha256": "7BB259D7AAE1FE2102AAA4372D76912E3580B81765A6A2B314045B2692E55649",
+      "embeddedResultSha256": "3C1525AD3D90E865612E2D8BBE71147BF978F4D7E68E50AF23EC6E8F8F40DBAA",
+      "canonicalRebuildIsByteIdentical": true,
+      "attachmentUrl": "https://media.base44.com/files/public/6a3a74a332b0ea528996ab54/70f27dbef_BASE-ENGINE-A-WIDTHS-V1capture1.json",
+      "indexedDbArchive": {
+        "dbName": "hatch_lab_baselines",
+        "storeName": "a_widths_captures",
+        "key": "BASE-ENGINE-A-WIDTHS-V1-2026-07-28T19:56:13.507Z",
+        "note": "The browser that ran the capture also holds the untruncated JSON in IndexedDB; restoreArchivedCapture() reads it back without touching the engine."
+      }
+    },
+    {
+      "name": "BASE-ENGINE-A-WIDTHS-V1.summary.json",
+      "role": "small summary of the same run",
+      "sizeBytes": 2124,
+      "sha256": "2CE392AF57F8F8A276AF7EA56E535E55ADBEEA398A4595C6F14303A1B4598CAD",
+      "attachmentUrl": "https://media.base44.com/files/public/6a3a74a332b0ea528996ab54/8c5feeb51_BASE-ENGINE-A-WIDTHS-V1summary1.json"
+    }
+  ],
+  "identityBinding": {
+    "baselineIdSource": "summary.baselineId (the canonical full-capture payload contains the 17 archive sections and deliberately excludes baselineId / invocationId / capturedAt / runStatus, which live in the summary)",
+    "baselineId": "BASE-ENGINE-A-WIDTHS-V1",
+    "invocationId": "BASE-ENGINE-A-WIDTHS-V1-2026-07-28T19:56:13.507Z",
+    "capturedAt": "2026-07-28T19:56:13.507Z",
+    "bindingProof": "summary.fullCaptureSizeBytes (3140114) equals the real size of the capture attachment and summary.resultSha256 equals the resultSha256 embedded in it, so both files describe the same single invocation."
+  }
+}

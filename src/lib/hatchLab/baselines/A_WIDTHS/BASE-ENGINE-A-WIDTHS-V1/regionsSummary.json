@@ -1,0 +1,48 @@
+{
+  "immutableBaseline": true,
+  "regionCount": 26,
+  "selectedRegionSource": "regions",
+  "coordinateSpace": "normalized_0_1",
+  "designMm": { "widthMm": 100, "heightMm": 80 },
+  "precisionNote": "Geometric millimetre values are printed with 3 decimals for legibility (e.g. 0.489 for the captured 0.4889999999999999). Full double precision lives in the raw capture; the five evaluated cases are also carried at full precision in evaluationReport.json.",
+  "columns": [
+    "sourceIndex", "id", "type", "region_class", "parentRegionId", "color",
+    "boundingWidthMm", "boundingHeightMm", "centerXMm", "centerYMm", "areaMm2",
+    "stitch_type", "density", "pull_compensation", "angle", "underlay",
+    "recommended_underlay.enabled", "recommended_underlay.type", "recommended_underlay.density_mm",
+    "priority", "layer_order", "travelOrder", "pathPointCount", "contourPointCount"
+  ],
+  "rows": [
+    [0, "r_nwqdg3s", "fill", null, null, "#888888", 5.985, 17.434, 72.965, 31.942, 68.33, "fill", 0.4, 0.208, 45, true, true, "edge_walk_zigzag", 0.76, 4, null, 1, 244, null],
+    [1, "r_w1gvj3y", "fill", null, null, "#888888", 4.973, 13.954, 56.938, 68.969, 63.77, "fill", 0.4, 0.205, 90, true, true, "edge_walk_zigzag", 0.76, 4, null, 2, 206, null],
+    [2, "r_22xf73s", "fill", null, null, "#888888", 6.933, 13.953, 72.948, 68.968, 86.1, "fill", 0.4, 0.205, 89, true, true, "edge_walk_zigzag", 0.76, 4, null, 3, 222, null],
+    [3, "r_xzelwhe", "fill", null, null, "#888888", 8.984, 13.958, 89.99, 68.965, 107.25, "fill", 0.4, 0.205, 88, true, true, "edge_walk_zigzag", 0.76, 4, null, 4, 232, null],
+    [4, "r_0csdkzj", "fill", null, null, "#888888", 7.906, 13.638, 89.94, 49.974, 66.18, "fill", 0.4, 0.204, 91, true, true, "edge_walk_zigzag", 0.76, 4, null, 5, 183, null],
+    [5, "r_gbyov3p", "fill", null, null, "#888888", 7.178, 18.962, 89.99, 31.928, 98.98, "fill", 0.4, 0.206, 45, true, true, "edge_walk_zigzag", 0.76, 4, null, 6, 264, null],
+    [6, "r_zr65703", "fill", null, null, "#888888", 8.008, 16.019, 92.92, 12.942, 127.54, "fill", 0.4, 0.205, 89, true, true, "zigzag", 0.95, 4, null, 7, 279, null],
+    [7, "r_c92bxh3", "fill", null, null, "#888888", 6.055, 16.019, 79.931, 12.942, 96.48, "fill", 0.4, 0.205, 89, true, true, "edge_walk_zigzag", 0.76, 4, null, 8, 259, null],
+    [8, "r_ecj9hl4", "fill", null, null, "#888888", 4.004, 16.018, 66.992, 12.943, 63.72, "fill", 0.4, 0.205, 45, true, true, "edge_walk_zigzag", 0.76, 4, null, 9, 239, null],
+    [9, "r_sv7z5qe", "fill", null, null, "#888888", 3.027, 16.013, 54.98, 12.945, 48.17, "fill", 0.4, 0.205, 45, true, true, "edge_walk_zigzag", 0.76, 5, null, 10, 229, null],
+    [10, "r_5n49ljm", "fill", null, null, "#888888", 5.052, 16.125, 56.939, 31.956, 45.48, "fill", 0.4, 0.21, 45, true, true, "edge_walk_zigzag", 0.76, 5, null, 11, 220, null],
+    [11, "r_wrtsviq", "fill", null, null, "#888888", 5.957, 13.538, 72.95, 49.928, 49.49, "fill", 0.4, 0.203, 45, true, true, "edge_walk_zigzag", 0.76, 5, null, 12, 183, null],
+    [12, "r_0qzdn2h", "fill", null, null, "#888888", 4.493, 13.429, 56.983, 49.956, 37.04, "fill", 0.4, 0.202, 45, true, true, "edge_walk", 0, 5, null, 13, 165, null],
+    [13, "r_gkr8yg0", "fill", null, null, "#888888", 3.506, 13.957, 40.968, 68.962, 46.01, "fill", 0.4, 0.205, 45, true, true, "edge_walk_zigzag", 0.76, 5, null, 14, 198, null],
+    [14, "r_c3il6qx", "fill", null, null, "#888888", 2.538, 13.962, 24.951, 68.965, 33.89, "fill", 0.4, 0.204, 45, true, true, "edge_walk", 0, 5, null, 15, 190, null],
+    [15, "r_36yb4mo", "fill", null, null, "#888888", 2.93, 13.219, 40.967, 49.963, 24.68, "fill", 0.4, 0.202, 45, true, true, "edge_walk", 0, 5, null, 16, 172, null],
+    [16, "r_t4dxwiv", "fill", null, null, "#888888", 4.559, 15.318, 40.926, 31.943, 30.14, "fill", 0.4, 0.211, 45, true, true, "edge_walk", 0, 5, null, 17, 208, null],
+    [17, "r_twns37f", "fill", null, null, "#888888", 3.858, 14.458, 24.957, 31.922, 14.81, "fill", 0, 0, 174, false, false, null, 0, 9, null, 23, 194, null],
+    [18, "r_qcby589", "fill", null, null, "#888888", 3.614, 14.131, 8.954, 31.95, 7.46, "fill", 0, 0, 174, false, false, null, 0, 9, null, 24, 192, null],
+    [19, "r_arf2a9x", "fill", null, null, "#888888", 0.977, 11.868, 8.936, 49.964, 7.93, "fill", 0, 0, 45, false, false, null, 0, 9, null, 25, 146, null],
+    [20, "r_gl3kar5", "fill", null, null, "#888888", 1.563, 13.958, 8.936, 68.968, 21.1, "fill", 0, 0, 45, false, false, null, 0, 9, null, 26, 178, null],
+    [21, "r_lpgp3rv", "fill", null, null, "#888888", 1.953, 12.845, 24.951, 49.963, 16.31, "fill", 0, 0, 45, false, false, null, 0, 9, null, 27, 158, null],
+    [22, "r_zbgef31", "fill", null, null, "#888888", 0.489, 16, 6.934, 12.946, 7.75, "fill", 0, 0, 45, false, false, null, 0, 10, null, 28, 203, null],
+    [23, "r_jtzwq22", "fill", null, null, "#888888", 1.074, 16.006, 18.945, 12.949, 16.44, "fill", 0, 0, 45, false, false, null, 0, 10, null, 29, 207, null],
+    [24, "r_1hisntc", "fill", null, null, "#888888", 1.464, 16.008, 30.957, 12.947, 23.32, "fill", 0, 0, 45, false, false, null, 0, 10, null, 30, 213, null],
+    [25, "r_awf2xwc", "fill", null, null, "#888888", 2.051, 16.01, 42.968, 12.946, 32.16, "fill", 0, 0, 45, false, false, null, 0, 10, null, 31, 217, null]
+  ],
+  "observations": {
+    "allStitchTypesAreFill": "26 of 26 regions carry stitch_type \"fill\"; no satin and no running_stitch object exists in the final collection.",
+    "twoParameterFamilies": "17 regions carry density 0.4 with pull 0.202–0.211 and an active underlay; 9 regions carry density 0, pull 0 and no underlay (the EIE running-stitch branch), yet are still labelled fill.",
+    "noContourObjects": "region_class, parentRegionId and contourPointCount are null for every region: contourSafeMode produced no standalone contour object in this run."
+  }
+}

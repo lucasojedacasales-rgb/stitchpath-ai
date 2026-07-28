@@ -1,0 +1,22 @@
+{
+  "immutableBaseline": true,
+  "clean": true,
+  "forbiddenKeysFound": [],
+  "seedCaseIdsFound": [],
+  "containsExpectedResult": false,
+  "containsCandidateRules": false,
+  "containsHatchTechnicalValues": false,
+  "scannedKeys": [
+    "expectedResult", "candidateRules", "seedCases", "caseId", "observation",
+    "expectedTechnique", "expectedUnderlay", "expectedSpacingMm", "expectedPullCompensationMm",
+    "spacingMode", "spacingMm", "autoSplit", "ruleScope", "hatch", "hatchReference"
+  ],
+  "scannedCaseIds": [
+    "HATCH-A-WIDTHS-A1", "HATCH-A-WIDTHS-A5", "HATCH-A-WIDTHS-A6",
+    "HATCH-A-WIDTHS-A7", "HATCH-A-WIDTHS-A8"
+  ],
+  "initialCtxKeys": ["darkStroke", "effectiveProfile", "inputAudit"],
+  "configKeyCount": 45,
+  "note": "Technique, density, pull compensation, underlay and angle are OUTPUTS observed from the engine. None of them is supplied as input, and no Hatch value fills any gap.",
+  "confirmation": "The engine received the image, the Editor-equivalent config and three context keys. No Hatch reference material of any kind reached the input: zero forbidden keys and zero seed case identifiers were found by scanning both keys and string values of the exact object handed to runPipeline."
+}

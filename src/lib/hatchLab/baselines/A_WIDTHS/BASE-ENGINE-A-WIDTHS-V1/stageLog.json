@@ -1,0 +1,27 @@
+{
+  "immutableBaseline": true,
+  "stageCount": 9,
+  "successfulStageCount": 9,
+  "failedStageCount": 0,
+  "totalDurationMs": 103597.9,
+  "stages": [
+    { "stage": "image_analysis", "ok": true, "durationMs": 3705.199999988079, "ts": 1785268577789 },
+    { "stage": "image_enhancement", "ok": true, "durationMs": 1695.3999999761581, "ts": 1785268579484 },
+    { "stage": "contour_engine", "ok": true, "durationMs": 2731.800000011921, "ts": 1785268582215 },
+    { "stage": "semantic_segmentation", "ok": true, "durationMs": 53878.10000002384, "ts": 1785268636093 },
+    { "stage": "vector_engine", "ok": true, "durationMs": 41570.30000001192, "ts": 1785268677663 },
+    { "stage": "region_builder", "ok": true, "durationMs": 12.299999952316284, "ts": 1785268677675 },
+    { "stage": "quality_phase_1_input_segmentation_cleanup", "ok": true, "durationMs": 3.100000023841858, "ts": 1785268677678 },
+    { "stage": "stitch_planner", "ok": true, "durationMs": 1.600000023841858, "ts": 1785268677680 },
+    { "stage": "stitch_optimizer", "ok": true, "durationMs": 0.09999996423721313, "ts": 1785268677680 }
+  ],
+  "performanceInformativeOnly": {
+    "totalMs": 103597.9,
+    "semanticSegmentationPct": 52.01,
+    "vectorEnginePct": 40.13,
+    "combinedPct": 92.14,
+    "remainingStagesMs": 8149.5,
+    "remainingStagesPct": 7.86,
+    "note": "Informative only. No performance work was done in this task."
+  }
+}

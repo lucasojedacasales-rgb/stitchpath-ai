@@ -1,0 +1,63 @@
+{
+  "baselineId": "BASE-ENGINE-A-WIDTHS-V1",
+  "invocationId": "BASE-ENGINE-A-WIDTHS-V1-2026-07-28T19:56:13.507Z",
+  "capturedAt": "2026-07-28T19:56:13.507Z",
+  "pipelineInvocationCount": 1,
+  "runStatus": "completed",
+  "status": "A_WIDTHS_BASELINE_CAPTURE_COMPLETED",
+  "sourceSha256": "4CB26E42A48E7D9F9D763CC644DA7B2FDB95A2022A65CDE50C05745619C12005",
+  "rawAttachmentSha256": "7BB259D7AAE1FE2102AAA4372D76912E3580B81765A6A2B314045B2692E55649",
+  "rawSummaryAttachmentSha256": "2CE392AF57F8F8A276AF7EA56E535E55ADBEEA398A4595C6F14303A1B4598CAD",
+  "embeddedResultSha256": "3C1525AD3D90E865612E2D8BBE71147BF978F4D7E68E50AF23EC6E8F8F40DBAA",
+  "embeddedPayloadHashVerification": "reproduced",
+  "embeddedPayloadHashProcedure": "canonicalJson(full capture without resultSha256, keys sorted, indent 2) → SHA-256 hex uppercase, exactly as buildCaptureArtifacts/assembleFullCapture do. Recomputation equals the embedded value, and re-serialising {full, resultSha256} reproduces the attachment byte for byte (3140114 bytes), so rawAttachmentSha256 differing from embeddedResultSha256 is expected and not a defect.",
+  "rawCaptureSizeBytes": 3140114,
+  "rawSummarySizeBytes": 2124,
+  "regionCount": 26,
+  "selectedRegionSource": "regions",
+  "coordinateSpace": "normalized_0_1",
+  "evaluatorVersion": "0.2.1-A_WIDTHS",
+  "evaluatorConclusion": "evaluated",
+  "stageCount": 9,
+  "successfulStageCount": 9,
+  "failedStageCount": 0,
+  "readiness": {
+    "benchmarkReady": false,
+    "expectedResultDefined": false,
+    "motorIntegrationReady": false,
+    "physicalValidationAvailable": false,
+    "rulesApplied": false
+  },
+  "immutableBaseline": true,
+  "rulesApplied": false,
+  "physicalValidationAvailable": false,
+  "engineFingerprint": {
+    "note": "The engine identity of this run is the productive pipeline as it existed at capture time; no engine file was modified in this task.",
+    "stageOrder": [
+      "image_analysis",
+      "image_enhancement",
+      "contour_engine",
+      "semantic_segmentation",
+      "vector_engine",
+      "region_builder",
+      "quality_phase_1_input_segmentation_cleanup",
+      "stitch_planner",
+      "stitch_optimizer"
+    ],
+    "runPipelineSignature": "runPipeline(imageUrl, config, opts = { onProgress, skipStages = [], initialCtx = {} })",
+    "effectiveProfileId": null,
+    "darkStrokeAvailable": true,
+    "fingerprintFile": "src/lib/hatchLab/baselines/A_WIDTHS/BASE-ENGINE-A-WIDTHS-V1/engineFingerprint.json"
+  },
+  "fileHashes": {
+    "policy": "The two attachments are identified by the SHA-256 values above. Derived artefacts in this folder are generated exclusively from the attachment and are not re-hashed, because they are extracts, not copies.",
+    "raw/BASE-ENGINE-A-WIDTHS-V1.capture.json": "7BB259D7AAE1FE2102AAA4372D76912E3580B81765A6A2B314045B2692E55649",
+    "raw/BASE-ENGINE-A-WIDTHS-V1.summary.json": "2CE392AF57F8F8A276AF7EA56E535E55ADBEEA398A4595C6F14303A1B4598CAD"
+  },
+  "declarations": {
+    "preRuleBaseline": "This capture is the state of the engine BEFORE any Hatch rule. No candidate rule, no learned value and no Hatch technical value entered the run (see engineInputAudit.json).",
+    "noLearnedChanges": "professionalMode, unifiedStandardProProfile, universalAutoDigitizerPro and every experimental flag were false; referenceLearning did not participate.",
+    "noSilentReplacement": "Any modification of this folder invalidates the baseline. The persistent capture guard has no reset path.",
+    "newRunNeedsNewId": "A second real execution would require a different baselineId in a separate task; BASE-ENGINE-A-WIDTHS-V1 is closed."
+  }
+}

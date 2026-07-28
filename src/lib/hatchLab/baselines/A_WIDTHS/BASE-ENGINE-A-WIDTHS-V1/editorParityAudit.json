@@ -1,0 +1,23 @@
+{
+  "immutableBaseline": true,
+  "parityStatus": "equivalent",
+  "runAllowed": true,
+  "editorRunPipelineSignature": "runPipeline(imageUrl, config, opts = { onProgress, skipStages = [], initialCtx = {} })",
+  "harnessRunPipelineSignature": "runPipeline(imageUrl, config, opts = { onProgress, skipStages = [], initialCtx = {} })",
+  "harnessInitialCtxKeys": ["darkStroke", "effectiveProfile", "inputAudit"],
+  "missingInHarness": [],
+  "additionalInHarness": [],
+  "harnessPassesOnProgress": false,
+  "skipStages": { "editor": [], "harness": [] },
+  "darkStrokeBuilder": {
+    "editor": "buildStrictDarkStrokeContextFromOriginalImage(darkStrokeSourceUrl, pickMotorConfig(config))",
+    "harness": "buildStrictDarkStrokeContextFromOriginalImage(darkStrokeSourceUrl, pickMotorConfig(config))"
+  },
+  "equivalences": [
+    { "item": "inputAudit", "justification": "Editor.buildInputSegmentationAudit is module-local and not exported, so the harness reimplements the same six fields with the same derivation (verifiable side by side at src/pages/Editor.jsx lines 74-85)." },
+    { "item": "pickMotorConfig", "justification": "Also module-local; the same key list (lines 119-130) is replicated to feed darkStroke, which is the only place the Editor uses it before runPipeline." },
+    { "item": "aiStrategy", "justification": "Absent by design: the Editor omits it when the user presses \"Procesar\" without AI, which is the flow being reproduced." },
+    { "item": "project / originalImageUrl", "justification": "No project record exists for the baseline; both are null, so the audit resolves darkStrokeSourceUrl to the same source image the engine receives." }
+  ],
+  "conclusion": "The captured run is the same call the Editor performs, with four declared and verifiable equivalences. No stage was skipped and no progress callback was injected."
+}

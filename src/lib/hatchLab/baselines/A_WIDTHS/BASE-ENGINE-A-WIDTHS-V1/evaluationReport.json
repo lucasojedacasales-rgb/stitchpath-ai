@@ -1,0 +1,130 @@
+{
+  "immutableBaseline": true,
+  "extractPolicy": "Field-for-field extract of evaluationReport from the raw capture. Statuses, conclusions and per-case values are copied unchanged; only the very long per-comparison prose was condensed into name → status + delta. No conclusion was altered.",
+  "evaluatorVersion": "0.2.1-A_WIDTHS",
+  "status": "evaluated",
+  "conclusion": "evaluated",
+  "dataConclusion": "complete",
+  "matchConclusion": "all_assigned",
+  "matchCoverage": { "matched": 5, "ambiguous": 0, "unmatched": 0, "unavailable": 0 },
+  "comparisonSuppressed": false,
+  "comparisonSuppressionReason": null,
+  "optimalityProven": true,
+  "errors": [],
+  "warnings": [],
+  "coordinateSystem": {
+    "status": "resolved",
+    "space": "normalized_0_1",
+    "source": "design.coordinateSpace",
+    "widthMm": 100, "heightMm": 80, "widthPx": 1181, "heightPx": 945,
+    "conversions": ["xMm = x * design.widthMm; yMm = y * design.heightMm"]
+  },
+  "identitySummary": { "stable": 26, "missing_id": 0, "duplicated_id": 0, "notAnObject": 0, "notMeasurable": 0, "duplicatedRegionIds": [] },
+  "planIntegrity": { "status": "ok", "missingRegionIds": [], "orphanPlanEntries": [], "regionsWithoutPlan": [], "duplicatedRegionIds": [], "warnings": [] },
+  "assignmentSearch": {
+    "searchComplete": true,
+    "optimalityProven": true,
+    "stoppedEarly": false,
+    "stopReason": null,
+    "branchesExplored": 11,
+    "branchesPruned": 4,
+    "pruning": { "byMatchCount": 4, "byScore": 0, "byDistance": 0, "byOther": 0, "total": 4 },
+    "solutionsExplored": 2,
+    "estimatedSearchSpace": 32,
+    "candidateLimitApplied": false,
+    "solutionLimitApplied": false,
+    "candidatesExcludedTotal": 0,
+    "objectivePriority": ["matchCount_desc", "totalScore_desc", "totalCenterDistance_asc", "signature_asc"],
+    "proofMethod": "exact depth-first branch-and-bound with lexicographic admissible bounds: a branch is pruned only when it cannot reach the best match count, or when it can reach exactly the best match count and its best possible score stays below the best score minus ambiguityScoreMargin; a branch that can reach MORE matches is never pruned by score"
+  },
+  "conflictFields": ["densityMm", "underlayDensityMm", "underlayEnabled"],
+  "unavailableFields": ["autoSplit", "primaryLengthMm", "secondaryLengthMm", "secondarySpacingMm", "secondaryUnderlay", "spacingMm", "spacingMode"],
+  "unknownFields": ["_validation", "area_px", "bbox", "bbox_aspect", "bezier_handles", "compacidad", "corner_count", "coverage", "inertia_ratio", "is_dark_outline", "pixelCount", "qualityPhase1", "travel_score"],
+  "cases": [
+    {
+      "caseId": "HATCH-A-WIDTHS-A1",
+      "status": "matched",
+      "identityStatus": "stable",
+      "regionId": "r_zbgef31",
+      "sourceIndex": 22,
+      "internalCandidateKey": "regions#22:r_zbgef31",
+      "actual": {
+        "widthMm": 0.4889999999999999,
+        "heightMm": 16,
+        "measurementMethod": "bounding_box_width",
+        "technique": "fill",
+        "densityMm": { "availability": "conflict", "sources": { "region.density": 0, "plan.sequence[].density": 0.4 } },
+        "planDensityMm": 0.4,
+        "pullCompensationMm": 0,
+        "stitchAngleDeg": 45,
+        "underlayType": "edge_run",
+        "underlayEnabled": { "availability": "conflict", "sources": { "region.underlay": false, "plan.sequence[].underlay": true } },
+        "underlayDensityMm": { "availability": "conflict", "sources": { "region.recommended_underlay.density_mm": 0, "plan.sequence[].underlay.density": 1 } },
+        "spacingMode": "unavailable",
+        "spacingMm": "unavailable",
+        "autoSplit": "unavailable"
+      },
+      "reference": { "nominalWidthMm": 0.5, "observedWidthMm": 0.55, "heightMm": 16, "technique": "satin", "pullCompensationMm": 0.4, "underlayRaw": "Corrido centrado", "underlayNormalized": "unknown", "spacingMode": "automático", "spacingMm": null, "autoSplit": true, "stitchAngleDeg": null },
+      "comparisons": {
+        "nominalWidthMm_vs_engineWidthMm": { "status": "informational", "delta": -0.011 },
+        "observedWidthMm_vs_engineWidthMm": { "status": "informational", "delta": -0.061 },
+        "nominalHeightMm_vs_engineHeightMm": { "status": "informational", "delta": 0 },
+        "technique": { "status": "different", "actual": "fill", "reference": "satin" },
+        "underlayType": { "status": "different", "actual": "edge_run", "reference": "unknown" },
+        "pullCompensationMm": { "status": "different", "delta": -0.4 },
+        "spacingMode": { "status": "unavailable_actual" },
+        "spacingMm": { "status": "not_comparable" },
+        "autoSplit": { "status": "unavailable_actual" },
+        "stitchAngleDeg": { "status": "unavailable_reference" }
+      },
+      "conflictFields": ["densityMm", "underlayEnabled", "underlayDensityMm"]
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A5",
+      "status": "matched",
+      "identityStatus": "stable",
+      "regionId": "r_sv7z5qe",
+      "actual": { "widthMm": 3.027000000000001, "heightMm": 16.013, "technique": "fill", "densityMm": 0.4, "planDensityMm": 0.4, "pullCompensationMm": 0.205, "stitchAngleDeg": 45, "underlayType": "edge_run_plus_zigzag", "underlayEnabled": true, "underlayDensityMm": 0.76, "spacingMode": "unavailable", "spacingMm": "unavailable", "autoSplit": "unavailable" },
+      "reference": { "nominalWidthMm": 3, "technique": "satin", "pullCompensationMm": 0.4, "underlayRaw": "Corrido centrado", "underlayNormalized": "unknown", "spacingMode": "automático", "spacingMm": null, "autoSplit": true },
+      "comparisons": { "nominalWidthMm_vs_engineWidthMm": { "status": "informational", "delta": 0.027 }, "technique": { "status": "different" }, "pullCompensationMm": { "status": "different", "delta": -0.195 }, "underlayType": { "status": "different" }, "spacingMm": { "status": "not_comparable" }, "autoSplit": { "status": "unavailable_actual" } },
+      "conflictFields": []
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A6",
+      "status": "matched",
+      "identityStatus": "stable",
+      "regionId": "r_ecj9hl4",
+      "actual": { "widthMm": 4.004, "heightMm": 16.018, "technique": "fill", "densityMm": 0.4, "planDensityMm": 0.4, "pullCompensationMm": 0.205, "stitchAngleDeg": 45, "underlayType": "edge_run_plus_zigzag", "underlayEnabled": true, "underlayDensityMm": 0.76, "spacingMode": "unavailable", "spacingMm": "unavailable", "autoSplit": "unavailable" },
+      "reference": { "nominalWidthMm": 4, "technique": "satin", "pullCompensationMm": 0.4, "underlayRaw": "Corrido de borde + Zigzag", "underlayNormalized": "edge_run_plus_zigzag", "spacingMode": "automático", "autoSplit": true },
+      "comparisons": { "nominalWidthMm_vs_engineWidthMm": { "status": "informational", "delta": 0.004 }, "technique": { "status": "different" }, "pullCompensationMm": { "status": "different", "delta": -0.195 }, "underlayType": { "status": "equal" }, "spacingMm": { "status": "not_comparable" }, "autoSplit": { "status": "unavailable_actual" } },
+      "conflictFields": []
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A7",
+      "status": "matched",
+      "identityStatus": "stable",
+      "regionId": "r_c92bxh3",
+      "actual": { "widthMm": 6.055, "heightMm": 16.019, "technique": "fill", "densityMm": 0.4, "planDensityMm": 0.4, "pullCompensationMm": 0.205, "stitchAngleDeg": 89, "underlayType": "edge_run_plus_zigzag", "underlayEnabled": true, "underlayDensityMm": 0.76, "spacingMode": "unavailable", "spacingMm": "unavailable", "autoSplit": "unavailable" },
+      "reference": { "nominalWidthMm": 6, "technique": "satin", "pullCompensationMm": 0.4, "underlayRaw": "Corrido de borde + Zigzag", "underlayNormalized": "edge_run_plus_zigzag", "spacingMode": "manual", "spacingMm": 0.36, "autoSplit": true, "stitchAngleDeg": 0 },
+      "comparisons": { "nominalWidthMm_vs_engineWidthMm": { "status": "informational", "delta": 0.055 }, "technique": { "status": "different" }, "pullCompensationMm": { "status": "different", "delta": -0.195 }, "underlayType": { "status": "equal" }, "spacingMm": { "status": "not_comparable" }, "stitchAngleDeg": { "status": "different", "actual": 89, "reference": 0 }, "autoSplit": { "status": "unavailable_actual" } },
+      "conflictFields": []
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A8",
+      "status": "matched",
+      "identityStatus": "stable",
+      "regionId": "r_zr65703",
+      "actual": { "widthMm": 8.008, "heightMm": 16.019, "technique": "fill", "densityMm": 0.4, "planDensityMm": 0.4, "pullCompensationMm": 0.205, "stitchAngleDeg": 89, "underlayType": "zigzag", "underlayEnabled": true, "underlayDensityMm": 0.95, "spacingMode": "unavailable", "spacingMm": "unavailable", "autoSplit": "unavailable" },
+      "reference": { "nominalWidthMm": 8, "technique": "satin", "pullCompensationMm": 0.4, "underlayRaw": "Corrido de borde + Zigzag", "underlayNormalized": "edge_run_plus_zigzag", "spacingMode": "manual", "spacingMm": 0.36, "autoSplit": true, "stitchAngleDeg": 0 },
+      "comparisons": { "nominalWidthMm_vs_engineWidthMm": { "status": "informational", "delta": 0.008 }, "technique": { "status": "different" }, "pullCompensationMm": { "status": "different", "delta": -0.195 }, "underlayType": { "status": "different", "actual": "zigzag", "reference": "edge_run_plus_zigzag" }, "spacingMm": { "status": "not_comparable" }, "stitchAngleDeg": { "status": "different", "actual": 89, "reference": 0 }, "autoSplit": { "status": "unavailable_actual" } },
+      "conflictFields": []
+    }
+  ],
+  "assignment": {
+    "HATCH-A-WIDTHS-A1": "r_zbgef31",
+    "HATCH-A-WIDTHS-A5": "r_sv7z5qe",
+    "HATCH-A-WIDTHS-A6": "r_ecj9hl4",
+    "HATCH-A-WIDTHS-A7": "r_c92bxh3",
+    "HATCH-A-WIDTHS-A8": "r_zr65703"
+  }
+}
