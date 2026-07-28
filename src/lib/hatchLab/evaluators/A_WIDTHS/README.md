@@ -1,4 +1,4 @@
-# A_WIDTHS evaluator (Hatch Lab) — version 0.2.0-A_WIDTHS
+# A_WIDTHS evaluator (Hatch Lab) — version 0.2.1-A_WIDTHS
 
 ## Purpose
 
@@ -55,6 +55,21 @@ conclusion }`.
 
 `generatedAt` defaults to `null` (and only ever comes from `options.generatedAt`),
 so the same input always yields byte-identical output.
+
+## What 0.2.1 corrects (P0.3A.3)
+
+1. **Lexicographic pruning** — the score bound is only applied when the branch can
+   reach *exactly* the current best match count. A branch that can still match MORE
+   cases is never pruned by score, even when its best possible score is lower.
+2. **Independent optimality proof** — the branch-and-bound is verified against an
+   exhaustive oracle written separately in the test suite (adversarial fixture plus
+   100 deterministic instances); optimality is never claimed merely because
+   `maximumBranches` was not reached.
+3. **Real suppression of comparisons** — when the search is not proven, no region is
+   attributed, no `actual` value is produced and every comparison against Hatch is
+   suppressed (`comparisonSuppressed`, `comparisonSuppressionReason`).
+
+The seed schema version (`1.1.0`) is unchanged.
 
 ## Completeness corrections (P0.3A.2)
 
@@ -116,17 +131,46 @@ options first; each case may also stay unmatched) and ranks them by:
 3. total centre distance (asc);
 4. signature `caseId → internalCandidateKey` (asc) as the deterministic tie-break.
 
-**Optimality proof.** Pruning uses two admissible upper bounds — the number of
-remaining assignable cases and the sum of the best remaining candidate scores — so
-a branch is dropped only when it cannot reach the best match count nor come within
-`ambiguityScoreMargin` of the best score. No optimal or equally good solution can
-therefore be discarded, and a naive greedy is never used.
+The objective is declared in `assignmentSearch.objectivePriority`:
+`['matchCount_desc', 'totalScore_desc', 'totalCenterDistance_asc', 'signature_asc']`.
+
+**Pruning (exact conditions).** With `maxPossibleMatches = assignedSoFar +
+suffixPossible[index]` and `maxPossibleScore = currentScore +
+suffixBestScore[index]`:
+
+1. `maxPossibleMatches < best.matchCount` → prune (`byMatchCount`).
+2. `maxPossibleMatches === best.matchCount` **and**
+   `maxPossibleScore < best.totalScore − ambiguityScoreMargin − 1e-9` → prune
+   (`byScore`). The 1e-9 slack absorbs floating-point summation error so a branch
+   exactly at the margin is never lost.
+3. `maxPossibleMatches > best.matchCount` → **never pruned**, whatever its score
+   bound: a branch that can match more cases always survives (e.g. a provisional
+   4-match / 4.00 solution never prunes a 5-match / 3.75 branch).
+4. Distance and signature are never used as bounds — no admissible bound exists for
+   them — so `pruning.byDistance` and `pruning.byOther` stay 0.
+
+**Optimality proof.** Both bounds are admissible upper bounds on the lexicographic
+objective, so no optimal or equally good solution can be discarded; a naive greedy
+is never used. The proof is checked **independently** in
+`src/tests/hatchLab/aWidthsEvaluator.test.js` by `bruteForceAssignmentOracle`,
+which enumerates every one-to-one assignment without pruning, without
+`maximumBranches` and without `candidatesPerCaseLimit`, and never calls the
+branch-and-bound code: match count, score, distance, signature, assignments,
+ambiguous cases and alternative counts must agree on the adversarial fixture and on
+100 deterministic instances.
+
+`solveAssignmentOptions({ caseOptions, ambiguityScoreMargin, maximumBranches })`
+exposes the solver alone, over already evaluated options
+(`{ caseId, options: [{ internalCandidateKey, score, centerDistanceMm }] }`), so the
+assignment problem is testable without any geometry.
 
 `assignmentSearch` reports the proof: `searchComplete`, `optimalityProven`,
-`solutionsExplored`, `branchesExplored`, `branchesPruned`, `estimatedSearchSpace`,
-`candidateLimitApplied`, `solutionLimitApplied`, `stoppedEarly`, `stopReason`,
-`candidatesExcludedTotal`, `proofMethod`. It is also mirrored at the top level of
-the report together with `optimalityProven`.
+`solutionsExplored`, `branchesExplored`, `branchesPruned`,
+`pruning { byMatchCount, byScore, byDistance, byOther, total }`,
+`objectivePriority`, `estimatedSearchSpace`, `candidateLimitApplied`,
+`solutionLimitApplied`, `stoppedEarly`, `stopReason`, `candidatesExcludedTotal`,
+`proofMethod`. It is also mirrored at the top level of the report together with
+`optimalityProven`.
 
 `candidateCountsByCase` reports, per case: `evaluatedCandidates`,
 `acceptedCandidates`, `rejectedCandidates`, `candidatesUsedByAssignment`,
@@ -137,8 +181,32 @@ safety guards. If either is hit, `searchComplete` and `optimalityProven` are
 `false`, `assignmentMethod` becomes `exact_branch_and_bound_interrupted`, the error
 `ASSIGNMENT_SEARCH_INCOMPLETE` (with cause, candidates per case, estimated space,
 explored amount and the recommendation to repeat the run with higher limits) is
-added, and the global conclusion is `inconclusive`: the found assignment is not
-presented as optimal and its values are not compared against Hatch.
+added, and the global conclusion is `inconclusive`.
+
+## Suppression of comparisons when the search is not proven
+
+`searchProven` is decided immediately after the assignment and **before** any
+`actual`, reference comparison or delta is built. When it is false:
+
+* the provisional pairs are never used to attribute a region to a case;
+* `assignment` is `null` and the pairs are kept only under
+  `provisionalAssignment` (explicitly labelled PROVISIONAL, NOT CONFIRMED);
+* every case is `unavailable`, with `emptyActual` values (no `widthMm`, no
+  `technique`, no `heightMm`);
+* every comparison carries `comparisonStatus: 'assignment_search_incomplete'`,
+  `comparable: false`, `actualValue: null`, `delta: null`, `absoluteDelta: null`,
+  `relativeDelta: null` — no `equal`, `different`, `informational` or
+  `source_conflict` status is produced;
+* `comparisonSuppressed: true`, `comparisonSuppressionReason:
+  'ASSIGNMENT_SEARCH_INCOMPLETE'`, `matchConclusion: 'unavailable'`,
+  `dataConclusion: 'unavailable'`, `conclusion: 'inconclusive'`.
+
+`assignment_search_incomplete` means exclusively "the assignment search was not
+completed" and is never reused for `unmatched`, `ambiguous_match`,
+`unavailable_actual` or `source_conflict`.
+
+Kept for diagnostics only: candidate evaluations, `candidateCountsByCase`,
+`assignmentSearch`, `mergeDiagnostics` and `provisionalAssignment`.
 
 Other output: `assignments`, `unassignedCases`, `unassignedRegions`,
 `collisionsPrevented`, `totalScore`, `assignmentMethod`, `deterministicTieBreak`,

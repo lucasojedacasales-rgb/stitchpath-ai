@@ -60,6 +60,9 @@ function baseReport(opts, errors, warnings, extra = {}) {
     identitySummary: null,
     planIntegrity: null,
     assignment: null,
+    provisionalAssignment: null,
+    comparisonSuppressed: false,
+    comparisonSuppressionReason: null,
     assignmentSearch: null,
     candidateCountsByCase: {},
     mergeDiagnostics: [],
@@ -137,8 +140,33 @@ export function evaluateAWidthsResult({ result = null, seedCases = null, design 
     : null;
   const mergeDiagnostics = convertPoint ? detectPossibleMergedRegions({ seedCases, measuredCandidates: candidates, options: opts }) : [];
 
+  /**
+   * Completeness of the assignment search is decided HERE, immediately after the
+   * assignment and BEFORE any `actual`, reference comparison or delta is built.
+   * If the search is not proven, the provisional assignment is never used to
+   * attribute a region to a case.
+   */
+  const assignmentSearch = assignment?.assignmentSearch ?? null;
+  const searchProven = !!assignmentSearch
+    && assignmentSearch.searchComplete === true
+    && assignmentSearch.optimalityProven === true
+    && assignmentSearch.stoppedEarly === false
+    && assignmentSearch.candidateLimitApplied === false
+    && assignmentSearch.solutionLimitApplied === false;
+  const comparisonSuppressed = !!assignmentSearch && !searchProven;
+  const confirmedAssignment = comparisonSuppressed ? null : assignment;
+
+  if (comparisonSuppressed) {
+    const excludedTotal = assignmentSearch.candidatesExcludedTotal ?? 0;
+    errors.push({
+      code: 'ASSIGNMENT_SEARCH_INCOMPLETE',
+      message: `${assignmentSearch.stopReason || 'The assignment search could not be completed.'} Estimated search space ${assignmentSearch.estimatedSearchSpace}; branches explored ${assignmentSearch.branchesExplored}; solutions explored ${assignmentSearch.solutionsExplored}; accepted candidates excluded ${excludedTotal}. Optimality is not proven, no region is attributed to any case, every comparison against Hatch is suppressed, and the run must be repeated with higher candidatesPerCaseLimit / maximumBranches.`,
+      candidateCountsByCase: assignment.candidateCountsByCase,
+    });
+  }
+
   const byKey = new Map(candidates.map(c => [c.internalCandidateKey, c]));
-  const assignedByCase = new Map((assignment?.assignments || []).map(a => [a.caseId, a]));
+  const assignedByCase = new Map((confirmedAssignment?.assignments || []).map(a => [a.caseId, a]));
 
   const unknownFields = new Set();
   const unavailableFields = new Set();
@@ -157,7 +185,10 @@ export function evaluateAWidthsResult({ result = null, seedCases = null, design 
     let status;
 
     if (!convertPoint) { status = 'unavailable'; reasons.push('Coordinate space unavailable.'); }
-    else if (assigned) { status = 'matched'; reasons.push(`Accepted candidate ${assigned.internalCandidateKey} with score ${assigned.score.toFixed(4)} and centre distance ${assigned.centerDistanceMm.toFixed(4)} mm.`); }
+    else if (comparisonSuppressed) {
+      status = 'unavailable';
+      reasons.push(`ASSIGNMENT_SEARCH_INCOMPLETE: ${assignmentSearch.stopReason} No region is attributed to this case and no comparison against Hatch is produced.`);
+    } else if (assigned) { status = 'matched'; reasons.push(`Accepted candidate ${assigned.internalCandidateKey} with score ${assigned.score.toFixed(4)} and centre distance ${assigned.centerDistanceMm.toFixed(4)} mm.`); }
     else if (assignment.ambiguousCaseIds.includes(seedCase.caseId)) {
       status = 'ambiguous';
       reasons.push(`Several equally good global assignments exist for this case (${assignment.alternativeSolutionCount} solutions within ambiguityScoreMargin = ${opts.ambiguityScoreMargin}); no candidate is chosen arbitrarily.`);
@@ -187,10 +218,15 @@ export function evaluateAWidthsResult({ result = null, seedCases = null, design 
     const { planEntry, planStatus } = candidate ? resolvePlanEntry({ entriesByRegionId, candidate }) : { planEntry: null, planStatus: 'missing' };
     const actual = candidate
       ? extractAWidthsActual({ candidate, planEntry, planStatus, options: opts })
-      : emptyActual(status === 'ambiguous' ? 'Ambiguous assignment: no values are attributed.' : 'No region assigned to this case.');
+      : emptyActual(comparisonSuppressed
+        ? 'The assignment search was not completed: no provisional value is presented as actual.'
+        : status === 'ambiguous' ? 'Ambiguous assignment: no values are attributed.' : 'No region assigned to this case.');
 
     const reference = buildReference(seedCase);
-    const comparisons = compareAWidthsReference({ reference, actual, matchStatus: status, options: opts });
+    const comparisons = compareAWidthsReference({
+      reference, actual, options: opts,
+      matchStatus: comparisonSuppressed ? 'assignment_search_incomplete' : status,
+    });
 
     actual.unknownFields.forEach(f => unknownFields.add(f));
     actual.unavailableFields.forEach(f => unavailableFields.add(f));
@@ -250,36 +286,19 @@ export function evaluateAWidthsResult({ result = null, seedCases = null, design 
   const requiredComplete = assignedCases.length > 0 && assignedCases.every(c => c.requiredMissing.length === 0);
   const identitiesStable = assignedCases.every(c => c.actual.identityStatus === 'stable');
 
-  const matchConclusion = coordinateSystem.status !== 'resolved' ? 'unavailable'
+  const matchConclusion = coordinateSystem.status !== 'resolved' || comparisonSuppressed ? 'unavailable'
     : matchCoverage.matched === cases.length ? 'all_assigned'
       : matchCoverage.matched > 0 ? 'partial_assignment'
         : matchCoverage.ambiguous > 0 ? 'ambiguous_assignment'
           : 'no_assignment';
 
-  const dataConclusion = coordinateSystem.status !== 'resolved' || assignedCases.length === 0 ? 'unavailable'
+  const dataConclusion = coordinateSystem.status !== 'resolved' || comparisonSuppressed || assignedCases.length === 0 ? 'unavailable'
     : requiredConflicts.length > 0 ? 'conflicted'
       : requiredComplete ? 'complete' : 'incomplete';
 
-  const assignmentSearch = assignment?.assignmentSearch ?? null;
-  const searchProven = !!assignmentSearch
-    && assignmentSearch.searchComplete === true
-    && assignmentSearch.optimalityProven === true
-    && assignmentSearch.stoppedEarly === false
-    && assignmentSearch.candidateLimitApplied === false
-    && assignmentSearch.solutionLimitApplied === false;
-
-  if (assignmentSearch && !searchProven) {
-    const excludedTotal = assignmentSearch.candidatesExcludedTotal ?? 0;
-    errors.push({
-      code: 'ASSIGNMENT_SEARCH_INCOMPLETE',
-      message: `${assignmentSearch.stopReason || 'The assignment search could not be completed.'} Estimated search space ${assignmentSearch.estimatedSearchSpace}; branches explored ${assignmentSearch.branchesExplored}; solutions explored ${assignmentSearch.solutionsExplored}; accepted candidates excluded ${excludedTotal}. Optimality is not proven, the found assignment is not used to compare against Hatch, and the run must be repeated with higher candidatesPerCaseLimit / maximumBranches.`,
-      candidateCountsByCase: assignment.candidateCountsByCase,
-    });
-  }
-
   let conclusion;
   if (coordinateSystem.status !== 'resolved') conclusion = 'inconclusive';
-  else if (assignmentSearch && !searchProven) conclusion = 'inconclusive';
+  else if (comparisonSuppressed) conclusion = 'inconclusive';
   else if (dataConclusion === 'conflicted' && opts.conflictInRequiredFieldPolicy === 'ambiguous') conclusion = 'ambiguous';
   else if (matchCoverage.matched === 0) conclusion = matchCoverage.ambiguous > 0 ? 'ambiguous' : 'no_matches';
   else if (matchConclusion === 'all_assigned' && identitiesStable && dataConclusion === 'complete') conclusion = 'evaluated';
@@ -300,9 +319,9 @@ export function evaluateAWidthsResult({ result = null, seedCases = null, design 
     coordinateSystem,
     identitySummary,
     planIntegrity,
-    assignment: assignment
+    assignment: confirmedAssignment
       ? {
-        assignments: assignment.assignments,
+        assignments: confirmedAssignment.assignments,
         unassignedCases: assignment.unassignedCases,
         unassignedRegions: assignment.unassignedRegions,
         collisionsPrevented: assignment.collisionsPrevented,
@@ -316,6 +335,18 @@ export function evaluateAWidthsResult({ result = null, seedCases = null, design 
         tolerancesUsed: assignment.tolerancesUsed,
       }
       : null,
+    /** Kept for diagnostics ONLY, never used to attribute a region to a case. */
+    provisionalAssignment: comparisonSuppressed
+      ? {
+        note: 'PROVISIONAL, NOT CONFIRMED: the assignment search was not completed. These pairs are diagnostic material only and were not used to build actual values, comparisons or deltas.',
+        assignments: assignment.assignments,
+        totalScore: assignment.totalScore,
+        assignmentMethod: assignment.assignmentMethod,
+        ambiguousCaseIds: assignment.ambiguousCaseIds,
+      }
+      : null,
+    comparisonSuppressed,
+    comparisonSuppressionReason: comparisonSuppressed ? 'ASSIGNMENT_SEARCH_INCOMPLETE' : null,
     assignmentSearch,
     candidateCountsByCase: assignment?.candidateCountsByCase ?? {},
     optimalityProven: assignmentSearch ? assignmentSearch.optimalityProven : null,

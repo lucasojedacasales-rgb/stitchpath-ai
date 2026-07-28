@@ -5,9 +5,14 @@
  *
  * 0.2.0 hardens: one-to-one matching, region identity, explicit region-source
  * selection, source conflicts, technical coverage and informative comparisons.
+ *
+ * 0.2.1 corrects: lexicographic pruning of the assignment search (match count
+ * always before score), an independent optimality proof (branch-and-bound
+ * verified against an exhaustive oracle in the test suite) and the REAL
+ * suppression of every comparison against Hatch when the search is not proven.
  */
 
-export const EVALUATOR_VERSION = '0.2.0-A_WIDTHS';
+export const EVALUATOR_VERSION = '0.2.1-A_WIDTHS';
 
 export const COORDINATE_SPACES = Object.freeze(['mm', 'normalized_0_1', 'pixels']);
 export const COORDINATE_STATUS = Object.freeze(['resolved', 'unavailable']);
@@ -48,10 +53,19 @@ export const UNDERLAY_TYPES = Object.freeze([
   'center_run', 'edge_run', 'zigzag', 'edge_run_plus_zigzag', 'none', 'unknown', 'unavailable',
 ]);
 
+/**
+ * `assignment_search_incomplete` means EXCLUSIVELY that the assignment search
+ * was not completed, so no region may be attributed to the case. It is never a
+ * substitute for unmatched, ambiguous_match, unavailable_actual or
+ * source_conflict.
+ */
 export const COMPARISON_STATUS = Object.freeze([
   'equal', 'different', 'unavailable_reference', 'unavailable_actual',
   'ambiguous_match', 'not_comparable', 'informational', 'source_conflict',
+  'assignment_search_incomplete',
 ]);
+
+export const COMPARISON_SUPPRESSION_REASONS = Object.freeze(['ASSIGNMENT_SEARCH_INCOMPLETE']);
 
 export const MATCH_CONCLUSIONS = Object.freeze([
   'all_assigned', 'partial_assignment', 'ambiguous_assignment', 'no_assignment', 'unavailable',

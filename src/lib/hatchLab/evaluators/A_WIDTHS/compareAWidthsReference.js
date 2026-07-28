@@ -67,6 +67,12 @@ function comparison(name, referenceValue, actualField, { matchStatus, tolerance 
     name, referenceValue, actualValue: null, delta: null, absoluteDelta: null, relativeDelta: null,
     tolerance, withinTolerance: null, comparable, comparisonStatus: 'not_comparable', reason: '',
   };
+  if (matchStatus === 'assignment_search_incomplete') {
+    return {
+      ...base, comparable: false, comparisonStatus: 'assignment_search_incomplete',
+      reason: 'The assignment search was not completed; no region is attributed to this case and no value is compared against Hatch.',
+    };
+  }
   if (matchStatus === 'ambiguous') return { ...base, comparisonStatus: 'ambiguous_match', reason: 'The case ↔ region assignment is ambiguous; no comparison is made.' };
   if (actualField && actualField.availability === 'conflict') {
     return { ...base, comparisonStatus: 'source_conflict', reason: actualField.reason, comparable: false };

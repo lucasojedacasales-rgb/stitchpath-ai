@@ -9,8 +9,8 @@
 import {
   evaluateAWidthsResult, selectRegionSource, matchCasesToRegions, buildMeasuredCandidates,
   buildPlanIndex, detectPossibleMergedRegions, normalizeTechniqueValue, buildUnderlayFields,
-  buildReference, createPointConverter, measureRegion,
-  CONCLUSIONS, DEFAULT_OPTIONS, EVALUATOR_VERSION, AVAILABILITY,
+  buildReference, createPointConverter, measureRegion, solveAssignmentOptions,
+  CONCLUSIONS, DEFAULT_OPTIONS, EVALUATOR_VERSION, AVAILABILITY, COMPARISON_STATUS,
 } from '@/lib/hatchLab/evaluators/A_WIDTHS/index.js';
 import { A_WIDTHS_CASES } from '@/lib/hatchLab/seed/real/A_WIDTHS/index.js';
 
@@ -56,6 +56,138 @@ function mmResult(ids = Object.keys(CASE_GEOMETRY), extra = {}) {
 const run = (result, seedCases = A_WIDTHS_CASES, options = {}, design = DESIGN_MM) =>
   evaluateAWidthsResult({ result, seedCases, design, options });
 
+const R9 = v => Math.round(v * 1e9) / 1e9;
+
+/**
+ * INDEPENDENT exhaustive oracle (P0.3A.3). Written from scratch inside the test
+ * file: it enumerates every one-to-one assignment, never prunes, never uses
+ * maximumBranches or candidatesPerCaseLimit, and never calls the
+ * branch-and-bound implementation it verifies.
+ */
+function bruteForceAssignmentOracle(caseOptions, margin) {
+  const cases = caseOptions.map(c => ({ caseId: String(c.caseId), options: [...(c.options || [])] }));
+  const caseIds = cases.map(c => c.caseId).sort((a, b) => a.localeCompare(b));
+  const solutions = [];
+
+  const summarize = chosen => {
+    const assigned = chosen.filter(a => a.internalCandidateKey != null);
+    return {
+      assignments: assigned.map(a => ({ ...a })).sort((x, y) => x.caseId.localeCompare(y.caseId)),
+      matchCount: assigned.length,
+      totalScore: R9(assigned.reduce((s, a) => s + a.score, 0)),
+      totalCenterDistance: R9(assigned.reduce((s, a) => s + a.centerDistanceMm, 0)),
+      signature: [...chosen].sort((a, b) => a.caseId.localeCompare(b.caseId))
+        .map(a => `${a.caseId}→${a.internalCandidateKey ?? '∅'}`).join('|'),
+    };
+  };
+
+  const walk = (index, used, chosen) => {
+    if (index === cases.length) { solutions.push(summarize(chosen)); return; }
+    const { caseId, options } = cases[index];
+    for (const option of options) {
+      if (used.has(option.internalCandidateKey)) continue;
+      walk(index + 1, new Set([...used, option.internalCandidateKey]),
+        [...chosen, { caseId, internalCandidateKey: option.internalCandidateKey, score: option.score, centerDistanceMm: option.centerDistanceMm }]);
+    }
+    walk(index + 1, used, [...chosen, { caseId, internalCandidateKey: null, score: 0, centerDistanceMm: 0 }]);
+  };
+  walk(0, new Set(), []);
+
+  // Same declared objective order, implemented independently.
+  let best = null;
+  for (const s of solutions) {
+    if (best === null) { best = s; continue; }
+    if (s.matchCount > best.matchCount) { best = s; continue; }
+    if (s.matchCount < best.matchCount) continue;
+    if (s.totalScore > best.totalScore) { best = s; continue; }
+    if (s.totalScore < best.totalScore) continue;
+    if (s.totalCenterDistance < best.totalCenterDistance) { best = s; continue; }
+    if (s.totalCenterDistance > best.totalCenterDistance) continue;
+    if (s.signature.localeCompare(best.signature) < 0) best = s;
+  }
+  const resolved = best || { assignments: [], matchCount: 0, totalScore: 0, totalCenterDistance: 0, signature: '' };
+  const equallyGood = solutions.filter(s => s.matchCount === resolved.matchCount && Math.abs(s.totalScore - resolved.totalScore) < margin);
+  const ambiguousCaseIds = caseIds.filter(id => {
+    const keys = new Set(equallyGood.map(s => (s.assignments.find(a => a.caseId === id) || {}).internalCandidateKey ?? '∅'));
+    return keys.size > 1;
+  }).sort();
+
+  return {
+    matchCount: resolved.matchCount,
+    totalScore: resolved.totalScore,
+    totalCenterDistance: resolved.totalCenterDistance,
+    signature: resolved.signature,
+    assignments: resolved.assignments,
+    ambiguousCaseIds,
+    alternativeSolutionCount: equallyGood.length,
+    enumeratedSolutions: solutions.length,
+  };
+}
+
+/**
+ * Replica of the PREVIOUS (0.2.0) pruning rule, kept only inside the test file to
+ * prove that the adversarial fixture really discriminates the corrected bound.
+ */
+function legacyBuggySolve(caseOptions, margin) {
+  const order = [...caseOptions].map(c => ({ caseId: String(c.caseId), options: [...(c.options || [])] }))
+    .sort((a, b) => a.options.length - b.options.length || a.caseId.localeCompare(b.caseId));
+  const suffixPossible = new Array(order.length + 1).fill(0);
+  const suffixBestScore = new Array(order.length + 1).fill(0);
+  for (let i = order.length - 1; i >= 0; i--) {
+    suffixPossible[i] = suffixPossible[i + 1] + (order[i].options.length > 0 ? 1 : 0);
+    suffixBestScore[i] = suffixBestScore[i + 1] + (order[i].options.length > 0 ? Math.max(...order[i].options.map(o => o.score)) : 0);
+  }
+  let best = null;
+  const walk = (index, used, chosen, currentScore, assignedSoFar) => {
+    if (index === order.length) {
+      const solution = { matchCount: assignedSoFar, totalScore: R9(currentScore) };
+      if (!best || solution.matchCount > best.matchCount
+        || (solution.matchCount === best.matchCount && solution.totalScore > best.totalScore)) best = solution;
+      return;
+    }
+    if (best) {
+      if (assignedSoFar + suffixPossible[index] < best.matchCount) return;
+      // the 0.2.0 bug: score pruning applied regardless of the match-count bound
+      if (currentScore + suffixBestScore[index] < best.totalScore - margin) return;
+    }
+    for (const option of order[index].options) {
+      if (used.has(option.internalCandidateKey)) continue;
+      walk(index + 1, new Set([...used, option.internalCandidateKey]), chosen, currentScore + option.score, assignedSoFar + 1);
+    }
+    walk(index + 1, used, chosen, currentScore, assignedSoFar);
+  };
+  walk(0, new Set(), [], 0, 0);
+  return best || { matchCount: 0, totalScore: 0 };
+}
+
+/** Deterministic pseudo-random generator (fixed seed, no Math.random). */
+function makeRandom(seed) {
+  let state = seed >>> 0;
+  return () => { state = (state * 1664525 + 1013904223) >>> 0; return state / 4294967296; };
+}
+
+/** SYNTHETIC bipartite instances built directly on caseOptions. */
+function buildRandomInstances(count, seed) {
+  const rnd = makeRandom(seed);
+  const pick = arr => arr[Math.floor(rnd() * arr.length)];
+  const SCORES = [0.75, 0.8, 0.8, 0.9, 1.0, 1.0];
+  const DISTANCES = [0, 0.1, 0.25, 0.25, 0.5];
+  const instances = [];
+  for (let i = 0; i < count; i++) {
+    const caseCount = 1 + Math.floor(rnd() * 5);
+    const candidateCount = 1 + Math.floor(rnd() * 7);
+    const keys = Array.from({ length: candidateCount }, (_, k) => `K${String(k).padStart(2, '0')}`);
+    const caseOptions = Array.from({ length: caseCount }, (_, c) => {
+      const caseId = `SYN-RND-${String(i).padStart(3, '0')}-${String(c).padStart(2, '0')}`;
+      const options = keys.filter(() => rnd() < 0.55)
+        .map(key => ({ internalCandidateKey: key, score: pick(SCORES), centerDistanceMm: pick(DISTANCES) }));
+      return { caseId, options };
+    });
+    instances.push(caseOptions);
+  }
+  return instances;
+}
+
 export function runAWidthsEvaluatorTests() {
   const fails = [];
   let checks = 0;
@@ -64,7 +196,7 @@ export function runAWidthsEvaluatorTests() {
   const cmp = (c, name) => c.comparisons.find(x => x.name === name);
   const errorCodes = out => out.errors.map(e => e.code);
 
-  ok('0. version 0.2.0 and conflict availability declared', EVALUATOR_VERSION === '0.2.0-A_WIDTHS' && AVAILABILITY.includes('conflict'));
+  ok('0. version 0.2.1 and conflict availability declared', EVALUATOR_VERSION === '0.2.1-A_WIDTHS' && AVAILABILITY.includes('conflict'));
 
   const base = run(mmResult());
   const a7 = caseOf(base, 'HATCH-A-WIDTHS-A7');
@@ -318,7 +450,7 @@ export function runAWidthsEvaluatorTests() {
     && bigOut.assignment.assignments.every((a, i) => a.internalCandidateKey.endsWith(`big_${String(i).padStart(2, '0')}`))
     && bigOut.assignment.totalScore >= cappedEnumeration.bestScore);
   ok('A2-6. searchComplete true on a complete assignment', bigSearch.searchComplete === true && base.assignmentSearch.searchComplete === true);
-  ok('A2-7. optimalityProven true on a complete assignment', bigSearch.optimalityProven === true && /admissible upper bounds/.test(bigSearch.proofMethod));
+  ok('A2-7. optimalityProven true on a complete assignment', bigSearch.optimalityProven === true && /lexicographic admissible bounds/.test(bigSearch.proofMethod));
   ok('A2-8. stoppedEarly false on a complete assignment', bigSearch.stoppedEarly === false && bigSearch.solutionLimitApplied === false && bigSearch.stopReason === null);
   ok('A2-9. assignmentMethod does not claim truncation', !/truncated/.test(bigOut.assignment.assignmentMethod) && bigOut.assignment.assignmentMethod === 'exact_branch_and_bound');
   ok('A2-9b. branches explored and pruned reported', bigSearch.branchesExplored > 0 && bigSearch.solutionsExplored > 0 && Number.isFinite(bigSearch.branchesPruned));
@@ -334,7 +466,7 @@ export function runAWidthsEvaluatorTests() {
   ok('A2-12. interrupted search never concludes evaluated', cappedBranches.assignmentSearch.stoppedEarly === true
     && cappedBranches.conclusion === 'inconclusive' && cappedBranches.conclusion !== 'evaluated'
     && errorCodes(cappedBranches).includes('ASSIGNMENT_SEARCH_INCOMPLETE'));
-  ok('A2-12b. incomplete search values are not compared against Hatch', cappedCandidates.dataConclusion !== 'complete' || cappedCandidates.conclusion === 'inconclusive');
+  // A2-12b was replaced in P0.3A.3 by the direct suppression checks (A3-15…A3-17).
 
   // Explicit empty collection
   const emptyExplicit = run({ regions: [] }, A_WIDTHS_CASES, { regionSource: 'regions' });
@@ -369,6 +501,125 @@ export function runAWidthsEvaluatorTests() {
   ok('A2-23. deterministic and non-mutating on the large instance', JSON.stringify(run({ regions: bigRegions }, bigCases)) === JSON.stringify(bigOut));
   ok('A2-24. evaluated still requires a proven search', base.conclusion === 'evaluated' && base.optimalityProven === true
     && cappedBranches.conclusion === 'inconclusive');
+
+  // ── P0.3A.3: lexicographic bound, independent oracle, real suppression ─────
+  const MARGIN = DEFAULT_OPTIONS.ambiguityScoreMargin;
+  const solve = caseOptions => solveAssignmentOptions({ caseOptions, ambiguityScoreMargin: MARGIN, maximumBranches: DEFAULT_OPTIONS.maximumBranches });
+  const sameSolution = (got, oracle) => got.matchCount === oracle.matchCount
+    && got.totalScore === oracle.totalScore
+    && got.totalCenterDistance === oracle.totalCenterDistance
+    && got.signature === oracle.signature
+    && JSON.stringify(got.bestAssignments) === JSON.stringify(oracle.assignments)
+    && JSON.stringify(got.ambiguousCaseIds) === JSON.stringify(oracle.ambiguousCaseIds);
+
+  // SYNTHETIC adversarial instance: 4 matches / 4.00 found first, optimum is 5 / 3.75.
+  const ADVERSARIAL = [
+    { caseId: 'SYN-ADV-A', options: [{ internalCandidateKey: 'K1', score: 1.0, centerDistanceMm: 0.1 }, { internalCandidateKey: 'K5', score: 0.5, centerDistanceMm: 0.4 }] },
+    { caseId: 'SYN-ADV-B', options: [{ internalCandidateKey: 'K2', score: 1.0, centerDistanceMm: 0.1 }, { internalCandidateKey: 'K5', score: 0.05, centerDistanceMm: 0.9 }] },
+    { caseId: 'SYN-ADV-C', options: [{ internalCandidateKey: 'K3', score: 1.0, centerDistanceMm: 0.1 }, { internalCandidateKey: 'K5', score: 0.05, centerDistanceMm: 0.9 }] },
+    { caseId: 'SYN-ADV-D', options: [{ internalCandidateKey: 'K4', score: 1.0, centerDistanceMm: 0.1 }, { internalCandidateKey: 'K5', score: 0.05, centerDistanceMm: 0.9 }] },
+    { caseId: 'SYN-ADV-E', options: [{ internalCandidateKey: 'K1', score: 0.25, centerDistanceMm: 0.8 }, { internalCandidateKey: 'K2', score: 0.05, centerDistanceMm: 0.9 }] },
+  ];
+  const advSolved = solve(ADVERSARIAL);
+  const advOracle = bruteForceAssignmentOracle(ADVERSARIAL, MARGIN);
+  const advLegacy = legacyBuggySolve(ADVERSARIAL, MARGIN);
+  ok('A3-1. matchCount has priority over totalScore', advSolved.matchCount === 5 && advSolved.totalScore === 3.75
+    && advOracle.matchCount === 5 && advOracle.totalScore === 3.75);
+  ok('A3-2. a 4-match/4.00 solution does not win over 5-match/3.75', advSolved.totalScore < 4.0 && advSolved.matchCount > 4
+    && advSolved.bestAssignments.find(a => a.caseId === 'SYN-ADV-A').internalCandidateKey === 'K5');
+  ok('A3-3. the five-match branch is not pruned by score (legacy rule would lose it)', advLegacy.matchCount === 4 && advLegacy.totalScore === 4
+    && advSolved.matchCount === 5);
+  ok('A3-4. score pruning still applies when maxPossibleMatches equals best.matchCount', (() => {
+    const flat = [
+      { caseId: 'SYN-SC-A', options: [{ internalCandidateKey: 'P', score: 1.0, centerDistanceMm: 0.1 }, { internalCandidateKey: 'Q', score: 0.8, centerDistanceMm: 0.2 }] },
+      { caseId: 'SYN-SC-B', options: [{ internalCandidateKey: 'R', score: 1.0, centerDistanceMm: 0.1 }, { internalCandidateKey: 'S', score: 0.8, centerDistanceMm: 0.2 }] },
+    ];
+    const got = solve(flat);
+    return got.pruning.byScore > 0 && got.matchCount === 2 && got.totalScore === 2 && sameSolution(got, bruteForceAssignmentOracle(flat, MARGIN));
+  })());
+  ok('A3-5. match-count pruning applies when the branch cannot reach the best count', advSolved.pruning.byMatchCount > 0);
+  ok('A3-6. pruning counters are consistent and every pruned branch has a reason', (() => {
+    const p = advSolved.pruning;
+    return p.total === p.byMatchCount + p.byScore + p.byDistance + p.byOther
+      && p.total === advSolved.stats.branchesPruned && p.byDistance === 0 && p.byOther === 0;
+  })());
+  ok('A3-7. objective priority declared in the correct order', JSON.stringify(advSolved.objectivePriority) === JSON.stringify(['matchCount_desc', 'totalScore_desc', 'totalCenterDistance_asc', 'signature_asc'])
+    && JSON.stringify(bigOut.assignmentSearch.objectivePriority) === JSON.stringify(advSolved.objectivePriority));
+  ok('A3-8. adversarial instance matches the independent oracle exactly', sameSolution(advSolved, advOracle)
+    && advSolved.alternativeSolutionCount === advOracle.alternativeSolutionCount);
+
+  // 100 deterministic SYNTHETIC instances against the oracle
+  const instances = buildRandomInstances(100, 20260728);
+  const corpus = instances.map(caseOptions => {
+    const got = solve(caseOptions);
+    const oracle = bruteForceAssignmentOracle(caseOptions, MARGIN);
+    return { got, oracle, agrees: sameSolution(got, oracle) && got.alternativeSolutionCount === oracle.alternativeSolutionCount };
+  });
+  const divergences = corpus.filter(c => !c.agrees).length;
+  ok('A3-9. 100 deterministic instances match the oracle in every objective field', corpus.length === 100 && divergences === 0);
+  ok('A3-10. ambiguousCaseIds match the oracle, and ambiguity really occurs', corpus.every(c => JSON.stringify(c.got.ambiguousCaseIds) === JSON.stringify(c.oracle.ambiguousCaseIds))
+    && corpus.some(c => c.oracle.ambiguousCaseIds.length > 0));
+  ok('A3-11. distance tie-break matches the oracle', corpus.every(c => c.got.totalCenterDistance === c.oracle.totalCenterDistance)
+    && corpus.some(c => c.oracle.totalCenterDistance > 0));
+  ok('A3-12. signature tie-break matches the oracle', corpus.every(c => c.got.signature === c.oracle.signature)
+    && corpus.some(c => c.got.signature.includes('∅')) && corpus.some(c => !c.got.signature.includes('∅')));
+  ok('A3-12b. corpus covers cases without options, partial and complete solutions', instances.some(inst => inst.some(c => c.options.length === 0))
+    && corpus.some(c => c.oracle.matchCount === 0) && corpus.some(c => c.oracle.matchCount === c.got.bestAssignments.length && c.oracle.matchCount > 1)
+    && corpus.some(c => c.oracle.enumeratedSolutions > 100));
+  ok('A3-13. a completed search proves optimality', corpus.every(c => c.got.stats.stoppedEarly === false)
+    && bigOut.optimalityProven === true && base.optimalityProven === true);
+  ok('A3-14. an interrupted search never claims optimality', cappedBranches.optimalityProven === false && cappedCandidates.optimalityProven === false);
+
+  // Real suppression of comparisons
+  const suppressed = (out, label, expectedCases) => {
+    ok(`${label} comparisons suppressed and flagged`, out.comparisonSuppressed === true
+      && out.comparisonSuppressionReason === 'ASSIGNMENT_SEARCH_INCOMPLETE'
+      && out.dataConclusion === 'unavailable' && out.conclusion === 'inconclusive'
+      && out.assignment === null && out.provisionalAssignment !== null && /PROVISIONAL/.test(out.provisionalAssignment.note));
+    ok(`${label} no case keeps a confirmed region or actual value`, out.cases.length === expectedCases
+      && out.cases.every(c => c.status === 'unavailable' && c.match.internalCandidateKey === null && c.match.selectedRegionId === null
+        && c.actual.widthMm.availability !== 'available' && c.actual.heightMm.availability !== 'available' && c.actual.technique.availability !== 'available'));
+    ok(`${label} no actualValue and no delta survives`, out.cases.every(c => c.comparisons.length > 0 && c.comparisons.every(x =>
+      x.actualValue === null && x.delta === null && x.absoluteDelta === null && x.relativeDelta === null
+      && x.comparable === false && x.comparisonStatus === 'assignment_search_incomplete')));
+    ok(`${label} no equal / different / informational / source_conflict status`, out.cases.every(c => c.comparisons.every(x =>
+      !['equal', 'different', 'informational', 'source_conflict'].includes(x.comparisonStatus))));
+  };
+  suppressed(cappedBranches, 'A3-15.', A_WIDTHS_CASES.length);
+  suppressed(cappedCandidates, 'A3-16.', BIG_N);
+  ok('A3-17. suppression status belongs to the declared vocabulary and is not reused', COMPARISON_STATUS.includes('assignment_search_incomplete')
+    && base.cases.every(c => c.comparisons.every(x => x.comparisonStatus !== 'assignment_search_incomplete'))
+    && caseOf(dupIds, 'HATCH-A-WIDTHS-A7').comparisons.every(x => x.comparisonStatus !== 'assignment_search_incomplete'));
+  ok('A3-18. a proven search still produces informative comparisons', base.comparisonSuppressed === false && base.comparisonSuppressionReason === null
+    && base.provisionalAssignment === null && cmp(a7, 'observedWidthMm_vs_engineWidthMm').comparisonStatus === 'informational'
+    && cmp(a7, 'observedWidthMm_vs_engineWidthMm').actualValue !== null);
+  ok('A3-19. explicit empty collection still yields no_matches', emptyExplicit.conclusion === 'no_matches' && emptyExplicit.comparisonSuppressed === false);
+  ok('A3-20. solver independent of case order', (() => {
+    const shuffled = [ADVERSARIAL[3], ADVERSARIAL[0], ADVERSARIAL[4], ADVERSARIAL[2], ADVERSARIAL[1]];
+    return sameSolution(solve(shuffled), advOracle);
+  })());
+  ok('A3-21. solver independent of option order', (() => {
+    const flipped = ADVERSARIAL.map(c => ({ caseId: c.caseId, options: [...c.options].reverse() }));
+    return sameSolution(solve(flipped), advOracle);
+  })());
+  ok('A3-22. one-to-one assignment kept in every instance', corpus.every(c => {
+    const usedKeys = c.got.bestAssignments.map(a => a.internalCandidateKey);
+    return new Set(usedKeys).size === usedKeys.length;
+  }));
+  ok('A3-23. the five real cases remain untouched', A_WIDTHS_CASES.length === 5 && A_WIDTHS_CASES.every(c => c.phase === 'A_WIDTHS' && c.seedVersion === '1.1.0'));
+  ok('A3-24. expectedResult still null everywhere', A_WIDTHS_CASES.every(c => c.expectedResult === null));
+  ok('A3-25. still no confirmed rule', A_WIDTHS_CASES.every(c => c.candidateRules.every(r => r.status === 'candidata')));
+  ok('A3-26. solver does not mutate its input', (() => {
+    const snapshot = JSON.stringify(ADVERSARIAL);
+    solve(ADVERSARIAL);
+    return JSON.stringify(ADVERSARIAL) === snapshot;
+  })());
+  ok('A3-27. solver is deterministic', JSON.stringify(solve(ADVERSARIAL)) === JSON.stringify(advSolved)
+    && JSON.stringify(run(mmResult())) === JSON.stringify(base));
+  ok('A3-28. solver needs no engine, no pipeline and no geometry', typeof solveAssignmentOptions === 'function'
+    && !/stitch|command|export/i.test(JSON.stringify(advSolved)));
+  ok('A3-29. engine still never executed', !('commands' in cappedBranches) && !('stitches' in cappedBranches)
+    && cappedBranches.cases.every(c => !('commands' in c.actual)) && base.inputSummary.measurementMethod === 'bounding_box_width');
 
   return { name: 'hatchLab/aWidthsEvaluator', pass: fails.length === 0, checks, fails };
 }
