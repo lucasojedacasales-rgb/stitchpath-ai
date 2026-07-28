@@ -1,0 +1,18 @@
+{
+  "immutableBaseline": true,
+  "policy": "This file is an index of integrity references, not a second source of truth. The authoritative digests live in runManifest.json (capture, summary, embedded result) and in raw/rawSourceReference.json (raw attachments). They are NOT restated here so the two files can never drift apart.",
+  "authoritativeDigestLocations": {
+    "rawCaptureSha256": "runManifest.json → integrity.rawCaptureSha256",
+    "summarySha256": "runManifest.json → integrity.summarySha256",
+    "embeddedResultSha256": "runManifest.json → integrity.embeddedResultSha256",
+    "sourceImageSha256": "sourceManifest.json → sha256 (also asserted in src/tests/hatchLab/aWidthsSourceImageUrl.js)",
+    "rawAttachmentDigests": "raw/rawSourceReference.json"
+  },
+  "hashProcedure": {
+    "canonicalisation": "canonicalJson (src/lib/hatchLab/baselines/A_WIDTHS/canonicalSnapshot.js): recursive key sort, 2-space indent, UTF-8 bytes.",
+    "resultSha256Definition": "SHA-256 of the canonical JSON of the full capture WITHOUT the resultSha256 field, then embedded into the file. Recomputing it therefore requires removing that field first.",
+    "reproduced": true,
+    "reproductionNote": "The embedded digest was recomputed from the delivered bytes with this exact procedure and matched. The raw attachment digest differs from the embedded digest only because the embedded one excludes resultSha256 by definition — not because of any transformation in transit."
+  },
+  "immutabilityRule": "Any edit inside BASE-ENGINE-A-WIDTHS-V1/ invalidates the baseline. A new measurement requires a new baselineId in a separate task; this folder is closed."
+}
