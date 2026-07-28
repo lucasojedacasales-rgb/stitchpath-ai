@@ -1,0 +1,204 @@
+{
+  "seedVersion": "1.1.0",
+  "caseId": "HATCH-A-WIDTHS-A8",
+  "phase": "A_WIDTHS",
+  "title": "Barra recta 8,0 mm nominal (A8) — satín mantenido hasta 8,04 mm observados",
+  "source": {
+    "tool": "Hatch",
+    "labTestId": "HATCH-A-WIDTHS-R01",
+    "embFile": "HATCH-A-WIDTHS-R01-100MM.EMB",
+    "sourceImage": "HATCH-A-WIDTHS-EXACT-100x80mm-300dpi.png",
+    "fabricProfile": "Pure Cotton",
+    "capturedAt": "2026-07-22",
+    "packagedAt": "2026-07-28T14:15:58+02:00",
+    "reliability": "observed",
+    "physicalValidation": false
+  },
+  "input": {
+    "testId": "A8",
+    "family": "Fila A",
+    "geometry": "barra_recta",
+    "sheetSizeMm": { "width": 100, "height": 80 },
+    "unit": "mm",
+    "centerXMm": 93,
+    "centerYMm": 13.0,
+    "sourceOfInput": "05_Datos_Objetos/HATCH-A-WIDTHS-EXACT-map.csv#L9"
+  },
+  "dimensionsMm": { "width": 100, "height": 80 },
+  "testedSizeMm": { "width": 8.0, "height": 16.0 },
+  "fabric": "Pure Cotton",
+  "configuration": {
+    "documented": {
+      "autoSplit": true,
+      "spacingMode": "Manual",
+      "spacingMm": 0.36,
+      "pullCompensationMm": 0.4,
+      "underlay1": "Corrido de borde",
+      "underlay1LengthMm": 2,
+      "underlay2": "Zigzag",
+      "underlay2LengthMm": 3.6,
+      "underlay2SpacingMm": 2,
+      "stitchAngleDeg": 0
+    },
+    "common": {
+      "mainConnector": "Salto 7,0 mm",
+      "runConnector": "3,0 mm (visible, no seleccionado)",
+      "tieOnCondition": "Si conector anterior ≥ 2,0 mm; longitud 1,0 mm; número 2",
+      "tieOffCondition": "Si conector siguiente ≥ 2,0 mm; longitud 1,0 mm; número 2",
+      "autoTrimCondition": "Si conector siguiente ≥ 2,0 mm",
+      "maxStitchMm": 12.1,
+      "jumpLengthMm": 7.0,
+      "pullCompensationMm": 0.4,
+      "autoSplit": "Activada",
+      "stitchAngleDeg": 0,
+      "source": "analisis-ABCD.xlsx#Config_comun!A2:C10"
+    },
+    "sourceOfConfiguration": "analisis-ABCD.xlsx#Fila_A!A9:P9"
+  },
+  "observation": {
+    "measured": {
+      "nominalWidthMm": 8,
+      "observedWidthMm": 8.04,
+      "differenceMm": null,
+      "nominalHeightMm": 16.0,
+      "observedHeightMm": 16,
+      "topStitch": "Satín",
+      "spacingMode": "Manual",
+      "spacingMm": 0.36,
+      "underlayType": "Corrido de borde + Zigzag",
+      "pullCompensationMm": 0.4,
+      "autoSplit": true,
+      "unit": "mm",
+      "source": "analisis-ABCD.xlsx#Fila_A!A9:P9"
+    },
+    "notes": "Hatch sigue usando satín hasta 8,04 mm.",
+    "methodNotes": "Límite de satín: se registra como rango observado (0,55–8,04 mm en Fila A), no como límite universal (analisis-ABCD.xlsx#Notas_metodo!A11:C11).",
+    "warnings": [
+      "La columna \"Diferencia (mm)\" está vacía en la hoja Fila_A: differenceMm queda null y no se infiere.",
+      "8,04 mm es el máximo probado en la Fila A: no se ha observado el punto de cambio a tatami.",
+      "Sin validación física de esta lámina."
+    ]
+  },
+  "expectedResult": null,
+  "candidateRules": [
+    {
+      "ruleId": "SATIN-RANGE-OBSERVED-001",
+      "status": "candidata",
+      "title": "No usar 8 mm como límite rígido de satín",
+      "conditions": "Objetos columna/cápsula de unos 13–16 mm de alto sobre Pure Cotton.",
+      "expression": "Mantener satín como candidato al menos hasta 9,18 mm y validar longitud máxima, división y geometría antes de cambiar a tatami.",
+      "parameters": { "maximumObservedSatinWidthMm": 9.18 },
+      "evidence": ["A1-A8", "B1-B6", "C1-C6", "D1-D6"],
+      "confidence": 0.95,
+      "physicalValidation": false,
+      "source": "06_Reglas/HATCH-A-WIDTHS-reglas.json"
+    },
+    {
+      "ruleId": "SPACING-GEOMETRY-001",
+      "status": "candidata",
+      "title": "No fijar espaciado manual solo por anchura máxima",
+      "conditions": "Satín con división automática.",
+      "expression": "Aplicar 0,36 mm manual cuando la anchura alta se mantenga durante suficiente longitud; conservar automático en formas afiladas con sección variable.",
+      "parameters": { "manualSpacingMm": 0.36, "firstManualObservedMm": 6.09, "lastAutomaticObservedMm": 4.06 },
+      "evidence": ["A7/A8", "B5/B6", "C5/C6", "D5/D6"],
+      "confidence": 0.95,
+      "physicalValidation": false,
+      "source": "06_Reglas/HATCH-A-WIDTHS-reglas.json"
+    },
+    {
+      "ruleId": "PULL-COMP-COTTON-040-001",
+      "status": "candidata",
+      "title": "Compensación base observada en algodón",
+      "conditions": "Pure Cotton, familias A-D de esta lámina.",
+      "expression": "Usar 0,40 mm como valor inicial de referencia, nunca como constante universal.",
+      "parameters": { "pullCompensationMm": 0.4 },
+      "evidence": ["A1-D6"],
+      "confidence": 0.9,
+      "physicalValidation": false,
+      "source": "06_Reglas/HATCH-A-WIDTHS-reglas.json"
+    }
+  ],
+  "ruleScope": "Barra recta vertical de 16 mm de alto, 8,0 mm nominal, Pure Cotton, lámina 100x80 mm, división automática activada.",
+  "exceptions": [
+    "Las reglas siguen siendo candidatas y no deben afectar al motor productivo.",
+    "No debe fijarse 8 mm como límite rígido de satín: es el máximo probado, no un umbral observado."
+  ],
+  "evidence": [
+    {
+      "evidenceId": "A8-CSV-ROW",
+      "type": "measurement",
+      "reference": "A_Anchuras_parte_05.zip#05_Datos_Objetos/HATCH-A-WIDTHS-EXACT-map.csv#L9",
+      "extractable": true,
+      "sourceReliability": "documented",
+      "notes": "Fila exacta A8: A8,barra_recta,8.0,16.0,93,13.0"
+    },
+    {
+      "evidenceId": "A8-XLSX-ROW",
+      "type": "table",
+      "reference": "analisis-ABCD.xlsx#Fila_A!A9:P9",
+      "extractable": true,
+      "sourceReliability": "measured",
+      "notes": "Fila 9 de la hoja Fila_A (objeto A8), leída estructuradamente."
+    },
+    {
+      "evidenceId": "A8-XLSX-CONFIG",
+      "type": "table",
+      "reference": "analisis-ABCD.xlsx#Config_comun!A2:C10",
+      "extractable": true,
+      "sourceReliability": "measured",
+      "notes": "Configuración común observada en A1-A8, incluido el ángulo 0° visible en A7-A8."
+    },
+    {
+      "evidenceId": "A8-XLSX-METHOD",
+      "type": "table",
+      "reference": "analisis-ABCD.xlsx#Notas_metodo!A11:C11",
+      "extractable": true,
+      "sourceReliability": "documented",
+      "notes": "Regla de medición del límite de satín como rango observado."
+    },
+    {
+      "evidenceId": "A8-XLSX-COMPARISON",
+      "type": "table",
+      "reference": "analisis-ABCD.xlsx#Comparativa_A_B_C_D!A2:H2",
+      "extractable": true,
+      "sourceReliability": "documented",
+      "notes": "Lectura de familia Fila A: rango satín 0,55–8,04 mm; underlay simple hasta 3,13; doble desde 4,06; automático hasta 4,06; manual desde 6,09."
+    },
+    {
+      "evidenceId": "A8-SOURCE-IMAGE",
+      "type": "image",
+      "reference": "A_Anchuras_parte_01.zip#00_Fuentes/Imagenes/HATCH-A-WIDTHS-EXACT-100x80mm-300dpi.png",
+      "extractable": false,
+      "sourceReliability": "documented",
+      "notes": "Imagen fuente de la lámina. Sin parser verificado."
+    },
+    {
+      "evidenceId": "A8-EMB",
+      "type": "emb",
+      "reference": "A_Anchuras_parte_01.zip#01_EMB/A_Anchuras/HATCH-A-WIDTHS-R01-100MM.EMB",
+      "extractable": false,
+      "sourceReliability": "observed",
+      "notes": "Evidencia global no extraíble."
+    },
+    {
+      "evidenceId": "A8-RULES-JSON",
+      "type": "report",
+      "reference": "A_Anchuras_parte_05.zip#06_Reglas/HATCH-A-WIDTHS-reglas.json",
+      "extractable": true,
+      "sourceReliability": "documented",
+      "notes": "Reglas candidatas SATIN-RANGE-OBSERVED-001 y SPACING-GEOMETRY-001."
+    },
+    {
+      "evidenceId": "A8-CONCLUSIONS",
+      "type": "report",
+      "reference": "A_Anchuras_parte_05.zip#07_Informes/HATCH-A-WIDTHS-conclusiones.txt",
+      "extractable": true,
+      "sourceReliability": "documented",
+      "notes": "Interpretación documentada: no debe fijarse 8 mm como límite rígido."
+    }
+  ],
+  "confidence": "probable",
+  "viability": "high",
+  "holdout": false,
+  "syntheticExample": false
+}

@@ -1,0 +1,96 @@
+{
+  "reportId": "P0.2B-A_WIDTHS-CONVERSION-V1",
+  "generatedAt": "2026-07-28",
+  "hatchLabSchemaVersion": "1.1.0",
+  "phase": "A_WIDTHS",
+  "sourceFilesRead": [
+    "A_Anchuras_SUMMARY.json",
+    "A_Anchuras_MANIFEST.csv",
+    "A_Anchuras_parte_01.zip",
+    "A_Anchuras_parte_02.zip",
+    "A_Anchuras_parte_03.zip",
+    "A_Anchuras_parte_04.zip",
+    "A_Anchuras_parte_05.zip",
+    "05_Datos_Objetos/HATCH-A-WIDTHS-EXACT-map.csv",
+    "05_Datos_Objetos/HATCH-A-WIDTHS-R01-analisis-ABCD.xlsx",
+    "06_Reglas/HATCH-A-WIDTHS-reglas.json",
+    "07_Informes/HATCH-A-WIDTHS-conclusiones.txt",
+    "02_Capturas/A_Anchuras/CAPTURAS_INCLUIDAS.txt",
+    "MANIFEST_SHA256.txt",
+    "00_Fuentes/Imagenes/HATCH-A-WIDTHS-EXACT-100x80mm-300dpi.png (referenciada, no extraída)",
+    "00_Fuentes/Imagenes/HATCH-A-WIDTHS-GUIDE-100x80mm-300dpi.png (referenciada, no extraída)",
+    "00_Fuentes/Vectores/HATCH-A-WIDTHS-EXACT-100x80mm.svg (referenciado, extractable false)",
+    "01_EMB/A_Anchuras/HATCH-A-WIDTHS-R01-100MM.EMB (evidencia no extraíble)"
+  ],
+  "excelSheetsUsed": ["Fila_A", "Reglas_candidatas", "Config_comun", "Notas_metodo", "Comparativa_A_B_C_D"],
+  "excelSheetsPresentNotUsed": ["Fila_B", "Fila_C", "Fila_D"],
+  "csvRowsUsed": [
+    { "caseId": "HATCH-A-WIDTHS-A1", "line": 2, "raw": "A1,barra_recta,0.5,16.0,7,13.0" },
+    { "caseId": "HATCH-A-WIDTHS-A5", "line": 6, "raw": "A5,barra_recta,3.0,16.0,55,13.0" },
+    { "caseId": "HATCH-A-WIDTHS-A6", "line": 7, "raw": "A6,barra_recta,4.0,16.0,67,13.0" },
+    { "caseId": "HATCH-A-WIDTHS-A7", "line": 8, "raw": "A7,barra_recta,6.0,16.0,80,13.0" },
+    { "caseId": "HATCH-A-WIDTHS-A8", "line": 9, "raw": "A8,barra_recta,8.0,16.0,93,13.0" }
+  ],
+  "casesCreated": [
+    "HATCH-A-WIDTHS-A1", "HATCH-A-WIDTHS-A5", "HATCH-A-WIDTHS-A6", "HATCH-A-WIDTHS-A7", "HATCH-A-WIDTHS-A8"
+  ],
+  "quantitativeValues": [
+    { "caseId": "HATCH-A-WIDTHS-A1", "xlsxRef": "Fila_A!A2:S2", "nominalWidthMm": 0.5, "observedWidthMm": 0.55, "derivedDifferenceMm": 0.05, "heightMm": 16, "topStitch": "Satín", "underlay": "Corrido centrado (2 mm)", "spacingMode": "Automático", "spacingMm": null, "pullCompensationMm": 0.4, "autoSplit": true, "stitchAngleDeg": null },
+    { "caseId": "HATCH-A-WIDTHS-A5", "xlsxRef": "Fila_A!A6:P6", "nominalWidthMm": 3, "observedWidthMm": 3.13, "derivedDifferenceMm": 0.13, "heightMm": 16, "topStitch": "Satín", "underlay": "Corrido centrado (2 mm)", "spacingMode": "Automático", "spacingMm": null, "pullCompensationMm": 0.4, "autoSplit": true, "stitchAngleDeg": null },
+    { "caseId": "HATCH-A-WIDTHS-A6", "xlsxRef": "Fila_A!A7:P7", "nominalWidthMm": 4, "observedWidthMm": 4.06, "derivedDifferenceMm": 0.06, "heightMm": 16, "topStitch": "Satín", "underlay": "Corrido de borde (2 mm) + Zigzag (3,6 mm / esp. 2 mm)", "spacingMode": "Automático", "spacingMm": null, "pullCompensationMm": 0.4, "autoSplit": true, "stitchAngleDeg": null },
+    { "caseId": "HATCH-A-WIDTHS-A7", "xlsxRef": "Fila_A!A8:P8", "nominalWidthMm": 6, "observedWidthMm": 6.09, "derivedDifferenceMm": 0.09, "heightMm": 16, "topStitch": "Satín", "underlay": "Corrido de borde (2 mm) + Zigzag (3,6 mm / esp. 2 mm)", "spacingMode": "Manual", "spacingMm": 0.36, "pullCompensationMm": 0.4, "autoSplit": true, "stitchAngleDeg": 0 },
+    { "caseId": "HATCH-A-WIDTHS-A8", "xlsxRef": "Fila_A!A9:P9", "nominalWidthMm": 8, "observedWidthMm": 8.04, "derivedDifferenceMm": 0.04, "heightMm": 16, "topStitch": "Satín", "underlay": "Corrido de borde (2 mm) + Zigzag (3,6 mm / esp. 2 mm)", "spacingMode": "Manual", "spacingMm": 0.36, "pullCompensationMm": 0.4, "autoSplit": true, "stitchAngleDeg": 0 }
+  ],
+  "derivedValuesNote": "derivedDifferenceMm se calcula en este informe como observado − nominal. NO se almacena en los casos: la columna \"Diferencia (mm)\" de Fila_A está vacía y observation.measured.differenceMm queda null.",
+  "missingValues": [
+    { "field": "differenceMm", "cases": ["A1", "A5", "A6", "A7", "A8"], "reason": "Columna D de Fila_A vacía en el XLSX", "sourceReviewed": "analisis-ABCD.xlsx#Fila_A!D2:D9" },
+    { "field": "spacingMm", "cases": ["A1", "A5", "A6"], "reason": "Hatch no muestra el valor cuando el modo es automático", "sourceReviewed": "analisis-ABCD.xlsx#Fila_A!H2:H7 y Notas_metodo!A5:C5" },
+    { "field": "stitchAngleDeg", "cases": ["A1", "A5", "A6"], "reason": "El ángulo 0° solo es visible explícitamente en A7-A8", "sourceReviewed": "analisis-ABCD.xlsx#Config_comun!A10:C10" },
+    { "field": "underlay2LengthMm / underlay2SpacingMm", "cases": ["A1", "A5"], "reason": "Refuerzo 2 desactivado", "sourceReviewed": "analisis-ABCD.xlsx#Fila_A!L2:N6" }
+  ],
+  "documentedUnderlayChange": {
+    "lastCenterRun": { "caseId": "HATCH-A-WIDTHS-A5", "observedWidthMm": 3.13, "underlay": "Corrido centrado" },
+    "firstEdgeRunPlusZigzag": { "caseId": "HATCH-A-WIDTHS-A6", "observedWidthMm": 4.06, "underlay": "Corrido de borde + Zigzag" },
+    "thresholdIntervalMm": [3.13, 4.06],
+    "source": "analisis-ABCD.xlsx#Reglas_candidatas!A3:F3 y Comparativa_A_B_C_D!A2:H2"
+  },
+  "documentedSpacingChange": {
+    "lastAutomatic": { "caseId": "HATCH-A-WIDTHS-A6", "observedWidthMm": 4.06 },
+    "firstManual": { "caseId": "HATCH-A-WIDTHS-A7", "observedWidthMm": 6.09, "spacingMm": 0.36 },
+    "thresholdIntervalMm": [4.06, 6.09],
+    "source": "analisis-ABCD.xlsx#Reglas_candidatas!A4:F4 y Comparativa_A_B_C_D!A2:H2"
+  },
+  "documentedPullCompensationMm": { "value": 0.4, "scope": "Constante en A1-A8", "source": "analisis-ABCD.xlsx#Config_comun!A8:C8" },
+  "documentedAutoSplit": { "value": "Activada", "scope": "Constante en A1-A8", "source": "analisis-ABCD.xlsx#Config_comun!A9:C9" },
+  "candidateRulesRelated": [
+    { "ruleId": "SATIN-RANGE-OBSERVED-001", "status": "candidata", "confidence": 0.95, "cases": ["A1", "A5", "A6", "A7", "A8"] },
+    { "ruleId": "UNDERLAY-GEOMETRY-001", "status": "candidata", "confidence": 0.96, "cases": ["A5", "A6"] },
+    { "ruleId": "SPACING-GEOMETRY-001", "status": "candidata", "confidence": 0.95, "cases": ["A7", "A8"] },
+    { "ruleId": "LOCAL-WIDTH-PROFILE-001", "status": "candidata", "confidence": 0.98, "cases": ["A7"] },
+    { "ruleId": "PULL-COMP-COTTON-040-001", "status": "candidata", "confidence": 0.9, "cases": ["A1", "A5", "A6", "A7", "A8"] }
+  ],
+  "unmappedEvidence": {
+    "screenshots": 78,
+    "relationStatus": "uncertain",
+    "reason": "No existe índice explícito captura->objeto; CAPTURAS_INCLUIDAS.txt solo lista nombres.",
+    "otherUnmapped": ["02_Capturas/A_Anchuras/CAPTURAS_INCLUIDAS.txt", "DONDE_PEGAR_CADA_ARCHIVO.txt"]
+  },
+  "physicalValidationAvailable": false,
+  "expectedResultPresent": false,
+  "expectedResultReason": "El benchmark actual no dispone de métricas verificadas para técnica por objeto, underlay, espaciado, división automática, compensación ni anchura observada. No se usan regionCount, colorCount ni stitchCount como sustitutos.",
+  "benchmarkLimitations": [
+    "Sin métricas de técnica/underlay/espaciado/compensación/anchura por objeto: ningún criterio puede evaluarse todavía.",
+    "El EMB no es extraíble (sin parser verificado).",
+    "Las capturas no pueden usarse para generar expectedResult.",
+    "Los umbrales solo están documentados como intervalos entre objetos consecutivos.",
+    "Sin validación física: las reglas permanecen candidatas."
+  ],
+  "nextTechnicalStep": "Crear un evaluador A_WIDTHS capaz de extraer y comparar técnica, underlay, espaciado, compensación y anchura por objeto desde un resultado ya generado por el motor base.",
+  "engineImpact": {
+    "pipelineExecuted": false,
+    "rulesAppliedToEngine": false,
+    "productiveFilesModified": false,
+    "featureFlagsAdded": false,
+    "uiControlsAdded": false
+  }
+}

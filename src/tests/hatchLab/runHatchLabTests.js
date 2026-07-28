@@ -8,10 +8,11 @@ import { runSeedValidationTests } from './seedValidation.test.js';
 import { runMetricExtractionTests } from './metricExtraction.test.js';
 import { runMetricComparisonTests } from './metricComparison.test.js';
 import { runMutationSafetyTests } from './mutationSafety.test.js';
+import { runAWidthsSeedIntegrityTests } from './aWidthsSeedIntegrity.test.js';
 
 export function runHatchLabTests() {
   const suites = [];
-  for (const fn of [runSeedValidationTests, runMetricExtractionTests, runMetricComparisonTests, runMutationSafetyTests]) {
+  for (const fn of [runSeedValidationTests, runMetricExtractionTests, runMetricComparisonTests, runMutationSafetyTests, runAWidthsSeedIntegrityTests]) {
     try {
       suites.push(fn());
     } catch (e) {

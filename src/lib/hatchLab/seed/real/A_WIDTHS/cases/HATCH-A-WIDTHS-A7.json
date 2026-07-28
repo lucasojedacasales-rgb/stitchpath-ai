@@ -1,0 +1,216 @@
+{
+  "seedVersion": "1.1.0",
+  "caseId": "HATCH-A-WIDTHS-A7",
+  "phase": "A_WIDTHS",
+  "title": "Barra recta 6,0 mm nominal (A7) — primer caso observado con espaciado manual 0,36 mm",
+  "source": {
+    "tool": "Hatch",
+    "labTestId": "HATCH-A-WIDTHS-R01",
+    "embFile": "HATCH-A-WIDTHS-R01-100MM.EMB",
+    "sourceImage": "HATCH-A-WIDTHS-EXACT-100x80mm-300dpi.png",
+    "fabricProfile": "Pure Cotton",
+    "capturedAt": "2026-07-22",
+    "packagedAt": "2026-07-28T14:15:58+02:00",
+    "reliability": "observed",
+    "physicalValidation": false
+  },
+  "input": {
+    "testId": "A7",
+    "family": "Fila A",
+    "geometry": "barra_recta",
+    "sheetSizeMm": { "width": 100, "height": 80 },
+    "unit": "mm",
+    "centerXMm": 80,
+    "centerYMm": 13.0,
+    "sourceOfInput": "05_Datos_Objetos/HATCH-A-WIDTHS-EXACT-map.csv#L8"
+  },
+  "dimensionsMm": { "width": 100, "height": 80 },
+  "testedSizeMm": { "width": 6.0, "height": 16.0 },
+  "fabric": "Pure Cotton",
+  "configuration": {
+    "documented": {
+      "autoSplit": true,
+      "spacingMode": "Manual",
+      "spacingMm": 0.36,
+      "pullCompensationMm": 0.4,
+      "underlay1": "Corrido de borde",
+      "underlay1LengthMm": 2,
+      "underlay2": "Zigzag",
+      "underlay2LengthMm": 3.6,
+      "underlay2SpacingMm": 2,
+      "stitchAngleDeg": 0
+    },
+    "common": {
+      "mainConnector": "Salto 7,0 mm",
+      "runConnector": "3,0 mm (visible, no seleccionado)",
+      "tieOnCondition": "Si conector anterior ≥ 2,0 mm; longitud 1,0 mm; número 2",
+      "tieOffCondition": "Si conector siguiente ≥ 2,0 mm; longitud 1,0 mm; número 2",
+      "autoTrimCondition": "Si conector siguiente ≥ 2,0 mm",
+      "maxStitchMm": 12.1,
+      "jumpLengthMm": 7.0,
+      "pullCompensationMm": 0.4,
+      "autoSplit": "Activada",
+      "stitchAngleDeg": 0,
+      "source": "analisis-ABCD.xlsx#Config_comun!A2:C10"
+    },
+    "sourceOfConfiguration": "analisis-ABCD.xlsx#Fila_A!A8:P8"
+  },
+  "observation": {
+    "measured": {
+      "nominalWidthMm": 6,
+      "observedWidthMm": 6.09,
+      "differenceMm": null,
+      "nominalHeightMm": 16.0,
+      "observedHeightMm": 16,
+      "topStitch": "Satín",
+      "spacingMode": "Manual",
+      "spacingMm": 0.36,
+      "underlayType": "Corrido de borde + Zigzag",
+      "pullCompensationMm": 0.4,
+      "autoSplit": true,
+      "unit": "mm",
+      "source": "analisis-ABCD.xlsx#Fila_A!A8:P8"
+    },
+    "notes": "Primer caso observado con espaciado manual de 0,36 mm.",
+    "methodNotes": "Espaciado: se registra automático/manual y el valor manual cuando es visible; el valor automático no se asume si Hatch no lo muestra (analisis-ABCD.xlsx#Notas_metodo!A5:C5). El ángulo de puntada 0° es visible explícitamente en A7-A8 (Config_comun!A10:C10).",
+    "warnings": [
+      "La columna \"Diferencia (mm)\" está vacía en la hoja Fila_A: differenceMm queda null y no se infiere.",
+      "El umbral de cambio de espaciado queda como intervalo 4,06–6,09 mm; no se documenta un valor exacto.",
+      "Sin validación física de esta lámina."
+    ]
+  },
+  "expectedResult": null,
+  "candidateRules": [
+    {
+      "ruleId": "SATIN-RANGE-OBSERVED-001",
+      "status": "candidata",
+      "title": "No usar 8 mm como límite rígido de satín",
+      "conditions": "Objetos columna/cápsula de unos 13–16 mm de alto sobre Pure Cotton.",
+      "expression": "Mantener satín como candidato al menos hasta 9,18 mm y validar longitud máxima, división y geometría antes de cambiar a tatami.",
+      "parameters": { "maximumObservedSatinWidthMm": 9.18 },
+      "evidence": ["A1-A8", "B1-B6", "C1-C6", "D1-D6"],
+      "confidence": 0.95,
+      "physicalValidation": false,
+      "source": "06_Reglas/HATCH-A-WIDTHS-reglas.json"
+    },
+    {
+      "ruleId": "LOCAL-WIDTH-PROFILE-001",
+      "status": "candidata",
+      "title": "Decidir por perfil de anchura local",
+      "conditions": "Formas con anchura variable, curvas o extremos afilados/redondeados.",
+      "expression": "Usar anchura local, anchura media, porcentaje de longitud cerca del máximo, curvatura, relación longitud/anchura y forma de extremos; no usar solo la caja delimitadora.",
+      "parameters": {},
+      "evidence": ["A7 vs C5/C6", "A vs B", "A vs D"],
+      "confidence": 0.98,
+      "physicalValidation": false,
+      "source": "06_Reglas/HATCH-A-WIDTHS-reglas.json"
+    },
+    {
+      "ruleId": "SPACING-GEOMETRY-001",
+      "status": "candidata",
+      "title": "No fijar espaciado manual solo por anchura máxima",
+      "conditions": "Satín con división automática.",
+      "expression": "Aplicar 0,36 mm manual cuando la anchura alta se mantenga durante suficiente longitud; conservar automático en formas afiladas con sección variable.",
+      "parameters": { "manualSpacingMm": 0.36, "firstManualObservedMm": 6.09, "lastAutomaticObservedMm": 4.06 },
+      "evidence": ["A7/A8", "B5/B6", "C5/C6", "D5/D6"],
+      "confidence": 0.95,
+      "physicalValidation": false,
+      "source": "06_Reglas/HATCH-A-WIDTHS-reglas.json"
+    },
+    {
+      "ruleId": "PULL-COMP-COTTON-040-001",
+      "status": "candidata",
+      "title": "Compensación base observada en algodón",
+      "conditions": "Pure Cotton, familias A-D de esta lámina.",
+      "expression": "Usar 0,40 mm como valor inicial de referencia, nunca como constante universal.",
+      "parameters": { "pullCompensationMm": 0.4 },
+      "evidence": ["A1-D6"],
+      "confidence": 0.9,
+      "physicalValidation": false,
+      "source": "06_Reglas/HATCH-A-WIDTHS-reglas.json"
+    }
+  ],
+  "ruleScope": "Barra recta vertical de 16 mm de alto, 6,0 mm nominal, Pure Cotton, lámina 100x80 mm, división automática activada.",
+  "exceptions": [
+    "Las reglas siguen siendo candidatas y no deben afectar al motor productivo.",
+    "El umbral de espaciado queda expresado como intervalo 4,06–6,09 mm."
+  ],
+  "evidence": [
+    {
+      "evidenceId": "A7-CSV-ROW",
+      "type": "measurement",
+      "reference": "A_Anchuras_parte_05.zip#05_Datos_Objetos/HATCH-A-WIDTHS-EXACT-map.csv#L8",
+      "extractable": true,
+      "sourceReliability": "documented",
+      "notes": "Fila exacta A7: A7,barra_recta,6.0,16.0,80,13.0"
+    },
+    {
+      "evidenceId": "A7-XLSX-ROW",
+      "type": "table",
+      "reference": "analisis-ABCD.xlsx#Fila_A!A8:P8",
+      "extractable": true,
+      "sourceReliability": "measured",
+      "notes": "Fila 8 de la hoja Fila_A (objeto A7), leída estructuradamente."
+    },
+    {
+      "evidenceId": "A7-XLSX-CONFIG",
+      "type": "table",
+      "reference": "analisis-ABCD.xlsx#Config_comun!A2:C10",
+      "extractable": true,
+      "sourceReliability": "measured",
+      "notes": "Configuración común observada en A1-A8, incluido el ángulo 0° visible en A7-A8."
+    },
+    {
+      "evidenceId": "A7-XLSX-METHOD",
+      "type": "table",
+      "reference": "analisis-ABCD.xlsx#Notas_metodo!A5:C5",
+      "extractable": true,
+      "sourceReliability": "documented",
+      "notes": "Regla de medición del espaciado."
+    },
+    {
+      "evidenceId": "A7-XLSX-RULES-SHEET",
+      "type": "table",
+      "reference": "analisis-ABCD.xlsx#Reglas_candidatas!A4:F4",
+      "extractable": true,
+      "sourceReliability": "documented",
+      "notes": "Fila 4: cambio de modo de espaciado entre A6 (4,06 mm automático) y A7 (6,09 mm manual 0,36 mm)."
+    },
+    {
+      "evidenceId": "A7-SOURCE-IMAGE",
+      "type": "image",
+      "reference": "A_Anchuras_parte_01.zip#00_Fuentes/Imagenes/HATCH-A-WIDTHS-EXACT-100x80mm-300dpi.png",
+      "extractable": false,
+      "sourceReliability": "documented",
+      "notes": "Imagen fuente de la lámina. Sin parser verificado."
+    },
+    {
+      "evidenceId": "A7-EMB",
+      "type": "emb",
+      "reference": "A_Anchuras_parte_01.zip#01_EMB/A_Anchuras/HATCH-A-WIDTHS-R01-100MM.EMB",
+      "extractable": false,
+      "sourceReliability": "observed",
+      "notes": "Evidencia global no extraíble."
+    },
+    {
+      "evidenceId": "A7-RULES-JSON",
+      "type": "report",
+      "reference": "A_Anchuras_parte_05.zip#06_Reglas/HATCH-A-WIDTHS-reglas.json",
+      "extractable": true,
+      "sourceReliability": "documented",
+      "notes": "Reglas candidatas SPACING-GEOMETRY-001 y LOCAL-WIDTH-PROFILE-001."
+    },
+    {
+      "evidenceId": "A7-CONCLUSIONS",
+      "type": "report",
+      "reference": "A_Anchuras_parte_05.zip#07_Informes/HATCH-A-WIDTHS-conclusiones.txt",
+      "extractable": true,
+      "sourceReliability": "documented",
+      "notes": "Interpretación documentada: la anchura máxima no basta para decidir espaciado."
+    }
+  ],
+  "confidence": "probable",
+  "viability": "high",
+  "holdout": false,
+  "syntheticExample": false
+}

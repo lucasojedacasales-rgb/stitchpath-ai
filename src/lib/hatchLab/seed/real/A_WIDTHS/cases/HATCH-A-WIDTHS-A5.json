@@ -1,0 +1,204 @@
+{
+  "seedVersion": "1.1.0",
+  "caseId": "HATCH-A-WIDTHS-A5",
+  "phase": "A_WIDTHS",
+  "title": "Barra recta 3,0 mm nominal (A5) — último caso observado con underlay corrido centrado",
+  "source": {
+    "tool": "Hatch",
+    "labTestId": "HATCH-A-WIDTHS-R01",
+    "embFile": "HATCH-A-WIDTHS-R01-100MM.EMB",
+    "sourceImage": "HATCH-A-WIDTHS-EXACT-100x80mm-300dpi.png",
+    "fabricProfile": "Pure Cotton",
+    "capturedAt": "2026-07-22",
+    "packagedAt": "2026-07-28T14:15:58+02:00",
+    "reliability": "observed",
+    "physicalValidation": false
+  },
+  "input": {
+    "testId": "A5",
+    "family": "Fila A",
+    "geometry": "barra_recta",
+    "sheetSizeMm": { "width": 100, "height": 80 },
+    "unit": "mm",
+    "centerXMm": 55,
+    "centerYMm": 13.0,
+    "sourceOfInput": "05_Datos_Objetos/HATCH-A-WIDTHS-EXACT-map.csv#L6"
+  },
+  "dimensionsMm": { "width": 100, "height": 80 },
+  "testedSizeMm": { "width": 3.0, "height": 16.0 },
+  "fabric": "Pure Cotton",
+  "configuration": {
+    "documented": {
+      "autoSplit": true,
+      "spacingMode": "Automático",
+      "spacingMm": null,
+      "pullCompensationMm": 0.4,
+      "underlay1": "Corrido centrado",
+      "underlay1LengthMm": 2,
+      "underlay2": "Desactivado",
+      "underlay2LengthMm": null,
+      "underlay2SpacingMm": null,
+      "stitchAngleDeg": null
+    },
+    "common": {
+      "mainConnector": "Salto 7,0 mm",
+      "runConnector": "3,0 mm (visible, no seleccionado)",
+      "tieOnCondition": "Si conector anterior ≥ 2,0 mm; longitud 1,0 mm; número 2",
+      "tieOffCondition": "Si conector siguiente ≥ 2,0 mm; longitud 1,0 mm; número 2",
+      "autoTrimCondition": "Si conector siguiente ≥ 2,0 mm",
+      "maxStitchMm": 12.1,
+      "jumpLengthMm": 7.0,
+      "pullCompensationMm": 0.4,
+      "autoSplit": "Activada",
+      "source": "analisis-ABCD.xlsx#Config_comun!A2:C10"
+    },
+    "sourceOfConfiguration": "analisis-ABCD.xlsx#Fila_A!A6:P6"
+  },
+  "observation": {
+    "measured": {
+      "nominalWidthMm": 3,
+      "observedWidthMm": 3.13,
+      "differenceMm": null,
+      "nominalHeightMm": 16.0,
+      "observedHeightMm": 16,
+      "topStitch": "Satín",
+      "spacingMode": "Automático",
+      "spacingMm": null,
+      "underlayType": "Corrido centrado",
+      "pullCompensationMm": 0.4,
+      "autoSplit": true,
+      "unit": "mm",
+      "source": "analisis-ABCD.xlsx#Fila_A!A6:P6"
+    },
+    "notes": "Último caso observado con un solo refuerzo centrado.",
+    "methodNotes": "Underlay: se registra el último objeto con corrido centrado y el primero con borde + zigzag, para expresar el umbral como intervalo (analisis-ABCD.xlsx#Notas_metodo!A4:C4).",
+    "warnings": [
+      "La columna \"Diferencia (mm)\" está vacía en la hoja Fila_A: differenceMm queda null y no se infiere.",
+      "El valor de espaciado automático no se muestra en Hatch: spacingMm queda null.",
+      "stitchAngleDeg queda null: el ángulo solo es visible explícitamente en A7-A8.",
+      "Sin validación física de esta lámina."
+    ]
+  },
+  "expectedResult": null,
+  "candidateRules": [
+    {
+      "ruleId": "SATIN-RANGE-OBSERVED-001",
+      "status": "candidata",
+      "title": "No usar 8 mm como límite rígido de satín",
+      "conditions": "Objetos columna/cápsula de unos 13–16 mm de alto sobre Pure Cotton.",
+      "expression": "Mantener satín como candidato al menos hasta 9,18 mm y validar longitud máxima, división y geometría antes de cambiar a tatami.",
+      "parameters": { "maximumObservedSatinWidthMm": 9.18 },
+      "evidence": ["A1-A8", "B1-B6", "C1-C6", "D1-D6"],
+      "confidence": 0.95,
+      "physicalValidation": false,
+      "source": "06_Reglas/HATCH-A-WIDTHS-reglas.json"
+    },
+    {
+      "ruleId": "UNDERLAY-GEOMETRY-001",
+      "status": "candidata",
+      "title": "Cambiar underlay según geometría y anchura",
+      "conditions": "Objetos satinados sobre Pure Cotton.",
+      "expression": "Corrido centrado en formas estrechas; corrido de borde + zigzag cuando la anchura sostenida y geometría superen el umbral propio de la familia.",
+      "parameters": { "lastCenterRunObservedMm": 3.13, "firstEdgeRunPlusZigzagObservedMm": 4.06 },
+      "evidence": ["A5/A6", "B3/B4", "C3/C4", "D3/D4"],
+      "confidence": 0.96,
+      "physicalValidation": false,
+      "source": "06_Reglas/HATCH-A-WIDTHS-reglas.json"
+    },
+    {
+      "ruleId": "PULL-COMP-COTTON-040-001",
+      "status": "candidata",
+      "title": "Compensación base observada en algodón",
+      "conditions": "Pure Cotton, familias A-D de esta lámina.",
+      "expression": "Usar 0,40 mm como valor inicial de referencia, nunca como constante universal.",
+      "parameters": { "pullCompensationMm": 0.4 },
+      "evidence": ["A1-D6"],
+      "confidence": 0.9,
+      "physicalValidation": false,
+      "source": "06_Reglas/HATCH-A-WIDTHS-reglas.json"
+    }
+  ],
+  "ruleScope": "Barra recta vertical de 16 mm de alto, 3,0 mm nominal, Pure Cotton, lámina 100x80 mm, división automática activada.",
+  "exceptions": [
+    "Las reglas siguen siendo candidatas y no deben afectar al motor productivo.",
+    "El umbral de underlay queda expresado como intervalo 3,13–4,06 mm y no como valor exacto."
+  ],
+  "evidence": [
+    {
+      "evidenceId": "A5-CSV-ROW",
+      "type": "measurement",
+      "reference": "A_Anchuras_parte_05.zip#05_Datos_Objetos/HATCH-A-WIDTHS-EXACT-map.csv#L6",
+      "extractable": true,
+      "sourceReliability": "documented",
+      "notes": "Fila exacta A5: A5,barra_recta,3.0,16.0,55,13.0"
+    },
+    {
+      "evidenceId": "A5-XLSX-ROW",
+      "type": "table",
+      "reference": "analisis-ABCD.xlsx#Fila_A!A6:P6",
+      "extractable": true,
+      "sourceReliability": "measured",
+      "notes": "Fila 6 de la hoja Fila_A (objeto A5), leída estructuradamente."
+    },
+    {
+      "evidenceId": "A5-XLSX-CONFIG",
+      "type": "table",
+      "reference": "analisis-ABCD.xlsx#Config_comun!A2:C10",
+      "extractable": true,
+      "sourceReliability": "measured",
+      "notes": "Configuración común observada en A1-A8."
+    },
+    {
+      "evidenceId": "A5-XLSX-METHOD",
+      "type": "table",
+      "reference": "analisis-ABCD.xlsx#Notas_metodo!A4:C4",
+      "extractable": true,
+      "sourceReliability": "documented",
+      "notes": "Regla de medición del umbral de underlay."
+    },
+    {
+      "evidenceId": "A5-XLSX-RULES-SHEET",
+      "type": "table",
+      "reference": "analisis-ABCD.xlsx#Reglas_candidatas!A3:F3",
+      "extractable": true,
+      "sourceReliability": "documented",
+      "notes": "Fila 3: cambio de underlay entre A5 (3,13 mm) y A6 (4,06 mm)."
+    },
+    {
+      "evidenceId": "A5-SOURCE-IMAGE",
+      "type": "image",
+      "reference": "A_Anchuras_parte_01.zip#00_Fuentes/Imagenes/HATCH-A-WIDTHS-EXACT-100x80mm-300dpi.png",
+      "extractable": false,
+      "sourceReliability": "documented",
+      "notes": "Imagen fuente de la lámina. Sin parser verificado."
+    },
+    {
+      "evidenceId": "A5-EMB",
+      "type": "emb",
+      "reference": "A_Anchuras_parte_01.zip#01_EMB/A_Anchuras/HATCH-A-WIDTHS-R01-100MM.EMB",
+      "extractable": false,
+      "sourceReliability": "observed",
+      "notes": "Evidencia global no extraíble."
+    },
+    {
+      "evidenceId": "A5-RULES-JSON",
+      "type": "report",
+      "reference": "A_Anchuras_parte_05.zip#06_Reglas/HATCH-A-WIDTHS-reglas.json",
+      "extractable": true,
+      "sourceReliability": "documented",
+      "notes": "Reglas candidatas UNDERLAY-GEOMETRY-001 y SATIN-RANGE-OBSERVED-001."
+    },
+    {
+      "evidenceId": "A5-CONCLUSIONS",
+      "type": "report",
+      "reference": "A_Anchuras_parte_05.zip#07_Informes/HATCH-A-WIDTHS-conclusiones.txt",
+      "extractable": true,
+      "sourceReliability": "documented",
+      "notes": "Interpretación documentada sobre cambios de underlay y espaciado."
+    }
+  ],
+  "confidence": "probable",
+  "viability": "high",
+  "holdout": false,
+  "syntheticExample": false
+}

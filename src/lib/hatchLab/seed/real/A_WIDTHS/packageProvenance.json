@@ -1,0 +1,36 @@
+{
+  "packageVersion": "1.0.0",
+  "phase": "A_Anchuras",
+  "createdAt": "2026-07-28T14:15:58.6972460+02:00",
+  "sourceFolder": "C:\\Users\\lucas\\Documents\\PAQUETE_MAESTRO_STITCHPATH_HATCH_A_G\\01_ANCHURAS",
+  "sourceFileCount": 89,
+  "packagedFileCount": 89,
+  "archiveCount": 5,
+  "excludedNestedArchiveCount": 0,
+  "oversizedFileCount": 0,
+  "archives": [
+    { "name": "A_Anchuras_parte_01.zip", "sizeBytes": 17478735, "sha256": "70FA19522EEC70D058151E930FD5443904207252BA16680299B31E1FA0AAEF46", "filesInArchive": 25 },
+    { "name": "A_Anchuras_parte_02.zip", "sizeBytes": 17906575, "sha256": "DCB127C1FF7E41F8D9A7208A641353465AA3B1E2036555089A4C439B0B88711F", "filesInArchive": 19 },
+    { "name": "A_Anchuras_parte_03.zip", "sizeBytes": 18364275, "sha256": "A44B9543735EC5B119EF5DD9EFFB49883F781F813FA9AD994D5E48BB2A2C482A", "filesInArchive": 18 },
+    { "name": "A_Anchuras_parte_04.zip", "sizeBytes": 18364236, "sha256": "FEC9D54E378D73CCABD4020D29C9532A1CB8108BE5110AC35EBF16A416BE0C17", "filesInArchive": 18 },
+    { "name": "A_Anchuras_parte_05.zip", "sizeBytes": 2015681, "sha256": "822DC76EDDA8F4803A332BA457E0972E0FF3A5042C5E902FE80B38E5CBABF927", "filesInArchive": 9 }
+  ],
+  "totalPaths": 89,
+  "hashesVerified": 89,
+  "archiveHashesVerified": 5,
+  "verification": {
+    "method": "SHA-256 recalculado en sandbox sobre cada ZIP y sobre cada archivo descomprimido",
+    "comparedAgainst": ["A_Anchuras_SUMMARY.json", "A_Anchuras_MANIFEST.csv", "MANIFEST_SHA256.txt"],
+    "hashMismatches": 0,
+    "sizeMismatches": 0,
+    "missingPaths": 0,
+    "extraPaths": 0,
+    "duplicatedPaths": 0,
+    "corruptEntries": 0,
+    "verifiedAt": "2026-07-28"
+  },
+  "packageNote": "Cada ZIP es completo e independiente. Todos juntos representan la fase A_Anchuras.",
+  "conversionDate": "2026-07-28",
+  "hatchLabSchemaVersion": "1.1.0",
+  "physicalValidationAvailable": false
+}

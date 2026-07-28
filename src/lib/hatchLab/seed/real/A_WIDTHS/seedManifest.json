@@ -1,0 +1,62 @@
+{
+  "seedId": "HATCH-A-WIDTHS-R01-SUBSET-V1",
+  "seedVersion": "1.1.0",
+  "phase": "A_WIDTHS",
+  "sourcePackage": {
+    "name": "01_ANCHURAS / A_Anchuras",
+    "packageVersion": "1.0.0",
+    "createdAt": "2026-07-28T14:15:58.6972460+02:00",
+    "archiveCount": 5,
+    "totalPaths": 89
+  },
+  "caseCount": 5,
+  "caseIds": [
+    "HATCH-A-WIDTHS-A1",
+    "HATCH-A-WIDTHS-A5",
+    "HATCH-A-WIDTHS-A6",
+    "HATCH-A-WIDTHS-A7",
+    "HATCH-A-WIDTHS-A8"
+  ],
+  "trainingCaseIds": [
+    "HATCH-A-WIDTHS-A1",
+    "HATCH-A-WIDTHS-A5",
+    "HATCH-A-WIDTHS-A6",
+    "HATCH-A-WIDTHS-A7",
+    "HATCH-A-WIDTHS-A8"
+  ],
+  "holdoutCaseIds": [],
+  "unresolvedEvidenceCount": 78,
+  "unresolvedEvidenceNote": "78 capturas de la fase A_WIDTHS sin índice explícito captura->objeto: relationStatus uncertain, relatedCaseIds vacío.",
+  "physicalValidationAvailable": false,
+  "benchmarkReady": false,
+  "motorIntegrationReady": false,
+  "expectedResultReady": false,
+  "limitations": [
+    "El benchmark actual no dispone de métricas verificadas para técnica por objeto, tipo de underlay, espaciado, división automática, compensación ni anchura observada por objeto.",
+    "expectedResult permanece null en los cinco casos: no se sustituyen esas métricas por regionCount, colorCount o stitchCount.",
+    "El EMB no es extraíble: no existe parser verificado en el repositorio.",
+    "Las capturas no están mapeadas a objetos individuales.",
+    "La columna Diferencia (mm) está vacía en la hoja Fila_A: differenceMm queda null en los cinco casos.",
+    "El valor de espaciado automático no se muestra en Hatch: spacingMm es null en A1, A5 y A6.",
+    "Sin validación física de la lámina: todas las reglas permanecen candidatas.",
+    "El laboratorio sigue desconectado del Editor, del pipeline y de cualquier configuración productiva."
+  ],
+  "generatedAt": "2026-07-28",
+  "sourceHashes": {
+    "A_Anchuras_parte_01.zip": "70FA19522EEC70D058151E930FD5443904207252BA16680299B31E1FA0AAEF46",
+    "A_Anchuras_parte_02.zip": "DCB127C1FF7E41F8D9A7208A641353465AA3B1E2036555089A4C439B0B88711F",
+    "A_Anchuras_parte_03.zip": "A44B9543735EC5B119EF5DD9EFFB49883F781F813FA9AD994D5E48BB2A2C482A",
+    "A_Anchuras_parte_04.zip": "FEC9D54E378D73CCABD4020D29C9532A1CB8108BE5110AC35EBF16A416BE0C17",
+    "A_Anchuras_parte_05.zip": "822DC76EDDA8F4803A332BA457E0972E0FF3A5042C5E902FE80B38E5CBABF927",
+    "05_Datos_Objetos/HATCH-A-WIDTHS-EXACT-map.csv": "08D833E7B63327BEE8D7C9422833D31808834A72BEC8E36A34B34CC640CE9A08",
+    "05_Datos_Objetos/HATCH-A-WIDTHS-R01-analisis-ABCD.xlsx": "4064BDC426072CB31E43FA0B26E231AAE2423EACC6708620630F9BAE784E0986",
+    "06_Reglas/HATCH-A-WIDTHS-reglas.json": "AF0F84318ED59B5979827CA0ED8F188472B511C1408FC25F1A8C7D6D5833D698",
+    "07_Informes/HATCH-A-WIDTHS-conclusiones.txt": "68DBBD44A1EF77E56AD462624BA15FE7C6FCF4F142B27AA774EA033A188F3DC6",
+    "01_EMB/A_Anchuras/HATCH-A-WIDTHS-R01-100MM.EMB": "E06F55F90DF8BAEF40C25275D5AB7FF06D0900D2E200D3066FF120A69377732A",
+    "00_Fuentes/Imagenes/HATCH-A-WIDTHS-EXACT-100x80mm-300dpi.png": "4CB26E42A48E7D9F9D763CC644DA7B2FDB95A2022A65CDE50C05745619C12005",
+    "00_Fuentes/Imagenes/HATCH-A-WIDTHS-GUIDE-100x80mm-300dpi.png": "8CBC9B8DF985F7E532AA42028D0C0D3D8DC5FDB98268F84A75B713DC8D827B68",
+    "00_Fuentes/Vectores/HATCH-A-WIDTHS-EXACT-100x80mm.svg": "548CBE7AB351DFDC481F31643F5482A8391918A54AD842EF68D77447FACADCBE",
+    "02_Capturas/A_Anchuras/CAPTURAS_INCLUIDAS.txt": "4C063DF6A5CFDA4A4051410ED99C344580B7D817EDEB12667A3E847765D3FBF8",
+    "MANIFEST_SHA256.txt": "E3D5FD040624539C600078E3049C1949A4FECFA7B522CC38EF419D7C6D1ECEDF"
+  }
+}
