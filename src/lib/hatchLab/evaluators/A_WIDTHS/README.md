@@ -56,19 +56,38 @@ conclusion }`.
 `generatedAt` defaults to `null` (and only ever comes from `options.generatedAt`),
 so the same input always yields byte-identical output.
 
+## Completeness corrections (P0.3A.2)
+
+* Accepted candidates are never truncated silently; the counts per case are reported.
+* The 20 000-solution cap was replaced by an exact branch-and-bound search that
+  proves optimality.
+* An interrupted or limited search can never conclude `evaluated`.
+* A declared but **empty** region collection is a valid engine result
+  (`no_matches`), not a missing source.
+
 ## Region source policy (`options.regionSource`)
 
 Declarable collections: `regions` → `result.regions`, `optimizedRegions` →
 `result.optimizedRegions`, `optimizedSequence` → `result.optimized.optimizedSequence`,
 `objects` → `result.objects`.
 
-* Exactly one non-empty collection → it is used **and recorded**.
-* Two or more non-empty collections and no `regionSource` → `invalid_input` with
-  `AMBIGUOUS_REGION_SOURCE`, listing every collection and its count.
-* `regionSource` pointing to an absent/empty collection → `invalid_input` with
-  `REGION_SOURCE_UNAVAILABLE`.
+Four distinct situations are separated: **absent**, **present with an incompatible
+type**, **present and empty**, **present and non-empty**.
+
+* `regionSource` declared and the field is an array (empty or not) → resolved and
+  recorded; an empty array yields `regionCount: 0`, `matchCoverage.matched: 0` and
+  `conclusion: 'no_matches'` — never `REGION_SOURCE_UNAVAILABLE`.
+* `regionSource` declared but the field is absent or not an array → `invalid_input`
+  with `REGION_SOURCE_UNAVAILABLE`. That code is used **only** for a missing field
+  or an incompatible type — never for "zero regions".
+* No `regionSource`: exactly one non-empty collection → it is used and recorded;
+  two or more non-empty → `invalid_input` with `AMBIGUOUS_REGION_SOURCE`; no
+  non-empty collection but several declared empty arrays → `invalid_input` with
+  `AMBIGUOUS_REGION_SOURCE`, listing the empty collections; a single declared empty
+  array → resolved with `no_matches`.
 * Regions from different stages are never mixed.
 * Always reported: `selectedRegionSource`, `availableRegionSources`,
+  `declaredRegionSources`, `emptyRegionSources`, `invalidTypeRegionSources`,
   `countsByRegionSource`, `regionSourceReason`.
 
 Which collection P0.3B will use is **not** assumed here.
@@ -87,18 +106,42 @@ a global warning only, and never an attribution as if the identity were stable.
 
 ## Global assignment algorithm
 
-`matchCasesToRegions({ seedCases, measuredCandidates, options })` enumerates
-deterministic one-to-one solutions (cases sorted by `caseId`, candidates by
-`internalCandidateKey`; each case may also stay unmatched) and ranks them by:
+`matchCasesToRegions({ seedCases, measuredCandidates, options })` runs an **exact
+depth-first branch-and-bound** over one-to-one solutions (cases sorted by
+`caseId`, candidates by `internalCandidateKey`, exploration ordered by fewest
+options first; each case may also stay unmatched) and ranks them by:
 
 1. number of valid matches (desc);
 2. total score (desc);
 3. total centre distance (asc);
 4. signature `caseId → internalCandidateKey` (asc) as the deterministic tie-break.
 
-A naive greedy is not used: it could block a better global assignment. Output:
-`assignments`, `unassignedCases`, `unassignedRegions`, `collisionsPrevented`,
-`totalScore`, `assignmentMethod` (`exhaustive_bipartite`), `deterministicTieBreak`,
+**Optimality proof.** Pruning uses two admissible upper bounds — the number of
+remaining assignable cases and the sum of the best remaining candidate scores — so
+a branch is dropped only when it cannot reach the best match count nor come within
+`ambiguityScoreMargin` of the best score. No optimal or equally good solution can
+therefore be discarded, and a naive greedy is never used.
+
+`assignmentSearch` reports the proof: `searchComplete`, `optimalityProven`,
+`solutionsExplored`, `branchesExplored`, `branchesPruned`, `estimatedSearchSpace`,
+`candidateLimitApplied`, `solutionLimitApplied`, `stoppedEarly`, `stopReason`,
+`candidatesExcludedTotal`, `proofMethod`. It is also mirrored at the top level of
+the report together with `optimalityProven`.
+
+`candidateCountsByCase` reports, per case: `evaluatedCandidates`,
+`acceptedCandidates`, `rejectedCandidates`, `candidatesUsedByAssignment`,
+`candidatesExcluded` (0 in a complete run) and `exclusionReason`.
+
+**Resource guards.** `candidatesPerCaseLimit` and `maximumBranches` exist only as
+safety guards. If either is hit, `searchComplete` and `optimalityProven` are
+`false`, `assignmentMethod` becomes `exact_branch_and_bound_interrupted`, the error
+`ASSIGNMENT_SEARCH_INCOMPLETE` (with cause, candidates per case, estimated space,
+explored amount and the recommendation to repeat the run with higher limits) is
+added, and the global conclusion is `inconclusive`: the found assignment is not
+presented as optimal and its values are not compared against Hatch.
+
+Other output: `assignments`, `unassignedCases`, `unassignedRegions`,
+`collisionsPrevented`, `totalScore`, `assignmentMethod`, `deterministicTieBreak`,
 `ambiguousCaseIds`, `alternativeSolutionCount`, `tolerancesUsed`. The result does
 not depend on case order or region order.
 
@@ -125,7 +168,8 @@ Being inside the search radius is never enough to return `matched`.
 | `valueToleranceMm`, `angleToleranceDeg`, `densityToleranceMm` | numeric comparison / agreement | 0.01 / 0 / 0.001 |
 | `requiredActualFields` | data coverage required | `['widthMm','heightMm','technique']` |
 | `conflictInRequiredFieldPolicy` | conflict in a required field | `'ambiguous'` |
-| `candidatesPerCaseLimit` | accepted candidates examined per case | 8 |
+| `candidatesPerCaseLimit` | safety guard; exceeding it marks the search incomplete | 64 |
+| `maximumBranches` | safety guard on explored branches; exceeding it marks the search incomplete | 2000000 |
 
 There are no hidden constants: every value appears in `tolerancesUsed`, in
 `inputSummary.optionsUsed` and in each acceptance / rejection reason.
@@ -223,12 +267,15 @@ Three separate conclusions:
 * `conclusion` (global):
   * `evaluated` — every case uniquely assigned, every selected identity stable, no
     provenance conflict in `requiredActualFields`, all `requiredActualFields`
-    available, coordinate system resolved;
+    available, coordinate system resolved **and** the assignment search proven
+    complete (`searchComplete`, `optimalityProven`, `stoppedEarly === false`,
+    `candidateLimitApplied === false`, `solutionLimitApplied === false`);
   * `partial` — at least one valid match, but a case or a required field is missing;
   * `ambiguous` — an assignment, identity or provenance ambiguity prevents attributing
     data (documented policy: a conflict in a required field yields `ambiguous`);
   * `no_matches` — no valid match;
-  * `inconclusive` — cannot measure (coordinates / provenance);
+  * `inconclusive` — cannot measure (coordinates / provenance) or the assignment
+    search could not be completed (`ASSIGNMENT_SEARCH_INCOMPLETE`);
   * `invalid_input` — ambiguous region source, invalid structure, forbidden option,
     duplicated `caseId`, incompatible input.
 

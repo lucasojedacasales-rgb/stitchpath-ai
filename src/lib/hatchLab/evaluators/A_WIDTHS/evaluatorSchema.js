@@ -37,6 +37,7 @@ export const REGION_SOURCES = Object.freeze({
 export const ERROR_CODES = Object.freeze([
   'AMBIGUOUS_REGION_SOURCE', 'REGION_SOURCE_UNAVAILABLE', 'DUPLICATED_SEED_CASE_ID',
   'UNVERIFIED_DENSITY_SPACING_EQUIVALENCE', 'INVALID_RESULT_STRUCTURE', 'INVALID_SEED_CASES',
+  'ASSIGNMENT_SEARCH_INCOMPLETE',
 ]);
 
 export const TECHNIQUES = Object.freeze([
@@ -87,8 +88,13 @@ export const DEFAULT_OPTIONS = Object.freeze({
   /** Ambiguity: two global solutions within this score margin → ambiguous. */
   ambiguityScoreMargin: 0.05,
   matchPolicy: 'global_one_to_one',
-  assignmentMethod: 'exhaustive_bipartite',
-  candidatesPerCaseLimit: 8,
+  /**
+   * Safety guards only. Accepted candidates are never silently truncated: if
+   * either guard is hit, the search is reported as incomplete, optimality is not
+   * proven and the conclusion can never be `evaluated`.
+   */
+  candidatesPerCaseLimit: 64,
+  maximumBranches: 2000000,
 
   /** Merge diagnostics: width beyond factor × nominal width is only an observation. */
   mergeWidthFactor: 3.0,

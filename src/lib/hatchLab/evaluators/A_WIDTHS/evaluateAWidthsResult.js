@@ -60,6 +60,8 @@ function baseReport(opts, errors, warnings, extra = {}) {
     identitySummary: null,
     planIntegrity: null,
     assignment: null,
+    assignmentSearch: null,
+    candidateCountsByCase: {},
     mergeDiagnostics: [],
     fieldCoverage: {},
     matchCoverage: { matched: 0, ambiguous: 0, unmatched: 0, unavailable: 0 },
@@ -258,8 +260,26 @@ export function evaluateAWidthsResult({ result = null, seedCases = null, design 
     : requiredConflicts.length > 0 ? 'conflicted'
       : requiredComplete ? 'complete' : 'incomplete';
 
+  const assignmentSearch = assignment?.assignmentSearch ?? null;
+  const searchProven = !!assignmentSearch
+    && assignmentSearch.searchComplete === true
+    && assignmentSearch.optimalityProven === true
+    && assignmentSearch.stoppedEarly === false
+    && assignmentSearch.candidateLimitApplied === false
+    && assignmentSearch.solutionLimitApplied === false;
+
+  if (assignmentSearch && !searchProven) {
+    const excludedTotal = assignmentSearch.candidatesExcludedTotal ?? 0;
+    errors.push({
+      code: 'ASSIGNMENT_SEARCH_INCOMPLETE',
+      message: `${assignmentSearch.stopReason || 'The assignment search could not be completed.'} Estimated search space ${assignmentSearch.estimatedSearchSpace}; branches explored ${assignmentSearch.branchesExplored}; solutions explored ${assignmentSearch.solutionsExplored}; accepted candidates excluded ${excludedTotal}. Optimality is not proven, the found assignment is not used to compare against Hatch, and the run must be repeated with higher candidatesPerCaseLimit / maximumBranches.`,
+      candidateCountsByCase: assignment.candidateCountsByCase,
+    });
+  }
+
   let conclusion;
   if (coordinateSystem.status !== 'resolved') conclusion = 'inconclusive';
+  else if (assignmentSearch && !searchProven) conclusion = 'inconclusive';
   else if (dataConclusion === 'conflicted' && opts.conflictInRequiredFieldPolicy === 'ambiguous') conclusion = 'ambiguous';
   else if (matchCoverage.matched === 0) conclusion = matchCoverage.ambiguous > 0 ? 'ambiguous' : 'no_matches';
   else if (matchConclusion === 'all_assigned' && identitiesStable && dataConclusion === 'complete') conclusion = 'evaluated';
@@ -289,11 +309,16 @@ export function evaluateAWidthsResult({ result = null, seedCases = null, design 
         totalScore: assignment.totalScore,
         assignmentMethod: assignment.assignmentMethod,
         deterministicTieBreak: assignment.deterministicTieBreak,
+        assignmentSearch: assignment.assignmentSearch,
+        candidateCountsByCase: assignment.candidateCountsByCase,
         ambiguousCaseIds: assignment.ambiguousCaseIds,
         alternativeSolutionCount: assignment.alternativeSolutionCount,
         tolerancesUsed: assignment.tolerancesUsed,
       }
       : null,
+    assignmentSearch,
+    candidateCountsByCase: assignment?.candidateCountsByCase ?? {},
+    optimalityProven: assignmentSearch ? assignmentSearch.optimalityProven : null,
     mergeDiagnostics,
     fieldCoverage: coverage,
     matchCoverage,

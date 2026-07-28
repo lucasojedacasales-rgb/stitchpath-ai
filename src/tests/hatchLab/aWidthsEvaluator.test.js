@@ -90,7 +90,7 @@ export function runAWidthsEvaluatorTests() {
     } return n; })();
   ok('2. global assignment matches both cases where naive greedy matches one', globalOut.matchCoverage.matched === 2 && greedyCount === 1);
   ok('2b. the case does not keep its own best candidate when that blocks the optimum', caseOf(globalOut, 'SYN-G1').match.selectedRegionId === 'R_y' && caseOf(globalOut, 'SYN-G2').match.selectedRegionId === 'R_x');
-  ok('2c. assignment method and tie-break declared', globalOut.assignment.assignmentMethod === 'exhaustive_bipartite' && /caseId/.test(globalOut.assignment.deterministicTieBreak));
+  ok('2c. assignment method and tie-break declared', globalOut.assignment.assignmentMethod === 'exact_branch_and_bound' && /caseId/.test(globalOut.assignment.deterministicTieBreak));
 
   // 3 / 4 — order independence
   const shuffledCases = [A_WIDTHS_CASES[3], A_WIDTHS_CASES[0], A_WIDTHS_CASES[4], A_WIDTHS_CASES[1], A_WIDTHS_CASES[2]];
@@ -286,6 +286,89 @@ export function runAWidthsEvaluatorTests() {
   ok('51. merge detection is computed for every candidate', detectPossibleMergedRegions({ seedCases: [realCase('HATCH-A-WIDTHS-A7')], measuredCandidates: cands, options: DEFAULT_OPTIONS }).length === cands.length);
   ok('52. reference keeps documented nulls', buildReference(realCase('HATCH-A-WIDTHS-A1')).spacingMm === null && buildReference(realCase('HATCH-A-WIDTHS-A7')).spacingMm === 0.36);
   ok('53. coordinate space still never inferred', run(mmResult(), A_WIDTHS_CASES, {}, { widthMm: 100, heightMm: 80 }).conclusion === 'inconclusive');
+
+  // ── P0.3A.2: assignment completeness and empty region source ──────────────
+  // SYNTHETIC instance with many accepted candidates per case.
+  const manyRegions = Array.from({ length: 10 }, (_, i) => bar({ id: `many_${i}`, cx: 79.6 + i * 0.08, cy: 13, w: 6, h: 16 }));
+  const manyOut = run({ regions: manyRegions }, [realCase('HATCH-A-WIDTHS-A7')]);
+  const manyCounts = manyOut.candidateCountsByCase['HATCH-A-WIDTHS-A7'];
+  ok('A2-1. more than eight accepted candidates for one case', manyCounts.acceptedCandidates > 8 && manyCounts.evaluatedCandidates === 10);
+  ok('A2-2. no accepted candidate silently dropped', manyCounts.candidatesUsedByAssignment === manyCounts.acceptedCandidates
+    && manyCounts.candidatesExcluded === 0 && manyCounts.exclusionReason === null && manyOut.assignmentSearch.candidateLimitApplied === false);
+
+  // SYNTHETIC 6-case instance whose search space exceeds 20 000 combinations.
+  const BIG_N = 8;
+  const bigCases = Array.from({ length: BIG_N }, (_, i) => syntheticCase({ caseId: `SYN-BIG-${i}`, cx: 20 + i * 0.7, cy: 13, w: 4, h: 16 }));
+  const bigRegions = Array.from({ length: BIG_N }, (_, i) => bar({ id: `big_${String(i).padStart(2, '0')}`, cx: 20 + i * 0.7, cy: 13, w: 4, h: 16 }));
+  const bigOut = run({ regions: bigRegions }, bigCases);
+  const bigSearch = bigOut.assignmentSearch;
+  ok('A2-3. search space above 20000 combinations', bigSearch.estimatedSearchSpace > 20000);
+  const cappedEnumeration = (() => {
+    // previous behaviour: stop after 20000 explored leaves → cannot cover the space
+    let leaves = 0; let bestCount = 0; let bestScore = 0;
+    const perCase = bigCases.map(c => (bigOut.assignment.candidateCountsByCase[c.caseId] || {}).acceptedCandidates || 0);
+    const space = perCase.reduce((p, n) => p * (n + 1), 1);
+    leaves = Math.min(space, 20000);
+    for (const c of bigOut.assignment.assignments) { bestCount += 1; bestScore += c.score; }
+    return { leaves, space, coversSpace: leaves >= space, bestCount, bestScore };
+  })();
+  ok('A2-4. a 20000-leaf cap cannot cover this space nor prove optimality', cappedEnumeration.coversSpace === false && cappedEnumeration.space > cappedEnumeration.leaves);
+  ok('A2-5. the exact search finds an optimal one-to-one solution', bigOut.assignment.assignments.length === BIG_N
+    && new Set(bigOut.assignment.assignments.map(a => a.internalCandidateKey)).size === BIG_N
+    && bigOut.assignment.assignments.every((a, i) => a.internalCandidateKey.endsWith(`big_${String(i).padStart(2, '0')}`))
+    && bigOut.assignment.totalScore >= cappedEnumeration.bestScore);
+  ok('A2-6. searchComplete true on a complete assignment', bigSearch.searchComplete === true && base.assignmentSearch.searchComplete === true);
+  ok('A2-7. optimalityProven true on a complete assignment', bigSearch.optimalityProven === true && /admissible upper bounds/.test(bigSearch.proofMethod));
+  ok('A2-8. stoppedEarly false on a complete assignment', bigSearch.stoppedEarly === false && bigSearch.solutionLimitApplied === false && bigSearch.stopReason === null);
+  ok('A2-9. assignmentMethod does not claim truncation', !/truncated/.test(bigOut.assignment.assignmentMethod) && bigOut.assignment.assignmentMethod === 'exact_branch_and_bound');
+  ok('A2-9b. branches explored and pruned reported', bigSearch.branchesExplored > 0 && bigSearch.solutionsExplored > 0 && Number.isFinite(bigSearch.branchesPruned));
+
+  // Deliberately incomplete searches
+  const cappedCandidates = run({ regions: bigRegions }, bigCases, { candidatesPerCaseLimit: 2 });
+  ok('A2-10. candidate safety limit marks the search incomplete', cappedCandidates.assignmentSearch.candidateLimitApplied === true
+    && cappedCandidates.assignmentSearch.searchComplete === false && cappedCandidates.assignmentSearch.optimalityProven === false
+    && /NOT proven/.test(cappedCandidates.assignmentSearch.stopReason));
+  ok('A2-11. incomplete search → inconclusive with a visible diagnostic', cappedCandidates.conclusion === 'inconclusive'
+    && errorCodes(cappedCandidates).includes('ASSIGNMENT_SEARCH_INCOMPLETE') && cappedCandidates.optimalityProven === false);
+  const cappedBranches = run(mmResult(), A_WIDTHS_CASES, { maximumBranches: 3 });
+  ok('A2-12. interrupted search never concludes evaluated', cappedBranches.assignmentSearch.stoppedEarly === true
+    && cappedBranches.conclusion === 'inconclusive' && cappedBranches.conclusion !== 'evaluated'
+    && errorCodes(cappedBranches).includes('ASSIGNMENT_SEARCH_INCOMPLETE'));
+  ok('A2-12b. incomplete search values are not compared against Hatch', cappedCandidates.dataConclusion !== 'complete' || cappedCandidates.conclusion === 'inconclusive');
+
+  // Explicit empty collection
+  const emptyExplicit = run({ regions: [] }, A_WIDTHS_CASES, { regionSource: 'regions' });
+  ok('A2-13. explicit empty collection resolves its provenance', emptyExplicit.inputSummary.selectedRegionSource === 'regions'
+    && emptyExplicit.inputSummary.regionSourceField === 'result.regions' && emptyExplicit.inputSummary.regionCount === 0
+    && !errorCodes(emptyExplicit).includes('REGION_SOURCE_UNAVAILABLE'));
+  ok('A2-14. explicit empty collection → no_matches', emptyExplicit.matchCoverage.matched === 0 && emptyExplicit.conclusion === 'no_matches');
+  const emptyImplicit = run({ regions: [] });
+  ok('A2-14b. single declared empty collection is a valid engine result', emptyImplicit.conclusion === 'no_matches' && emptyImplicit.inputSummary.selectedRegionSource === 'regions');
+  const absentSource = run({ plan: { sequence: [] } }, A_WIDTHS_CASES, { regionSource: 'regions' });
+  ok('A2-15. requested collection absent → invalid_input', absentSource.conclusion === 'invalid_input' && errorCodes(absentSource).includes('REGION_SOURCE_UNAVAILABLE')
+    && /does not exist/.test(absentSource.errors[0].message));
+  const wrongType = run({ regions: { notAnArray: true } }, A_WIDTHS_CASES, { regionSource: 'regions' });
+  ok('A2-16. requested collection with wrong type → invalid_input', wrongType.conclusion === 'invalid_input'
+    && errorCodes(wrongType).includes('REGION_SOURCE_UNAVAILABLE') && /not an array/.test(wrongType.errors[0].message));
+  const twoEmpty = run({ regions: [], objects: [] });
+  ok('A2-17. two empty collections without regionSource → AMBIGUOUS_REGION_SOURCE', twoEmpty.conclusion === 'invalid_input'
+    && errorCodes(twoEmpty).includes('AMBIGUOUS_REGION_SOURCE') && twoEmpty.inputSummary.countsByRegionSource.objects === 0);
+  const twoEmptyExplicit = run({ regions: [], objects: [] }, A_WIDTHS_CASES, { regionSource: 'objects' });
+  ok('A2-18. two empty collections with explicit regionSource → no_matches', twoEmptyExplicit.conclusion === 'no_matches'
+    && twoEmptyExplicit.inputSummary.selectedRegionSource === 'objects');
+
+  // Preserved guarantees under the new search
+  const bigShuffledCases = [bigCases[4], bigCases[0], bigCases[5], bigCases[2], bigCases[7], bigCases[1], bigCases[6], bigCases[3]];
+  const bigByCaseOrder = run({ regions: bigRegions }, bigShuffledCases);
+  const bigByRegionOrder = run({ regions: [...bigRegions].reverse() }, bigCases);
+  ok('A2-19. independent of case order on the large instance', signature(bigByCaseOrder) === signature(bigOut));
+  ok('A2-20. independent of region order on the large instance', signature(bigByRegionOrder) === signature(bigOut));
+  ok('A2-21. one-to-one assignment preserved', bigOut.assignment.assignments.every(a => a.internalCandidateKey != null)
+    && bigOut.assignment.unassignedRegions.length === bigRegions.length - BIG_N);
+  ok('A2-22. global-vs-greedy advantage preserved', globalOut.matchCoverage.matched === 2 && greedyCount === 1 && globalOut.assignmentSearch.optimalityProven === true);
+  ok('A2-23. deterministic and non-mutating on the large instance', JSON.stringify(run({ regions: bigRegions }, bigCases)) === JSON.stringify(bigOut));
+  ok('A2-24. evaluated still requires a proven search', base.conclusion === 'evaluated' && base.optimalityProven === true
+    && cappedBranches.conclusion === 'inconclusive');
 
   return { name: 'hatchLab/aWidthsEvaluator', pass: fails.length === 0, checks, fails };
 }
