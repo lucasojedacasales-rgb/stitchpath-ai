@@ -1,0 +1,66 @@
+{
+  "auditId": "P1.0-A_WIDTHS-TECHNIQUE-PATH",
+  "readOnly": true,
+  "engineModified": false,
+  "runPipelineExecuted": false,
+  "firstStitchTypeIntroduction": {
+    "file": "src/lib/pipeline/regionNormalize.js",
+    "function": "normalizeRegionForPipeline",
+    "lineApprox": 180,
+    "statement": "stitch_type: region.stitch_type || 'fill'",
+    "valueAdded": "fill",
+    "condition": "the incoming region has no truthy stitch_type",
+    "nature": "normalization default (fallback), not a technical decision",
+    "input": "raw region from hybridDigitize, from the vectorization fusion engine, or from ctx.contours.regions",
+    "output": "same region object plus a guaranteed stitch_type field",
+    "callSites": [
+      "src/lib/pipeline/stages/vectorEngineStage.js:163 (backend regions)",
+      "src/lib/pipeline/stages/vectorEngineStage.js:173 (fallback to ctx.contours.regions)",
+      "src/lib/pipeline/stages/vectorEngineStage.js:55 (vector fusion path, opt-in)",
+      "src/lib/pipeline/stages/regionBuilderStage.js:24 (last-resort contour fallback)"
+    ],
+    "alreadyPresentInVectorRegions": "possible: base44/functions/hybridDigitize/entry.ts can emit stitch_type; when it does, the value is preserved verbatim because of the || fallback",
+    "relativeToPhysicalWidthMeasurement": "BEFORE. Width is measured later, inside enrichAllRegions / EIE skeleton metrics (src/lib/regionBuilder.js), so the default cannot depend on width.",
+    "whenFieldAbsent": "set to 'fill'",
+    "whenFieldPresent": "kept unchanged"
+  },
+  "semanticOverride": {
+    "file": "src/lib/pipeline/stages/regionBuilderStage.js",
+    "function": "runRegionBuilder",
+    "lineApprox": 68,
+    "statement": "stitch_type: sem.stitch_type",
+    "condition": "a semantic object from ctx.semanticMap matched the region centroid (findSemanticForRegion score > -0.3)",
+    "nature": "LLM-sourced override, applied before enrichment and before width measurement",
+    "declaredReason": "inline comment: 'LLM has visual context we don't — respect it'"
+  },
+  "adaptiveEngineFixation": {
+    "file": "src/lib/regionBuilder.js",
+    "function": "enrichRegion / enrichAllRegions",
+    "lineApprox": 397,
+    "statement": "if (region.stitch_type) overrides.stitch_type = region.stitch_type;",
+    "effect": "any pre-existing stitch_type wins over the EIE/adaptive proposal (adaptStitchType → eieStitchType), so the geometry-driven technique proposal is computed and then discarded",
+    "fastModeShortcut": "src/lib/regionBuilder.js:352-357 — when useAdaptive is false and the region already has a stitch_type, the adaptive path is skipped entirely",
+    "output": "adapted.stitch_type (src/lib/regionBuilder.js:448)"
+  },
+  "secondForcing": {
+    "file": "src/lib/contourSafeMode.js",
+    "function": "separateFillsAndContoursSafe",
+    "linesApprox": "151-163",
+    "statements": ["f.type = 'fill'", "f.stitch_type = 'fill'", "f.contour = null"],
+    "condition": "region is not classified as border contour nor as whitelisted dark detail, AND (!f.region_class || f.region_class === 'fill')",
+    "calledFrom": "src/lib/pipeline/stages/regionBuilderStage.js:126, gated by config.contourSafeMode === true (true in the baseline)",
+    "relativeToStitchPlanner": "BEFORE stitch_planner (stage 8); region_builder is stage 6",
+    "objectsAffected": "every non-contour region without an explicit region_class",
+    "fieldsAffected": ["type", "stitch_type", "contour"],
+    "modifiesRegionStitchType": true,
+    "modifiesPlanSequenceStitchType": false,
+    "modifiesBoth": false,
+    "visualOnly": false,
+    "affectsSatinAndRunning": "yes for any region whose region_class is absent — including one whose stitch_type was 'satin' or 'running_stitch'; regions with a non-fill region_class are exempt",
+    "regionClassAvailabilityInBaseline": "region_class is assigned by regionClassifier, which only runs when config.experimentalDetailPreservation === true. It was false, so no region had a region_class and all 26 regions were forced to fill.",
+    "declaredReason": "inline comment: 'Respect region_class + detailPreserved from the new classifier — don't force everything to fill'; the f.contour = null line prevents fills from carrying a duplicated contour object and double-rendering on the canvas",
+    "protectsExistingFunctionality": "yes — it keeps the fill/contour separation single-sourced (standalone contour objects live in contours[]), and it guarantees every non-contour object enters the clipped scanline fill path used by ce01SafeFillMode and by DST export. Removing it without a replacement route would send those objects to the polygon-path branch described in satinCapabilityMatrix.json.",
+    "mutatesInputRegions": true,
+    "mutationNote": "the loop assigns onto the enriched region objects in place; documented, not modified."
+  }
+}

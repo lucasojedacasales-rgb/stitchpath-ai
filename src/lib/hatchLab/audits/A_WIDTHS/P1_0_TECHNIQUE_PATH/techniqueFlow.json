@@ -1,0 +1,167 @@
+{
+  "auditId": "P1.0-A_WIDTHS-TECHNIQUE-PATH",
+  "readOnly": true,
+  "runPipelineExecuted": false,
+  "evidenceSource": "static read-only inspection of productive code + the stored BASE-ENGINE-A-WIDTHS-V1 artefacts",
+  "techniqueKinds": {
+    "proposed": "a technique computed from geometry that is not necessarily written back (EIE adaptStitchType, stitchPlanner classifyStitchType)",
+    "effective": "region.stitch_type as it stands after region_builder — the value every later consumer reads",
+    "parameterDriving": "the technique used to pick density / compensation / underlay / stitch length",
+    "commandDriving": "the technique used to choose the geometry generator inside buildFinalCommands",
+    "displayOnly": "the technique used exclusively for badges, labels and preview thickness"
+  },
+  "stages": [
+    {
+      "stage": "vectorRegions (stage 5, vector_engine)",
+      "inputField": "raw region from hybridDigitize / fusion / contours",
+      "inputValue": "stitch_type may be absent or supplied by the backend",
+      "decidingFunction": "normalizeRegionForPipeline (src/lib/pipeline/regionNormalize.js:180)",
+      "computedValue": "'fill' when absent",
+      "valueKept": "any backend-supplied stitch_type",
+      "valueOverwritten": "none",
+      "outputField": "region.stitch_type",
+      "downstreamConsumer": "regionBuilderStage",
+      "techniqueKind": "effective (by default, not by decision)"
+    },
+    {
+      "stage": "regionNormalize (same call, coordinate + color normalisation)",
+      "inputField": "region.path_points, region.color",
+      "inputValue": "backend units",
+      "decidingFunction": "detectCoordMode / toNormalized",
+      "computedValue": "normalized 0–1 geometry, area_mm2, perimeter_mm, centroid",
+      "valueKept": "stitch_type untouched by geometry work",
+      "valueOverwritten": "none",
+      "outputField": "normalized region",
+      "downstreamConsumer": "regionBuilderStage",
+      "techniqueKind": "n/a — width is available in mm from here, but no technique logic reads it"
+    },
+    {
+      "stage": "region_builder — semantic enrichment",
+      "inputField": "region.stitch_type + ctx.semanticMap.objects[].stitch_type",
+      "inputValue": "'fill' (default) vs LLM label",
+      "decidingFunction": "runRegionBuilder / findSemanticForRegion (regionBuilderStage.js:60-72)",
+      "computedValue": "sem.stitch_type when a semantic object matched",
+      "valueKept": "region colour and layer order",
+      "valueOverwritten": "region.stitch_type",
+      "outputField": "named[].stitch_type",
+      "downstreamConsumer": "enrichAllRegions",
+      "techniqueKind": "effective, LLM-sourced, still width-blind"
+    },
+    {
+      "stage": "adaptive / EIE (enrichAllRegions)",
+      "inputField": "named[].stitch_type + skeleton metrics (mean/max width mm)",
+      "inputValue": "existing stitch_type, real measured width",
+      "decidingFunction": "adaptStitchType → eieStitchType (src/lib/adaptiveEngine.js:27-29, src/lib/stitchIntelligence.js)",
+      "computedValue": "a geometry-driven technique proposal",
+      "valueKept": "the incoming stitch_type (regionBuilder.js:397 — overrides.stitch_type = region.stitch_type)",
+      "valueOverwritten": "the EIE proposal itself is discarded",
+      "outputField": "adapted.stitch_type (regionBuilder.js:448) plus density / compensation / underlay / angle derived FROM the kept technique",
+      "downstreamConsumer": "contourSafeMode, stitch_planner, buildFinalCommands",
+      "techniqueKind": "proposed (computed, dropped) + parameterDriving (the kept value)"
+    },
+    {
+      "stage": "region_builder — contour separation (safe mode)",
+      "inputField": "enriched[].stitch_type, enriched[].region_class",
+      "inputValue": "whatever survived enrichment",
+      "decidingFunction": "separateFillsAndContoursSafe (src/lib/contourSafeMode.js:151-163)",
+      "computedValue": "'fill' for every non-contour region without region_class",
+      "valueKept": "stitch_type of border contours, whitelisted dark details, and regions with a non-fill region_class",
+      "valueOverwritten": "region.stitch_type, region.type, region.contour",
+      "outputField": "ctx.regions = [...fills, ...contourObjects]",
+      "downstreamConsumer": "stitch_planner, canvas, buildFinalCommands, export",
+      "techniqueKind": "effective — this is the last write before every consumer"
+    },
+    {
+      "stage": "stitch_planner (stage 8)",
+      "inputField": "region geometry (mean_width_mm, area, perimeter)",
+      "inputValue": "measured mm",
+      "decidingFunction": "classifyStitchType (src/lib/stitchPlanner.js:86,95 — narrow → satin, medium → satin)",
+      "computedValue": "plan.sequence[].stitchType, possibly 'satin'",
+      "valueKept": "region.stitch_type is NOT modified",
+      "valueOverwritten": "none",
+      "outputField": "ctx.stitchPlan",
+      "downstreamConsumer": "StitchPlannerPanel (UI), plan warnings (SATIN_TOO_WIDE), time estimate, needle path metrics",
+      "techniqueKind": "proposed + displayOnly",
+      "reachesCommands": false,
+      "evidence": "src/lib/exportPipeline.js does not import stitchPlanner; buildFinalCommands receives regions, never ctx.stitchPlan. The plan only reaches regions if the user presses Apply in StitchPlannerPanel (Editor.jsx onApplyPlan)."
+    },
+    {
+      "stage": "stitch_optimizer (stage 9)",
+      "inputField": "regions / plan order",
+      "inputValue": "sequence and travel",
+      "decidingFunction": "runStitchOptimizer",
+      "computedValue": "ordering and travel metrics",
+      "valueKept": "stitch_type untouched",
+      "valueOverwritten": "none",
+      "outputField": "ordered regions / metrics",
+      "downstreamConsumer": "Editor, buildFinalCommands input order",
+      "techniqueKind": "n/a"
+    },
+    {
+      "stage": "buildFinalCommands (src/lib/exportPipeline.js:1959)",
+      "inputField": "obj.isContour, obj.stitch_type",
+      "inputValue": "'fill' for all 26 baseline regions",
+      "decidingFunction": "obj.isContour ? generateContourStitches(obj, ms) : processObjectStitches(obj, ms) (exportPipeline.js:1088-1090)",
+      "computedValue": "stitch points",
+      "valueKept": "stitch_type read, never rewritten",
+      "valueOverwritten": "none",
+      "outputField": "commands[] with stitchType metadata",
+      "downstreamConsumer": "simulator, Final Look, DST/DSB encoders, CE01 validation",
+      "techniqueKind": "commandDriving",
+      "branchDetail": {
+        "contourRoute": "generateContourStitches → generateSatinColumnPath (real zigzag column, src/lib/contourExportBuilder.js:90-124,176-184)",
+        "nonContourRoute": "processObjectStitches (src/lib/industrialStitchProcessor.js:326-408): stitch_type 'fill' → generateClippedFillStitches; anything else (satin, running) → the plain normalized polygon path, line 400-402 'Satin / running: constant density path along polygon'"
+      }
+    },
+    {
+      "stage": "simulation / Final Look",
+      "inputField": "command.stitchType, segment kind",
+      "inputValue": "'fill' in the baseline",
+      "decidingFunction": "finalLookRender KIND_FACTOR (src/components/editor/finalLook/finalLookRender.js:4,66)",
+      "computedValue": "thread thickness factor (satin 1.15 vs fill 0.78) and technical-mode styling",
+      "valueKept": "geometry as generated",
+      "valueOverwritten": "none",
+      "outputField": "pixels",
+      "downstreamConsumer": "user's eyes",
+      "techniqueKind": "displayOnly"
+    },
+    {
+      "stage": "export (DST / DSB encoders)",
+      "inputField": "commands[] (x, y, type)",
+      "inputValue": "stitch / jump / trim / colorChange",
+      "decidingFunction": "dstEncoder / dsbEncoder",
+      "computedValue": "binary records",
+      "valueKept": "coordinates only",
+      "valueOverwritten": "none",
+      "outputField": "binary file",
+      "downstreamConsumer": "machine",
+      "techniqueKind": "none — no encoder reads stitch_type (no 'satin' occurrence in dstEncoder.js)"
+    }
+  ],
+  "exampleTraces": {
+    "note": "Values taken exclusively from the stored BASE-ENGINE-A-WIDTHS-V1 evaluationReport.json / regionsSummary.json. The engine was not run.",
+    "HATCH-A-WIDTHS-A1": {
+      "regionId": "r_zbgef31",
+      "sourceIndex": 22,
+      "measuredWidthMm": 0.489,
+      "measuredHeightMm": 16,
+      "effectiveTechnique": "fill",
+      "planTechnique": "not exposed per case; plan density 0.4 recorded while region density is 0",
+      "referenceTechnique": "satin",
+      "commandGenerator": "processObjectStitches → generateClippedFillStitches (fill branch)",
+      "observation": "0.489 mm is narrower than a single scanline spacing; the fill branch was still selected because the technique was fixed before the width existed."
+    },
+    "HATCH-A-WIDTHS-A8": {
+      "regionId": "r_zr65703",
+      "measuredWidthMm": 8.008,
+      "measuredHeightMm": 16.019,
+      "effectiveTechnique": "fill",
+      "engineAngleDeg": 89,
+      "referenceAngleDeg": 0,
+      "engineUnderlay": "zigzag",
+      "referenceUnderlay": "edge_run_plus_zigzag",
+      "commandGenerator": "processObjectStitches → generateClippedFillStitches (fill branch)",
+      "observation": "the engine's 89° is a fill scanline direction and the reference 0° is a satin column direction; they are not the same quantity, so the difference is not an error of degree."
+    }
+  }
+}

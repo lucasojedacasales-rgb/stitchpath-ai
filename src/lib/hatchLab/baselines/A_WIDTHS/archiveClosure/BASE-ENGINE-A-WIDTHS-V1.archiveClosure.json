@@ -1,0 +1,54 @@
+{
+  "closureId": "BASE-ENGINE-A-WIDTHS-V1-ARCHIVE-CLOSURE",
+  "baselineId": "BASE-ENGINE-A-WIDTHS-V1",
+  "rawStorageMode": "external_verified",
+  "captureStoredInRepository": false,
+  "summaryStoredInRepository": false,
+  "repositoryRawFolderContents": ["rawSourceReference.json"],
+  "captureExternalReference": "https://media.base44.com/files/public/6a3a74a332b0ea528996ab54/70f27dbef_BASE-ENGINE-A-WIDTHS-V1capture1.json",
+  "summaryExternalReference": "https://media.base44.com/files/public/6a3a74a332b0ea528996ab54/8c5feeb51_BASE-ENGINE-A-WIDTHS-V1summary1.json",
+  "captureSizeBytes": 3140114,
+  "summarySizeBytes": 2124,
+  "rawCaptureSha256": "7BB259D7AAE1FE2102AAA4372D76912E3580B81765A6A2B314045B2692E55649",
+  "rawSummarySha256": "2CE392AF57F8F8A276AF7EA56E535E55ADBEEA398A4595C6F14303A1B4598CAD",
+  "embeddedResultSha256": "3C1525AD3D90E865612E2D8BBE71147BF978F4D7E68E50AF23EC6E8F8F40DBAA",
+  "embeddedHashReproduced": true,
+  "embeddedHashProcedure": "canonicalJson(capture without resultSha256, keys sorted recursively, JSON.stringify indent 2, UTF-8) → SHA-256 hex uppercase. Recomputed length 3139474 bytes, digest identical to the embedded value.",
+  "retrievalVerified": true,
+  "retrievalEvidence": {
+    "method": "HTTP GET of both external references during P1.0, bytes hashed in memory",
+    "captureBytesRetrieved": 3140114,
+    "summaryBytesRetrieved": 2124,
+    "captureShaMatchesDeclared": true,
+    "summaryShaMatchesDeclared": true,
+    "captureValidJson": true,
+    "summaryValidJson": true,
+    "captureTopLevelSections": [
+      "baselineConfig", "coordinateDeclaration", "editorParityAudit", "engineInputAudit",
+      "evaluationReport", "missingContextKeys", "omittedFields", "pipelineInvocationCount",
+      "pipelineSnapshot", "preservedRegionFieldReport", "readiness", "regionSourceResolution",
+      "regionsSummary", "resultSha256", "source", "stageLog", "status"
+    ],
+    "identityFields": {
+      "baselineId": "BASE-ENGINE-A-WIDTHS-V1",
+      "baselineIdFoundIn": "summary",
+      "invocationId": "BASE-ENGINE-A-WIDTHS-V1-2026-07-28T19:56:13.507Z",
+      "invocationIdFoundIn": "summary",
+      "pipelineInvocationCount": 1,
+      "pipelineInvocationCountFoundIn": ["capture", "summary"],
+      "resultSha256SharedByBothFiles": true
+    }
+  },
+  "verifiedAt": "2026-07-28",
+  "reclassification": {
+    "previousWording": "Earlier text implied the full capture 'stays in raw', which could be read as stored in the repository.",
+    "correctedStatement": "Neither JSON is stored inside the repository. Both exist as external, hash-verified references plus an IndexedDB archive in the browser that ran the capture."
+  },
+  "limitations": [
+    "external_verified, not self_contained: retrieval depends on the external file host staying available.",
+    "The IndexedDB archive (hatch_lab_baselines / a_widths_captures / BASE-ENGINE-A-WIDTHS-V1-2026-07-28T19:56:13.507Z) exists only in the browser profile that ran the capture and could not be inspected from this audit context.",
+    "No second execution was performed and none is possible: the persistent capture guard was left untouched.",
+    "The capture payload deliberately excludes baselineId / invocationId / capturedAt / runStatus; identity is bound through the summary and the shared resultSha256."
+  ],
+  "immutableFolderUntouched": "src/lib/hatchLab/baselines/A_WIDTHS/BASE-ENGINE-A-WIDTHS-V1/** was read only; no file inside it was created, modified or deleted."
+}
