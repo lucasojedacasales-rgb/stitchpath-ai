@@ -9,10 +9,11 @@ import { runMetricExtractionTests } from './metricExtraction.test.js';
 import { runMetricComparisonTests } from './metricComparison.test.js';
 import { runMutationSafetyTests } from './mutationSafety.test.js';
 import { runAWidthsSeedIntegrityTests } from './aWidthsSeedIntegrity.test.js';
+import { runSeedStructuralConformanceTests } from './seedStructuralConformance.test.js';
 
 export function runHatchLabTests() {
   const suites = [];
-  for (const fn of [runSeedValidationTests, runMetricExtractionTests, runMetricComparisonTests, runMutationSafetyTests, runAWidthsSeedIntegrityTests]) {
+  for (const fn of [runSeedValidationTests, runMetricExtractionTests, runMetricComparisonTests, runMutationSafetyTests, runAWidthsSeedIntegrityTests, runSeedStructuralConformanceTests]) {
     try {
       suites.push(fn());
     } catch (e) {

@@ -42,6 +42,14 @@
     "El laboratorio sigue desconectado del Editor, del pipeline y de cualquier configuración productiva."
   ],
   "generatedAt": "2026-07-28",
+  "structuralConformance": {
+    "phase": "P0.2C",
+    "reviewedAt": "2026-07-28",
+    "schemaVersion": "1.1.0",
+    "ruleScopeShape": "object",
+    "evidenceFreeTextField": "description",
+    "note": "Solo cambios estructurales y administrativos: ningún valor técnico, hash, regla ni indicador de estado fue alterado."
+  },
   "sourceHashes": {
     "A_Anchuras_parte_01.zip": "70FA19522EEC70D058151E930FD5443904207252BA16680299B31E1FA0AAEF46",
     "A_Anchuras_parte_02.zip": "DCB127C1FF7E41F8D9A7208A641353465AA3B1E2036555089A4C439B0B88711F",

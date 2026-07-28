@@ -7,6 +7,8 @@
 import {
   SEED_SCHEMA_VERSION, PHASES, CONFIDENCE_LEVELS, VIABILITY_LEVELS,
   EVIDENCE_TYPES, SOURCE_RELIABILITY, NON_EXTRACTABLE_TYPES, VERIFIED_PARSERS,
+  SOURCE_FIELDS, REQUIRED_SOURCE_FIELDS, EVIDENCE_FIELDS,
+  RULE_SCOPE_FIELDS, REQUIRED_RULE_SCOPE_FIELDS,
 } from './seedSchema.js';
 import {
   METRIC_DEFS, NUMERIC_OPERATORS, SEQUENCE_OPERATORS, OPERATORS, RELATIVE_DIRECTIONS,
@@ -114,6 +116,90 @@ export function validateExpectedResult(expectedResult) {
   return { errors, warnings, empty: false };
 }
 
+/** Object-typed optional field: null/absent is valid, wrong type is not. */
+function validateObjectField(value, field, errors) {
+  if (value == null) return false;
+  if (!isObject(value)) {
+    errors.push({ field, code: 'INVALID_TYPE', message: `${field} must be an object` });
+    return false;
+  }
+  return true;
+}
+
+function validateSource(source, errors, warnings) {
+  if (!validateObjectField(source, 'source', errors)) {
+    if (source == null) errors.push({ field: 'source', code: 'MISSING', message: 'source is required' });
+    return;
+  }
+  for (const key of REQUIRED_SOURCE_FIELDS) {
+    if (!isNonEmptyString(source[key])) {
+      errors.push({ field: `source.${key}`, code: 'MISSING', message: `source.${key} is required (Hatch / Wilcom / …)` });
+    }
+  }
+  for (const key of SOURCE_FIELDS) {
+    const v = source[key];
+    if (v != null && typeof v !== 'string') {
+      errors.push({ field: `source.${key}`, code: 'INVALID_TYPE', message: `source.${key} must be a string or null` });
+    }
+  }
+  for (const key of ['version', 'author', 'date']) {
+    if (!(key in source)) {
+      warnings.push({ field: `source.${key}`, code: 'SOURCE_FIELD_NOT_DECLARED', message: `source.${key} is not declared; declare it explicitly as null when undocumented` });
+    }
+  }
+  if (source.physicalValidation != null && typeof source.physicalValidation !== 'boolean') {
+    errors.push({ field: 'source.physicalValidation', code: 'INVALID_TYPE', message: 'source.physicalValidation must be a boolean' });
+  }
+}
+
+function validateSizeRange(range, at, errors) {
+  if (range == null) return;
+  if (!isObject(range)) { errors.push({ field: at, code: 'INVALID_TYPE', message: `${at} must be an object` }); return; }
+  for (const k of ['minimum', 'maximum']) {
+    if (!isFiniteNum(range[k]) || range[k] <= 0) {
+      errors.push({ field: `${at}.${k}`, code: 'NOT_POSITIVE', message: `${at}.${k} must be a positive finite number` });
+    }
+  }
+  if (isFiniteNum(range.minimum) && isFiniteNum(range.maximum) && range.minimum > range.maximum) {
+    errors.push({ field: at, code: 'INVALID_RANGE', message: `${at} requires minimum ≤ maximum` });
+  }
+  if (range.unit != null && typeof range.unit !== 'string') {
+    errors.push({ field: `${at}.unit`, code: 'INVALID_TYPE', message: `${at}.unit must be a string` });
+  }
+}
+
+/** ruleScope is a structured object; free text lives in ruleScope.description. */
+function validateRuleScope(ruleScope, errors, warnings) {
+  if (ruleScope == null) return;
+  if (typeof ruleScope === 'string') {
+    errors.push({ field: 'ruleScope', code: 'RULE_SCOPE_NOT_OBJECT', message: 'ruleScope must be an object; put free text in ruleScope.description' });
+    return;
+  }
+  if (!isObject(ruleScope)) {
+    errors.push({ field: 'ruleScope', code: 'RULE_SCOPE_NOT_OBJECT', message: 'ruleScope must be an object' });
+    return;
+  }
+  for (const key of REQUIRED_RULE_SCOPE_FIELDS) {
+    if (!isNonEmptyString(ruleScope[key])) {
+      errors.push({ field: `ruleScope.${key}`, code: 'RULE_SCOPE_INCOMPLETE', message: `ruleScope.${key} is required` });
+    }
+  }
+  if (ruleScope.phase != null && isNonEmptyString(ruleScope.phase) && !PHASES.includes(ruleScope.phase)) {
+    errors.push({ field: 'ruleScope.phase', code: 'UNKNOWN_PHASE', message: `unknown ruleScope.phase "${ruleScope.phase}"` });
+  }
+  for (const key of ['geometryClass', 'fabric', 'description']) {
+    if (ruleScope[key] != null && typeof ruleScope[key] !== 'string') {
+      errors.push({ field: `ruleScope.${key}`, code: 'INVALID_TYPE', message: `ruleScope.${key} must be a string or null` });
+    }
+  }
+  validateSizeRange(ruleScope.sizeRangeMm, 'ruleScope.sizeRangeMm', errors);
+  for (const key of Object.keys(ruleScope)) {
+    if (!RULE_SCOPE_FIELDS.includes(key)) {
+      warnings.push({ field: `ruleScope.${key}`, code: 'UNKNOWN_RULE_SCOPE_FIELD', message: `ruleScope.${key} is not a declared ruleScope field` });
+    }
+  }
+}
+
 function validateEvidence(list, errors, warnings) {
   if (!Array.isArray(list)) { errors.push({ field: 'evidence', code: 'INVALID_TYPE', message: 'evidence must be an array' }); return; }
   const seenIds = new Set();
@@ -137,6 +223,14 @@ function validateEvidence(list, errors, warnings) {
     }
     if (ev.sourceReliability != null && !SOURCE_RELIABILITY.includes(ev.sourceReliability)) {
       warnings.push({ field: `${at}.sourceReliability`, code: 'UNKNOWN_RELIABILITY', message: `unknown sourceReliability "${ev.sourceReliability}"` });
+    }
+    if (ev.description != null && typeof ev.description !== 'string') {
+      errors.push({ field: `${at}.description`, code: 'INVALID_TYPE', message: 'evidence description must be a string or null' });
+    }
+    for (const key of Object.keys(ev)) {
+      if (!EVIDENCE_FIELDS.includes(key)) {
+        errors.push({ field: `${at}.${key}`, code: 'UNKNOWN_EVIDENCE_FIELD', message: `"${key}" is not a declared evidence field; free text belongs in description` });
+      }
     }
   });
 }
@@ -162,8 +256,19 @@ export function validateSeedCase(seedCase) {
   if (!isNonEmptyString(seedCase.caseId)) errors.push({ field: 'caseId', code: 'EMPTY_CASE_ID', message: 'caseId must be a non-empty string' });
   if (!PHASES.includes(seedCase.phase)) errors.push({ field: 'phase', code: 'UNKNOWN_PHASE', message: `unknown phase "${seedCase.phase}"` });
 
-  if (!isObject(seedCase.source) || !isNonEmptyString(seedCase.source.tool)) {
-    errors.push({ field: 'source', code: 'MISSING', message: 'source.tool is required (Hatch / Wilcom / …)' });
+  validateSource(seedCase.source, errors, warnings);
+  validateObjectField(seedCase.input, 'input', errors);
+  validateObjectField(seedCase.configuration, 'configuration', errors);
+  validateObjectField(seedCase.observation, 'observation', errors);
+  validateRuleScope(seedCase.ruleScope, errors, warnings);
+
+  for (const key of ['holdout', 'syntheticExample']) {
+    if (seedCase[key] != null && typeof seedCase[key] !== 'boolean') {
+      errors.push({ field: key, code: 'INVALID_TYPE', message: `${key} must be a boolean` });
+    }
+  }
+  if (seedCase.exceptions != null && !Array.isArray(seedCase.exceptions)) {
+    errors.push({ field: 'exceptions', code: 'INVALID_TYPE', message: 'exceptions must be an array' });
   }
 
   if (!CONFIDENCE_LEVELS.includes(seedCase.confidence)) {
@@ -189,11 +294,31 @@ export function validateSeedCase(seedCase) {
     errors.push({ field: 'candidateRules', code: 'INVALID_TYPE', message: 'candidateRules must be an array' });
   } else {
     (seedCase.candidateRules || []).forEach((rule, i) => {
-      if (!isObject(rule) || !isNonEmptyString(rule.ruleId)) {
-        errors.push({ field: `candidateRules[${i}].ruleId`, code: 'EMPTY', message: 'candidate rule requires a ruleId' });
+      const at = `candidateRules[${i}]`;
+      if (!isObject(rule)) {
+        errors.push({ field: at, code: 'INVALID_TYPE', message: 'candidate rule must be an object' });
+        return;
       }
-      if (isObject(rule) && 'text' in rule && !('expression' in rule)) {
-        errors.push({ field: `candidateRules[${i}]`, code: 'OBSERVATION_AS_RULE', message: 'free text belongs in observation, not in a candidate rule' });
+      if (!isNonEmptyString(rule.ruleId)) {
+        errors.push({ field: `${at}.ruleId`, code: 'EMPTY', message: 'candidate rule requires a ruleId' });
+      }
+      if ('text' in rule && !('expression' in rule)) {
+        errors.push({ field: at, code: 'OBSERVATION_AS_RULE', message: 'free text belongs in observation, not in a candidate rule' });
+      }
+      if (!isNonEmptyString(rule.expression)) {
+        errors.push({ field: `${at}.expression`, code: 'MISSING_EXPRESSION', message: 'candidate rule requires a non-empty expression' });
+      }
+      if (rule.parameters != null && (!isObject(rule.parameters))) {
+        errors.push({ field: `${at}.parameters`, code: 'INVALID_TYPE', message: 'candidate rule parameters must be an object' });
+      }
+      if (rule.evidence != null && !Array.isArray(rule.evidence)) {
+        errors.push({ field: `${at}.evidence`, code: 'INVALID_TYPE', message: 'candidate rule evidence must be an array' });
+      }
+      if (rule.confidence != null && (!isFiniteNum(rule.confidence) || rule.confidence < 0 || rule.confidence > 1)) {
+        errors.push({ field: `${at}.confidence`, code: 'INVALID_VALUE', message: 'candidate rule confidence must be a finite number in [0, 1]' });
+      }
+      if (rule.physicalValidation != null && typeof rule.physicalValidation !== 'boolean') {
+        errors.push({ field: `${at}.physicalValidation`, code: 'INVALID_TYPE', message: 'candidate rule physicalValidation must be a boolean' });
       }
     });
   }

@@ -5,6 +5,9 @@
   "title": "Barra recta 4,0 mm nominal (A6) — primer caso observado con underlay borde + zigzag",
   "source": {
     "tool": "Hatch",
+    "version": null,
+    "author": null,
+    "date": "2026-07-22",
     "labTestId": "HATCH-A-WIDTHS-R01",
     "embFile": "HATCH-A-WIDTHS-R01-100MM.EMB",
     "sourceImage": "HATCH-A-WIDTHS-EXACT-100x80mm-300dpi.png",
@@ -15,6 +18,8 @@
     "physicalValidation": false
   },
   "input": {
+    "imageRef": "A_Anchuras_parte_01.zip#00_Fuentes/Imagenes/HATCH-A-WIDTHS-EXACT-100x80mm-300dpi.png",
+    "description": "Objeto A6 de la lámina A_WIDTHS: barra recta vertical de 4,0 mm nominal y 16,0 mm de alto, centrada en X=67 mm, Y=13,0 mm.",
     "testId": "A6",
     "family": "Fila A",
     "geometry": "barra_recta",
@@ -118,7 +123,13 @@
       "source": "06_Reglas/HATCH-A-WIDTHS-reglas.json"
     }
   ],
-  "ruleScope": "Barra recta vertical de 16 mm de alto, 4,0 mm nominal, Pure Cotton, lámina 100x80 mm, división automática activada.",
+  "ruleScope": {
+    "phase": "A_WIDTHS",
+    "geometryClass": "barra_recta",
+    "sizeRangeMm": { "minimum": 4.0, "maximum": 4.0, "unit": "mm" },
+    "fabric": "Pure Cotton",
+    "description": "Barra recta vertical de 16 mm de alto, 4,0 mm nominal, Pure Cotton, lámina 100x80 mm, división automática activada."
+  },
   "exceptions": [
     "Las reglas siguen siendo candidatas y no deben afectar al motor productivo.",
     "El umbral de underlay queda expresado como intervalo 3,13–4,06 mm y no como valor exacto."
@@ -130,7 +141,7 @@
       "reference": "A_Anchuras_parte_05.zip#05_Datos_Objetos/HATCH-A-WIDTHS-EXACT-map.csv#L7",
       "extractable": true,
       "sourceReliability": "documented",
-      "notes": "Fila exacta A6: A6,barra_recta,4.0,16.0,67,13.0"
+      "description": "Fila exacta A6: A6,barra_recta,4.0,16.0,67,13.0"
     },
     {
       "evidenceId": "A6-XLSX-ROW",
@@ -138,7 +149,7 @@
       "reference": "analisis-ABCD.xlsx#Fila_A!A7:P7",
       "extractable": true,
       "sourceReliability": "measured",
-      "notes": "Fila 7 de la hoja Fila_A (objeto A6), leída estructuradamente."
+      "description": "Fila 7 de la hoja Fila_A (objeto A6), leída estructuradamente."
     },
     {
       "evidenceId": "A6-XLSX-CONFIG",
@@ -146,7 +157,7 @@
       "reference": "analisis-ABCD.xlsx#Config_comun!A2:C10",
       "extractable": true,
       "sourceReliability": "measured",
-      "notes": "Configuración común observada en A1-A8."
+      "description": "Configuración común observada en A1-A8."
     },
     {
       "evidenceId": "A6-XLSX-METHOD",
@@ -154,7 +165,7 @@
       "reference": "analisis-ABCD.xlsx#Notas_metodo!A4:C4",
       "extractable": true,
       "sourceReliability": "documented",
-      "notes": "Regla de medición del umbral de underlay."
+      "description": "Regla de medición del umbral de underlay."
     },
     {
       "evidenceId": "A6-XLSX-RULES-SHEET",
@@ -162,7 +173,7 @@
       "reference": "analisis-ABCD.xlsx#Reglas_candidatas!A3:F3",
       "extractable": true,
       "sourceReliability": "documented",
-      "notes": "Fila 3: cambio de underlay entre A5 (3,13 mm) y A6 (4,06 mm)."
+      "description": "Fila 3: cambio de underlay entre A5 (3,13 mm) y A6 (4,06 mm)."
     },
     {
       "evidenceId": "A6-SOURCE-IMAGE",
@@ -170,7 +181,7 @@
       "reference": "A_Anchuras_parte_01.zip#00_Fuentes/Imagenes/HATCH-A-WIDTHS-EXACT-100x80mm-300dpi.png",
       "extractable": false,
       "sourceReliability": "documented",
-      "notes": "Imagen fuente de la lámina. Sin parser verificado."
+      "description": "Imagen fuente de la lámina. Sin parser verificado."
     },
     {
       "evidenceId": "A6-EMB",
@@ -178,7 +189,7 @@
       "reference": "A_Anchuras_parte_01.zip#01_EMB/A_Anchuras/HATCH-A-WIDTHS-R01-100MM.EMB",
       "extractable": false,
       "sourceReliability": "observed",
-      "notes": "Evidencia global no extraíble."
+      "description": "Evidencia global no extraíble."
     },
     {
       "evidenceId": "A6-RULES-JSON",
@@ -186,7 +197,7 @@
       "reference": "A_Anchuras_parte_05.zip#06_Reglas/HATCH-A-WIDTHS-reglas.json",
       "extractable": true,
       "sourceReliability": "documented",
-      "notes": "Reglas candidatas relacionadas con el cambio de underlay."
+      "description": "Reglas candidatas relacionadas con el cambio de underlay."
     },
     {
       "evidenceId": "A6-CONCLUSIONS",
@@ -194,7 +205,7 @@
       "reference": "A_Anchuras_parte_05.zip#07_Informes/HATCH-A-WIDTHS-conclusiones.txt",
       "extractable": true,
       "sourceReliability": "documented",
-      "notes": "Interpretación documentada sobre el primer cambio de underlay."
+      "description": "Interpretación documentada sobre el primer cambio de underlay."
     }
   ],
   "confidence": "probable",

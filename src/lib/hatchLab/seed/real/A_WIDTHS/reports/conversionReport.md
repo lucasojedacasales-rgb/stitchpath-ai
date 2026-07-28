@@ -69,6 +69,15 @@ Ninguna regla se eleva a `confirmed`, ninguna se traduce en comportamiento del m
 - `benchmarkReady: false`, `motorIntegrationReady: false`, `expectedResultReady: false`.
 - Pipeline **no ejecutado**; código productivo **no modificado**; sin feature flags ni controles de interfaz.
 
+## Conformidad estructural (P0.2C, 2026-07-28)
+
+- Inventario real de P0.2B (calculado sobre rutas): **13 archivos creados** — 12 dentro de `A_WIDTHS` + `src/tests/hatchLab/aWidthsSeedIntegrity.test.js` — y 1 modificado (`runHatchLabTests.js`). La cifra "11" anunciada en P0.2B era incorrecta.
+- `ruleScope`: string → objeto `{ phase, geometryClass, sizeRangeMm{minimum,maximum,unit}, fabric, description }`; el texto original se conserva íntegro en `description`.
+- `source`: añadidos `version: null`, `author: null`, `date: "2026-07-22"` (fecha real de observación, igual a `capturedAt`); campos extra conservados.
+- `input`: añadidos `imageRef` (PNG fuente ya registrado) y `description`; datos cuantitativos intactos.
+- `evidence`: `notes` → `description` en las 44 evidencias de los cinco casos; sin duplicar campos.
+- Valores técnicos, hashes, reglas candidatas, `expectedResult: null` y los indicadores `benchmarkReady` / `motorIntegrationReady` / `expectedResultReady` / `physicalValidationAvailable`: sin cambios.
+
 ## Próximo paso técnico
 
 Crear un evaluador A_WIDTHS capaz de extraer y comparar técnica, underlay,

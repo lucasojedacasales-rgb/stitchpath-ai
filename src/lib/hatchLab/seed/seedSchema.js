@@ -52,6 +52,47 @@ export const CRITERION_FIELDS = Object.freeze([
   'minimumDelta', 'maximumDelta', 'required', 'tolerance',
 ]);
 
+/**
+ * P0.2C — structural contract made explicit.
+ * These field lists were already the de-facto v1.1.0 contract (exercised by the
+ * synthetic reference case and by normalizeSeedCase/normalizeEvidence) but were
+ * never declared. Declaring them adds NO new semantics: it only makes the
+ * existing shape checkable by validateSeed.js.
+ */
+
+/** source: tool is required; version/author/date are documented and may be null. */
+export const SOURCE_FIELDS = Object.freeze(['tool', 'version', 'author', 'date']);
+export const REQUIRED_SOURCE_FIELDS = Object.freeze(['tool']);
+/** Extra, phase-specific source fields are allowed and must be preserved. */
+
+/** input: imageRef/description are documented and may be null. Extra fields allowed. */
+export const INPUT_FIELDS = Object.freeze(['imageRef', 'description']);
+
+/** evidence item fields. description is the canonical free-text field (never "notes"). */
+export const EVIDENCE_FIELDS = Object.freeze([
+  'evidenceId', 'type', 'reference', 'extractable', 'description', 'sourceReliability',
+]);
+export const REQUIRED_EVIDENCE_FIELDS = Object.freeze(['evidenceId', 'type', 'reference', 'extractable']);
+
+/**
+ * ruleScope is an OBJECT, never a free-text string: free text belongs in
+ * ruleScope.description. phase is required; the rest may be null.
+ * sizeRangeMm, when present, is { minimum, maximum, unit } with finite,
+ * positive bounds and minimum ≤ maximum.
+ */
+export const RULE_SCOPE_FIELDS = Object.freeze([
+  'phase', 'geometryClass', 'sizeRangeMm', 'fabric', 'description',
+]);
+export const REQUIRED_RULE_SCOPE_FIELDS = Object.freeze(['phase']);
+export const SIZE_RANGE_FIELDS = Object.freeze(['minimum', 'maximum', 'unit']);
+
+/** candidate rule fields. ruleId and expression are required; free text is forbidden. */
+export const CANDIDATE_RULE_FIELDS = Object.freeze([
+  'ruleId', 'status', 'title', 'conditions', 'expression', 'parameters',
+  'evidence', 'confidence', 'physicalValidation', 'source',
+]);
+export const REQUIRED_CANDIDATE_RULE_FIELDS = Object.freeze(['ruleId', 'expression']);
+
 /** Top-level case fields. observation and expectedResult are separate by design. */
 export const SEED_CASE_FIELDS = Object.freeze([
   'seedVersion', 'caseId', 'phase', 'title', 'source', 'input',

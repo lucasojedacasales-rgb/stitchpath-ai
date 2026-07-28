@@ -85,6 +85,39 @@
     "Los umbrales solo están documentados como intervalos entre objetos consecutivos.",
     "Sin validación física: las reglas permanecen candidatas."
   ],
+  "structuralConformanceP02C": {
+    "reviewedAt": "2026-07-28",
+    "schemaVersion": "1.1.0",
+    "p02bFileInventoryCorrection": {
+      "announced": 11,
+      "actual": 13,
+      "actualPaths": [
+        "src/lib/hatchLab/seed/real/A_WIDTHS/README.md",
+        "src/lib/hatchLab/seed/real/A_WIDTHS/packageProvenance.json",
+        "src/lib/hatchLab/seed/real/A_WIDTHS/evidenceIndex.json",
+        "src/lib/hatchLab/seed/real/A_WIDTHS/seedManifest.json",
+        "src/lib/hatchLab/seed/real/A_WIDTHS/index.js",
+        "src/lib/hatchLab/seed/real/A_WIDTHS/cases/HATCH-A-WIDTHS-A1.json",
+        "src/lib/hatchLab/seed/real/A_WIDTHS/cases/HATCH-A-WIDTHS-A5.json",
+        "src/lib/hatchLab/seed/real/A_WIDTHS/cases/HATCH-A-WIDTHS-A6.json",
+        "src/lib/hatchLab/seed/real/A_WIDTHS/cases/HATCH-A-WIDTHS-A7.json",
+        "src/lib/hatchLab/seed/real/A_WIDTHS/cases/HATCH-A-WIDTHS-A8.json",
+        "src/lib/hatchLab/seed/real/A_WIDTHS/reports/conversionReport.json",
+        "src/lib/hatchLab/seed/real/A_WIDTHS/reports/conversionReport.md",
+        "src/tests/hatchLab/aWidthsSeedIntegrity.test.js"
+      ]
+    },
+    "migrations": [
+      { "field": "ruleScope", "from": "string", "to": "object { phase, geometryClass, sizeRangeMm, fabric, description }", "textPreservedIn": "ruleScope.description" },
+      { "field": "source", "added": ["version: null", "author: null", "date: \"2026-07-22\""], "extraFieldsPreserved": ["labTestId", "embFile", "sourceImage", "fabricProfile", "physicalValidation", "packagedAt", "reliability"] },
+      { "field": "input", "added": ["imageRef", "description"], "quantitativeDataPreserved": true },
+      { "field": "evidence[].notes", "to": "evidence[].description", "count": 44, "duplicated": false }
+    ],
+    "technicalDataChanged": false,
+    "hashesChanged": false,
+    "rulesPromoted": false,
+    "expectedResultAdded": false
+  },
   "nextTechnicalStep": "Crear un evaluador A_WIDTHS capaz de extraer y comparar técnica, underlay, espaciado, compensación y anchura por objeto desde un resultado ya generado por el motor base.",
   "engineImpact": {
     "pipelineExecuted": false,

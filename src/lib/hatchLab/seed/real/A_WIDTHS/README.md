@@ -12,6 +12,19 @@ paquete verificado `01_ANCHURAS` (5 ZIPs, 89 archivos, 89/89 hashes coincidentes
 - Ninguna regla se aplica al motor. El pipeline no se ejecuta. No hay feature flags ni controles de interfaz.
 - Nada fuera de `src/lib/hatchLab/**` y `src/tests/hatchLab/**` importa estos archivos.
 
+**Conformidad estructural (P0.2C)**
+
+El esquema v1.1.0 declaraba `ruleScope`, `source`, `input` y los campos de
+`evidence` solo por nombre en `SEED_CASE_FIELDS`; la forma real estaba fijada por
+el caso sintético de referencia y por `normalizeSeedCase`. En P0.2C esa forma se
+declaró explícitamente (`RULE_SCOPE_FIELDS`, `SOURCE_FIELDS`, `INPUT_FIELDS`,
+`EVIDENCE_FIELDS`, `CANDIDATE_RULE_FIELDS`), el validador la comprueba de verdad
+y los cinco casos se ajustaron: `ruleScope` pasó de string a objeto (el texto
+íntegro vive en `ruleScope.description`), `source` declara `version: null`,
+`author: null` y `date: "2026-07-22"`, `input` añade `imageRef` y `description`,
+y el texto libre de cada evidencia pasó de `notes` a `description`.
+Ningún valor técnico, hash, regla ni indicador de estado cambió.
+
 **Contenido**
 
 ```
