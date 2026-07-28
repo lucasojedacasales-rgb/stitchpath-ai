@@ -1,10 +1,18 @@
 /**
- * normalizeSeed.js — Hatch Lab (P0)
- * Produces a new, fully-shaped copy of a seed case. Never mutates the input,
- * never raises confidence, never invents zeros: missing data stays null.
+ * normalizeSeed.js — Hatch Lab (P0.1)
+ * Safe normalization. NEVER makes an invalid case valid:
+ *  - required fields (seedVersion, caseId, phase, confidence, source) are
+ *    NEVER auto-filled — absent stays null;
+ *  - only optional fields get safe defaults;
+ *  - confidence is never raised;
+ *  - missing data stays null, never an invented zero.
+ *
+ * Correct sequence: validate original → normalize only valid input → keep an
+ * explicit validation result. Use prepareSeedCase for that flow.
  */
 
-import { SEED_SCHEMA_VERSION, CONFIDENCE_LEVELS, VIABILITY_LEVELS } from './seedSchema.js';
+import { CONFIDENCE_LEVELS, VIABILITY_LEVELS } from './seedSchema.js';
+import { validateSeedCase } from './validateSeed.js';
 
 const clone = v => (v == null ? null : JSON.parse(JSON.stringify(v)));
 const str = v => (typeof v === 'string' && v.trim().length > 0 ? v : null);
@@ -24,37 +32,44 @@ function normalizeEvidence(list) {
 
 /**
  * @param {object} seedCase — never mutated
- * @returns {object} normalized copy
+ * @returns {object} normalized deep copy. Required fields are NOT auto-filled.
  */
 export function normalizeSeedCase(seedCase) {
   const src = seedCase && typeof seedCase === 'object' ? seedCase : {};
-  const confidence = CONFIDENCE_LEVELS.includes(src.confidence) ? src.confidence : 'hypothetical';
-  const viability = VIABILITY_LEVELS.includes(src.viability) ? src.viability : 'insufficient';
-
   return {
-    seedVersion: str(src.seedVersion) || SEED_SCHEMA_VERSION,
+    // required fields: null when absent/invalid — never invented
+    seedVersion: str(src.seedVersion),
     caseId: str(src.caseId),
     phase: str(src.phase),
-    title: str(src.title),
+    confidence: CONFIDENCE_LEVELS.includes(src.confidence) ? src.confidence : null,
     source: clone(src.source),
+    // optional fields: safe defaults allowed
+    title: str(src.title),
     input: clone(src.input),
     dimensionsMm: clone(src.dimensionsMm),
     testedSizeMm: clone(src.testedSizeMm),
     fabric: str(src.fabric),
     configuration: clone(src.configuration),
     observation: clone(src.observation),
-    // Absence of an expected result is explicit — it drives "no_expected_result".
     expectedResult: clone(src.expectedResult),
     candidateRules: Array.isArray(src.candidateRules) ? clone(src.candidateRules) : [],
     ruleScope: clone(src.ruleScope),
     exceptions: Array.isArray(src.exceptions) ? clone(src.exceptions) : [],
     evidence: normalizeEvidence(src.evidence),
-    confidence,
-    viability,
+    viability: VIABILITY_LEVELS.includes(src.viability) ? src.viability : 'insufficient',
     holdout: src.holdout === true,
     syntheticExample: src.syntheticExample === true,
-    _normalized: { schemaVersion: SEED_SCHEMA_VERSION, confidenceRaised: false },
+    _normalized: { confidenceRaised: false, requiredFieldsAutoFilled: false },
   };
+}
+
+/**
+ * Validate-first flow: an invalid case is never normalized into use.
+ * @returns {{ validation: object, normalized: object|null }}
+ */
+export function prepareSeedCase(seedCase) {
+  const validation = validateSeedCase(seedCase);
+  return { validation, normalized: validation.valid ? normalizeSeedCase(seedCase) : null };
 }
 
 export function normalizeSeedCollection(cases) {

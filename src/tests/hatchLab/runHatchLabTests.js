@@ -1,8 +1,7 @@
 /**
- * runHatchLabTests.js — Hatch Lab (P0)
+ * runHatchLabTests.js — Hatch Lab (P0.1)
  * Aggregator following the repository convention (no test runner installed).
- * Not registered anywhere: import and call it manually from a console or a
- * future lab-only page.
+ * Executed by hatchLabTests.html via the Vite dev server.
  */
 
 import { runSeedValidationTests } from './seedValidation.test.js';
@@ -11,15 +10,18 @@ import { runMetricComparisonTests } from './metricComparison.test.js';
 import { runMutationSafetyTests } from './mutationSafety.test.js';
 
 export function runHatchLabTests() {
-  const suites = [
-    runSeedValidationTests(),
-    runMetricExtractionTests(),
-    runMetricComparisonTests(),
-    runMutationSafetyTests(),
-  ];
+  const suites = [];
+  for (const fn of [runSeedValidationTests, runMetricExtractionTests, runMetricComparisonTests, runMutationSafetyTests]) {
+    try {
+      suites.push(fn());
+    } catch (e) {
+      suites.push({ name: fn.name, pass: false, checks: 0, fails: [`suite crashed: ${e.message}`] });
+    }
+  }
   const pass = suites.filter(s => s.pass).length;
+  const checks = suites.reduce((s, x) => s + (x.checks || 0), 0);
   return {
     suites,
-    summary: { total: suites.length, pass, fail: suites.length - pass },
+    summary: { total: suites.length, pass, fail: suites.length - pass, checks },
   };
 }

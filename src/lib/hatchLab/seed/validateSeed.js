@@ -1,15 +1,20 @@
 /**
- * validateSeed.js — Hatch Lab (P0)
- * Pure validator for seed cases. Never mutates its input.
+ * validateSeed.js — Hatch Lab (P0.1)
+ * Pure validators for seed cases and expectedResult criteria.
+ * Never mutates its input.
  */
 
 import {
   SEED_SCHEMA_VERSION, PHASES, CONFIDENCE_LEVELS, VIABILITY_LEVELS,
   EVIDENCE_TYPES, SOURCE_RELIABILITY, NON_EXTRACTABLE_TYPES, VERIFIED_PARSERS,
 } from './seedSchema.js';
+import {
+  METRIC_DEFS, NUMERIC_OPERATORS, SEQUENCE_OPERATORS, OPERATORS, RELATIVE_DIRECTIONS,
+} from '../bench/metricAvailability.js';
 
 const isObject = v => !!v && typeof v === 'object' && !Array.isArray(v);
 const isNonEmptyString = v => typeof v === 'string' && v.trim().length > 0;
+const isFiniteNum = v => typeof v === 'number' && Number.isFinite(v);
 
 function validatePositiveDims(dims, field, errors) {
   if (dims == null) return;
@@ -17,10 +22,96 @@ function validatePositiveDims(dims, field, errors) {
   for (const k of ['width', 'height']) {
     const v = dims[k];
     if (v == null) { errors.push({ field: `${field}.${k}`, code: 'MISSING', message: `${field}.${k} is required when ${field} is present` }); continue; }
-    if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) {
-      errors.push({ field: `${field}.${k}`, code: 'NOT_POSITIVE', message: `${field}.${k} must be a positive number` });
+    if (!isFiniteNum(v) || v <= 0) {
+      errors.push({ field: `${field}.${k}`, code: 'NOT_POSITIVE', message: `${field}.${k} must be a positive finite number` });
     }
   }
+}
+
+function validateTolerance(tol, at, errors) {
+  if (tol == null) return;
+  if (!isObject(tol)) { errors.push({ field: `${at}.tolerance`, code: 'INVALID_TOLERANCE', message: 'tolerance must be an object' }); return; }
+  for (const k of ['absolute', 'relative']) {
+    if (tol[k] != null && (!isFiniteNum(tol[k]) || tol[k] < 0)) {
+      errors.push({ field: `${at}.tolerance.${k}`, code: 'INVALID_TOLERANCE', message: `tolerance.${k} must be a finite number ≥ 0` });
+    }
+  }
+}
+
+/**
+ * Validates an expectedResult object. Pure.
+ * @returns {{ errors: Array, warnings: Array, empty: boolean }}
+ */
+export function validateExpectedResult(expectedResult) {
+  const errors = [];
+  const warnings = [];
+  if (expectedResult == null) return { errors, warnings, empty: true };
+  if (!isObject(expectedResult)) {
+    return { errors: [{ field: 'expectedResult', code: 'INVALID_TYPE', message: 'expectedResult must be an object' }], warnings, empty: true };
+  }
+  const criteria = expectedResult.criteria;
+  if (!Array.isArray(criteria) || criteria.length === 0) {
+    errors.push({ field: 'expectedResult.criteria', code: 'EMPTY_EXPECTED_RESULT', message: 'expectedResult must declare a non-empty criteria array' });
+    return { errors, warnings, empty: true };
+  }
+
+  criteria.forEach((c, i) => {
+    const at = `expectedResult.criteria[${i}]`;
+    if (!isObject(c)) { errors.push({ field: at, code: 'INVALID_TYPE', message: 'criterion must be an object' }); return; }
+
+    const def = METRIC_DEFS[c.metric];
+    if (!def) {
+      errors.push({ field: `${at}.metric`, code: 'UNKNOWN_EXPECTED_METRIC', message: `unknown metric "${c.metric}"` });
+      return;
+    }
+    if (!OPERATORS.includes(c.operator)) {
+      errors.push({ field: `${at}.operator`, code: 'UNKNOWN_OPERATOR', message: `unknown operator "${c.operator}"` });
+      return;
+    }
+    // operator / metric-type compatibility
+    if (def.type === 'object') {
+      errors.push({ field: `${at}.metric`, code: 'INCOMPATIBLE_OPERATOR', message: `metric "${c.metric}" is not comparable in criteria` });
+      return;
+    }
+    if (def.type === 'number' && !NUMERIC_OPERATORS.includes(c.operator)) {
+      errors.push({ field: `${at}.operator`, code: 'INCOMPATIBLE_OPERATOR', message: `operator "${c.operator}" incompatible with numeric metric "${c.metric}"` });
+    }
+    if (def.type === 'sequence' && !SEQUENCE_OPERATORS.includes(c.operator)) {
+      errors.push({ field: `${at}.operator`, code: 'INCOMPATIBLE_OPERATOR', message: `operator "${c.operator}" incompatible with sequence metric "${c.metric}"` });
+    }
+
+    if (typeof c.required !== 'boolean') {
+      errors.push({ field: `${at}.required`, code: 'REQUIRED_NOT_BOOLEAN', message: 'required must be declared explicitly as boolean' });
+    }
+    validateTolerance(c.tolerance, at, errors);
+
+    // operator-specific values — no NaN/Infinity ever
+    if (['equals', 'minimum', 'maximum'].includes(c.operator)) {
+      if (!isFiniteNum(c.value)) errors.push({ field: `${at}.value`, code: 'INVALID_VALUE', message: `${c.operator} requires a finite numeric value` });
+    }
+    if (c.operator === 'between') {
+      if (!isFiniteNum(c.min) || !isFiniteNum(c.max)) {
+        errors.push({ field: `${at}`, code: 'INVALID_VALUE', message: 'between requires finite min and max' });
+      } else if (c.min > c.max) {
+        errors.push({ field: `${at}`, code: 'INVALID_VALUE', message: 'between requires min ≤ max' });
+      }
+    }
+    if (SEQUENCE_OPERATORS.includes(c.operator) && !Array.isArray(c.value)) {
+      errors.push({ field: `${at}.value`, code: 'INVALID_VALUE', message: `${c.operator} requires an array value` });
+    }
+    if (c.operator === 'relative_to_baseline') {
+      if (!RELATIVE_DIRECTIONS.includes(c.direction)) {
+        errors.push({ field: `${at}.direction`, code: 'INVALID_VALUE', message: `relative_to_baseline requires direction ∈ ${RELATIVE_DIRECTIONS.join('|')}` });
+      }
+      for (const k of ['minimumDelta', 'maximumDelta']) {
+        if (c[k] != null && (!isFiniteNum(c[k]) || c[k] < 0)) {
+          errors.push({ field: `${at}.${k}`, code: 'INVALID_VALUE', message: `${k} must be a finite number ≥ 0` });
+        }
+      }
+    }
+  });
+
+  return { errors, warnings, empty: false };
 }
 
 function validateEvidence(list, errors, warnings) {
@@ -85,7 +176,15 @@ export function validateSeedCase(seedCase) {
   validatePositiveDims(seedCase.dimensionsMm, 'dimensionsMm', errors);
   validatePositiveDims(seedCase.testedSizeMm, 'testedSizeMm', errors);
 
-  // Observation vs candidate rule separation
+  // expectedResult — explicit criteria, strictly separate from observation
+  const er = validateExpectedResult(seedCase.expectedResult);
+  errors.push(...er.errors);
+  warnings.push(...er.warnings);
+  if (isObject(seedCase.observation) && ('criteria' in seedCase.observation || 'candidateRules' in seedCase.observation)) {
+    errors.push({ field: 'observation', code: 'OBSERVATION_AS_RULE', message: 'criteria/rules must not be nested inside observation' });
+  }
+
+  // candidate rules — separate from observations
   if (seedCase.candidateRules != null && !Array.isArray(seedCase.candidateRules)) {
     errors.push({ field: 'candidateRules', code: 'INVALID_TYPE', message: 'candidateRules must be an array' });
   } else {
@@ -93,16 +192,13 @@ export function validateSeedCase(seedCase) {
       if (!isObject(rule) || !isNonEmptyString(rule.ruleId)) {
         errors.push({ field: `candidateRules[${i}].ruleId`, code: 'EMPTY', message: 'candidate rule requires a ruleId' });
       }
-      if (rule && typeof rule === 'object' && 'text' in rule && !('expression' in rule)) {
+      if (isObject(rule) && 'text' in rule && !('expression' in rule)) {
         errors.push({ field: `candidateRules[${i}]`, code: 'OBSERVATION_AS_RULE', message: 'free text belongs in observation, not in a candidate rule' });
       }
     });
   }
-  if (isObject(seedCase.observation) && Array.isArray(seedCase.observation.candidateRules)) {
-    errors.push({ field: 'observation.candidateRules', code: 'OBSERVATION_AS_RULE', message: 'candidate rules must not be nested inside observation' });
-  }
 
-  // Synthetic examples can never claim confirmed status or count as evidence.
+  // synthetic cases: never confirmed, never holdout, never evidence
   if (seedCase.syntheticExample === true) {
     if (seedCase.confidence === 'confirmed') {
       errors.push({ field: 'confidence', code: 'SYNTHETIC_CANNOT_BE_CONFIRMED', message: 'a syntheticExample case cannot declare confidence "confirmed"' });
@@ -110,7 +206,7 @@ export function validateSeedCase(seedCase) {
     if (seedCase.holdout === true) {
       errors.push({ field: 'holdout', code: 'SYNTHETIC_CANNOT_BE_HOLDOUT', message: 'a syntheticExample case cannot be used as a holdout validation case' });
     }
-    warnings.push({ field: 'syntheticExample', code: 'NOT_EVIDENCE', message: 'synthetic example: schema verification only, never learning evidence' });
+    warnings.push({ field: 'syntheticExample', code: 'SYNTHETIC_EXAMPLE', message: 'synthetic example: schema verification only, never learning evidence, never pass/fail' });
   }
 
   if (seedCase.confidence === 'confirmed' && (!Array.isArray(seedCase.evidence) || seedCase.evidence.length === 0)) {

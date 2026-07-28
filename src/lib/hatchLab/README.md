@@ -1,94 +1,165 @@
-# Hatch Lab — P0 foundation (isolated, disabled, removable)
+# Hatch Lab — P0.1 (isolated, disabled, removable)
 
 Infrastructure to turn Hatch/Wilcom A–G technical evidence into checkable rules,
 regression cases and comparable metrics for the **current base engine**.
 
-**Status of P0**
+**Status**
 
+- Schema version: **1.1.0** (`seed/seedSchema.js`).
 - No A–G rule is implemented.
-- The lab is **not** connected to the Editor, the router, the pipeline or any config.
-- Nothing in `src/` outside `src/lib/hatchLab/**` and `src/tests/hatchLab/**` was created or modified.
-- Deleting these two folders restores the repository to its exact previous behaviour.
-- No feature flag has been added yet. When P1 starts, a flag
-  `BASE_ENGINE_HATCH_LAB_ENABLED = false` should live in a new
-  `src/lib/hatchLab/hatchLabFlags.js` — **not** in the Editor, not in `config`,
-  not persisted in the `Project` entity.
+- The lab is **not** connected to the Editor, the router, the pipeline or any
+  persisted config. No feature flag exists yet anywhere in productive code.
+- Deleting `src/lib/hatchLab/**` and `src/tests/hatchLab/**` restores the app
+  to its exact previous behaviour.
 
-**Seed status**: the Hatch/Wilcom A–G seed is **not present in this repository**.
-`seed/syntheticSeedExample.js` is marked `syntheticExample: true` and exists only
-to exercise the schema and the validator. It is not evidence and must never be
-used to derive rules.
+**Seed status**: the real Hatch/Wilcom A–G seed is **not in this repository**.
+`seed/syntheticSeedExample.js` is `syntheticExample: true`: schema/validator
+verification only — never evidence, never a learning case, never pass/fail.
 
-**Engine V2**: `src/lib/referenceLearning/**`, `src/components/referenceLearning/**`
-and `src/pages/ReferenceLearning.jsx` are the *reference-learning module of the base
-application*; their relation to the externally developed Engine V2 is **not confirmed**.
-They are excluded as a precaution and the lab must never import them. See
-`engineBoundaryManifest.js`.
+**Engine V2 / referenceLearning**: `src/lib/referenceLearning/**`,
+`src/components/referenceLearning/**` and `src/pages/ReferenceLearning.jsx` are
+the *reference-learning module of the base application*; their relation to the
+externally developed Engine V2 is **not confirmed**. Excluded as a precaution —
+the lab never imports them. See `engineBoundaryManifest.js`.
 
-## Modules
+## Verified real structures (read-only inspection, 2026-07-28)
 
-| File | Purpose |
-|---|---|
-| `engineBoundaryManifest.js` | Declarative path classification + hard constraints. Imports nothing. |
-| `seed/seedSchema.js` | Versioned A–G case schema, phases, evidence types, confidence levels. |
-| `seed/validateSeed.js` | Pure validator (single case + collection). Never mutates input. |
-| `seed/normalizeSeed.js` | Pure normalizer producing a new copy; missing data stays `null`. |
-| `seed/syntheticSeedExample.js` | Synthetic valid case + invalid variants for the tests. |
-| `bench/metricAvailability.js` | `unavailable` vocabulary, metric keys, default tolerances. |
-| `bench/extractMetrics.js` | Pure extraction from an already-produced engine result. |
-| `bench/compareMetrics.js` | Pure comparison: equal / improvement / regression / informational / not comparable. |
-| `bench/buildBenchReport.js` | JSON report; `pass` is never the default. |
-| `reports/reportSchema.js` | Report shape and allowed conclusions. |
+**Regions** (`src/lib/pipeline/types.js` EnrichedRegion + `regionBuilderStage.js`):
 
-## Comparison policy
+- Stable: `id`, `color` (`#rrggbb`), `stitch_type ∈ fill|satin|running_stitch`,
+  `visible` (false ⇒ discarded), `path_points` (normalized 0–1 `[[x,y],…]`),
+  `area_mm2` (number, mm²), `area_norm` (number, contour stage),
+  `region_class`/`layerType` (`outer_outline|inner_outline|detail_run|detail|micro_fill`),
+  contour objects: `type: 'contour'` + `contour_points`.
+- `holes` is declared as a **number** on EnrichedRegion — counted only when the
+  field is explicitly present; never inferred from geometry or screenshots.
+- Ambiguous: a bare `stitch_type: 'running_stitch'` without `type:'contour'` or
+  an outline `region_class` does **not** confirm a contour → classified
+  `unknown`, never auto-counted as contour.
 
-Fewer regions, fewer colors, fewer stitches or shorter processing time are
-**informational differences**, never improvements. A change is only an
-improvement or a regression when a seed case declares the expected direction in
-`expectedResult`. Without a seed `expectedResult` the report concludes
-`no_expected_result`; with essential metrics missing it concludes `inconclusive`.
+**Commands** (`src/lib/exportPipeline.js` — `flattenToCommands`,
+`buildFinalCommands`): `{ type, x, y, color, regionId, stitchType?, source?,
+layerType? }` with `type ∈ 'stitch' | 'jump' | 'trim' | 'colorChange' | 'end'`.
+`'stop'` was NOT observed in the generator: it is recognized literally if
+present but never invented from another type. Any other type → `unknown`
+(`unknownCommandCount`, `commandRecognitionCoverage`), and a required metric
+that depends on commands becomes non-conclusive.
 
-Holes are only counted when the region data declares them explicitly
-(`region.holes`). They are never inferred from geometry and never read from a
-screenshot.
+**stageLog** (`src/lib/pipeline/types.js` `logStage` + `runner.js`):
+`[{ stage, durationMs, ok, ts, error? }]` — field names verified; the extractor
+uses exactly `stage`, `durationMs`, `ok`, `error`.
+
+**Cannot be measured reliably today**: holes not explicitly declared, overlaps
+between layers, expected technique per shape, and anything inside an EMB file
+(no parser — EMB evidence must declare `extractable: false`).
+
+## Availability policy
+
+`extractMetrics(result, options)` → `{ metrics, availability, warnings }`.
+Each metric's availability entry: `{ available, complete, reason, unit, source }`.
+
+- Zero is a real measurement: `regions: []` → `regionCount = 0`, `colorCount = 0`;
+  `commands: []` → `stitchCount = 0`. An **absent** field → `unavailable`.
+- Partial data → `available: true, complete: false` + coverage metrics
+  (`colorCoverage`, `holeCoverage`, `classifiedRegionCoverage`,
+  `commandRecognitionCoverage`). Partial sums are never presented as totals.
+- Units are never mixed: `totalAreaMm2` (from `area_mm2` only, all-or-unavailable)
+  vs `totalAreaNormalized` (from `area_norm`, or shoelace(path_points) as a
+  single consistent fallback). `smallRegionCount` declares its unit + threshold
+  in `availability.source` and requires complete mm² data.
+- Region classification is mutually exclusive: `fill | contour | detail |
+  discarded | unknown` — one class per region, counts always sum to `regionCount`.
+
+## expectedResult (v1.1.0)
+
+`expectedResult: { criteria: [{ metric, operator, value|min/max|direction,
+required, tolerance? }] }` with operators `equals | minimum | maximum | between |
+sequence_equals | set_equals | relative_to_baseline`. Every operator except
+`relative_to_baseline` evaluates the candidate against the **real target value**;
+improving vs baseline never satisfies an absolute target. Validation rejects:
+unknown metrics, unknown operators, operator/metric-type mismatches, empty
+criteria, NaN/Infinity, non-boolean `required`, invalid tolerances,
+non-array sequence values, and negative dimensions. `observation` remains a
+separate field and can never carry criteria or rules.
+
+## Synthetic-case policy
+
+`syntheticExample: true` ⇒ never `pass`, never `fail`, never holdout, never
+evidence; its expectedResult is ignored for approval; the report concludes
+`no_expected_result` and carries a `SYNTHETIC_EXAMPLE` warning. Enforced in
+`buildBenchReport` and covered by tests.
+
+## Conclusion rules (exact)
+
+- `invalid_case` — invalid seed, invalid expectedResult, unknown metric or operator.
+- `no_expected_result` — synthetic case, no expectedResult, or empty criteria.
+- `inconclusive` — any required criterion unavailable / incomplete /
+  notComparable / unevaluated; unknown command types affecting a required
+  command-derived metric; or zero required criteria (a pass is impossible
+  without at least one required criterion).
+- `fail` — at least one required criterion evaluated and not satisfied.
+- `pass` — valid non-synthetic seed, ≥1 required criterion, ALL required
+  criteria available + complete + comparable + evaluated + satisfied.
+
+Never pass by default; never pass by mere absence of regressions. Every report
+includes `conclusionReason` explaining the verdict. Differences outside the
+criteria remain informational only.
+
+## Test execution
+
+Suites live in `src/tests/hatchLab/*.test.js` (pure runners — no test framework
+is installed and `package.json` was not modified). Real execution:
+open **`/src/tests/hatchLab/hatchLabTests.html`** through the Vite dev server —
+it runs all suites, colors the page green/red and prints the full JSON result.
+The latest execution result is recorded in the task report (see conversation);
+this README does not claim results that were not actually executed.
 
 ## Future stage-hook feasibility
 
-Read-only inspection of `src/lib/pipeline/runner.js` (not modified):
+Read-only inspection of `src/lib/pipeline/runner.js` (unmodified):
 
-- `runPipeline(imageUrl, config, { onProgress, skipStages, initialCtx })` iterates
-  a private `CLIENT_STAGES` array. `onProgress(weight, stageId)` is invoked
-  **before** each stage and receives no `ctx`, so it cannot read or transform
-  regions: it is a progress notification, not a hook.
-- There is **no** after-stage callback, no stage-level interception point and no
-  early-stop mechanism: `skipStages` skips a stage but the loop always runs to
-  the end. Stage failures are swallowed and logged into `ctx.stageLog`.
-- Intermediate state **is** reachable: the returned `ctx` carries every stage's
-  output, `initialCtx` is merged into a fresh context before the loop, and the
-  exported `runStages(ctx, stageIds)` re-runs an arbitrary subset on an existing
-  context.
-- Stages that replace or reorder `ctx.regions`: `region_builder`,
-  `quality_phase_1_input_segmentation_cleanup` and `stitch_optimizer`
-  (the last one overwrites `ctx.regions` with `result.optimizedSequence`).
-  A rule that modifies regions before any of these must be followed by a re-run
-  of every later stage, otherwise plan, path metrics and ordering go stale.
+- `runPipeline(imageUrl, config, { onProgress, skipStages, initialCtx })`:
+  `onProgress(weight, stageId)` fires **before** each stage without `ctx` — a
+  progress signal, not a hook. No after-stage callback, no early stop
+  (`skipStages` skips but the loop completes). Failures are swallowed into
+  `ctx.stageLog` (`{ stage, durationMs, ok, ts, error? }`).
+- Intermediate state is reachable: the returned `ctx` carries all outputs,
+  `initialCtx` merges into a fresh context, and `runStages(ctx, stageIds)`
+  re-runs any subset on an existing context.
+- Stages that replace/reorder `ctx.regions`: `region_builder`,
+  `quality_phase_1_input_segmentation_cleanup`, `stitch_optimizer` — a rule
+  touching regions requires re-running every later stage.
 
-**Conclusion: B — there are no usable per-stage hooks; an optional API would be
-needed for true in-pipeline rule insertion.**
+**Conclusion: B — no usable per-stage hooks; an optional API would be needed.**
+Mitigation without touching `runner.js`: segmented execution
+(`runPipeline` + `skipStages` → apply rule to `ctx` → `runStages(rest)`);
+limits: depends on private stage-id strings, cannot intercept inside a stage,
+re-runs whole stages. Option D (duplicating the pipeline) is rejected.
+Minimal future change if real hooks are ever needed: optional
+`opts.hooks = { afterStage(stageId, ctx) }` in the runner loop — additive,
+default-undefined, NOT part of P0/P0.1.
 
-Mitigation available today **without touching `runner.js`**: segmented execution
-composed externally — call `runPipeline` with `skipStages` listing every stage
-after the insertion point, apply the lab rule to the returned `ctx`, then call
-`runStages(ctx, [...remaining stage ids])`. This is a legitimate C-style
-composition and is the recommended P1 mechanism. Its limits, stated honestly:
-it depends on the private stage-id strings, it cannot intercept anything
-*inside* a stage (for example the blob filter inside `contourEngine`), and it
-re-runs whole stages rather than patching them.
+## File inventory (exact)
 
-Option D (duplicating the pipeline) is **rejected**: it would fork the base
-engine and guarantee divergence.
+```
+src/lib/hatchLab/README.md
+src/lib/hatchLab/engineBoundaryManifest.js
+src/lib/hatchLab/seed/seedSchema.js
+src/lib/hatchLab/seed/validateSeed.js
+src/lib/hatchLab/seed/normalizeSeed.js
+src/lib/hatchLab/seed/syntheticSeedExample.js
+src/lib/hatchLab/bench/metricAvailability.js
+src/lib/hatchLab/bench/extractMetrics.js
+src/lib/hatchLab/bench/compareMetrics.js
+src/lib/hatchLab/bench/buildBenchReport.js
+src/lib/hatchLab/reports/reportSchema.js
+src/tests/hatchLab/seedValidation.test.js
+src/tests/hatchLab/metricExtraction.test.js
+src/tests/hatchLab/metricComparison.test.js
+src/tests/hatchLab/mutationSafety.test.js
+src/tests/hatchLab/runHatchLabTests.js
+src/tests/hatchLab/hatchLabTests.html
+```
 
-**Minimal future change, if in-pipeline hooks are ever required**: add an optional
-`opts.hooks = { afterStage(stageId, ctx) }` invoked after `stage.fn(ctx)` inside
-the existing loop of `runner.js` — a purely additive, default-undefined
-parameter. That change is **not** part of P0 and has not been made.
+17 files, all inside the two lab folders. Nothing outside them is imported,
+modified or referenced by productive code.
