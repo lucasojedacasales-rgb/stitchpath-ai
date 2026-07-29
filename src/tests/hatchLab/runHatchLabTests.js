@@ -15,10 +15,11 @@ import { runAWidthsBaselineHarnessTests } from './aWidthsBaselineHarness.test.js
 import { runAWidthsStoredBaselineTests } from './aWidthsStoredBaseline.test.js';
 import { runAWidthsArchiveClosureTests } from './aWidthsArchiveClosure.test.js';
 import { runAWidthsSatinFoundationTests } from './aWidthsSatinFoundation.test.js';
+import { runAWidthsHoleSemanticsTests } from './aWidthsHoleSemantics.test.js';
 
 export function runHatchLabTests() {
   const suites = [];
-  for (const fn of [runSeedValidationTests, runMetricExtractionTests, runMetricComparisonTests, runMutationSafetyTests, runAWidthsSeedIntegrityTests, runSeedStructuralConformanceTests, runAWidthsEvaluatorTests, runAWidthsBaselineHarnessTests, runAWidthsStoredBaselineTests, runAWidthsArchiveClosureTests, runAWidthsSatinFoundationTests]) {
+  for (const fn of [runSeedValidationTests, runMetricExtractionTests, runMetricComparisonTests, runMutationSafetyTests, runAWidthsSeedIntegrityTests, runSeedStructuralConformanceTests, runAWidthsEvaluatorTests, runAWidthsBaselineHarnessTests, runAWidthsStoredBaselineTests, runAWidthsArchiveClosureTests, runAWidthsSatinFoundationTests, runAWidthsHoleSemanticsTests]) {
     try {
       suites.push(fn());
     } catch (e) {

@@ -4,7 +4,11 @@
  * the productive engine, referenceLearning or any UI module.
  */
 
-export { FOUNDATION_VERSION, DEFAULT_OPTIONS, OPTION_KINDS, RESULT_STATUSES, ELIGIBILITY_VALUES, resolveOptions } from './foundationSchema.js';
+export { FOUNDATION_VERSION, DEFAULT_OPTIONS, OPTION_KINDS, RESULT_STATUSES, ELIGIBILITY_VALUES, GEOMETRY_ELIGIBILITY_VALUES, HOLE_METADATA_STATUS_VALUES, OVERALL_ELIGIBILITY_VALUES, resolveOptions } from './foundationSchema.js';
+// P1.F0.2 — hole semantics audit surface (laboratory only).
+export { HOLE_FIELD_PRODUCER } from './holeSemantics/producerSemantics.js';
+export { auditRegionTopology } from './holeSemantics/auditRegionTopology.js';
+export { reconcileHoleSemantics, resolveOverallEligibility, HOLE_SEMANTIC_STATUSES } from './holeSemantics/reconcileHoleSemantics.js';
 export { normalizePolygonMm } from './geometry/normalizePolygonMm.js';
 export { validatePolygonMm, hasSelfIntersection, shoelaceSignedArea, perimeterMm } from './geometry/polygonValidation.js';
 export { analyzePolygonSimplicity, orientation, onSegment } from './geometry/polygonSimplicity.js';

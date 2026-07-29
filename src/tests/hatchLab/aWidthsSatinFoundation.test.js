@@ -154,14 +154,18 @@ export function runAWidthsSatinFoundationTests() {
       eq(r.zigzag.geometryType, 'paired_boundary_zigzag', 'geometryType');
     }
   });
-  check('five real cases are ineligible because they declare numeric holes', () => {
+  // P1.F0.2 — the numeric declaration is preserved as metadata but, once its
+  // producer semantics are reconciled, it no longer blocks the geometry.
+  check('five real cases keep their numeric holes metadata and are eligible after reconciliation', () => {
     for (const r of live) {
       eq(r.holeStatus, 'present', `${r.caseId} holeStatus`);
       eq(r.holeSourceField, 'holes', `${r.caseId} holeSourceField`);
       ok(r.declaredHoleCount > 0, `${r.caseId} declaredHoleCount`);
-      eq(r.eligibility, 'ineligible', `${r.caseId} eligibility`);
-      eq(r.status, 'ineligible', `${r.caseId} status`);
-      ok(r.reasons.some((x) => /hole/i.test(x)), `${r.caseId} reason names holes`);
+      eq(r.geometryEligibility, 'eligible', `${r.caseId} geometryEligibility`);
+      eq(r.holeMetadataStatus, 'clear', `${r.caseId} holeMetadataStatus`);
+      eq(r.overallEligibility, 'eligible', `${r.caseId} overallEligibility`);
+      eq(r.status, 'candidate_geometry_complete', `${r.caseId} status`);
+      eq(r.reasons.length, 0, `${r.caseId} no failed criterion: ${r.reasons.join(' | ')}`);
     }
   });
   for (const id of ['A1', 'A5', 'A6', 'A7', 'A8']) {
@@ -282,17 +286,19 @@ export function runAWidthsSatinFoundationTests() {
   });
 
   // ── hole representation policy ───────────────────────────────────────────
-  check('a numeric hole count is rejected as a hole declaration', () => {
+  check('a numeric hole count is reported as metadata and never blocks the geometry alone', () => {
     const r = measureSatinCandidate(synth(rect(0.1, 0.1, 0.4, 0.05), { holes: 2 }));
     eq(r.holeStatus, 'present', 'holeStatus');
     eq(r.declaredHoleCount, 2, 'declaredHoleCount');
-    eq(r.eligibility, 'ineligible', 'eligibility');
+    eq(r.topology.interiorRingCount, 0, 'a number creates no interior ring');
+    eq(r.geometryEligibility, 'eligible', 'geometryEligibility');
+    eq(r.holeMetadataStatus, 'clear', 'holeMetadataStatus');
   });
   check('holeCount / hole_count / explicitHoleCount and boolean flags are honoured', () => {
     const hc = measureSatinCandidate(synth(rect(0.1, 0.1, 0.4, 0.05), { regionExtra: { holeCount: 3 } }));
     eq(hc.holeSourceField, 'holeCount', 'holeCount detected');
     eq(hc.declaredHoleCount, 3, 'count from holeCount');
-    eq(hc.eligibility, 'ineligible', 'holeCount ineligible');
+    eq(hc.topology.interiorRingCount, 0, 'holeCount creates no ring');
     eq(describeHoleDeclaration({ hole_count: 1 }).holeStatus, 'present', 'hole_count');
     eq(describeHoleDeclaration({ explicitHoleCount: 5 }).declaredHoleCount, 5, 'explicitHoleCount');
     eq(describeHoleDeclaration({ holes: true }).declaredHoleCount, null, 'boolean flag must not invent a count');

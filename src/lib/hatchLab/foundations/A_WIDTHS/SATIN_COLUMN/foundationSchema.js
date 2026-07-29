@@ -67,10 +67,15 @@ export const RESULT_STATUSES = [
   'ineligible',                  // polygon/axis/holes incompatible with a straight column
   'partial',                     // geometry produced but a policy criterion not met
   'unsupported_requires_split',  // geometry complete but a stitch exceeds maxStitchLengthMm
+  'blocked_by_hole_metadata',    // P1.F0.2 — geometry complete, hole metadata unreconciled
   'candidate_geometry_complete', // full candidate geometry, all paired and contained
 ];
 
+// P1.F0.2 — three separate verdicts replace the former single ambiguous one.
 export const ELIGIBILITY_VALUES = ['eligible', 'partial', 'ineligible', 'unavailable'];
+export const GEOMETRY_ELIGIBILITY_VALUES = ['eligible', 'partial', 'ineligible', 'unavailable'];
+export const HOLE_METADATA_STATUS_VALUES = ['clear', 'real_holes', 'conflict', 'unresolved', 'unavailable'];
+export const OVERALL_ELIGIBILITY_VALUES = ['eligible', 'partial', 'ineligible', 'metadata_conflict', 'unavailable'];
 
 export function resolveOptions(options = {}) {
   const merged = { ...DEFAULT_OPTIONS, ...options };

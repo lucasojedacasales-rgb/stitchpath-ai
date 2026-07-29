@@ -69,11 +69,10 @@ export function validatePolygonMm(pointsMm, region = {}, options = {}) {
   // Identity / role constraints (straight-column foundation scope).
   if (!region || typeof region.id !== 'string' || region.id.length === 0) reasons.push('region identity (id) is missing');
 
+  // P1.F0.2: the declaration is reported but is NOT a geometric defect. Hole
+  // semantics are reconciled separately (holeSemantics/) and only real interior
+  // ring geometry can remove a polygon from the straight-column scope.
   const holes = describeHoleDeclaration(region);
-  if (holes.holeStatus === 'present') {
-    const count = holes.declaredHoleCount == null ? 'an unspecified number of' : holes.declaredHoleCount;
-    reasons.push(`region declares ${count} hole(s) via "${holes.holeSourceField}"; foundation only admits hole-free polygons`);
-  }
 
   const roleText = `${region.region_class || ''} ${region.type || ''}`.toLowerCase();
   if (/contour|outline/.test(roleText)) reasons.push('region role is contour/outline, incompatible with a filled straight column');

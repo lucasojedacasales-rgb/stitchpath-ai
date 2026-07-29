@@ -1,0 +1,92 @@
+{
+  "reportId": "P1.F0.2-A_WIDTHS-HOLE-SEMANTICS-RECONCILIATION-V1",
+  "foundationVersion": "P1.F0.1-A_WIDTHS-SATIN_COLUMN-STRAIGHT-CLOSURE-V1",
+  "candidateOnly": true,
+  "integrated": false,
+  "engineExecuted": false,
+  "buildFinalCommandsExecuted": false,
+  "baselineModified": false,
+  "productiveCodeModified": false,
+  "rawValuesModified": false,
+  "finalState": "HOLE_SEMANTICS_RESOLVED_NO_REAL_HOLES",
+  "recommendation": "PROCEED_TO_P1_F1_STRAIGHT_SATIN_COMMAND_MODEL",
+  "recommendationImplemented": false,
+  "producer": {
+    "field": "holes",
+    "producer": "src/lib/regionBuilder.js::estimateHoles",
+    "stage": "region_builder",
+    "meaning": "nearby_small_sibling_region_count",
+    "representsInteriorHoles": false,
+    "meaningConfidence": "proven_by_source_inspection",
+    "holeGeometryPreserved": false
+  },
+  "eligibilityModel": {
+    "geometryEligibility": ["eligible", "partial", "ineligible", "unavailable"],
+    "holeMetadataStatus": ["clear", "real_holes", "conflict", "unresolved", "unavailable"],
+    "overallEligibility": ["eligible", "partial", "ineligible", "metadata_conflict", "unavailable"],
+    "geometryEligibilityDependsOn": ["polygon", "axis", "straightness", "stations", "rails", "containment", "width", "split"],
+    "geometryEligibilityDependsOnScalarMetadata": false
+  },
+  "rows": [
+    {
+      "caseId": "HATCH-A-WIDTHS-A1", "regionId": "r_zbgef31",
+      "rawHoles": 1, "sourceField": "holes", "verifiedMeaning": "nearby_small_sibling_region_count",
+      "producer": "src/lib/regionBuilder.js::estimateHoles", "topologyHoleCount": 0, "interiorRingCount": 0,
+      "holeGeometryAvailable": false, "holeSemanticStatus": "confirmed_no_real_holes",
+      "geometryEligibility": "eligible", "holeMetadataStatus": "clear", "overallEligibility": "eligible",
+      "candidateGeometryComplete": true, "status": "candidate_geometry_complete",
+      "blocked": false, "blockingReason": null,
+      "reason": "the scalar is an inter-region proximity metric and the measured topology has zero interior rings",
+      "nextAllowedStep": "P1.F1 straight satin command model (laboratory only)"
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A5", "regionId": "r_sv7z5qe",
+      "rawHoles": 2, "sourceField": "holes", "verifiedMeaning": "nearby_small_sibling_region_count",
+      "producer": "src/lib/regionBuilder.js::estimateHoles", "topologyHoleCount": 0, "interiorRingCount": 0,
+      "holeGeometryAvailable": false, "holeSemanticStatus": "confirmed_no_real_holes",
+      "geometryEligibility": "eligible", "holeMetadataStatus": "clear", "overallEligibility": "eligible",
+      "candidateGeometryComplete": true, "status": "candidate_geometry_complete",
+      "blocked": false, "blockingReason": null,
+      "reason": "the scalar is an inter-region proximity metric and the measured topology has zero interior rings",
+      "nextAllowedStep": "P1.F1 straight satin command model (laboratory only)"
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A6", "regionId": "r_ecj9hl4",
+      "rawHoles": 2, "sourceField": "holes", "verifiedMeaning": "nearby_small_sibling_region_count",
+      "producer": "src/lib/regionBuilder.js::estimateHoles", "topologyHoleCount": 0, "interiorRingCount": 0,
+      "holeGeometryAvailable": false, "holeSemanticStatus": "confirmed_no_real_holes",
+      "geometryEligibility": "eligible", "holeMetadataStatus": "clear", "overallEligibility": "eligible",
+      "candidateGeometryComplete": true, "status": "candidate_geometry_complete",
+      "blocked": false, "blockingReason": null,
+      "reason": "the scalar is an inter-region proximity metric and the measured topology has zero interior rings",
+      "nextAllowedStep": "P1.F1 straight satin command model (laboratory only)"
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A7", "regionId": "r_c92bxh3",
+      "rawHoles": 1, "sourceField": "holes", "verifiedMeaning": "nearby_small_sibling_region_count",
+      "producer": "src/lib/regionBuilder.js::estimateHoles", "topologyHoleCount": 0, "interiorRingCount": 0,
+      "holeGeometryAvailable": false, "holeSemanticStatus": "confirmed_no_real_holes",
+      "geometryEligibility": "eligible", "holeMetadataStatus": "clear", "overallEligibility": "eligible",
+      "candidateGeometryComplete": true, "status": "candidate_geometry_complete",
+      "blocked": false, "blockingReason": null,
+      "reason": "the scalar is an inter-region proximity metric and the measured topology has zero interior rings",
+      "nextAllowedStep": "P1.F1 straight satin command model (laboratory only)"
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A8", "regionId": "r_zr65703",
+      "rawHoles": 1, "sourceField": "holes", "verifiedMeaning": "nearby_small_sibling_region_count",
+      "producer": "src/lib/regionBuilder.js::estimateHoles", "topologyHoleCount": 0, "interiorRingCount": 0,
+      "holeGeometryAvailable": false, "holeSemanticStatus": "confirmed_no_real_holes",
+      "geometryEligibility": "eligible", "holeMetadataStatus": "clear", "overallEligibility": "eligible",
+      "candidateGeometryComplete": true, "status": "candidate_geometry_complete",
+      "blocked": false, "blockingReason": null,
+      "reason": "the scalar is an inter-region proximity metric and the measured topology has zero interior rings",
+      "nextAllowedStep": "P1.F1 straight satin command model (laboratory only)"
+    }
+  ],
+  "limitations": [
+    "the conclusion is about the semantics of the productive field, not about physical embroidery quality",
+    "no machine compatibility, no Hatch conformance and no physical validation is claimed",
+    "the raw scalar values (1, 2, 2, 1, 1) remain untouched in the fixture and are still reported as metadata"
+  ]
+}

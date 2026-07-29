@@ -1,0 +1,64 @@
+{
+  "auditId": "P1.F0.2-A_WIDTHS-TOPOLOGY-AUDIT-V1",
+  "fixtureId": "A_WIDTHS_STRAIGHT_BARS",
+  "baselineId": "BASE-ENGINE-A-WIDTHS-V1",
+  "engineExecuted": false,
+  "rawFixtureModified": false,
+  "topologyMethod": "declared_ring_enumeration + shoelace + simplicity_analysis (scalar metadata excluded from the computation)",
+  "scalarMetadataUsedAsInput": false,
+  "coordinateSpace": { "declared": "normalized_0_1", "widthMm": 100, "heightMm": 80 },
+  "ringDetectionPolicy": "only fields carrying >= 3 finite points (directly, in an array of rings, or via points/path_points/ring/contour/pointsMm on an object) can create an interior ring; numbers and booleans can never create geometry",
+  "cases": [
+    {
+      "caseId": "HATCH-A-WIDTHS-A1", "regionId": "r_zbgef31",
+      "exteriorRingCount": 1, "interiorRingCount": 0, "pathRingCount": 1, "topologyHoleCount": 0,
+      "simplePolygon": true, "selfIntersectionCount": 0, "nestedRingCount": 0,
+      "ringWinding": "counter_clockwise_positive_area", "signedAreaMm2": 7.7456, "absoluteAreaMm2": 7.7456, "perimeterMm": 32.5141,
+      "boundaryComponentCount": 1, "holeGeometryAvailable": false,
+      "scalarHoleFieldsIgnored": [{ "field": "holes", "value": 1, "valueType": "number", "usedAsTopologyInput": false }],
+      "topologyWarnings": ["exterior ring: duplicate/closing point(s) removed before analysis", "scalar hole metadata is non-zero but no interior ring geometry exists in the region — a count cannot be turned into geometry"]
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A5", "regionId": "r_sv7z5qe",
+      "exteriorRingCount": 1, "interiorRingCount": 0, "pathRingCount": 1, "topologyHoleCount": 0,
+      "simplePolygon": true, "selfIntersectionCount": 0, "nestedRingCount": 0,
+      "ringWinding": "counter_clockwise_positive_area", "signedAreaMm2": 48.1729, "absoluteAreaMm2": 48.1729, "perimeterMm": 37.4235,
+      "boundaryComponentCount": 1, "holeGeometryAvailable": false,
+      "scalarHoleFieldsIgnored": [{ "field": "holes", "value": 2, "valueType": "number", "usedAsTopologyInput": false }],
+      "topologyWarnings": ["exterior ring: duplicate/closing point(s) removed before analysis", "scalar hole metadata is non-zero but no interior ring geometry exists in the region — a count cannot be turned into geometry"]
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A6", "regionId": "r_ecj9hl4",
+      "exteriorRingCount": 1, "interiorRingCount": 0, "pathRingCount": 1, "topologyHoleCount": 0,
+      "simplePolygon": true, "selfIntersectionCount": 0, "nestedRingCount": 0,
+      "ringWinding": "counter_clockwise_positive_area", "signedAreaMm2": 63.7204, "absoluteAreaMm2": 63.7204, "perimeterMm": 39.3873,
+      "boundaryComponentCount": 1, "holeGeometryAvailable": false,
+      "scalarHoleFieldsIgnored": [{ "field": "holes", "value": 2, "valueType": "number", "usedAsTopologyInput": false }],
+      "topologyWarnings": ["exterior ring: duplicate/closing point(s) removed before analysis", "scalar hole metadata is non-zero but no interior ring geometry exists in the region — a count cannot be turned into geometry"]
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A7", "regionId": "r_c92bxh3",
+      "exteriorRingCount": 1, "interiorRingCount": 0, "pathRingCount": 1, "topologyHoleCount": 0,
+      "simplePolygon": true, "selfIntersectionCount": 0, "nestedRingCount": 0,
+      "ringWinding": "counter_clockwise_positive_area", "signedAreaMm2": 96.4802, "absoluteAreaMm2": 96.4802, "perimeterMm": 43.4943,
+      "boundaryComponentCount": 1, "holeGeometryAvailable": false,
+      "scalarHoleFieldsIgnored": [{ "field": "holes", "value": 1, "valueType": "number", "usedAsTopologyInput": false }],
+      "topologyWarnings": ["exterior ring: duplicate/closing point(s) removed before analysis", "scalar hole metadata is non-zero but no interior ring geometry exists in the region — a count cannot be turned into geometry"]
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A8", "regionId": "r_zr65703",
+      "exteriorRingCount": 1, "interiorRingCount": 0, "pathRingCount": 1, "topologyHoleCount": 0,
+      "simplePolygon": true, "selfIntersectionCount": 0, "nestedRingCount": 0,
+      "ringWinding": "counter_clockwise_positive_area", "signedAreaMm2": 127.5374, "absoluteAreaMm2": 127.5374, "perimeterMm": 47.4712,
+      "boundaryComponentCount": 1, "holeGeometryAvailable": false,
+      "scalarHoleFieldsIgnored": [{ "field": "holes", "value": 1, "valueType": "number", "usedAsTopologyInput": false }],
+      "topologyWarnings": ["exterior ring: duplicate/closing point(s) removed before analysis", "scalar hole metadata is non-zero but no interior ring geometry exists in the region — a count cannot be turned into geometry"]
+    }
+  ],
+  "otherInteriorGeometryFieldsFoundInCapture": [],
+  "notes": [
+    "each region carries exactly one path_points array, so exactly one declared ring; it was never split into exterior + holes",
+    "no interior ring was invented, reconstructed from a count, or taken from the visual captures",
+    "concavity and corner_count were never interpreted as holes"
+  ]
+}

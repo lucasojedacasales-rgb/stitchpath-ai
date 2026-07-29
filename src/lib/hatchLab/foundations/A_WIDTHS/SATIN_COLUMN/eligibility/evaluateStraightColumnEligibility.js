@@ -7,14 +7,14 @@
  * eligibility values:
  *  - eligible:   every criterion satisfied
  *  - partial:    geometry produced but at least one policy/threshold criterion not met
- *  - ineligible: structural criterion violated (polygon / holes / axis / pairing / containment)
+ *  - ineligible: structural criterion violated (polygon / interior rings / axis / pairing / containment)
  *  - unavailable: not computable (handled upstream)
  *
  * P1.F0.1 strictness: with requireAllStationsPaired the pairing criterion is
  * structural and demands failedStations === 0 and stationSuccessRatio === 1.
  */
 
-export function evaluateStraightColumnEligibility({ validation, axis, rails, zigzag, straightness, containment }, options) {
+export function evaluateStraightColumnEligibility({ validation, axis, rails, zigzag, straightness, containment, topology }, options) {
   const checks = [];
   const add = (name, kind, satisfied, detail, threshold) => {
     checks.push({ name, kind, satisfied: !!satisfied, detail, threshold: threshold ?? null });
@@ -24,10 +24,12 @@ export function evaluateStraightColumnEligibility({ validation, axis, rails, zig
   add('polygonValid', 'structural', validation.valid, validation.valid ? 'simple, hole-free, positive-area polygon' : validation.reasons.join('; '));
   add('polygonSimple', 'structural', validation.polygonSimple !== false,
     validation.simplicity ? `${validation.simplicity.defects.length} simplicity defect(s)` : 'not analyzed');
-  add('holeFree', 'structural', validation.holeStatus !== 'present',
-    validation.holeStatus === 'present'
-      ? `holes ${validation.holeStatus} via "${validation.holeSourceField}" (declaredHoleCount ${validation.declaredHoleCount})`
-      : 'no hole declaration found');
+  // P1.F0.2: geometryEligibility depends only on represented geometry. A scalar
+  // metadata declaration never appears here; only real interior rings do.
+  add('noInteriorRingGeometry', 'structural', !(topology && topology.holeGeometryAvailable),
+    topology
+      ? `${topology.interiorRingCount} interior ring(s) represented in the geometry`
+      : 'topology not audited');
   add('axisStable', 'structural', axis.ok && axis.axisConfidence >= options.minAxisConfidence,
     `axisConfidence ${axis.axisConfidence?.toFixed(4)}`, options.minAxisConfidence);
 

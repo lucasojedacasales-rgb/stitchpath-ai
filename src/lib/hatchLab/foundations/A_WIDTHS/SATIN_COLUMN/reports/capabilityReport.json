@@ -20,6 +20,11 @@
     "containment": "computed",
     "splitRequired": "computed",
     "eligibility": "computed",
+    "geometryEligibility": "computed",
+    "overallEligibility": "computed",
+    "topologyHoleCount": "computed (scalar metadata excluded from the computation)",
+    "holeMetadataStatus": "computed from the verified producer semantics",
+    "holeSemanticStatus": "computed from the verified producer semantics",
     "geometryComplete": "computed",
     "spacingMm": "configured",
     "maxStitchLengthMm": "configured",
@@ -49,15 +54,20 @@
     "containmentSampleFractions": [0, 0.25, 0.5, 0.75, 1]
   },
   "closureFinding": {
-    "title": "The five real regions declare interior holes numerically",
-    "detail": "Every authorized region carries holes: 1 or holes: 2 as a NUMBER. The P1.F0 check only tested Array.isArray(region.holes), so the declaration was invisible and the five cases were reported eligible. Under the P1.F0.1 hole policy a finite count > 0 is a hole declaration, so the five cases are now ineligible for a straight satin column while their measured geometry stays complete, paired, straight and contained.",
-    "consequence": "eligibility ineligible (polygonValid + holeFree) · geometryComplete true · allStationsPaired true · containment contained · straightness within policy",
-    "notForced": "Obtained by recomputing the unchanged fixture under the hardened policy; no measurement was edited and the engine was not re-executed."
+    "title": "P1.F0.2 — the numeric holes field is not a topological hole count",
+    "detail": "The five regions carry holes: 1 or holes: 2 as a NUMBER. P1.F0.1 treated any finite count > 0 as a hole declaration and reported the five cases ineligible. The P1.F0.2 audit traced the field to src/lib/regionBuilder.js::estimateHoles (stage region_builder): it counts SIBLING regions whose area is under 12 % of this region and whose normalized centroid is closer than 0.15 — an inter-region proximity heuristic that never inspects the region's own boundary and stores no hole geometry. The independent topology audit measures one exterior ring, zero interior rings and zero interior boundaries for all five.",
+    "consequence": "geometryEligibility eligible · holeMetadataStatus clear · overallEligibility eligible · status candidate_geometry_complete · raw scalars (1, 2, 2, 1, 1) preserved as metadata",
+    "notForced": "Obtained by recomputing the unchanged fixture; no raw value was edited, no measurement was hand-written and the engine was not re-executed.",
+    "supersedes": "the P1.F0.1 finding that attributed the ineligibility to a hole declaration",
+    "reports": ["holeSemantics/holeFieldTrace.md", "holeSemantics/topologyAudit.md", "holeSemantics/reconciliationReport.md"]
   },
   "cases": [
     {
       "caseId": "HATCH-A-WIDTHS-A1", "regionId": "r_zbgef31", "sourceIndex": 22,
-      "status": "ineligible", "eligibility": "ineligible", "geometryComplete": true, "allStationsPaired": true,
+      "status": "candidate_geometry_complete", "eligibility": "eligible",
+      "geometryEligibility": "eligible", "holeMetadataStatus": "clear", "overallEligibility": "eligible",
+      "holeSemanticStatus": "confirmed_no_real_holes", "topologyHoleCount": 0, "interiorRingCount": 0, "holeGeometryAvailable": false,
+      "geometryComplete": true, "candidateGeometryComplete": true, "allStationsPaired": true,
       "holeStatus": "present", "holeSourceField": "holes", "declaredHoleCount": 1, "polygonSimple": true,
       "axisAngleDeg": 90.001954, "axisConfidence": 0.999055, "aspectRatio": 32.684629,
       "minimumWidthMm": 0.439303, "meanWidthMm": 0.487726, "maximumWidthMm": 0.489, "widthVariationRatio": 0.101896,
@@ -65,15 +75,15 @@
       "stitchCount": 77, "spacingMm": 0.4, "minimumStitchLengthMm": 0.439303, "averageStitchLengthMm": 0.558582, "maximumStitchLengthMm": 0.631771, "splitRequired": false,
       "centerlinePointCount": 39, "centerlineMaximumDeviationMm": 0.001502, "centerlineRmsDeviationMm": 0.000253, "centerlineDeviationRatio": 0.000099, "centerlineStartToEndAngleDeg": -90.006281, "principalAxisVsCenterlineAngleDeltaDeg": 0.002872, "withinStraightnessPolicy": true,
       "containmentStatus": "contained", "segmentsChecked": 77, "samplesChecked": 385, "outsideSampleCount": 0, "outsideSegmentIndices": [],
-      "reasons": [
-        "polygonValid: region declares 1 hole(s) via \"holes\"; foundation only admits hole-free polygons (threshold null)",
-        "holeFree: holes present via \"holes\" (declaredHoleCount 1) (threshold null)"
-      ],
+      "reasons": [],
       "previewSvg": "previews/HATCH-A-WIDTHS-A1-SATIN-CANDIDATE.svg"
     },
     {
       "caseId": "HATCH-A-WIDTHS-A5", "regionId": "r_sv7z5qe", "sourceIndex": 9,
-      "status": "ineligible", "eligibility": "ineligible", "geometryComplete": true, "allStationsPaired": true,
+      "status": "candidate_geometry_complete", "eligibility": "eligible",
+      "geometryEligibility": "eligible", "holeMetadataStatus": "clear", "overallEligibility": "eligible",
+      "holeSemanticStatus": "confirmed_no_real_holes", "topologyHoleCount": 0, "interiorRingCount": 0, "holeGeometryAvailable": false,
+      "geometryComplete": true, "candidateGeometryComplete": true, "allStationsPaired": true,
       "holeStatus": "present", "holeSourceField": "holes", "declaredHoleCount": 2, "polygonSimple": true,
       "axisAngleDeg": 89.95855, "axisConfidence": 0.964392, "aspectRatio": 5.297893,
       "minimumWidthMm": 2.81851, "meanWidthMm": 3.012777, "maximumWidthMm": 3.019089, "widthVariationRatio": 0.066576,
@@ -81,15 +91,15 @@
       "stitchCount": 79, "spacingMm": 0.4, "minimumStitchLengthMm": 2.81851, "averageStitchLengthMm": 3.027632, "maximumStitchLengthMm": 3.04539, "splitRequired": false,
       "centerlinePointCount": 40, "centerlineMaximumDeviationMm": 0.048932, "centerlineRmsDeviationMm": 0.008935, "centerlineDeviationRatio": 0.003137, "centerlineStartToEndAngleDeg": 89.86615, "principalAxisVsCenterlineAngleDeltaDeg": 0.0032, "withinStraightnessPolicy": true,
       "containmentStatus": "contained", "segmentsChecked": 79, "samplesChecked": 395, "outsideSampleCount": 0, "outsideSegmentIndices": [],
-      "reasons": [
-        "polygonValid: region declares 2 hole(s) via \"holes\"; foundation only admits hole-free polygons (threshold null)",
-        "holeFree: holes present via \"holes\" (declaredHoleCount 2) (threshold null)"
-      ],
+      "reasons": [],
       "previewSvg": "previews/HATCH-A-WIDTHS-A5-SATIN-CANDIDATE.svg"
     },
     {
       "caseId": "HATCH-A-WIDTHS-A6", "regionId": "r_ecj9hl4", "sourceIndex": 8,
-      "status": "ineligible", "eligibility": "ineligible", "geometryComplete": true, "allStationsPaired": true,
+      "status": "candidate_geometry_complete", "eligibility": "eligible",
+      "geometryEligibility": "eligible", "holeMetadataStatus": "clear", "overallEligibility": "eligible",
+      "holeSemanticStatus": "confirmed_no_real_holes", "topologyHoleCount": 0, "interiorRingCount": 0, "holeGeometryAvailable": false,
+      "geometryComplete": true, "candidateGeometryComplete": true, "allStationsPaired": true,
       "holeStatus": "present", "holeSourceField": "holes", "declaredHoleCount": 2, "polygonSimple": true,
       "axisAngleDeg": 89.961378, "axisConfidence": 0.937824, "aspectRatio": 4.010394,
       "minimumWidthMm": 3.847569, "meanWidthMm": 3.983486, "maximumWidthMm": 3.990184, "widthVariationRatio": 0.035802,
@@ -97,15 +107,15 @@
       "stitchCount": 79, "spacingMm": 0.4, "minimumStitchLengthMm": 3.847569, "averageStitchLengthMm": 3.994499, "maximumStitchLengthMm": 4.010273, "splitRequired": false,
       "centerlinePointCount": 40, "centerlineMaximumDeviationMm": 0.056137, "centerlineRmsDeviationMm": 0.009855, "centerlineDeviationRatio": 0.003599, "centerlineStartToEndAngleDeg": 90.095203, "principalAxisVsCenterlineAngleDeltaDeg": 0.00772, "withinStraightnessPolicy": true,
       "containmentStatus": "contained", "segmentsChecked": 79, "samplesChecked": 395, "outsideSampleCount": 0, "outsideSegmentIndices": [],
-      "reasons": [
-        "polygonValid: region declares 2 hole(s) via \"holes\"; foundation only admits hole-free polygons (threshold null)",
-        "holeFree: holes present via \"holes\" (declaredHoleCount 2) (threshold null)"
-      ],
+      "reasons": [],
       "previewSvg": "previews/HATCH-A-WIDTHS-A6-SATIN-CANDIDATE.svg"
     },
     {
       "caseId": "HATCH-A-WIDTHS-A7", "regionId": "r_c92bxh3", "sourceIndex": 7,
-      "status": "ineligible", "eligibility": "ineligible", "geometryComplete": true, "allStationsPaired": true,
+      "status": "candidate_geometry_complete", "eligibility": "eligible",
+      "geometryEligibility": "eligible", "holeMetadataStatus": "clear", "overallEligibility": "eligible",
+      "holeSemanticStatus": "confirmed_no_real_holes", "topologyHoleCount": 0, "interiorRingCount": 0, "holeGeometryAvailable": false,
+      "geometryComplete": true, "candidateGeometryComplete": true, "allStationsPaired": true,
       "holeStatus": "present", "holeSourceField": "holes", "declaredHoleCount": 1, "polygonSimple": true,
       "axisAngleDeg": 89.951623, "axisConfidence": 0.857676, "aspectRatio": 2.650535,
       "minimumWidthMm": 5.91006, "meanWidthMm": 6.031475, "maximumWidthMm": 6.037252, "widthVariationRatio": 0.021088,
@@ -113,15 +123,15 @@
       "stitchCount": 79, "spacingMm": 0.4, "minimumStitchLengthMm": 5.91006, "averageStitchLengthMm": 6.038756, "maximumStitchLengthMm": 6.050613, "splitRequired": false,
       "centerlinePointCount": 40, "centerlineMaximumDeviationMm": 0.057915, "centerlineRmsDeviationMm": 0.009739, "centerlineDeviationRatio": 0.003712, "centerlineStartToEndAngleDeg": 90.131816, "principalAxisVsCenterlineAngleDeltaDeg": 0.010045, "withinStraightnessPolicy": true,
       "containmentStatus": "contained", "segmentsChecked": 79, "samplesChecked": 395, "outsideSampleCount": 0, "outsideSegmentIndices": [],
-      "reasons": [
-        "polygonValid: region declares 1 hole(s) via \"holes\"; foundation only admits hole-free polygons (threshold null)",
-        "holeFree: holes present via \"holes\" (declaredHoleCount 1) (threshold null)"
-      ],
+      "reasons": [],
       "previewSvg": "previews/HATCH-A-WIDTHS-A7-SATIN-CANDIDATE.svg"
     },
     {
       "caseId": "HATCH-A-WIDTHS-A8", "regionId": "r_zr65703", "sourceIndex": 6,
-      "status": "ineligible", "eligibility": "ineligible", "geometryComplete": true, "allStationsPaired": true,
+      "status": "candidate_geometry_complete", "eligibility": "eligible",
+      "geometryEligibility": "eligible", "holeMetadataStatus": "clear", "overallEligibility": "eligible",
+      "holeSemanticStatus": "confirmed_no_real_holes", "topologyHoleCount": 0, "interiorRingCount": 0, "holeGeometryAvailable": false,
+      "geometryComplete": true, "candidateGeometryComplete": true, "allStationsPaired": true,
       "holeStatus": "present", "holeSourceField": "holes", "declaredHoleCount": 1, "polygonSimple": true,
       "axisAngleDeg": 89.934218, "axisConfidence": 0.751274, "aspectRatio": 2.003743,
       "minimumWidthMm": 7.854421, "meanWidthMm": 7.974416, "maximumWidthMm": 7.978471, "widthVariationRatio": 0.015556,
@@ -129,10 +139,7 @@
       "stitchCount": 79, "spacingMm": 0.4, "minimumStitchLengthMm": 7.854421, "averageStitchLengthMm": 7.97947, "maximumStitchLengthMm": 7.988801, "splitRequired": false,
       "centerlinePointCount": 40, "centerlineMaximumDeviationMm": 0.055252, "centerlineRmsDeviationMm": 0.009548, "centerlineDeviationRatio": 0.003542, "centerlineStartToEndAngleDeg": 90.180691, "principalAxisVsCenterlineAngleDeltaDeg": 0.003194, "withinStraightnessPolicy": true,
       "containmentStatus": "contained", "segmentsChecked": 79, "samplesChecked": 395, "outsideSampleCount": 0, "outsideSegmentIndices": [],
-      "reasons": [
-        "polygonValid: region declares 1 hole(s) via \"holes\"; foundation only admits hole-free polygons (threshold null)",
-        "holeFree: holes present via \"holes\" (declaredHoleCount 1) (threshold null)"
-      ],
+      "reasons": [],
       "previewSvg": "previews/HATCH-A-WIDTHS-A8-SATIN-CANDIDATE.svg"
     }
   ],

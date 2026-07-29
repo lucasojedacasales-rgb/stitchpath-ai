@@ -9,22 +9,26 @@ Values recomputed from the persisted fixture of `BASE-ENGINE-A-WIDTHS-V1` (hash-
 re-executed) and rounded to 6 decimals. `candidateOnly: true`, `integrated: false`. No Hatch
 conformance and no physical validation is asserted.
 
-## Closure finding — declared holes
+## Closure finding — P1.F0.2 supersedes the P1.F0.1 hole verdict
 
-Every authorized region declares interior holes **numerically** (`holes: 1` / `holes: 2`). P1.F0 only
-tested `Array.isArray(region.holes)`, so the declaration was invisible and the five cases were
-reported `eligible`. Under the hardened hole policy the five are now **`ineligible`**, while their
-measured geometry stays **complete, fully paired, straight and contained**.
+Every authorized region declares `holes: 1` or `holes: 2` as a **number**. P1.F0.1 treated any count
+> 0 as a hole declaration and reported the five cases `ineligible`. The P1.F0.2 audit traced the
+field to `src/lib/regionBuilder.js::estimateHoles` (stage `region_builder`): it counts **sibling
+regions** under 12 % of this region's area whose normalized centroid is nearer than 0.15 — an
+inter-region proximity heuristic that never inspects the region's own boundary and stores no hole
+geometry. The independent topology audit measures **one exterior ring, zero interior rings, zero
+interior boundaries** for all five, so the scalar stays metadata and the geometry is
+`eligible`. Full detail in `holeSemantics/`.
 
 ## Measured results
 
-| case | status | eligibility | geometryComplete | allStationsPaired | stations ok/total | gaps | holes (count) | widthMm min/mean/max | varRatio | stitches | stitchMm min/avg/max | split |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| A1 | ineligible | ineligible | true | true | 39/39 | 0 | present (1) | 0.439303/0.487726/0.489000 | 0.101896 | 77 | 0.439303/0.558582/0.631771 | false |
-| A5 | ineligible | ineligible | true | true | 40/40 | 0 | present (2) | 2.818510/3.012777/3.019089 | 0.066576 | 79 | 2.818510/3.027632/3.045390 | false |
-| A6 | ineligible | ineligible | true | true | 40/40 | 0 | present (2) | 3.847569/3.983486/3.990184 | 0.035802 | 79 | 3.847569/3.994499/4.010273 | false |
-| A7 | ineligible | ineligible | true | true | 40/40 | 0 | present (1) | 5.910060/6.031475/6.037252 | 0.021088 | 79 | 5.910060/6.038756/6.050613 | false |
-| A8 | ineligible | ineligible | true | true | 40/40 | 0 | present (1) | 7.854421/7.974416/7.978471 | 0.015556 | 79 | 7.854421/7.979470/7.988801 | false |
+| case | status | geometryEligibility | holeMetadataStatus | overallEligibility | geometryComplete | allStationsPaired | stations ok/total | gaps | raw holes (metadata) | topology holes | widthMm min/mean/max | varRatio | stitches | stitchMm min/avg/max | split |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| A1 | candidate_geometry_complete | eligible | clear | eligible | true | true | 39/39 | 0 | 1 | 0 | 0.439303/0.487726/0.489000 | 0.101896 | 77 | 0.439303/0.558582/0.631771 | false |
+| A5 | candidate_geometry_complete | eligible | clear | eligible | true | true | 40/40 | 0 | 2 | 0 | 2.818510/3.012777/3.019089 | 0.066576 | 79 | 2.818510/3.027632/3.045390 | false |
+| A6 | candidate_geometry_complete | eligible | clear | eligible | true | true | 40/40 | 0 | 2 | 0 | 3.847569/3.983486/3.990184 | 0.035802 | 79 | 3.847569/3.994499/4.010273 | false |
+| A7 | candidate_geometry_complete | eligible | clear | eligible | true | true | 40/40 | 0 | 1 | 0 | 5.910060/6.031475/6.037252 | 0.021088 | 79 | 5.910060/6.038756/6.050613 | false |
+| A8 | candidate_geometry_complete | eligible | clear | eligible | true | true | 40/40 | 0 | 1 | 0 | 7.854421/7.974416/7.978471 | 0.015556 | 79 | 7.854421/7.979470/7.988801 | false |
 
 `failedStations: 0`, `failedStationIndices: []`, `stationGapCount: 0`, `maximumStationGapMm: 0`,
 `polygonSimple: true` for the five cases.

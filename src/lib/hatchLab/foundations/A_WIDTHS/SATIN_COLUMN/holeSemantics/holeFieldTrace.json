@@ -1,0 +1,70 @@
+{
+  "traceId": "P1.F0.2-A_WIDTHS-HOLE-FIELD-TRACE-V1",
+  "method": "read-only static inspection of the productive sources plus repository-wide alias search; no productive module imported, no pipeline executed",
+  "aliasesSearched": ["holes", "hole", "holeCount", "hole_count", "explicitHoleCount", "interiorRing", "innerContour", "contourHierarchy", "hierarchy", "euler", "eulerNumber", "connectedComponents", "findContours", "childContours"],
+  "stagesInspected": [
+    { "stage": "image_analysis", "file": "src/lib/pipeline/stages/imageAnalysisStage.js", "producesHoles": false },
+    { "stage": "image_enhancement", "file": "src/lib/pipeline/stages/imageEnhancementStage.js", "producesHoles": false },
+    { "stage": "contour_engine", "file": "src/lib/pipeline/stages/contourEngineStage.js + src/lib/contourEngine.js", "producesHoles": false, "note": "contourEngine.js:509 only mentions holes in a comment about separate regions sewn over a fill" },
+    { "stage": "semantic_segmentation", "file": "src/lib/pipeline/stages/semanticSegmentationStage.js + src/lib/semanticSegmenter.js", "producesHoles": false, "note": "semanticSegmenter.js:230 mentions holes only inside an LLM complexity prompt (1-5 scale)" },
+    { "stage": "vector_engine", "file": "src/lib/pipeline/stages/vectorEngineStage.js", "producesHoles": false },
+    { "stage": "region_normalize", "file": "src/lib/pipeline/regionNormalize.js", "producesHoles": false },
+    { "stage": "region_builder", "file": "src/lib/pipeline/stages/regionBuilderStage.js -> src/lib/regionBuilder.js", "producesHoles": true },
+    { "stage": "adaptive_engine", "file": "src/lib/adaptiveEngine.js", "producesHoles": false, "note": "consumes geoMetrics.holes indirectly through stitchIntelligence" },
+    { "stage": "contour_safe_mode", "file": "src/lib/contourSafeMode.js", "producesHoles": false },
+    { "stage": "hybrid_digitize", "file": "base44/functions/hybridDigitize/entry.ts", "producesHoles": false },
+    { "stage": "vectorize_fallbacks", "file": "src/lib/vectorizationFusionEngine.js, src/lib/contourTracer.js, src/lib/contourFromFill.js", "producesHoles": false },
+    { "stage": "types_and_serialization", "file": "src/lib/pipeline/types.js:131", "producesHoles": false, "note": "EnrichedRegion declares holes as {number} only" }
+  ],
+  "producer": {
+    "firstFunctionCreatingHoles": "estimateHoles",
+    "file": "src/lib/regionBuilder.js",
+    "approximateLines": "203-217",
+    "calledFrom": "enrichRegion (src/lib/regionBuilder.js ~line 347), itself called by enrichAllRegions",
+    "stage": "region_builder",
+    "valueType": "number",
+    "inputUsed": "the sibling region array (allRegions): other.id, other.centroid (normalized 0-1), other.area_mm2; plus this region's own area_mm2 and centroid",
+    "formula": "count(other.id !== self.id && other.centroid && other.area_mm2 < 0.12 * self.area_mm2 && hypot(other.centroid - self.centroid) < 0.15)",
+    "computedOver": "sibling_region_metadata",
+    "computedOverOptions": {
+      "rasterImage": false,
+      "binaryMask": false,
+      "contourHierarchy": false,
+      "polygon": false,
+      "pathPoints": false,
+      "semanticObjects": false,
+      "connectedComponents": false,
+      "siblingRegionMetadata": true
+    },
+    "preservedRecomputedOrOverwritten": "recomputed and written on every enrichRegion call; no upstream stage supplies a competing value, so nothing earlier is preserved",
+    "meaning": "nearby_small_sibling_region_count",
+    "meaningPlainText": "how many OTHER regions of the same design are both small relative to this one (< 12 % of its area) and centroid-near (< 0.15 normalized units)",
+    "meaningClassification": {
+      "interiorHoleCount": false,
+      "ringCount": false,
+      "childContourCount": false,
+      "complexityMetric": false,
+      "removedNoise": false,
+      "rasterCuts": false,
+      "fallback": false,
+      "otherSemantics": "inter-region proximity heuristic between sibling regions"
+    },
+    "meaningConfidence": "proven_by_source_inspection",
+    "holeGeometryPreservedAnywhere": false,
+    "holeGeometryFields": []
+  },
+  "consumers": [
+    { "file": "src/lib/regionBuilder.js", "line": 312, "readsGeometry": false, "use": "computeQuality subtracts 8 quality points per unit and pushes an advisory issue" },
+    { "file": "src/lib/stitchIntelligence.js", "line": 461, "readsGeometry": false, "use": "eiePriority forces priority 10 for running_stitch when the value is > 0" },
+    { "file": "src/components/editor/RegionInspector.jsx", "line": 87, "readsGeometry": false, "use": "displays the number as \"Agujeros\"" },
+    { "file": "src/components/editor/IntelligencePanel.jsx", "line": 115, "readsGeometry": false, "use": "copies the scalar into its geo payload" },
+    { "file": "src/lib/hatchLab/bench/extractMetrics.js", "lines": "136-148", "readsGeometry": false, "use": "sums it into the explicitHoleCount benchmark metric" }
+  ],
+  "conclusions": [
+    "the field name is misleading: the producer never inspects the region's own boundary",
+    "no interior ring, child contour, contour hierarchy or Euler number is computed anywhere in the productive pipeline",
+    "no productive field stores hole boundary geometry, so no consumer could sew or knock out an interior hole",
+    "therefore a value > 0 does not certify a topological interior hole"
+  ],
+  "notModified": ["src/lib/**", "src/pages/**", "src/components/**", "base44/**", "BASE-ENGINE-A-WIDTHS-V1/**"]
+}

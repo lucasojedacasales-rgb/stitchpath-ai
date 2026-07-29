@@ -44,12 +44,25 @@ declaration — never deduced from numeric ranges. No pixels.
    every segment sampled at 0/25/50/75/100 %; `candidate_geometry_complete` requires
    `outsideSampleCount === 0`.
 
-### Closure finding
+### Closure finding — revised by P1.F0.2
 
-The five real regions declare interior holes **numerically** (`holes: 1` / `holes: 2`). P1.F0 only
-tested `Array.isArray`, so the declaration was invisible. Under the hardened policy the five are now
-`ineligible` (polygonValid + holeFree) while their geometry stays complete, paired, straight and
-contained. Details in `reports/capabilityReport.md`.
+The five real regions declare `holes: 1` / `holes: 2` **numerically**. P1.F0.1 read any count > 0 as
+a hole declaration and refused the five cases. P1.F0.2 (`holeSemantics/`) traced the field to
+`src/lib/regionBuilder.js::estimateHoles`: it counts **sibling regions** that are small (< 12 % of
+this area) and centroid-near (< 0.15), never inspecting the region's own boundary and storing no hole
+geometry. The independent topology audit measures one exterior ring and zero interior rings for all
+five, so the scalar is preserved as metadata and no longer blocks the geometry.
+
+### P1.F0.2 — three separate verdicts
+
+- `geometryEligibility` — polygon, axis, straightness, stations, rails, containment, width, split.
+- `holeMetadataStatus` — `clear` / `real_holes` / `conflict` / `unresolved` / `unavailable`.
+- `overallEligibility` — combines both and can be `metadata_conflict` without destroying
+  `candidateGeometryComplete`.
+
+Real interior ring geometry (`confirmed_real_holes`) still removes a region from the straight-column
+scope; a count claiming holes with no boundary geometry becomes `metadata_conflict`, never a silent
+rejection. Details in `holeSemantics/README.md`.
 
 ## Why `generateSatinColumnPath` was not reused
 
