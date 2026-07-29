@@ -1,80 +1,77 @@
-# SATIN_COLUMN foundation — P1.F0 (laboratory only)
+# SATIN_COLUMN foundation — P1.F0.1 straight-column closure (laboratory only)
 
-Isolated geometric prototype that validates whether a real A_WIDTHS region is a
-straight bar apt for a satin column and, when it is, builds candidate satin
-geometry: principal axis → perpendicular sections → left/right rails →
-transversal zigzag → measured widths, stations and stitch lengths → technical
-SVG preview.
+Isolated geometric prototype that decides whether a real A_WIDTHS region is a straight bar apt for a
+satin column and, when the geometry allows it, builds candidate satin geometry: principal axis →
+perpendicular sections → left/right rails → transversal zigzag → centerline straightness →
+zigzag containment → criterion-based eligibility → technical SVG preview.
 
-**candidateOnly: true · integrated: false.** Nothing here is imported by the
-productive engine, and this foundation imports nothing from
-`src/lib/pipeline/**`, the productive `src/lib/*` motor modules,
-`referenceLearning` or any UI component. It never runs `runPipeline`,
-`buildFinalCommands`, CE01, simulators or exporters, and never changes any
-region's `stitch_type`.
+**candidateOnly: true · integrated: false.** Nothing here is imported by the productive engine, and
+this foundation imports nothing from `src/lib/pipeline/**`, the productive motor modules,
+`referenceLearning` or any UI component. It never runs `runPipeline` or `buildFinalCommands`, never
+touches simulators, exporters or encoders, and never changes a region's `stitch_type`.
 
 ## Data source
 
-The five real regions come exclusively from the sealed baseline
-`BASE-ENGINE-A-WIDTHS-V1` (cases A1, A5, A6, A7, A8). The repository
-`pipelineSnapshot.json` is sanitised and keeps no `path_points`, so the
-verified external capture (3 140 114 bytes, SHA-256 recomputed and matched
-before extraction) was used. Only the five authorized regions were extracted
-into `fixtures/A_WIDTHS_STRAIGHT_BARS.json` with full-precision original
-points, explicit `coordinateSpace: normalized_0_1`, the 100×80 mm design size,
-a per-polygon FNV-1a hash and minimal provenance. The engine was **not**
-re-executed. See `sourceProvenance.json`.
+The five real regions come exclusively from the sealed baseline `BASE-ENGINE-A-WIDTHS-V1`
+(cases A1, A5, A6, A7, A8), extracted once from the verified external capture into
+`fixtures/A_WIDTHS_STRAIGHT_BARS.json` with full-precision points, explicit
+`coordinateSpace: normalized_0_1`, the 100 × 80 mm design size and a per-polygon FNV-1a hash. The
+engine was **not** re-executed. See `sourceProvenance.json`.
 
-## Coordinates
+Coordinates: `xMm = xNormalized × 100 ; yMm = yNormalized × 80`, from the baseline's explicit
+declaration — never deduced from numeric ranges. No pixels.
 
-`xMm = xNormalized × 100 ; yMm = yNormalized × 80`. The space is taken from the
-baseline's explicit declaration, never deduced from numeric ranges. No pixels.
+## P1.F0.1 hardening
 
-## Algorithm
+1. **Strict station pairing** (`requireAllStationsPaired: true`) — `eligible` requires
+   `failedStations === 0`, `stationSuccessRatio === 1` and every station returning exactly two
+   intersections. Failed stations are indexed (`failedStationIndices`), the axial holes they create
+   are measured (`stationGapCount`, `maximumStationGapMm`), the rails are never joined across a gap,
+   and `splitRequired` can no longer mask an earlier geometric failure. New result fields:
+   `geometryComplete`, `allStationsPaired`.
+2. **Robust polygon simplicity** (`geometry/polygonSimplicity.js`) — strict crossings, a non-adjacent
+   vertex on an edge, contact between non-adjacent edges, collinear overlap, zero-length edges and
+   repeated edges, all with the declared `geometryEpsilonMm`. Shared endpoints of genuinely adjacent
+   edges are never a defect.
+3. **Hole representation** (`geometry/holeDeclaration.js`) — non-empty array, finite number > 0,
+   non-empty object, `true`, `holeCount`, `hole_count`, `explicitHoleCount` mean holes present;
+   `0`, `false`, `[]`, `{}`, `null` mean absent. Reports `holeStatus`, `holeSourceField` and
+   `declaredHoleCount` (never invented from a boolean flag).
+4. **Centerline straightness** (`geometry/measureCenterlineStraightness.js`) — deviation of the
+   station centerline from a total-least-squares line through its centroid, plus the angle against
+   the principal axis. Configured a priori: 0.25 mm / 2 % / 5°.
+5. **Zigzag containment** (`geometry/checkZigzagContainment.js` + `geometry/pointInPolygon.js`) —
+   every segment sampled at 0/25/50/75/100 %; `candidate_geometry_complete` requires
+   `outsideSampleCount === 0`.
 
-1. `geometry/normalizePolygonMm.js` — explicit mm conversion; duplicate removal
-   is recorded, never silent.
-2. `geometry/polygonValidation.js` — simple, hole-free, positive-area,
-   non-self-intersecting polygon + identity/role checks. Incompatible shapes
-   return concrete reasons; nothing is repaired.
-3. `geometry/principalAxis.js` — axis from polygon **area moments**
-   (covariance of the filled region), invariant to start point, array rotation
-   and winding. `region.angle` / `fill_angle` / `plan.optimalAngle` are never
-   used.
-4. `geometry/boundaryIntersections.js` + `geometry/buildColumnRails.js` —
-   perpendicular section per station (spacingMm 0.4, experimental configured
-   value, not declared equivalent to Hatch spacing); exactly two deduplicated
-   intersections required; deterministic left/right by the canonical minor
-   axis; missing edges are reported as failed stations, never invented.
-5. `geometry/buildSatinZigzag.js` — left[0] → right[0] → left[1] → right[1] …;
-   stitch lengths measured against maxStitchLengthMm 12.1; exceeding it sets
-   `splitRequired: true` and status `unsupported_requires_split` (no autoSplit).
-6. `eligibility/evaluateStraightColumnEligibility.js` — criterion-based
-   eligibility; every threshold declared in `foundationSchema.js`, echoed in
-   the result and overridable via options.
-7. `renderSatinCandidateSvg.js` — raw technical previews under `previews/`
-   (polygon, axis, rails, stations, intersection pairs, zigzag, mm scale).
+### Closure finding
+
+The five real regions declare interior holes **numerically** (`holes: 1` / `holes: 2`). P1.F0 only
+tested `Array.isArray`, so the declaration was invisible. Under the hardened policy the five are now
+`ineligible` (polygonValid + holeFree) while their geometry stays complete, paired, straight and
+contained. Details in `reports/capabilityReport.md`.
 
 ## Why `generateSatinColumnPath` was not reused
 
-The existing generator (read-only inspection, `src/lib/contourExportBuilder.js`)
-consumes a **centerline + constant width** and alternates sides by sample
-parity around that centerline. Regions provide boundary polygons with varying
-width and no centerline, so the foundation implements the geometric principle
-(paired opposing boundary rails) independently. Full analysis in
-`sourceProvenance.json`.
+The existing generator (read-only inspection of `src/lib/contourExportBuilder.js`) consumes a
+**centerline + constant width** and alternates sides by sample parity. The five regions are boundary
+polygons with varying width and no centerline, so this foundation implements the geometric principle
+(paired opposing boundary rails) independently. Full analysis in `sourceProvenance.json`.
 
-## Outputs
+## Artifacts
 
-- `fixtures/A_WIDTHS_STRAIGHT_BARS.json` — verified real fixture.
-- `reports/capabilityReport.json` / `.md` — measured results per case, with
-  extracted / computed / configured / documentary / unavailable value kinds.
-- `previews/HATCH-A-WIDTHS-{A1,A5,A6,A7,A8}-SATIN-CANDIDATE.svg`.
+- `fixtures/A_WIDTHS_STRAIGHT_BARS.json` — verified real fixture (five regions).
+- `fixtures/syntheticFixtures.js` — laboratory shapes (`synthetic: true`): `SYNTH-STRAIGHT-BAR`
+  positive control and `SYNTH-BENT-CONSTANT-WIDTH` curved control.
+- `reports/capabilityReport.json` / `.md` — measured results with value kinds
+  (extracted / computed / configured / documentary / unavailable).
+- `previews/HATCH-A-WIDTHS-{A1,A5,A6,A7,A8}-SATIN-CANDIDATE.svg` — technical diagnostics.
+- `artifactManifest.json` — real persisted inventory with sizes and SHA-256 digests.
 
 ## Limitations
 
 - Straight, hole-free, almost-convex bars only; one column per region.
-- spacingMm 0.4 is an initial experimental configuration.
-- No satin/fill selection, no stitch_type changes, no compensation, no
-  underlay, no autoSplit, no integration, no machine compatibility claim,
-  no physical validation, no Hatch conformance statement.
+- `spacingMm: 0.4` is an initial experimental configuration, not a Hatch equivalence.
+- No curved columns, no width → technique rule, no `stitch_type` change, no compensation, no
+  underlay, no autoSplit, no integration, no machine-compatibility claim, no physical validation and
+  no Hatch conformance statement.

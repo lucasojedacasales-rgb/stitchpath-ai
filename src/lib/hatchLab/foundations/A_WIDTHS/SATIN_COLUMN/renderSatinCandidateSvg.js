@@ -1,61 +1,86 @@
 /**
- * renderSatinCandidateSvg.js — technical SVG preview of a measured candidate.
- * Raw geometry in millimetres; no thread simulation, no Final Look.
+ * renderSatinCandidateSvg.js — compact technical preview of a measured satin
+ * candidate. Diagnostic drawing only: never a machine preview, never a
+ * simulation of the productive Final Look.
+ *
+ * Layers: polygon · principal axis · zigzag trajectory · left rail · right rail ·
+ * station centerline · first/last markers · scale bar · metrics header.
+ * Coordinates are rounded to 0.1 px purely to keep the file small.
  */
 
-const fmt = (v) => Number(v.toFixed(4));
+const PX_PER_MM = 10;
+const PAD = 20;
+const HEADER = 90;
+// Integer px rounding keeps the persisted preview small; it is a diagnostic
+// drawing, never a measurement source.
+const r1 = (v) => Math.round(v);
 
 export function renderSatinCandidateSvg(result) {
-  if (!result.pointsMm || !result.axis || !result.rails || !result.zigzag) {
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="120"><text x="10" y="30" font-size="12">${result.caseId}: no geometry (status ${result.status})</text></svg>`;
+  if (!result || !Array.isArray(result.pointsMm) || result.pointsMm.length < 3) {
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="40"><text x="6" y="24" font-size="11">no geometry available</text></svg>';
   }
-  const pts = result.pointsMm;
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const [x, y] of pts) {
-    if (x < minX) minX = x; if (x > maxX) maxX = x;
-    if (y < minY) minY = y; if (y > maxY) maxY = y;
+  const poly = result.pointsMm;
+  const xs = poly.map((p) => p[0]);
+  const ys = poly.map((p) => p[1]);
+  const minX = Math.min(...xs), minY = Math.min(...ys);
+  const maxX = Math.max(...xs), maxY = Math.max(...ys);
+  const tx = (p) => [r1((p[0] - minX) * PX_PER_MM + PAD), r1((p[1] - minY) * PX_PER_MM + PAD)];
+  const pathOf = (pts) => pts.map(tx).map((p) => `${p[0]},${p[1]}`).join(' ');
+
+  const width = Math.max(470, (maxX - minX) * PX_PER_MM + PAD * 2);
+  const bodyHeight = (maxY - minY) * PX_PER_MM + PAD * 2;
+  const height = r1(HEADER + bodyHeight + 55);
+
+  const st = result.straightness || {};
+  const cn = result.containment || {};
+  const m = result.zigzag ? result.zigzag.metrics : {};
+  const rails = result.rails || {};
+  const f = (v, n = 4) => (typeof v === 'number' ? v.toFixed(n) : 'n/a');
+
+  const lines = [
+    `${result.caseId} · ${result.regionId} · ${result.status}`,
+    `spacingMm ${result.options.spacingMm} · stations ${rails.successfulStations}/${rails.stationCount} · allPaired ${result.allStationsPaired} · gaps ${result.stationGapCount}`,
+    `widthMm mean ${f(rails.meanWidthMm, 3)} · stitches ${m.stitchCount} · maxStitchMm ${f(m.maximumStitchLengthMm, 3)} · split ${m.splitRequired}`,
+    `centerline devMaxMm ${f(st.centerlineMaximumDeviationMm)} rms ${f(st.centerlineRmsDeviationMm)} ratio ${f(st.centerlineDeviationRatio, 5)} axisD° ${f(st.principalAxisVsCenterlineAngleDeltaDeg)}`,
+    `containment ${cn.containmentStatus} · outside ${cn.outsideSampleCount}/${cn.samplesChecked} samples · eligibility ${result.eligibility} · geometryComplete ${result.geometryComplete}`,
+    `holes ${result.holeStatus} (${result.declaredHoleCount}) · 1 mm = ${PX_PER_MM} px · candidateOnly true · integrated false`,
+  ];
+  const header = lines
+    .map((t, i) => `<text x="8" y="${14 + i * 13}" font-size="10" font-family="monospace" fill="#111">${t}</text>`)
+    .join('');
+
+  const axisA = result.axis ? [
+    result.axis.centroidMm[0] + result.axis.majorAxis[0] * result.axis.projection.sMin,
+    result.axis.centroidMm[1] + result.axis.majorAxis[1] * result.axis.projection.sMin,
+  ] : null;
+  const axisB = result.axis ? [
+    result.axis.centroidMm[0] + result.axis.majorAxis[0] * result.axis.projection.sMax,
+    result.axis.centroidMm[1] + result.axis.majorAxis[1] * result.axis.projection.sMax,
+  ] : null;
+
+  const parts = [];
+  parts.push(`<polygon points="${pathOf(poly)}" fill="#e2e8f0" stroke="#334155" stroke-width="0.8"/>`);
+  if (axisA && axisB) {
+    const a = tx(axisA), b = tx(axisB);
+    parts.push(`<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="#dc2626" stroke-width="1.2" stroke-dasharray="5 3"/>`);
   }
-  const pad = 2, S = 40; // 40 px per mm
-  const W = (maxX - minX + 2 * pad), H = (maxY - minY + 2 * pad);
-  const tx = (x) => fmt((x - minX + pad) * S);
-  const ty = (y) => fmt((y - minY + pad) * S);
-  const poly = pts.map(([x, y]) => `${tx(x)},${ty(y)}`).join(' ');
+  if (result.zigzag && result.zigzag.pointsMm.length) {
+    parts.push(`<polyline points="${pathOf(result.zigzag.pointsMm)}" fill="none" stroke="#7c3aed" stroke-width="0.7" opacity="0.9"/>`);
+  }
+  if (rails.leftRail && rails.leftRail.length) parts.push(`<polyline points="${pathOf(rails.leftRail)}" fill="none" stroke="#2563eb" stroke-width="1"/>`);
+  if (rails.rightRail && rails.rightRail.length) parts.push(`<polyline points="${pathOf(rails.rightRail)}" fill="none" stroke="#16a34a" stroke-width="1"/>`);
+  if (rails.centerPoints && rails.centerPoints.length) parts.push(`<polyline points="${pathOf(rails.centerPoints)}" fill="none" stroke="#f59e0b" stroke-width="0.8" stroke-dasharray="3 2"/>`);
+  if (result.zigzag && result.zigzag.pointsMm.length >= 2) {
+    const first = tx(result.zigzag.pointsMm[0]);
+    const last = tx(result.zigzag.pointsMm[result.zigzag.pointsMm.length - 1]);
+    parts.push(`<circle cx="${first[0]}" cy="${first[1]}" r="2.4" fill="#0f172a"/>`);
+    parts.push(`<circle cx="${last[0]}" cy="${last[1]}" r="2.4" fill="#dc2626"/>`);
+  }
 
-  const { axis, rails, zigzag } = result;
-  const [cx, cy] = axis.centroidMm;
-  const a1 = [cx + axis.majorAxis[0] * axis.projection.sMin, cy + axis.majorAxis[1] * axis.projection.sMin];
-  const a2 = [cx + axis.majorAxis[0] * axis.projection.sMax, cy + axis.majorAxis[1] * axis.projection.sMax];
+  const scale = `<line x1="8" y1="${r1(height - 16)}" x2="${8 + 10 * PX_PER_MM}" y2="${r1(height - 16)}" stroke="#111" stroke-width="2"/>`
+    + `<text x="${12 + 10 * PX_PER_MM}" y="${r1(height - 12)}" font-size="10" font-family="monospace" fill="#111">10 mm</text>`;
 
-  const railPath = (rail) => rail.map(([x, y]) => `${tx(x)},${ty(y)}`).join(' ');
-  const zig = zigzag.pointsMm.map(([x, y]) => `${tx(x)},${ty(y)}`).join(' ');
-  const stationMarks = result.rails.stations.filter((s) => s.centerPoint)
-    .map((s) => `<circle cx="${tx(s.centerPoint[0])}" cy="${ty(s.centerPoint[1])}" r="1.5" fill="#f59e0b"/>`).join('');
-  const pairMarks = result.rails.stations.filter((s) => s.leftRailPoint)
-    .map((s) => `<circle cx="${tx(s.leftRailPoint[0])}" cy="${ty(s.leftRailPoint[1])}" r="1.2" fill="#22c55e"/><circle cx="${tx(s.rightRailPoint[0])}" cy="${ty(s.rightRailPoint[1])}" r="1.2" fill="#3b82f6"/>`).join('');
-
-  const m = zigzag.metrics;
-  const infoLines = [
-    `${result.caseId} · ${result.regionId}`,
-    `spacingMm ${result.options.spacingMm} · meanWidthMm ${rails.meanWidthMm?.toFixed(3)} · maxStitchMm ${m.maximumStitchLengthMm?.toFixed(3)}`,
-    `eligibility ${result.eligibility} · splitRequired ${m.splitRequired} · scale: 1 mm = ${S} px`,
-  ].map((line, i) => `<text x="8" y="${16 + i * 14}" font-size="11" font-family="monospace" fill="#111">${line}</text>`).join('');
-
-  // 10 mm scale bar
-  const barY = fmt(H * S + 46);
-  const scaleBar = `<line x1="8" y1="${barY}" x2="${fmt(8 + 10 * S)}" y2="${barY}" stroke="#111" stroke-width="2"/><text x="8" y="${barY + 14}" font-size="10" font-family="monospace" fill="#111">10 mm</text>`;
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(Math.max(W * S, 460))}" height="${fmt(H * S + 70)}" viewBox="0 0 ${fmt(Math.max(W * S, 460))} ${fmt(H * S + 70)}">
-<rect width="100%" height="100%" fill="#ffffff"/>
-<g transform="translate(0,52)">
-<polygon points="${poly}" fill="#e2e8f0" stroke="#334155" stroke-width="1"/>
-<line x1="${tx(a1[0])}" y1="${ty(a1[1])}" x2="${tx(a2[0])}" y2="${ty(a2[1])}" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="6 3"/>
-<polyline points="${railPath(rails.leftRail)}" fill="none" stroke="#16a34a" stroke-width="1"/>
-<polyline points="${railPath(rails.rightRail)}" fill="none" stroke="#2563eb" stroke-width="1"/>
-<polyline points="${zig}" fill="none" stroke="#7c3aed" stroke-width="0.8" opacity="0.85"/>
-${stationMarks}
-${pairMarks}
-</g>
-${infoLines}
-${scaleBar}
-</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${r1(width)}" height="${height}" viewBox="0 0 ${r1(width)} ${height}">`
+    + `<rect width="100%" height="100%" fill="#ffffff"/>${header}`
+    + `<g transform="translate(0,${HEADER})">${parts.join('')}</g>${scale}</svg>`;
 }
