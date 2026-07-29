@@ -1,12 +1,13 @@
 /**
  * satinColumnFlag.js — P1.F2 integration switch.
  *
- * The straight satin column path is OFF by default: with the flag disabled the
- * engine behaves exactly as before (satin main stitches = constant-density
- * boundary path). Enabling it is an explicit, reversible decision.
+ * The straight satin column path is ON by default (P1.F2 activation): eligible
+ * straight bars are stitched as real satin columns. Regions that are not proven
+ * eligible still fall back to the previous constant-density boundary path, and
+ * setStraightSatinColumnEnabled(false) restores the old behaviour completely.
  */
 
-let enabled = false;
+let enabled = true;
 
 export function isStraightSatinColumnEnabled() {
   return enabled === true;
@@ -19,7 +20,7 @@ export function setStraightSatinColumnEnabled(value) {
 
 export const STRAIGHT_SATIN_COLUMN_FLAG = {
   id: 'STRAIGHT_SATIN_COLUMN_P1F2',
-  defaultEnabled: false,
+  defaultEnabled: true,
   scope: 'main satin stitches inside processObjectStitches',
   fallback: 'constant-density boundary path (previous behaviour) whenever the geometry is not an eligible straight column',
 };
