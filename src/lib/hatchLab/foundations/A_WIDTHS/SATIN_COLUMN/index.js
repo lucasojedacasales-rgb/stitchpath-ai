@@ -37,4 +37,6 @@ export const ISOLATION_MANIFEST = {
   enginesExecuted: [],
   mutatesRegions: false,
   producesMachineCommands: false,
+  producesProductiveShapeCandidates: true,
+  connectsProductivePipeline: false,
 };

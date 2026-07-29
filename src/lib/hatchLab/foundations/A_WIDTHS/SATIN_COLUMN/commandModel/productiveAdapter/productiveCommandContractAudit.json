@@ -1,0 +1,249 @@
+{
+  "auditId": "P1.F2-A_WIDTHS-PRODUCTIVE-COMMAND-CONTRACT-AUDIT-V2",
+  "targetContractId": "STITCHPATH-FLATTEN-TO-COMMANDS-ABSOLUTE-MM-STITCH-CORE-V1",
+  "targetContractAuditHash": "fnv1a32:1E170737",
+  "mode": "read_only_static_inspection",
+  "classification": "PRODUCTIVE_MM_CONTRACT_REQUIRES_START_ANCHOR_ADAPTER",
+  "classificationAllowedForImplementation": true,
+  "runPipelineExecuted": false,
+  "buildFinalCommandsExecuted": false,
+  "ce01Executed": false,
+  "encodersExecuted": false,
+  "exportsPerformed": false,
+  "productiveModulesImportedByAdapter": [],
+  "filesInspected": [
+    {
+      "path": "src/lib/exportPipeline.js",
+      "lines": 2316,
+      "sha256": "ABED06A09FF434AB41D8085892A49772D96430EEAC52087429938947FA80F300",
+      "functions": [
+        "flattenToCommands",
+        "validatePipeline",
+        "autoFix",
+        "buildFinalCommands",
+        "encodeCanonicalCommandsToFile",
+        "encodeToFile"
+      ]
+    },
+    {
+      "path": "src/lib/industrialStitchProcessor.js",
+      "lines": 409,
+      "sha256": "5DC7C339519C511E4D6AAA0F821C278013A896840AD216FB1D4869E171C44404",
+      "functions": [
+        "processObjectStitches",
+        "generateTieIn",
+        "generateTieOff",
+        "generateEdgeRunUnderlay",
+        "generateGridUnderlay"
+      ]
+    },
+    {
+      "path": "src/lib/contourExportBuilder.js",
+      "lines": 908,
+      "sha256": "1C2B3CBCCCF9476427F1BC07DC8EB42E7F446E70737D0FEA2C63D8092DFFCD38",
+      "functions": [
+        "generateSatinColumnPath",
+        "generateContourStitches",
+        "countContourStitches"
+      ]
+    },
+    {
+      "path": "src/lib/ce01SafeFillGenerator.js",
+      "lines": 726,
+      "sha256": "3984CBCB3AD74B16337B9615DC4B87C9F760046B1FC989414D02C95621FACBB1",
+      "functions": [
+        "generateCE01SafeFillCommands",
+        "_postProcess",
+        "_validate"
+      ]
+    },
+    {
+      "path": "src/lib/ce01CommandSanitizer.js",
+      "lines": 302,
+      "sha256": "486504C492EBA3E79E8C8D3A21493AFFADD02CF01EB5FBA787D5C4482F61C887",
+      "functions": [
+        "sanitizeCommandsForCE01",
+        "_removeDuplicates",
+        "_mergeMicroStitches",
+        "_splitLongStitches",
+        "_optimizeJumps"
+      ]
+    },
+    {
+      "path": "src/lib/ce01Validator.js",
+      "lines": 393,
+      "sha256": "7521C5030998A40D8EBE0CB0E2EB1EF05CABCAA459CAE59EA23B6400C64BE19C",
+      "functions": [
+        "validateCE01"
+      ]
+    },
+    {
+      "path": "src/lib/dstEncoder.js",
+      "lines": 369,
+      "sha256": "044A38DE1797D11BF2692BA5462955448F4AFAC23FE788D78456349B403FF0B9",
+      "functions": [
+        "encodeDSTDelta",
+        "encodeDSTMove",
+        "buildDSTFile"
+      ]
+    },
+    {
+      "path": "src/lib/dsbEncoder.js",
+      "lines": 524,
+      "sha256": "CCE83EF329786D40A53A7C243327DEF1EA60D8FDBB68D0B077F0F8859EA14C79",
+      "functions": [
+        "encodeDSBRecord",
+        "encodeDSBMove",
+        "buildDSBFile"
+      ]
+    },
+    {
+      "path": "src/lib/dstDirectExport.js",
+      "lines": 200,
+      "sha256": "49C956B13D4D57056B03BCD99FED518B9BB97C09FBE7F2B06235CBB7FDBB71A1",
+      "functions": [
+        "buildDSTFromCommands"
+      ]
+    },
+    {
+      "path": "src/lib/unifiedCommandMetrics.js",
+      "lines": 135,
+      "sha256": "088600E9943CF5A9322F349A972F76E88A7A16E6ABF7BB905DA06AC88A6E9713",
+      "functions": [
+        "calculateUnifiedCommandMetrics"
+      ]
+    },
+    {
+      "path": "src/components/editor/ValidationPreview.jsx",
+      "mode": "consumer_read_only",
+      "functions": [
+        "ValidationPreview"
+      ]
+    }
+  ],
+  "productiveContract": {
+    "producerFile": "src/lib/exportPipeline.js",
+    "producerFunction": "flattenToCommands",
+    "immediateConsumer": "buildFinalCommands",
+    "laterConsumers": [
+      "validatePipeline",
+      "autoFix",
+      "repairCE01FinalCommands",
+      "sanitizeCommandsForCE01",
+      "validateCE01",
+      "calculateUnifiedCommandMetrics",
+      "ValidationPreview",
+      "encodeToFile",
+      "buildDSTFromCommands"
+    ],
+    "coordinateMode": "absolute",
+    "coordinateSpace": "mm",
+    "quantized": false,
+    "operationField": "type",
+    "stitchLiteral": "stitch",
+    "xField": "x",
+    "yField": "y",
+    "dxField": null,
+    "dyField": null,
+    "opField": null,
+    "commandField": null,
+    "requiredConsumerFields": [
+      "type",
+      "x",
+      "y"
+    ],
+    "contextualFields": [
+      "color",
+      "regionId"
+    ],
+    "producerOptionalFields": [
+      "stitchType",
+      "source",
+      "layerType"
+    ],
+    "targetExactCommandFields": [
+      "type",
+      "x",
+      "y",
+      "regionId"
+    ],
+    "objectIdUsage": "not found in the audited productive command producer or immediate consumers",
+    "regionIdUsage": "emitted by flattenToCommands; used by CE01 validation and route/detail grouping",
+    "colorUsage": "emitted when object context supplies it; used for thread blocks and display; consumers fall back when absent",
+    "stitchTypeUsage": "optional producer context used by contour/detail guards and thread-block reporting",
+    "metadataUsage": "no generic metadata object belongs to the common flattenToCommands command core",
+    "fieldsAddedBySpecializedProducers": [
+      "blockId",
+      "CE01 density-calibration scalar fields"
+    ],
+    "fieldsAddedLater": [
+      "trim and jump commands can be synthesized by CE01 sanitization",
+      "colorChange commands can be restored by direct DST export",
+      "end is guaranteed by validation/auto-fix or export"
+    ]
+  },
+  "sequenceSemantics": {
+    "firstProductivePoint": "flattenToCommands normally sequences from the current needle position and may add jump/trim; P1.F2 does not perform that decision",
+    "adapterFirstCommand": "destination of P1.F1 command 0, never startAnchorMm",
+    "adapterStartAnchor": "stored separately with requiresExternalSequencing=true",
+    "lastProductivePoint": "destination of the final P1.F1 command",
+    "jump": "productive control op between spans/objects; forbidden in the isolated adapter",
+    "trim": "productive control op before sufficiently long travel; forbidden in the isolated adapter",
+    "end": "single trailing design terminator added by productive flow; forbidden in the isolated adapter",
+    "colorChange": "productive stop between thread-color blocks; forbidden in the isolated adapter",
+    "tieInTieOff": "point patterns are inserted by productive stitch generators, not represented as distinct common command types; P1.F2 adds none",
+    "underlay": "inserted at object-stitch generation for fill/satin; P1.F2 adds none"
+  },
+  "sanitization": {
+    "stage": "after flattenToCommands and before encoding inside buildFinalCommands",
+    "duplicateRemoval": "may remove stitch commands below 0.05 mm",
+    "microMerge": "may remove eligible stitches below 0.8 mm",
+    "longSplit": "may add stitch destinations above 8 mm",
+    "jumpOptimization": "may collapse/re-split jumps and insert trims",
+    "fieldRemoval": "existing stitch objects are copied with spread syntax; no named stitch field is stripped",
+    "defaults": {
+      "maxJumpLengthMm": 12.1,
+      "trimThresholdMm": 3.5,
+      "directExportMissingColor": "#000000",
+      "encodeToFileMissingColor": "#000000"
+    }
+  },
+  "encoderBoundary": {
+    "dstDirectExportInput": "absolute-mm command objects",
+    "dstDirectExportConversion": "Math.round(x*10), Math.round(y*10), then relative 0.1 mm deltas",
+    "dstEncoderInput": "absolute points already expressed in 0.1 mm units",
+    "dsbEncoderInput": "absolute points already expressed in 0.1 mm units",
+    "ignoredByDirectDSTForGeometry": [
+      "regionId",
+      "source",
+      "layerType"
+    ],
+    "usedByDirectDSTOutsideGeometry": [
+      "type",
+      "color",
+      "stitchType"
+    ],
+    "reasonNotTargeted": "P1.F2 must preserve full-precision millimeters and cannot quantize"
+  },
+  "adapterProfile": {
+    "rationale": "type/x/y are mandatory for all immediate consumers; regionId is authoritative in P1.F1 and is a real productive contextual field",
+    "excludedFields": {
+      "color": "P1.F1 has no authoritative thread color",
+      "stitchType": "not required by consumers and would imply an integration decision",
+      "source": "productive provenance literal would be fabricated",
+      "layerType": "P1.F1 has no authoritative productive layer",
+      "objectId": "not part of the audited command contract",
+      "metadata": "generic metadata is not part of the common command core",
+      "op": "productive contract uses type",
+      "dx": "productive pre-encoder contract is absolute",
+      "dy": "productive pre-encoder contract is absolute"
+    }
+  },
+  "implementationDecision": {
+    "allowed": true,
+    "quantizationRequired": false,
+    "oneLabCommandToOneProductiveCommand": true,
+    "startAnchorCommandAdded": false,
+    "integrationPerformed": false
+  }
+}

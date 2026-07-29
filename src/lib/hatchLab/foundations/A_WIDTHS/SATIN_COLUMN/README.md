@@ -62,6 +62,20 @@ pair, alternating `cross_column` / `advance_diagonal`, absolute mm at full preci
 productive command shape and not a machine command — the read-only contract audit classifies a future
 mapping as `compatible_with_adapter`. See `commandModel/README.md`.
 
+### P1.F2 — isolated productive command-shape adapter
+
+`commandModel/productiveAdapter/` maps each valid P1.F1 segment one-to-one to the verified
+pre-CE01 core `{ type: "stitch", x, y, regionId }`. Coordinates remain absolute millimeters at full
+precision. The P1.F1 `startAnchorMm` stays outside `productiveCommands`, so no jump, trim, end,
+color change, tie stitch, underlay, compensation, quantization, or sequencing decision is invented.
+
+The audited classification is
+`PRODUCTIVE_MM_CONTRACT_REQUIRES_START_ANCHOR_ADAPTER`. The five persisted outputs are only
+shape-compatible candidates: `candidateOnly: true`, `integrated: false`, `machineReady: false`,
+`exportReady: false`, `ce01Validated: false`, `encoderValidated: false`,
+`physicallyValidated: false`. They are not connected to `flattenToCommands`, `buildFinalCommands`,
+CE01, simulators, encoders, or export.
+
 ### P1.F0.2 — three separate verdicts
 
 - `geometryEligibility` — polygon, axis, straightness, stations, rails, containment, width, split.

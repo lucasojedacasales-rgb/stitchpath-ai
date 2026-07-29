@@ -1,0 +1,76 @@
+{
+  "closureId": "P1.F2-A_WIDTHS-STRAIGHT-SATIN-PRODUCTIVE-ADAPTER-SOURCE-CLOSURE-V1",
+  "repository": "lucasojedacasales-rgb/stitchpath-ai",
+  "baseCommit": "bf1220953737ed88d818eb9d56d0998360b0383d",
+  "branch": "hatchlab/p1-f2-isolated-productive-command-adapter",
+  "scope": "src/lib/hatchLab/foundations/A_WIDTHS/SATIN_COLUMN/commandModel/productiveAdapter/**",
+  "sourceModelVersion": "P1.F1-A_WIDTHS-STRAIGHT-SATIN-LAB-COMMAND-MODEL-V1",
+  "adapterVersion": "P1.F2-A_WIDTHS-STRAIGHT-SATIN-PRODUCTIVE-COMMAND-ADAPTER-V1",
+  "targetContractId": "STITCHPATH-FLATTEN-TO-COMMANDS-ABSOLUTE-MM-STITCH-CORE-V1",
+  "targetContractAuditHash": "fnv1a32:1E170737",
+  "preconditionHatchLab": {
+    "suites": 13,
+    "passed": 13,
+    "failed": 0,
+    "checks": 1000
+  },
+  "staticImportAudit": {
+    "adapterImportsProductiveModules": 0,
+    "productiveModulesImportAdapter": 0,
+    "productiveModulesImportSatinColumn": 0,
+    "productiveModulesImportCommandModel": 0
+  },
+  "sourceFixtures": [
+    {
+      "caseId": "HATCH-A-WIDTHS-A1",
+      "commandModelHash": "fnv1a32:0AF1C2C8",
+      "sha256": "ECE98F15131D7D3964EC41AE6F85BE241A6F1E388BEB0C85C84D926F5D42D933"
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A5",
+      "commandModelHash": "fnv1a32:31C54B0F",
+      "sha256": "524805341B91A617864921B14BFEB1B6D7F714800C3F77D0D21194FF36E0A8FE"
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A6",
+      "commandModelHash": "fnv1a32:FB2A0DFE",
+      "sha256": "66174BE66EF746EF65E214834CCF0C65B948FFEE0656A6F990B20945FBE1514D"
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A7",
+      "commandModelHash": "fnv1a32:EE54B846",
+      "sha256": "DC016628CE41DD541CDB1F31D5E3B99A249BFAF97D5048AA32611BAB5128C3FA"
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A8",
+      "commandModelHash": "fnv1a32:C5E13D01",
+      "sha256": "CADE2E661D6DC967236F521339FDA0CC93E65ECBE3B56DF04667D61867DD6839"
+    }
+  ],
+  "protectedFileDigests": {
+    "package.json": "27D300BBBF2C84966839EF1F400BA1ED36A330E42F69694C5E1F8E0CD49E3340",
+    "package-lock.json": "8F4DB31A2E8FB608CC7A6C2B6D689C0C80E7247BE20EFC8D4C265C3BC2B59C25"
+  },
+  "guarantees": {
+    "candidateOnly": true,
+    "integrated": false,
+    "machineReady": false,
+    "exportReady": false,
+    "ce01Validated": false,
+    "encoderValidated": false,
+    "physicallyValidated": false,
+    "productiveImports": [],
+    "runPipelineExecuted": false,
+    "buildFinalCommandsExecuted": false,
+    "ce01Executed": false,
+    "encodersExecuted": false,
+    "exportsPerformed": false,
+    "baselineModified": false,
+    "engineV2Modified": false,
+    "productiveCodeModified": false,
+    "stitchTypeModified": false,
+    "packageJsonModified": false,
+    "packageLockModified": false,
+    "sourceP1F1FixturesModified": false
+  }
+}

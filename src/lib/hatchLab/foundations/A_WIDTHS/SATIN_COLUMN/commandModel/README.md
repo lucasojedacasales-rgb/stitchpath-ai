@@ -59,3 +59,17 @@ order and numbers unrounded. No variable timestamp is inside the hashed part.
 Pipeline insertion, application to a productive region, DST/DSB generation, underlay, compensation,
 autoSplit and Final Look wiring. Next authorized step:
 `PROCEED_TO_P1_F2_ISOLATED_PRODUCTIVE_COMMAND_ADAPTER`.
+
+## P1.F2 implementation
+
+`productiveAdapter/` implements only that authorized next step. It targets the read-only audited
+absolute-mm command core `{ type, x, y, regionId }` and maps `toMm` without rounding or
+quantization. `startAnchorMm` remains separate with `requiresExternalSequencing: true`.
+
+The adapter deliberately excludes color, `stitchType`, productive `source`, `layerType`, generic
+metadata, and control commands because P1.F1 cannot supply them authoritatively. See
+`productiveAdapter/productiveCommandContractAudit.md` and
+`productiveAdapter/reports/productiveAdapterReport.md`.
+
+P1.F2 is still isolated and not machine-ready. Its next recommendation is
+`PROCEED_TO_P1_F3_SHADOW_PRODUCTIVE_COMMAND_VALIDATION`; P1.F3 is not implemented here.

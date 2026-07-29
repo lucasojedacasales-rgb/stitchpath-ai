@@ -17,10 +17,11 @@ import { runAWidthsArchiveClosureTests } from './aWidthsArchiveClosure.test.js';
 import { runAWidthsSatinFoundationTests } from './aWidthsSatinFoundation.test.js';
 import { runAWidthsHoleSemanticsTests } from './aWidthsHoleSemantics.test.js';
 import { runAWidthsSatinCommandModelTests } from './aWidthsSatinCommandModel.test.js';
+import { runAWidthsSatinProductiveAdapterTests } from './aWidthsSatinProductiveAdapter.test.js';
 
 export function runHatchLabTests() {
   const suites = [];
-  for (const fn of [runSeedValidationTests, runMetricExtractionTests, runMetricComparisonTests, runMutationSafetyTests, runAWidthsSeedIntegrityTests, runSeedStructuralConformanceTests, runAWidthsEvaluatorTests, runAWidthsBaselineHarnessTests, runAWidthsStoredBaselineTests, runAWidthsArchiveClosureTests, runAWidthsSatinFoundationTests, runAWidthsHoleSemanticsTests, runAWidthsSatinCommandModelTests]) {
+  for (const fn of [runSeedValidationTests, runMetricExtractionTests, runMetricComparisonTests, runMutationSafetyTests, runAWidthsSeedIntegrityTests, runSeedStructuralConformanceTests, runAWidthsEvaluatorTests, runAWidthsBaselineHarnessTests, runAWidthsStoredBaselineTests, runAWidthsArchiveClosureTests, runAWidthsSatinFoundationTests, runAWidthsHoleSemanticsTests, runAWidthsSatinCommandModelTests, runAWidthsSatinProductiveAdapterTests]) {
     try {
       suites.push(fn());
     } catch (e) {

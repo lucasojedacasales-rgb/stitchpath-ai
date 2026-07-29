@@ -1,0 +1,290 @@
+{
+  "reportId": "P1.F2-A_WIDTHS-STRAIGHT-SATIN-PRODUCTIVE-ADAPTER-REPORT-V1",
+  "adapterVersion": "P1.F2-A_WIDTHS-STRAIGHT-SATIN-PRODUCTIVE-COMMAND-ADAPTER-V1",
+  "targetContractId": "STITCHPATH-FLATTEN-TO-COMMANDS-ABSOLUTE-MM-STITCH-CORE-V1",
+  "targetContractAuditHash": "fnv1a32:1E170737",
+  "contractCompatibility": "PRODUCTIVE_MM_CONTRACT_REQUIRES_START_ANCHOR_ADAPTER",
+  "coordinateSpace": "mm",
+  "coordinateMode": "absolute",
+  "productiveCommandFields": [
+    "type",
+    "x",
+    "y",
+    "regionId"
+  ],
+  "candidateOnly": true,
+  "integrated": false,
+  "machineReady": false,
+  "exportReady": false,
+  "ce01Validated": false,
+  "encoderValidated": false,
+  "physicallyValidated": false,
+  "runPipelineExecuted": false,
+  "buildFinalCommandsExecuted": false,
+  "ce01Executed": false,
+  "encodersExecuted": false,
+  "exportsPerformed": false,
+  "baselineModified": false,
+  "productiveCodeModified": false,
+  "stitchTypeModified": false,
+  "totals": {
+    "cases": 5,
+    "labCommands": 393,
+    "productiveCommands": 393,
+    "traceEntries": 393,
+    "complete": 5
+  },
+  "layerSeparation": {
+    "p1f1LabModel": "local per-segment stitch model",
+    "p1f2AdaptedShape": "isolated absolute-mm productive command-shape candidate",
+    "activeProductiveCommand": "not produced",
+    "ce01Command": "not produced or validated",
+    "encoderCommand": "not produced or validated",
+    "machineCommand": "not produced or physically validated"
+  },
+  "finalState": "STRAIGHT_SATIN_PRODUCTIVE_ADAPTER_READY",
+  "recommendation": "PROCEED_TO_P1_F3_SHADOW_PRODUCTIVE_COMMAND_VALIDATION",
+  "recommendationImplemented": false,
+  "cases": [
+    {
+      "caseId": "HATCH-A-WIDTHS-A1",
+      "regionId": "r_zbgef31",
+      "sourceLabModelHash": "fnv1a32:0AF1C2C8",
+      "targetContractId": "STITCHPATH-FLATTEN-TO-COMMANDS-ABSOLUTE-MM-STITCH-CORE-V1",
+      "targetContractAuditHash": "fnv1a32:1E170737",
+      "contractCompatibility": "PRODUCTIVE_MM_CONTRACT_REQUIRES_START_ANCHOR_ADAPTER",
+      "labCommandCount": 77,
+      "productiveCommandCount": 77,
+      "traceCount": 77,
+      "startAnchor": {
+        "pointMm": [
+          6.715514851219354,
+          20.7463923113625
+        ],
+        "source": "labCommandModel.startAnchorMm",
+        "requiresExternalSequencing": true
+      },
+      "recoveredPointCount": 78,
+      "coordinateMismatchCount": 0,
+      "orderingMismatchCount": 0,
+      "exactFieldSetMismatchCount": 0,
+      "minimumCommandLengthMm": 0.4393027296107982,
+      "maximumCommandLengthMm": 0.6317707966326372,
+      "totalLabPathLengthMm": 43.010824435239314,
+      "totalAdaptedPathLengthMm": 43.010824435239314,
+      "pathLengthDeltaMm": 0,
+      "maximumCoordinateDeltaMm": 0,
+      "zeroLengthCommandCount": 0,
+      "belowMinimumCommandCount": 0,
+      "aboveMaximumCommandCount": 0,
+      "forbiddenOperationCount": 0,
+      "productiveAdapterHash": "fnv1a32:A7502B2D",
+      "fixturePath": "fixtures/HATCH-A-WIDTHS-A1-SATIN-PRODUCTIVE-SHAPE.json",
+      "fixtureSizeBytes": 38556,
+      "fixtureSha256": "A10B86055EAC0160BC83FA4C7BE5690226640B7266B3700195E3C94F657A0444",
+      "status": "productive_shape_candidate_complete",
+      "warnings": [
+        "shape-compatible candidate only; it is not active productive output",
+        "thread color and object entry/exit sequencing remain external requirements"
+      ],
+      "integrationRequirements": [
+        "external sequencing must place the needle at startAnchor.pointMm",
+        "external productive context must supply thread color when required",
+        "a later phase must validate the candidate against CE01 in shadow mode",
+        "a later phase must validate encoder quantization and machine behavior"
+      ]
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A5",
+      "regionId": "r_sv7z5qe",
+      "sourceLabModelHash": "fnv1a32:31C54B0F",
+      "targetContractId": "STITCHPATH-FLATTEN-TO-COMMANDS-ABSOLUTE-MM-STITCH-CORE-V1",
+      "targetContractAuditHash": "fnv1a32:1E170737",
+      "contractCompatibility": "PRODUCTIVE_MM_CONTRACT_REQUIRES_START_ANCHOR_ADAPTER",
+      "labCommandCount": 79,
+      "productiveCommandCount": 79,
+      "traceCount": 79,
+      "startAnchor": {
+        "pointMm": [
+          56.332793655448,
+          5.138286621396926
+        ],
+        "source": "labCommandModel.startAnchorMm",
+        "requiresExternalSequencing": true
+      },
+      "recoveredPointCount": 80,
+      "coordinateMismatchCount": 0,
+      "orderingMismatchCount": 0,
+      "exactFieldSetMismatchCount": 0,
+      "minimumCommandLengthMm": 2.81850991000595,
+      "maximumCommandLengthMm": 3.045389543198542,
+      "totalLabPathLengthMm": 239.18294471768104,
+      "totalAdaptedPathLengthMm": 239.18294471768104,
+      "pathLengthDeltaMm": 0,
+      "maximumCoordinateDeltaMm": 0,
+      "zeroLengthCommandCount": 0,
+      "belowMinimumCommandCount": 0,
+      "aboveMaximumCommandCount": 0,
+      "forbiddenOperationCount": 0,
+      "productiveAdapterHash": "fnv1a32:5C2A00E1",
+      "fixturePath": "fixtures/HATCH-A-WIDTHS-A5-SATIN-PRODUCTIVE-SHAPE.json",
+      "fixtureSizeBytes": 42224,
+      "fixtureSha256": "FFC49A5CEF40E165A9499A4FF46E9B33AAF3F117F9489A14F7A2CCCE0056E75A",
+      "status": "productive_shape_candidate_complete",
+      "warnings": [
+        "shape-compatible candidate only; it is not active productive output",
+        "thread color and object entry/exit sequencing remain external requirements"
+      ],
+      "integrationRequirements": [
+        "external sequencing must place the needle at startAnchor.pointMm",
+        "external productive context must supply thread color when required",
+        "a later phase must validate the candidate against CE01 in shadow mode",
+        "a later phase must validate encoder quantization and machine behavior"
+      ]
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A6",
+      "regionId": "r_ecj9hl4",
+      "sourceLabModelHash": "fnv1a32:FB2A0DFE",
+      "targetContractId": "STITCHPATH-FLATTEN-TO-COMMANDS-ABSOLUTE-MM-STITCH-CORE-V1",
+      "targetContractAuditHash": "fnv1a32:1E170737",
+      "contractCompatibility": "PRODUCTIVE_MM_CONTRACT_REQUIRES_START_ANCHOR_ADAPTER",
+      "labCommandCount": 79,
+      "productiveCommandCount": 79,
+      "traceCount": 79,
+      "startAnchor": {
+        "pointMm": [
+          68.8877171723579,
+          5.133429694548509
+        ],
+        "source": "labCommandModel.startAnchorMm",
+        "requiresExternalSequencing": true
+      },
+      "recoveredPointCount": 80,
+      "coordinateMismatchCount": 0,
+      "orderingMismatchCount": 0,
+      "exactFieldSetMismatchCount": 0,
+      "minimumCommandLengthMm": 3.8475687276300405,
+      "maximumCommandLengthMm": 4.010272681315522,
+      "totalLabPathLengthMm": 315.5654393008484,
+      "totalAdaptedPathLengthMm": 315.5654393008484,
+      "pathLengthDeltaMm": 0,
+      "maximumCoordinateDeltaMm": 0,
+      "zeroLengthCommandCount": 0,
+      "belowMinimumCommandCount": 0,
+      "aboveMaximumCommandCount": 0,
+      "forbiddenOperationCount": 0,
+      "productiveAdapterHash": "fnv1a32:99D40A99",
+      "fixturePath": "fixtures/HATCH-A-WIDTHS-A6-SATIN-PRODUCTIVE-SHAPE.json",
+      "fixtureSizeBytes": 42116,
+      "fixtureSha256": "58536990D1AAACD3CF1C1CA804A49B9071D2DFC6C50055EBEA3922893F87E23E",
+      "status": "productive_shape_candidate_complete",
+      "warnings": [
+        "shape-compatible candidate only; it is not active productive output",
+        "thread color and object entry/exit sequencing remain external requirements"
+      ],
+      "integrationRequirements": [
+        "external sequencing must place the needle at startAnchor.pointMm",
+        "external productive context must supply thread color when required",
+        "a later phase must validate the candidate against CE01 in shadow mode",
+        "a later phase must validate encoder quantization and machine behavior"
+      ]
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A7",
+      "regionId": "r_c92bxh3",
+      "sourceLabModelHash": "fnv1a32:EE54B846",
+      "targetContractId": "STITCHPATH-FLATTEN-TO-COMMANDS-ABSOLUTE-MM-STITCH-CORE-V1",
+      "targetContractAuditHash": "fnv1a32:1E170737",
+      "contractCompatibility": "PRODUCTIVE_MM_CONTRACT_REQUIRES_START_ANCHOR_ADAPTER",
+      "labCommandCount": 79,
+      "productiveCommandCount": 79,
+      "traceCount": 79,
+      "startAnchor": {
+        "pointMm": [
+          82.94104504959658,
+          5.132572906551928
+        ],
+        "source": "labCommandModel.startAnchorMm",
+        "requiresExternalSequencing": true
+      },
+      "recoveredPointCount": 80,
+      "coordinateMismatchCount": 0,
+      "orderingMismatchCount": 0,
+      "exactFieldSetMismatchCount": 0,
+      "minimumCommandLengthMm": 5.910060266258054,
+      "maximumCommandLengthMm": 6.0506128690080425,
+      "totalLabPathLengthMm": 477.0617609379029,
+      "totalAdaptedPathLengthMm": 477.0617609379029,
+      "pathLengthDeltaMm": 0,
+      "maximumCoordinateDeltaMm": 0,
+      "zeroLengthCommandCount": 0,
+      "belowMinimumCommandCount": 0,
+      "aboveMaximumCommandCount": 0,
+      "forbiddenOperationCount": 0,
+      "productiveAdapterHash": "fnv1a32:1A350716",
+      "fixturePath": "fixtures/HATCH-A-WIDTHS-A7-SATIN-PRODUCTIVE-SHAPE.json",
+      "fixtureSizeBytes": 42102,
+      "fixtureSha256": "F91EE5E6D3FA65CBDE36CED6A269AAE654DE1B76C0C0D179780D287BE935176B",
+      "status": "productive_shape_candidate_complete",
+      "warnings": [
+        "shape-compatible candidate only; it is not active productive output",
+        "thread color and object entry/exit sequencing remain external requirements"
+      ],
+      "integrationRequirements": [
+        "external sequencing must place the needle at startAnchor.pointMm",
+        "external productive context must supply thread color when required",
+        "a later phase must validate the candidate against CE01 in shadow mode",
+        "a later phase must validate encoder quantization and machine behavior"
+      ]
+    },
+    {
+      "caseId": "HATCH-A-WIDTHS-A8",
+      "regionId": "r_zr65703",
+      "sourceLabModelHash": "fnv1a32:C5E13D01",
+      "targetContractId": "STITCHPATH-FLATTEN-TO-COMMANDS-ABSOLUTE-MM-STITCH-CORE-V1",
+      "targetContractAuditHash": "fnv1a32:1E170737",
+      "contractCompatibility": "PRODUCTIVE_MM_CONTRACT_REQUIRES_START_ANCHOR_ADAPTER",
+      "labCommandCount": 79,
+      "productiveCommandCount": 79,
+      "traceCount": 79,
+      "startAnchor": {
+        "pointMm": [
+          96.89413019508417,
+          5.132504915638033
+        ],
+        "source": "labCommandModel.startAnchorMm",
+        "requiresExternalSequencing": true
+      },
+      "recoveredPointCount": 80,
+      "coordinateMismatchCount": 0,
+      "orderingMismatchCount": 0,
+      "exactFieldSetMismatchCount": 0,
+      "minimumCommandLengthMm": 7.854420945332152,
+      "maximumCommandLengthMm": 7.988801282670796,
+      "totalLabPathLengthMm": 630.3780931397922,
+      "totalAdaptedPathLengthMm": 630.3780931397922,
+      "pathLengthDeltaMm": 0,
+      "maximumCoordinateDeltaMm": 0,
+      "zeroLengthCommandCount": 0,
+      "belowMinimumCommandCount": 0,
+      "aboveMaximumCommandCount": 0,
+      "forbiddenOperationCount": 0,
+      "productiveAdapterHash": "fnv1a32:8354BAF0",
+      "fixturePath": "fixtures/HATCH-A-WIDTHS-A8-SATIN-PRODUCTIVE-SHAPE.json",
+      "fixtureSizeBytes": 42096,
+      "fixtureSha256": "F9A2FD68C063F5F2CD07F41C022D91EDF9E3C0833E242FCC84F08897AD9AB729",
+      "status": "productive_shape_candidate_complete",
+      "warnings": [
+        "shape-compatible candidate only; it is not active productive output",
+        "thread color and object entry/exit sequencing remain external requirements"
+      ],
+      "integrationRequirements": [
+        "external sequencing must place the needle at startAnchor.pointMm",
+        "external productive context must supply thread color when required",
+        "a later phase must validate the candidate against CE01 in shadow mode",
+        "a later phase must validate encoder quantization and machine behavior"
+      ]
+    }
+  ]
+}

@@ -18,6 +18,9 @@ export {
   computeCommandModelHash, fnv1a32,
 } from './canonicalizeLabSatinCommands.js';
 
+// P1.F2: isolated productive-command shape adapter.
+export * from './productiveAdapter/index.js';
+
 export const COMMAND_MODEL_ISOLATION = {
   phase: 'P1.F1',
   candidateOnly: true,

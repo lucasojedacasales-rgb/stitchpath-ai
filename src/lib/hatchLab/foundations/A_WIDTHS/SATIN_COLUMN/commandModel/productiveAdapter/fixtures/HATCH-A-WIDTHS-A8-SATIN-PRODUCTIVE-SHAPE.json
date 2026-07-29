@@ -1,0 +1,1768 @@
+{
+  "adapterVersion": "P1.F2-A_WIDTHS-STRAIGHT-SATIN-PRODUCTIVE-COMMAND-ADAPTER-V1",
+  "adapterId": "P1.F2-A_WIDTHS-STRAIGHT-SATIN-PRODUCTIVE-SHAPE-CANDIDATE-V1",
+  "caseId": "HATCH-A-WIDTHS-A8",
+  "regionId": "r_zr65703",
+  "sourceLabModelHash": "fnv1a32:C5E13D01",
+  "targetContractId": "STITCHPATH-FLATTEN-TO-COMMANDS-ABSOLUTE-MM-STITCH-CORE-V1",
+  "targetContractAuditHash": "fnv1a32:1E170737",
+  "contractCompatibility": "PRODUCTIVE_MM_CONTRACT_REQUIRES_START_ANCHOR_ADAPTER",
+  "coordinateSpace": "mm",
+  "phase": "P1.F2",
+  "candidateOnly": true,
+  "integrated": false,
+  "machineReady": false,
+  "exportReady": false,
+  "ce01Validated": false,
+  "encoderValidated": false,
+  "physicallyValidated": false,
+  "productiveImports": [],
+  "enginesExecuted": [],
+  "runPipelineExecuted": false,
+  "buildFinalCommandsExecuted": false,
+  "ce01Executed": false,
+  "encodersExecuted": false,
+  "exportsPerformed": false,
+  "mutatesRegions": false,
+  "changesStitchType": false,
+  "startAnchor": {
+    "pointMm": [
+      96.89413019508417,
+      5.132504915638033
+    ],
+    "source": "labCommandModel.startAnchorMm",
+    "requiresExternalSequencing": true
+  },
+  "productiveCommands": [
+    {
+      "type": "stitch",
+      "x": 89.03971442651047,
+      "y": 5.141522723199038,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.89489938521643,
+      "y": 5.532504296151447,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.91643360614087,
+      "y": 5.541664527943051,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.8956685753487,
+      "y": 5.932503676664861,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.91720767862301,
+      "y": 5.941663902850944,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.89643776548095,
+      "y": 6.332503057178275,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.91798175110516,
+      "y": 6.341663277758839,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.89720695561323,
+      "y": 6.732502437691689,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.91875582358732,
+      "y": 6.741662652666731,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.89797614574547,
+      "y": 7.132501818205104,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.91952989606946,
+      "y": 7.1416620275746245,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.89874533587775,
+      "y": 7.532501198718519,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.92030396855161,
+      "y": 7.541661402482519,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.89951452601,
+      "y": 7.932500579231932,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.92107804103375,
+      "y": 7.941660777390411,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.90028371614228,
+      "y": 8.332499959745348,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.92185211351591,
+      "y": 8.341660152298306,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.90105290627453,
+      "y": 8.73249934025876,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.92262618599804,
+      "y": 8.741659527206197,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.9018220964068,
+      "y": 9.132498720772174,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.9234002584802,
+      "y": 9.141658902114091,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.90259128653905,
+      "y": 9.53249810128559,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.92417433096234,
+      "y": 9.541658277021986,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.90336047667132,
+      "y": 9.932497481799002,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.9249484034445,
+      "y": 9.941657651929876,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.90412966680358,
+      "y": 10.332496862312414,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.92572247592663,
+      "y": 10.341657026837769,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.90489885693586,
+      "y": 10.73249624282583,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.92649654840878,
+      "y": 10.741656401745663,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.9056680470681,
+      "y": 11.132495623339244,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.92727062089092,
+      "y": 11.141655776653556,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.90643723720036,
+      "y": 11.532495003852658,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.92804469337308,
+      "y": 11.541655151561448,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.90720642733264,
+      "y": 11.932494384366072,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.92881876585523,
+      "y": 11.941654526469343,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.9079756174649,
+      "y": 12.332493764879485,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.92959283833737,
+      "y": 12.341653901377235,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.90874480759716,
+      "y": 12.7324931453929,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.93036691081953,
+      "y": 12.741653276285128,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.90951399772942,
+      "y": 13.132492525906313,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.93114098330167,
+      "y": 13.141652651193022,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.9102831878617,
+      "y": 13.532491906419727,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.93191505578382,
+      "y": 13.541652026100913,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.91105237799395,
+      "y": 13.932491286933141,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.93268912826596,
+      "y": 13.941651401008807,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.91182156812621,
+      "y": 14.332490667446555,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.93346320074812,
+      "y": 14.3416507759167,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.91259075825847,
+      "y": 14.732490047959969,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.93423727323025,
+      "y": 14.741650150824592,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.91335994839073,
+      "y": 15.132489428473383,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.9350113457124,
+      "y": 15.141649525732486,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.914129138523,
+      "y": 15.532488808986797,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.93578541819456,
+      "y": 15.541648900640377,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.91489832865527,
+      "y": 15.93248818950021,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.9365594906767,
+      "y": 15.941648275548271,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.91566751878753,
+      "y": 16.332487570013626,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.93733356315884,
+      "y": 16.341647650456164,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.91643670891979,
+      "y": 16.732486950527036,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.93810763564099,
+      "y": 16.741647025364056,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.91720589905205,
+      "y": 17.13248633104045,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.93888170812315,
+      "y": 17.14164640027195,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.91797508918431,
+      "y": 17.532485711553868,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.93965578060529,
+      "y": 17.541645775179845,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.91874427931658,
+      "y": 17.93248509206728,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.94042985308744,
+      "y": 17.94164515008774,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.91951346944883,
+      "y": 18.332484472580695,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.94120392556958,
+      "y": 18.341644524995633,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.9202826595811,
+      "y": 18.73248385309411,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.94197799805173,
+      "y": 18.741643899903522,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.92105184971335,
+      "y": 19.132483233607527,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.94275207053387,
+      "y": 19.14164327481142,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.92182103984561,
+      "y": 19.532482614120937,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.94352614301602,
+      "y": 19.54164264971931,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.92259022997789,
+      "y": 19.93248199463435,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.94430021549817,
+      "y": 19.941642024627203,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.92335942011015,
+      "y": 20.33248137514777,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.94507428798032,
+      "y": 20.3416413995351,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 96.88960166523815,
+      "y": 20.732520396718503,
+      "regionId": "r_zr65703"
+    },
+    {
+      "type": "stitch",
+      "x": 88.94584836046246,
+      "y": 20.741640774442992,
+      "regionId": "r_zr65703"
+    }
+  ],
+  "trace": [
+    {
+      "productiveCommandIndex": 0,
+      "sourceLabCommandIndex": 0,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.89413019508417,
+        5.132504915638033
+      ],
+      "sourceToMm": [
+        89.03971442651047,
+        5.141522723199038
+      ],
+      "sourceLengthMm": 7.854420945332152
+    },
+    {
+      "productiveCommandIndex": 1,
+      "sourceLabCommandIndex": 1,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        89.03971442651047,
+        5.141522723199038
+      ],
+      "sourceToMm": [
+        96.89489938521643,
+        5.532504296151447
+      ],
+      "sourceLengthMm": 7.864909238247363
+    },
+    {
+      "productiveCommandIndex": 2,
+      "sourceLabCommandIndex": 2,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.89489938521643,
+        5.532504296151447
+      ],
+      "sourceToMm": [
+        88.91643360614087,
+        5.541664527943051
+      ],
+      "sourceLengthMm": 7.978471037594002
+    },
+    {
+      "productiveCommandIndex": 3,
+      "sourceLabCommandIndex": 3,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.91643360614087,
+        5.541664527943051
+      ],
+      "sourceToMm": [
+        96.8956685753487,
+        5.932503676664861
+      ],
+      "sourceLengthMm": 7.988801282670796
+    },
+    {
+      "productiveCommandIndex": 4,
+      "sourceLabCommandIndex": 4,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.8956685753487,
+        5.932503676664861
+      ],
+      "sourceToMm": [
+        88.91720767862301,
+        5.941663902850944
+      ],
+      "sourceLengthMm": 7.978466155240899
+    },
+    {
+      "productiveCommandIndex": 5,
+      "sourceLabCommandIndex": 5,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.91720767862301,
+        5.941663902850944
+      ],
+      "sourceToMm": [
+        96.89643776548095,
+        6.332503057178275
+      ],
+      "sourceLengthMm": 7.988796406441602
+    },
+    {
+      "productiveCommandIndex": 6,
+      "sourceLabCommandIndex": 6,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.89643776548095,
+        6.332503057178275
+      ],
+      "sourceToMm": [
+        88.91798175110516,
+        6.341663277758839
+      ],
+      "sourceLengthMm": 7.978461272887797
+    },
+    {
+      "productiveCommandIndex": 7,
+      "sourceLabCommandIndex": 7,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.91798175110516,
+        6.341663277758839
+      ],
+      "sourceToMm": [
+        96.89720695561323,
+        6.732502437691689
+      ],
+      "sourceLengthMm": 7.9887915302124295
+    },
+    {
+      "productiveCommandIndex": 8,
+      "sourceLabCommandIndex": 8,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.89720695561323,
+        6.732502437691689
+      ],
+      "sourceToMm": [
+        88.91875582358732,
+        6.741662652666731
+      ],
+      "sourceLengthMm": 7.978456390534695
+    },
+    {
+      "productiveCommandIndex": 9,
+      "sourceLabCommandIndex": 9,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.91875582358732,
+        6.741662652666731
+      ],
+      "sourceToMm": [
+        96.89797614574547,
+        7.132501818205104
+      ],
+      "sourceLengthMm": 7.988786653983222
+    },
+    {
+      "productiveCommandIndex": 10,
+      "sourceLabCommandIndex": 10,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.89797614574547,
+        7.132501818205104
+      ],
+      "sourceToMm": [
+        88.91952989606946,
+        7.1416620275746245
+      ],
+      "sourceLengthMm": 7.978451508181578
+    },
+    {
+      "productiveCommandIndex": 11,
+      "sourceLabCommandIndex": 11,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.91952989606946,
+        7.1416620275746245
+      ],
+      "sourceToMm": [
+        96.89874533587775,
+        7.532501198718519
+      ],
+      "sourceLengthMm": 7.988781777754063
+    },
+    {
+      "productiveCommandIndex": 12,
+      "sourceLabCommandIndex": 12,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.89874533587775,
+        7.532501198718519
+      ],
+      "sourceToMm": [
+        88.92030396855161,
+        7.541661402482519
+      ],
+      "sourceLengthMm": 7.97844662582849
+    },
+    {
+      "productiveCommandIndex": 13,
+      "sourceLabCommandIndex": 13,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.92030396855161,
+        7.541661402482519
+      ],
+      "sourceToMm": [
+        96.89951452601,
+        7.932500579231932
+      ],
+      "sourceLengthMm": 7.9887769015248855
+    },
+    {
+      "productiveCommandIndex": 14,
+      "sourceLabCommandIndex": 14,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.89951452601,
+        7.932500579231932
+      ],
+      "sourceToMm": [
+        88.92107804103375,
+        7.941660777390411
+      ],
+      "sourceLengthMm": 7.978441743475374
+    },
+    {
+      "productiveCommandIndex": 15,
+      "sourceLabCommandIndex": 15,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.92107804103375,
+        7.941660777390411
+      ],
+      "sourceToMm": [
+        96.90028371614228,
+        8.332499959745348
+      ],
+      "sourceLengthMm": 7.988772025295757
+    },
+    {
+      "productiveCommandIndex": 16,
+      "sourceLabCommandIndex": 16,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.90028371614228,
+        8.332499959745348
+      ],
+      "sourceToMm": [
+        88.92185211351591,
+        8.341660152298306
+      ],
+      "sourceLengthMm": 7.978436861122286
+    },
+    {
+      "productiveCommandIndex": 17,
+      "sourceLabCommandIndex": 17,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.92185211351591,
+        8.341660152298306
+      ],
+      "sourceToMm": [
+        96.90105290627453,
+        8.73249934025876
+      ],
+      "sourceLengthMm": 7.98876714906658
+    },
+    {
+      "productiveCommandIndex": 18,
+      "sourceLabCommandIndex": 18,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.90105290627453,
+        8.73249934025876
+      ],
+      "sourceToMm": [
+        88.92262618599804,
+        8.741659527206197
+      ],
+      "sourceLengthMm": 7.9784319787691835
+    },
+    {
+      "productiveCommandIndex": 19,
+      "sourceLabCommandIndex": 19,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.92262618599804,
+        8.741659527206197
+      ],
+      "sourceToMm": [
+        96.9018220964068,
+        9.132498720772174
+      ],
+      "sourceLengthMm": 7.988762272837464
+    },
+    {
+      "productiveCommandIndex": 20,
+      "sourceLabCommandIndex": 20,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.9018220964068,
+        9.132498720772174
+      ],
+      "sourceToMm": [
+        88.9234002584802,
+        9.141658902114091
+      ],
+      "sourceLengthMm": 7.978427096416081
+    },
+    {
+      "productiveCommandIndex": 21,
+      "sourceLabCommandIndex": 21,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.9234002584802,
+        9.141658902114091
+      ],
+      "sourceToMm": [
+        96.90259128653905,
+        9.53249810128559
+      ],
+      "sourceLengthMm": 7.988757396608302
+    },
+    {
+      "productiveCommandIndex": 22,
+      "sourceLabCommandIndex": 22,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.90259128653905,
+        9.53249810128559
+      ],
+      "sourceToMm": [
+        88.92417433096234,
+        9.541658277021986
+      ],
+      "sourceLengthMm": 7.978422214062965
+    },
+    {
+      "productiveCommandIndex": 23,
+      "sourceLabCommandIndex": 23,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.92417433096234,
+        9.541658277021986
+      ],
+      "sourceToMm": [
+        96.90336047667132,
+        9.932497481799002
+      ],
+      "sourceLengthMm": 7.988752520379189
+    },
+    {
+      "productiveCommandIndex": 24,
+      "sourceLabCommandIndex": 24,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.90336047667132,
+        9.932497481799002
+      ],
+      "sourceToMm": [
+        88.9249484034445,
+        9.941657651929876
+      ],
+      "sourceLengthMm": 7.978417331709863
+    },
+    {
+      "productiveCommandIndex": 25,
+      "sourceLabCommandIndex": 25,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.9249484034445,
+        9.941657651929876
+      ],
+      "sourceToMm": [
+        96.90412966680358,
+        10.332496862312414
+      ],
+      "sourceLengthMm": 7.988747644150055
+    },
+    {
+      "productiveCommandIndex": 26,
+      "sourceLabCommandIndex": 26,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.90412966680358,
+        10.332496862312414
+      ],
+      "sourceToMm": [
+        88.92572247592663,
+        10.341657026837769
+      ],
+      "sourceLengthMm": 7.9784124493567745
+    },
+    {
+      "productiveCommandIndex": 27,
+      "sourceLabCommandIndex": 27,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.92572247592663,
+        10.341657026837769
+      ],
+      "sourceToMm": [
+        96.90489885693586,
+        10.73249624282583
+      ],
+      "sourceLengthMm": 7.9887427679209715
+    },
+    {
+      "productiveCommandIndex": 28,
+      "sourceLabCommandIndex": 28,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.90489885693586,
+        10.73249624282583
+      ],
+      "sourceToMm": [
+        88.92649654840878,
+        10.741656401745663
+      ],
+      "sourceLengthMm": 7.9784075670036865
+    },
+    {
+      "productiveCommandIndex": 29,
+      "sourceLabCommandIndex": 29,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.92649654840878,
+        10.741656401745663
+      ],
+      "sourceToMm": [
+        96.9056680470681,
+        11.132495623339244
+      ],
+      "sourceLengthMm": 7.988737891691853
+    },
+    {
+      "productiveCommandIndex": 30,
+      "sourceLabCommandIndex": 30,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.9056680470681,
+        11.132495623339244
+      ],
+      "sourceToMm": [
+        88.92727062089092,
+        11.141655776653556
+      ],
+      "sourceLengthMm": 7.97840268465057
+    },
+    {
+      "productiveCommandIndex": 31,
+      "sourceLabCommandIndex": 31,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.92727062089092,
+        11.141655776653556
+      ],
+      "sourceToMm": [
+        96.90643723720036,
+        11.532495003852658
+      ],
+      "sourceLengthMm": 7.988733015462756
+    },
+    {
+      "productiveCommandIndex": 32,
+      "sourceLabCommandIndex": 32,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.90643723720036,
+        11.532495003852658
+      ],
+      "sourceToMm": [
+        88.92804469337308,
+        11.541655151561448
+      ],
+      "sourceLengthMm": 7.9783978022974535
+    },
+    {
+      "productiveCommandIndex": 33,
+      "sourceLabCommandIndex": 33,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.92804469337308,
+        11.541655151561448
+      ],
+      "sourceToMm": [
+        96.90720642733264,
+        11.932494384366072
+      ],
+      "sourceLengthMm": 7.988728139233666
+    },
+    {
+      "productiveCommandIndex": 34,
+      "sourceLabCommandIndex": 34,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.90720642733264,
+        11.932494384366072
+      ],
+      "sourceToMm": [
+        88.92881876585523,
+        11.941654526469343
+      ],
+      "sourceLengthMm": 7.9783929199443655
+    },
+    {
+      "productiveCommandIndex": 35,
+      "sourceLabCommandIndex": 35,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.92881876585523,
+        11.941654526469343
+      ],
+      "sourceToMm": [
+        96.9079756174649,
+        12.332493764879485
+      ],
+      "sourceLengthMm": 7.988723263004584
+    },
+    {
+      "productiveCommandIndex": 36,
+      "sourceLabCommandIndex": 36,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.9079756174649,
+        12.332493764879485
+      ],
+      "sourceToMm": [
+        88.92959283833737,
+        12.341653901377235
+      ],
+      "sourceLengthMm": 7.978388037591263
+    },
+    {
+      "productiveCommandIndex": 37,
+      "sourceLabCommandIndex": 37,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.92959283833737,
+        12.341653901377235
+      ],
+      "sourceToMm": [
+        96.90874480759716,
+        12.7324931453929
+      ],
+      "sourceLengthMm": 7.988718386775511
+    },
+    {
+      "productiveCommandIndex": 38,
+      "sourceLabCommandIndex": 38,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.90874480759716,
+        12.7324931453929
+      ],
+      "sourceToMm": [
+        88.93036691081953,
+        12.741653276285128
+      ],
+      "sourceLengthMm": 7.978383155238147
+    },
+    {
+      "productiveCommandIndex": 39,
+      "sourceLabCommandIndex": 39,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.93036691081953,
+        12.741653276285128
+      ],
+      "sourceToMm": [
+        96.90951399772942,
+        13.132492525906313
+      ],
+      "sourceLengthMm": 7.988713510546429
+    },
+    {
+      "productiveCommandIndex": 40,
+      "sourceLabCommandIndex": 40,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.90951399772942,
+        13.132492525906313
+      ],
+      "sourceToMm": [
+        88.93114098330167,
+        13.141652651193022
+      ],
+      "sourceLengthMm": 7.9783782728850445
+    },
+    {
+      "productiveCommandIndex": 41,
+      "sourceLabCommandIndex": 41,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.93114098330167,
+        13.141652651193022
+      ],
+      "sourceToMm": [
+        96.9102831878617,
+        13.532491906419727
+      ],
+      "sourceLengthMm": 7.9887086343173825
+    },
+    {
+      "productiveCommandIndex": 42,
+      "sourceLabCommandIndex": 42,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.9102831878617,
+        13.532491906419727
+      ],
+      "sourceToMm": [
+        88.93191505578382,
+        13.541652026100913
+      ],
+      "sourceLengthMm": 7.9783733905319565
+    },
+    {
+      "productiveCommandIndex": 43,
+      "sourceLabCommandIndex": 43,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.93191505578382,
+        13.541652026100913
+      ],
+      "sourceToMm": [
+        96.91105237799395,
+        13.932491286933141
+      ],
+      "sourceLengthMm": 7.988703758088331
+    },
+    {
+      "productiveCommandIndex": 44,
+      "sourceLabCommandIndex": 44,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.91105237799395,
+        13.932491286933141
+      ],
+      "sourceToMm": [
+        88.93268912826596,
+        13.941651401008807
+      ],
+      "sourceLengthMm": 7.978368508178854
+    },
+    {
+      "productiveCommandIndex": 45,
+      "sourceLabCommandIndex": 45,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.93268912826596,
+        13.941651401008807
+      ],
+      "sourceToMm": [
+        96.91182156812621,
+        14.332490667446555
+      ],
+      "sourceLengthMm": 7.9886988818592854
+    },
+    {
+      "productiveCommandIndex": 46,
+      "sourceLabCommandIndex": 46,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.91182156812621,
+        14.332490667446555
+      ],
+      "sourceToMm": [
+        88.93346320074812,
+        14.3416507759167
+      ],
+      "sourceLengthMm": 7.978363625825738
+    },
+    {
+      "productiveCommandIndex": 47,
+      "sourceLabCommandIndex": 47,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.93346320074812,
+        14.3416507759167
+      ],
+      "sourceToMm": [
+        96.91259075825847,
+        14.732490047959969
+      ],
+      "sourceLengthMm": 7.988694005630234
+    },
+    {
+      "productiveCommandIndex": 48,
+      "sourceLabCommandIndex": 48,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.91259075825847,
+        14.732490047959969
+      ],
+      "sourceToMm": [
+        88.93423727323025,
+        14.741650150824592
+      ],
+      "sourceLengthMm": 7.978358743472649
+    },
+    {
+      "productiveCommandIndex": 49,
+      "sourceLabCommandIndex": 49,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.93423727323025,
+        14.741650150824592
+      ],
+      "sourceToMm": [
+        96.91335994839073,
+        15.132489428473383
+      ],
+      "sourceLengthMm": 7.988689129401218
+    },
+    {
+      "productiveCommandIndex": 50,
+      "sourceLabCommandIndex": 50,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.91335994839073,
+        15.132489428473383
+      ],
+      "sourceToMm": [
+        88.9350113457124,
+        15.141649525732486
+      ],
+      "sourceLengthMm": 7.978353861119547
+    },
+    {
+      "productiveCommandIndex": 51,
+      "sourceLabCommandIndex": 51,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.9350113457124,
+        15.141649525732486
+      ],
+      "sourceToMm": [
+        96.914129138523,
+        15.532488808986797
+      ],
+      "sourceLengthMm": 7.988684253172195
+    },
+    {
+      "productiveCommandIndex": 52,
+      "sourceLabCommandIndex": 52,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.914129138523,
+        15.532488808986797
+      ],
+      "sourceToMm": [
+        88.93578541819456,
+        15.541648900640377
+      ],
+      "sourceLengthMm": 7.97834897876643
+    },
+    {
+      "productiveCommandIndex": 53,
+      "sourceLabCommandIndex": 53,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.93578541819456,
+        15.541648900640377
+      ],
+      "sourceToMm": [
+        96.91489832865527,
+        15.93248818950021
+      ],
+      "sourceLengthMm": 7.988679376943182
+    },
+    {
+      "productiveCommandIndex": 54,
+      "sourceLabCommandIndex": 54,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.91489832865527,
+        15.93248818950021
+      ],
+      "sourceToMm": [
+        88.9365594906767,
+        15.941648275548271
+      ],
+      "sourceLengthMm": 7.978344096413342
+    },
+    {
+      "productiveCommandIndex": 55,
+      "sourceLabCommandIndex": 55,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.9365594906767,
+        15.941648275548271
+      ],
+      "sourceToMm": [
+        96.91566751878753,
+        16.332487570013626
+      ],
+      "sourceLengthMm": 7.988674500714175
+    },
+    {
+      "productiveCommandIndex": 56,
+      "sourceLabCommandIndex": 56,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.91566751878753,
+        16.332487570013626
+      ],
+      "sourceToMm": [
+        88.93733356315884,
+        16.341647650456164
+      ],
+      "sourceLengthMm": 7.97833921406024
+    },
+    {
+      "productiveCommandIndex": 57,
+      "sourceLabCommandIndex": 57,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.93733356315884,
+        16.341647650456164
+      ],
+      "sourceToMm": [
+        96.91643670891979,
+        16.732486950527036
+      ],
+      "sourceLengthMm": 7.9886696244851745
+    },
+    {
+      "productiveCommandIndex": 58,
+      "sourceLabCommandIndex": 58,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.91643670891979,
+        16.732486950527036
+      ],
+      "sourceToMm": [
+        88.93810763564099,
+        16.741647025364056
+      ],
+      "sourceLengthMm": 7.978334331707138
+    },
+    {
+      "productiveCommandIndex": 59,
+      "sourceLabCommandIndex": 59,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.93810763564099,
+        16.741647025364056
+      ],
+      "sourceToMm": [
+        96.91720589905205,
+        17.13248633104045
+      ],
+      "sourceLengthMm": 7.988664748256182
+    },
+    {
+      "productiveCommandIndex": 60,
+      "sourceLabCommandIndex": 60,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.91720589905205,
+        17.13248633104045
+      ],
+      "sourceToMm": [
+        88.93888170812315,
+        17.14164640027195
+      ],
+      "sourceLengthMm": 7.978329449354021
+    },
+    {
+      "productiveCommandIndex": 61,
+      "sourceLabCommandIndex": 61,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.93888170812315,
+        17.14164640027195
+      ],
+      "sourceToMm": [
+        96.91797508918431,
+        17.532485711553868
+      ],
+      "sourceLengthMm": 7.988659872027182
+    },
+    {
+      "productiveCommandIndex": 62,
+      "sourceLabCommandIndex": 62,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.91797508918431,
+        17.532485711553868
+      ],
+      "sourceToMm": [
+        88.93965578060529,
+        17.541645775179845
+      ],
+      "sourceLengthMm": 7.978324567000919
+    },
+    {
+      "productiveCommandIndex": 63,
+      "sourceLabCommandIndex": 63,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.93965578060529,
+        17.541645775179845
+      ],
+      "sourceToMm": [
+        96.91874427931658,
+        17.93248509206728
+      ],
+      "sourceLengthMm": 7.988654995798219
+    },
+    {
+      "productiveCommandIndex": 64,
+      "sourceLabCommandIndex": 64,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.91874427931658,
+        17.93248509206728
+      ],
+      "sourceToMm": [
+        88.94042985308744,
+        17.94164515008774
+      ],
+      "sourceLengthMm": 7.978319684647831
+    },
+    {
+      "productiveCommandIndex": 65,
+      "sourceLabCommandIndex": 65,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.94042985308744,
+        17.94164515008774
+      ],
+      "sourceToMm": [
+        96.91951346944883,
+        18.332484472580695
+      ],
+      "sourceLengthMm": 7.988650119569235
+    },
+    {
+      "productiveCommandIndex": 66,
+      "sourceLabCommandIndex": 66,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.91951346944883,
+        18.332484472580695
+      ],
+      "sourceToMm": [
+        88.94120392556958,
+        18.341644524995633
+      ],
+      "sourceLengthMm": 7.978314802294714
+    },
+    {
+      "productiveCommandIndex": 67,
+      "sourceLabCommandIndex": 67,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.94120392556958,
+        18.341644524995633
+      ],
+      "sourceToMm": [
+        96.9202826595811,
+        18.73248385309411
+      ],
+      "sourceLengthMm": 7.988645243340287
+    },
+    {
+      "productiveCommandIndex": 68,
+      "sourceLabCommandIndex": 68,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.9202826595811,
+        18.73248385309411
+      ],
+      "sourceToMm": [
+        88.94197799805173,
+        18.741643899903522
+      ],
+      "sourceLengthMm": 7.978309919941626
+    },
+    {
+      "productiveCommandIndex": 69,
+      "sourceLabCommandIndex": 69,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.94197799805173,
+        18.741643899903522
+      ],
+      "sourceToMm": [
+        96.92105184971335,
+        19.132483233607527
+      ],
+      "sourceLengthMm": 7.988640367111319
+    },
+    {
+      "productiveCommandIndex": 70,
+      "sourceLabCommandIndex": 70,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.92105184971335,
+        19.132483233607527
+      ],
+      "sourceToMm": [
+        88.94275207053387,
+        19.14164327481142
+      ],
+      "sourceLengthMm": 7.97830503758851
+    },
+    {
+      "productiveCommandIndex": 71,
+      "sourceLabCommandIndex": 71,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.94275207053387,
+        19.14164327481142
+      ],
+      "sourceToMm": [
+        96.92182103984561,
+        19.532482614120937
+      ],
+      "sourceLengthMm": 7.988635490882372
+    },
+    {
+      "productiveCommandIndex": 72,
+      "sourceLabCommandIndex": 72,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.92182103984561,
+        19.532482614120937
+      ],
+      "sourceToMm": [
+        88.94352614301602,
+        19.54164264971931
+      ],
+      "sourceLengthMm": 7.978300155235408
+    },
+    {
+      "productiveCommandIndex": 73,
+      "sourceLabCommandIndex": 73,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.94352614301602,
+        19.54164264971931
+      ],
+      "sourceToMm": [
+        96.92259022997789,
+        19.93248199463435
+      ],
+      "sourceLengthMm": 7.988630614653445
+    },
+    {
+      "productiveCommandIndex": 74,
+      "sourceLabCommandIndex": 74,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.92259022997789,
+        19.93248199463435
+      ],
+      "sourceToMm": [
+        88.94430021549817,
+        19.941642024627203
+      ],
+      "sourceLengthMm": 7.978295272882305
+    },
+    {
+      "productiveCommandIndex": 75,
+      "sourceLabCommandIndex": 75,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.94430021549817,
+        19.941642024627203
+      ],
+      "sourceToMm": [
+        96.92335942011015,
+        20.33248137514777
+      ],
+      "sourceLengthMm": 7.988625738424499
+    },
+    {
+      "productiveCommandIndex": 76,
+      "sourceLabCommandIndex": 76,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.92335942011015,
+        20.33248137514777
+      ],
+      "sourceToMm": [
+        88.94507428798032,
+        20.3416413995351
+      ],
+      "sourceLengthMm": 7.978290390529203
+    },
+    {
+      "productiveCommandIndex": 77,
+      "sourceLabCommandIndex": 77,
+      "sourceSegmentKind": "advance_diagonal",
+      "sourceFromMm": [
+        88.94507428798032,
+        20.3416413995351
+      ],
+      "sourceToMm": [
+        96.88960166523815,
+        20.732520396718503
+      ],
+      "sourceLengthMm": 7.9541373912221465
+    },
+    {
+      "productiveCommandIndex": 78,
+      "sourceLabCommandIndex": 78,
+      "sourceSegmentKind": "cross_column",
+      "sourceFromMm": [
+        96.88960166523815,
+        20.732520396718503
+      ],
+      "sourceToMm": [
+        88.94584836046246,
+        20.741640774442992
+      ],
+      "sourceLengthMm": 7.943758540415514
+    }
+  ],
+  "metrics": {
+    "labCommandCount": 79,
+    "productiveCommandCount": 79,
+    "traceCount": 79,
+    "recoveredPointCount": 80,
+    "coordinateMismatchCount": 0,
+    "orderingMismatchCount": 0,
+    "missingCommandCount": 0,
+    "additionalCommandCount": 0,
+    "operationMismatchCount": 0,
+    "totalLabPathLengthMm": 630.3780931397922,
+    "totalAdaptedPathLengthMm": 630.3780931397922,
+    "pathLengthDeltaMm": 0,
+    "maximumCoordinateDeltaMm": 0,
+    "minimumCommandLengthMm": 7.854420945332152,
+    "maximumCommandLengthMm": 7.988801282670796,
+    "zeroLengthCommandCount": 0,
+    "belowMinimumCommandCount": 0,
+    "aboveMaximumCommandCount": 0,
+    "forbiddenOperationCount": 0,
+    "exactFieldSetMismatchCount": 0,
+    "nonFiniteCoordinateCount": 0
+  },
+  "validation": {
+    "valid": true,
+    "checks": [
+      {
+        "name": "adapterVersion",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "sourceModelVersion",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "targetContractSupported",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "targetContractAuditHash",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "contractCompatibility",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "candidateOnly",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "notIntegrated",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "notMachineReady",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "notValidatedDownstream",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "startAnchorPreserved",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "noStartAnchorCommand",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "oneToOneCount",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "coordinatesExact",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "orderExact",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "operationExact",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "fieldSetExact",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "pathLengthExact",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "finiteCoordinates",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "lengthWindow",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "noMissingOrAdditionalCommands",
+        "satisfied": true,
+        "detail": null
+      },
+      {
+        "name": "recoveredPathComplete",
+        "satisfied": true,
+        "detail": null
+      }
+    ],
+    "failedChecks": []
+  },
+  "integrationRequirements": [
+    "external sequencing must place the needle at startAnchor.pointMm",
+    "external productive context must supply thread color when required",
+    "a later phase must validate the candidate against CE01 in shadow mode",
+    "a later phase must validate encoder quantization and machine behavior"
+  ],
+  "warnings": [
+    "shape-compatible candidate only; it is not active productive output",
+    "thread color and object entry/exit sequencing remain external requirements"
+  ],
+  "diagnostics": [],
+  "canonicalisationProcedure": "exclude productiveAdapterHash/fixtureSha256/generatedAt; sort object keys recursively; preserve array order and full-precision JSON numbers; FNV-1a 32-bit uppercase",
+  "productiveAdapterHash": "fnv1a32:8354BAF0",
+  "status": "productive_shape_candidate_complete"
+}
