@@ -60,7 +60,7 @@
     { "path": "reports/capabilityReport.json", "type": "json", "persisted": true, "readable": true, "sizeBytes": 11908, "sha256": "1ED06E0C39D696EFBD8ABBC006B1CC4905FBE633C91543439B859EFDDC318200", "jsonValid": true, "svgValid": null },
     { "path": "reports/capabilityReport.md", "type": "md", "persisted": true, "readable": true, "sizeBytes": 3721, "sha256": "041B16E1C55C40CD8D299F5915B23AA9640E7264B7224F2CCDA0E4348F41FF7B", "jsonValid": null, "svgValid": null },
     { "path": "sourceProvenance.json", "type": "json", "persisted": true, "readable": true, "sizeBytes": 3997, "sha256": "9BAB266C95173FF7CAC4D25F9198C75A1A3FAA73F2D6D4ECA67BC535324AB698", "jsonValid": true, "svgValid": null },
-    { "path": "src/tests/hatchLab/aWidthsSatinFoundation.test.js", "type": "js", "persisted": true, "readable": true, "sizeBytes": 35319, "sha256": "54E1945F5D1950434F74DE6DF26A419F6FEFD62F298AABA2D6514EA98AAF34C3", "jsonValid": null, "svgValid": null, "outsideFoundation": true },
+    { "path": "src/tests/hatchLab/aWidthsSatinFoundation.test.js", "type": "js", "persisted": true, "readable": true, "sizeBytes": 35478, "sha256": "EBC58A51D52D200D10D8BD13D21544DA8FCCFD5058D3BC142B5C829EC689EDA0", "jsonValid": null, "svgValid": null, "outsideFoundation": true },
     { "path": "src/tests/hatchLab/runHatchLabTests.js", "type": "js", "persisted": true, "readable": true, "sizeBytes": 1823, "sha256": "F154F7837738BFF1550759FA6847E5528816661CDAE59FB081DA8DF708F693F3", "jsonValid": null, "svgValid": null, "outsideFoundation": true, "satinSuiteRegistrations": 1 }
   ],
   "notes": [
