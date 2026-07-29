@@ -26,6 +26,9 @@ export { BASELINE_ID, RAW_CAPTURE_SHA256, AUTHORIZED_REGIONS, DESIGN_SPACE, hash
 export { renderSatinCandidateSvg } from './renderSatinCandidateSvg.js';
 export { SYNTHETIC_FIXTURES, SYNTH_STRAIGHT_BAR, SYNTH_BENT_CONSTANT_WIDTH, SYNTH_DESIGN } from './fixtures/syntheticFixtures.js';
 
+// P1.F1 — laboratory command model (isolated; produces no productive command).
+export * from './commandModel/index.js';
+
 export const ISOLATION_MANIFEST = {
   isolated: true,
   candidateOnly: true,

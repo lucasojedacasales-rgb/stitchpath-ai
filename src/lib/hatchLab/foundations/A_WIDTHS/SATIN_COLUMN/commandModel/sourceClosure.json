@@ -1,0 +1,44 @@
+{
+  "closureId": "P1.F1-A_WIDTHS-STRAIGHT-SATIN-LAB-COMMAND-MODEL-SOURCE-CLOSURE-V1",
+  "modelVersion": "P1.F1-A_WIDTHS-STRAIGHT-SATIN-LAB-COMMAND-MODEL-V1",
+  "baselineId": "BASE-ENGINE-A-WIDTHS-V1",
+  "rawCaptureSha256": "7BB259D7AAE1FE2102AAA4372D76912E3580B81765A6A2B314045B2692E55649",
+  "sourceFixture": "fixtures/A_WIDTHS_STRAIGHT_BARS.json",
+  "sourceFixtureModified": false,
+  "sourceGeometryPhase": "P1.F0.1 straight-column closure, verdicts reconciled by P1.F0.2",
+  "holeSemanticsResolution": "HOLE_SEMANTICS_RESOLVED_NO_REAL_HOLES",
+  "authorizedNextStep": "PROCEED_TO_P1_F1_STRAIGHT_SATIN_COMMAND_MODEL",
+  "candidateOnly": true,
+  "integrated": false,
+  "machineReady": false,
+  "exportReady": false,
+  "lengthLimits": {
+    "minStitchLengthMm": 0.3,
+    "maxStitchLengthMm": 12.1,
+    "provenance": "machineSettings of BASE-ENGINE-A-WIDTHS-V1",
+    "notHatchParameters": true,
+    "notALearnedRule": true,
+    "enforcement": "diagnostic_only"
+  },
+  "authorizedCases": [
+    { "caseId": "HATCH-A-WIDTHS-A1", "regionId": "r_zbgef31", "sourceIndex": 22, "polygonHash": "fnv1a32:841d565e", "rawHoles": 1 },
+    { "caseId": "HATCH-A-WIDTHS-A5", "regionId": "r_sv7z5qe", "sourceIndex": 9, "polygonHash": "fnv1a32:0b12229a", "rawHoles": 2 },
+    { "caseId": "HATCH-A-WIDTHS-A6", "regionId": "r_ecj9hl4", "sourceIndex": 8, "polygonHash": "fnv1a32:61ae9beb", "rawHoles": 2 },
+    { "caseId": "HATCH-A-WIDTHS-A7", "regionId": "r_c92bxh3", "sourceIndex": 7, "polygonHash": "fnv1a32:32d33a91", "rawHoles": 1 },
+    { "caseId": "HATCH-A-WIDTHS-A8", "regionId": "r_zr65703", "sourceIndex": 6, "polygonHash": "fnv1a32:8b5c1a9d", "rawHoles": 1 },
+    { "note": "sourceIndex and polygonHash are read at runtime from the persisted fixture; the values repeated here are informative only and are never used as an input to compilation" }
+  ],
+  "guarantees": {
+    "rawFixtureValuesModified": false,
+    "baselineModified": false,
+    "productiveCodeModified": false,
+    "engineV2Modified": false,
+    "stitchTypeModified": false,
+    "runPipelineExecuted": false,
+    "buildFinalCommandsExecuted": false,
+    "ce01Executed": false,
+    "encodersExecuted": false,
+    "exportsPerformed": false
+  },
+  "hashProcedure": "commandModelHash = fnv1a32 over a canonical JSON string of the envelope with commandModelHash, generatedAt, fixturePath and fixtureSha256 removed, keys sorted lexicographically at every depth, commands emitted in their canonical field order, numbers unrounded."
+}

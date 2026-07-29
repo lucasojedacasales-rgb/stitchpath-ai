@@ -1,0 +1,2146 @@
+{
+  "modelVersion": "P1.F1-A_WIDTHS-STRAIGHT-SATIN-LAB-COMMAND-MODEL-V1",
+  "modelId": "P1.F1-A_WIDTHS-STRAIGHT-SATIN-LAB-COMMAND-MODEL-V1::HATCH-A-WIDTHS-A1",
+  "compilerVersion": "compileStraightSatinCandidateToLabCommands@P1.F1-V1",
+  "caseId": "HATCH-A-WIDTHS-A1",
+  "regionId": "r_zbgef31",
+  "baselineId": "BASE-ENGINE-A-WIDTHS-V1",
+  "rawCaptureSha256": "7BB259D7AAE1FE2102AAA4372D76912E3580B81765A6A2B314045B2692E55649",
+  "sourceIndex": 22,
+  "polygonHash": "fnv1a32:841d565e",
+  "sourceCandidateHash": "fnv1a32:14AB4F8D",
+  "holeReconciliationStatus": "clear",
+  "holeSemanticStatus": "confirmed_no_real_holes",
+  "sourceGeometryPointCount": 78,
+  "sourceStationCount": 39,
+  "sourceSpacingMm": 0.4,
+  "sourceMaximumStitchLengthMm": 12.1,
+  "containmentStatus": "contained",
+  "coordinateSpace": "mm",
+  "candidateOnly": true,
+  "integrated": false,
+  "machineReady": false,
+  "exportReady": false,
+  "status": "lab_command_model_complete",
+  "startAnchorMm": [
+    6.715514851219354,
+    20.7463923113625
+  ],
+  "commands": [
+    {
+      "commandIndex": 0,
+      "op": "stitch",
+      "fromMm": [
+        6.715514851219354,
+        20.7463923113625
+      ],
+      "toMm": [
+        7.1548175805747745,
+        20.74640729056793
+      ],
+      "deltaMm": [
+        0.43930272935542014,
+        0.000014979205431586706
+      ],
+      "lengthMm": 0.4393027296107982,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 1,
+      "fromStationIndex": 0,
+      "toStationIndex": 0,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 1,
+      "op": "stitch",
+      "fromMm": [
+        7.1548175805747745,
+        20.74640729056793
+      ],
+      "toMm": [
+        6.689,
+        20.34639140703496
+      ],
+      "deltaMm": [
+        -0.4658175805747744,
+        -0.40001588353296924
+      ],
+      "lengthMm": 0.6140022194187887,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 2,
+      "fromStationIndex": 0,
+      "toStationIndex": 1,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 2,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        20.34639140703496
+      ],
+      "toMm": [
+        7.178,
+        20.346408080802195
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 3,
+      "fromStationIndex": 1,
+      "toStationIndex": 1,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 3,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        20.346408080802195
+      ],
+      "toMm": [
+        6.689,
+        19.946391406802434
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.4000166739997617
+      ],
+      "lengthMm": 0.6317707966326328,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 4,
+      "fromStationIndex": 1,
+      "toStationIndex": 2,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 4,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        19.946391406802434
+      ],
+      "toMm": [
+        7.178,
+        19.946408080569668
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 5,
+      "fromStationIndex": 2,
+      "toStationIndex": 2,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 5,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        19.946408080569668
+      ],
+      "toMm": [
+        6.689,
+        19.5463914065699
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.4000166739997688
+      ],
+      "lengthMm": 0.6317707966326372,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 6,
+      "fromStationIndex": 2,
+      "toStationIndex": 3,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 6,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        19.5463914065699
+      ],
+      "toMm": [
+        7.178,
+        19.546408080337134
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 7,
+      "fromStationIndex": 3,
+      "toStationIndex": 3,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 7,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        19.546408080337134
+      ],
+      "toMm": [
+        6.689,
+        19.146391406337372
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.4000166739997617
+      ],
+      "lengthMm": 0.6317707966326328,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 8,
+      "fromStationIndex": 3,
+      "toStationIndex": 4,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 8,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        19.146391406337372
+      ],
+      "toMm": [
+        7.178,
+        19.146408080104607
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 9,
+      "fromStationIndex": 4,
+      "toStationIndex": 4,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 9,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        19.146408080104607
+      ],
+      "toMm": [
+        6.689,
+        18.746391406104838
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.4000166739997688
+      ],
+      "lengthMm": 0.6317707966326372,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 10,
+      "fromStationIndex": 4,
+      "toStationIndex": 5,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 10,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        18.746391406104838
+      ],
+      "toMm": [
+        7.178,
+        18.746408079872072
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 11,
+      "fromStationIndex": 5,
+      "toStationIndex": 5,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 11,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        18.746408079872072
+      ],
+      "toMm": [
+        6.689,
+        18.34639140587231
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.4000166739997617
+      ],
+      "lengthMm": 0.6317707966326328,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 12,
+      "fromStationIndex": 5,
+      "toStationIndex": 6,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 12,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        18.34639140587231
+      ],
+      "toMm": [
+        7.178,
+        18.346408079639545
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 13,
+      "fromStationIndex": 6,
+      "toStationIndex": 6,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 13,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        18.346408079639545
+      ],
+      "toMm": [
+        6.689,
+        17.946391405639776
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.4000166739997688
+      ],
+      "lengthMm": 0.6317707966326372,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 14,
+      "fromStationIndex": 6,
+      "toStationIndex": 7,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 14,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        17.946391405639776
+      ],
+      "toMm": [
+        7.178,
+        17.94640807940701
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 15,
+      "fromStationIndex": 7,
+      "toStationIndex": 7,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 15,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        17.94640807940701
+      ],
+      "toMm": [
+        6.689,
+        17.54639140540725
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.4000166739997617
+      ],
+      "lengthMm": 0.6317707966326328,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 16,
+      "fromStationIndex": 7,
+      "toStationIndex": 8,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 16,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        17.54639140540725
+      ],
+      "toMm": [
+        7.178,
+        17.546408079174483
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 17,
+      "fromStationIndex": 8,
+      "toStationIndex": 8,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 17,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        17.546408079174483
+      ],
+      "toMm": [
+        6.689,
+        17.146391405174715
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.4000166739997688
+      ],
+      "lengthMm": 0.6317707966326372,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 18,
+      "fromStationIndex": 8,
+      "toStationIndex": 9,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 18,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        17.146391405174715
+      ],
+      "toMm": [
+        7.178,
+        17.14640807894195
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 19,
+      "fromStationIndex": 9,
+      "toStationIndex": 9,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 19,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        17.14640807894195
+      ],
+      "toMm": [
+        6.689,
+        16.746391404942187
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.4000166739997617
+      ],
+      "lengthMm": 0.6317707966326328,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 20,
+      "fromStationIndex": 9,
+      "toStationIndex": 10,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 20,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        16.746391404942187
+      ],
+      "toMm": [
+        7.178,
+        16.746408078709422
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 21,
+      "fromStationIndex": 10,
+      "toStationIndex": 10,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 21,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        16.746408078709422
+      ],
+      "toMm": [
+        6.689,
+        16.346391404709657
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 22,
+      "fromStationIndex": 10,
+      "toStationIndex": 11,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 22,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        16.346391404709657
+      ],
+      "toMm": [
+        7.178,
+        16.34640807847689
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 23,
+      "fromStationIndex": 11,
+      "toStationIndex": 11,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 23,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        16.34640807847689
+      ],
+      "toMm": [
+        6.689,
+        15.946391404477124
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976704
+      ],
+      "lengthMm": 0.6317707966326362,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 24,
+      "fromStationIndex": 11,
+      "toStationIndex": 12,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 24,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        15.946391404477124
+      ],
+      "toMm": [
+        7.178,
+        15.946408078244358
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 25,
+      "fromStationIndex": 12,
+      "toStationIndex": 12,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 25,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        15.946408078244358
+      ],
+      "toMm": [
+        6.689,
+        15.546391404244595
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.4000166739997635
+      ],
+      "lengthMm": 0.6317707966326339,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 26,
+      "fromStationIndex": 12,
+      "toStationIndex": 13,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 26,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        15.546391404244595
+      ],
+      "toMm": [
+        7.178,
+        15.54640807801183
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 27,
+      "fromStationIndex": 13,
+      "toStationIndex": 13,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 27,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        15.54640807801183
+      ],
+      "toMm": [
+        6.689,
+        15.146391404012064
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 28,
+      "fromStationIndex": 13,
+      "toStationIndex": 14,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 28,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        15.146391404012064
+      ],
+      "toMm": [
+        7.178,
+        15.146408077779299
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 29,
+      "fromStationIndex": 14,
+      "toStationIndex": 14,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 29,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        15.146408077779299
+      ],
+      "toMm": [
+        6.689,
+        14.746391403779535
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.4000166739997635
+      ],
+      "lengthMm": 0.6317707966326339,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 30,
+      "fromStationIndex": 14,
+      "toStationIndex": 15,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 30,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        14.746391403779535
+      ],
+      "toMm": [
+        7.178,
+        14.746408077546768
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.000016673767232688874
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 31,
+      "fromStationIndex": 15,
+      "toStationIndex": 15,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 31,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        14.746408077546768
+      ],
+      "toMm": [
+        6.689,
+        14.346391403547004
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.4000166739997635
+      ],
+      "lengthMm": 0.6317707966326339,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 32,
+      "fromStationIndex": 15,
+      "toStationIndex": 16,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 32,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        14.346391403547004
+      ],
+      "toMm": [
+        7.178,
+        14.346408077314237
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.000016673767232688874
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 33,
+      "fromStationIndex": 16,
+      "toStationIndex": 16,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 33,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        14.346408077314237
+      ],
+      "toMm": [
+        6.689,
+        13.946391403314474
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.4000166739997635
+      ],
+      "lengthMm": 0.6317707966326339,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 34,
+      "fromStationIndex": 16,
+      "toStationIndex": 17,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 34,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        13.946391403314474
+      ],
+      "toMm": [
+        7.178,
+        13.946408077081708
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 35,
+      "fromStationIndex": 17,
+      "toStationIndex": 17,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 35,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        13.946408077081708
+      ],
+      "toMm": [
+        6.689,
+        13.546391403081943
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 36,
+      "fromStationIndex": 17,
+      "toStationIndex": 18,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 36,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        13.546391403081943
+      ],
+      "toMm": [
+        7.178,
+        13.546408076849177
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 37,
+      "fromStationIndex": 18,
+      "toStationIndex": 18,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 37,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        13.546408076849177
+      ],
+      "toMm": [
+        6.689,
+        13.146391402849414
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.4000166739997635
+      ],
+      "lengthMm": 0.6317707966326339,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 38,
+      "fromStationIndex": 18,
+      "toStationIndex": 19,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 38,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        13.146391402849414
+      ],
+      "toMm": [
+        7.178,
+        13.146408076616648
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 39,
+      "fromStationIndex": 19,
+      "toStationIndex": 19,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 39,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        13.146408076616648
+      ],
+      "toMm": [
+        6.689,
+        12.746391402616883
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 40,
+      "fromStationIndex": 19,
+      "toStationIndex": 20,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 40,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        12.746391402616883
+      ],
+      "toMm": [
+        7.178,
+        12.746408076384117
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 41,
+      "fromStationIndex": 20,
+      "toStationIndex": 20,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 41,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        12.746408076384117
+      ],
+      "toMm": [
+        6.689,
+        12.346391402384352
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 42,
+      "fromStationIndex": 20,
+      "toStationIndex": 21,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 42,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        12.346391402384352
+      ],
+      "toMm": [
+        7.178,
+        12.346408076151587
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 43,
+      "fromStationIndex": 21,
+      "toStationIndex": 21,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 43,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        12.346408076151587
+      ],
+      "toMm": [
+        6.689,
+        11.946391402151821
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 44,
+      "fromStationIndex": 21,
+      "toStationIndex": 22,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 44,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        11.946391402151821
+      ],
+      "toMm": [
+        7.178,
+        11.946408075919056
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 45,
+      "fromStationIndex": 22,
+      "toStationIndex": 22,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 45,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        11.946408075919056
+      ],
+      "toMm": [
+        6.689,
+        11.54639140191929
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 46,
+      "fromStationIndex": 22,
+      "toStationIndex": 23,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 46,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        11.54639140191929
+      ],
+      "toMm": [
+        7.178,
+        11.546408075686525
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 47,
+      "fromStationIndex": 23,
+      "toStationIndex": 23,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 47,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        11.546408075686525
+      ],
+      "toMm": [
+        6.689,
+        11.14639140168676
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 48,
+      "fromStationIndex": 23,
+      "toStationIndex": 24,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 48,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        11.14639140168676
+      ],
+      "toMm": [
+        7.178,
+        11.146408075453994
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 49,
+      "fromStationIndex": 24,
+      "toStationIndex": 24,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 49,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        11.146408075453994
+      ],
+      "toMm": [
+        6.689,
+        10.74639140145423
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.4000166739997635
+      ],
+      "lengthMm": 0.6317707966326339,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 50,
+      "fromStationIndex": 24,
+      "toStationIndex": 25,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 50,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        10.74639140145423
+      ],
+      "toMm": [
+        7.178,
+        10.746408075221465
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 51,
+      "fromStationIndex": 25,
+      "toStationIndex": 25,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 51,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        10.746408075221465
+      ],
+      "toMm": [
+        6.689,
+        10.3463914012217
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 52,
+      "fromStationIndex": 25,
+      "toStationIndex": 26,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 52,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        10.3463914012217
+      ],
+      "toMm": [
+        7.178,
+        10.346408074988934
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 53,
+      "fromStationIndex": 26,
+      "toStationIndex": 26,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 53,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        10.346408074988934
+      ],
+      "toMm": [
+        6.689,
+        9.94639140098917
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 54,
+      "fromStationIndex": 26,
+      "toStationIndex": 27,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 54,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        9.94639140098917
+      ],
+      "toMm": [
+        7.178,
+        9.946408074756404
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 55,
+      "fromStationIndex": 27,
+      "toStationIndex": 27,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 55,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        9.946408074756404
+      ],
+      "toMm": [
+        6.689,
+        9.546391400756638
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 56,
+      "fromStationIndex": 27,
+      "toStationIndex": 28,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 56,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        9.546391400756638
+      ],
+      "toMm": [
+        7.178,
+        9.546408074523873
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 57,
+      "fromStationIndex": 28,
+      "toStationIndex": 28,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 57,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        9.546408074523873
+      ],
+      "toMm": [
+        6.689,
+        9.146391400524108
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 58,
+      "fromStationIndex": 28,
+      "toStationIndex": 29,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 58,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        9.146391400524108
+      ],
+      "toMm": [
+        7.178,
+        9.146408074291342
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 59,
+      "fromStationIndex": 29,
+      "toStationIndex": 29,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 59,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        9.146408074291342
+      ],
+      "toMm": [
+        6.689,
+        8.746391400291577
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 60,
+      "fromStationIndex": 29,
+      "toStationIndex": 30,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 60,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        8.746391400291577
+      ],
+      "toMm": [
+        7.178,
+        8.746408074058811
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 61,
+      "fromStationIndex": 30,
+      "toStationIndex": 30,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 61,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        8.746408074058811
+      ],
+      "toMm": [
+        6.689,
+        8.346391400059046
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 62,
+      "fromStationIndex": 30,
+      "toStationIndex": 31,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 62,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        8.346391400059046
+      ],
+      "toMm": [
+        7.178,
+        8.34640807382628
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 63,
+      "fromStationIndex": 31,
+      "toStationIndex": 31,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 63,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        8.34640807382628
+      ],
+      "toMm": [
+        6.689,
+        7.946391399826515
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 64,
+      "fromStationIndex": 31,
+      "toStationIndex": 32,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 64,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        7.946391399826515
+      ],
+      "toMm": [
+        7.178,
+        7.94640807359375
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 65,
+      "fromStationIndex": 32,
+      "toStationIndex": 32,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 65,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        7.94640807359375
+      ],
+      "toMm": [
+        6.689,
+        7.546391399593985
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976437
+      ],
+      "lengthMm": 0.6317707966326346,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 66,
+      "fromStationIndex": 32,
+      "toStationIndex": 33,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 66,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        7.546391399593985
+      ],
+      "toMm": [
+        7.178,
+        7.546408073361219
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.000016673767233577053
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 67,
+      "fromStationIndex": 33,
+      "toStationIndex": 33,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 67,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        7.546408073361219
+      ],
+      "toMm": [
+        6.689,
+        7.1463913993614545
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976437
+      ],
+      "lengthMm": 0.6317707966326346,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 68,
+      "fromStationIndex": 33,
+      "toStationIndex": 34,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 68,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        7.1463913993614545
+      ],
+      "toMm": [
+        7.178,
+        7.146408073128688
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.000016673767233577053
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 69,
+      "fromStationIndex": 34,
+      "toStationIndex": 34,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 69,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        7.146408073128688
+      ],
+      "toMm": [
+        6.689,
+        6.746391399128924
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976437
+      ],
+      "lengthMm": 0.6317707966326346,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 70,
+      "fromStationIndex": 34,
+      "toStationIndex": 35,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 70,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        6.746391399128924
+      ],
+      "toMm": [
+        7.178,
+        6.746408072896157
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.000016673767233577053
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 71,
+      "fromStationIndex": 35,
+      "toStationIndex": 35,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 71,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        6.746408072896157
+      ],
+      "toMm": [
+        6.689,
+        6.346391398896393
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976437
+      ],
+      "lengthMm": 0.6317707966326346,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 72,
+      "fromStationIndex": 35,
+      "toStationIndex": 36,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 72,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        6.346391398896393
+      ],
+      "toMm": [
+        7.178,
+        6.346408072663627
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 73,
+      "fromStationIndex": 36,
+      "toStationIndex": 36,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 73,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        6.346408072663627
+      ],
+      "toMm": [
+        6.689,
+        5.946391398663862
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 74,
+      "fromStationIndex": 36,
+      "toStationIndex": 37,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 74,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        5.946391398663862
+      ],
+      "toMm": [
+        7.178,
+        5.946408072431097
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 75,
+      "fromStationIndex": 37,
+      "toStationIndex": 37,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 75,
+      "op": "stitch",
+      "fromMm": [
+        7.178,
+        5.946408072431097
+      ],
+      "toMm": [
+        6.689,
+        5.546391398431331
+      ],
+      "deltaMm": [
+        -0.4889999999999999,
+        -0.40001667399976526
+      ],
+      "lengthMm": 0.6317707966326351,
+      "segmentKind": "advance_diagonal",
+      "sourcePointIndex": 76,
+      "fromStationIndex": 37,
+      "toStationIndex": 38,
+      "fromRail": "right",
+      "toRail": "left",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    },
+    {
+      "commandIndex": 76,
+      "op": "stitch",
+      "fromMm": [
+        6.689,
+        5.546391398431331
+      ],
+      "toMm": [
+        7.178,
+        5.546408072198566
+      ],
+      "deltaMm": [
+        0.4889999999999999,
+        0.00001667376723446523
+      ],
+      "lengthMm": 0.4890000002842682,
+      "segmentKind": "cross_column",
+      "sourcePointIndex": 77,
+      "fromStationIndex": 38,
+      "toStationIndex": 38,
+      "fromRail": "left",
+      "toRail": "right",
+      "finite": true,
+      "zeroLength": false,
+      "belowMinimum": false,
+      "aboveMaximum": false
+    }
+  ],
+  "endAnchorMm": [
+    7.178,
+    5.546408072198566
+  ],
+  "startAnchorPolicy": "startAnchorMm is the first geometry point and is NOT converted into a jump, a stitch from [0,0], a trim or a tie-in; the model is local to the object and knows nothing about the previous region",
+  "metrics": {
+    "commandCount": 77,
+    "crossColumnCommandCount": 39,
+    "advanceDiagonalCommandCount": 38,
+    "minimumStitchLengthMm": 0.4393027296107982,
+    "maximumStitchLengthMm": 0.6317707966326372,
+    "averageStitchLengthMm": 0.5585821355225885,
+    "totalPathLengthMm": 43.010824435239314,
+    "zeroLengthCommandCount": 0,
+    "belowMinimumCommandCount": 0,
+    "aboveMaximumCommandCount": 0,
+    "nonFiniteCommandCount": 0,
+    "minStitchLengthLimitMm": 0.3,
+    "maxStitchLengthLimitMm": 12.1,
+    "limitsProvenance": "baseline machineSettings (BASE-ENGINE-A-WIDTHS-V1)",
+    "limitsEnforcement": "diagnostic_only"
+  },
+  "safety": {
+    "splitRequired": false,
+    "shortStitchHandlingRequired": false,
+    "autoSplitImplemented": false,
+    "shortStitchFilteringImplemented": false,
+    "commandsRemoved": 0,
+    "commandsMerged": 0,
+    "commandsAdded": 0,
+    "segmentsNeedingFuturePolicy": [],
+    "modelComplete": true
+  },
+  "diagnostics": [],
+  "warnings": [],
+  "commandModelHash": "fnv1a32:0AF1C2C8"
+}

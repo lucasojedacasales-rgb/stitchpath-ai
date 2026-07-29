@@ -1,0 +1,81 @@
+{
+  "auditId": "P1.F1-A_WIDTHS-PRODUCTIVE-COMMAND-CONTRACT-AUDIT-V1",
+  "mode": "read_only_static_inspection",
+  "modulesImportedByCommandModel": [],
+  "enginesExecuted": [],
+  "runPipelineExecuted": false,
+  "buildFinalCommandsExecuted": false,
+  "encodersExecuted": false,
+  "filesInspected": [
+    { "path": "src/lib/exportPipeline.js", "lines": 2316, "functions": ["buildStitchObjects", "flattenToCommands", "buildFinalCommands", "encodeCanonicalCommandsToFile", "encodeOptimizedToFile", "encodeToFile", "runExportPipeline", "validatePipeline", "countCommandType", "commandPoint", "commandColor"] },
+    { "path": "src/lib/industrialStitchProcessor.js", "lines": 409, "functions": ["processObjectStitches", "generateTieIn", "generateTieOff", "generateEdgeRunUnderlay", "generateGridUnderlay", "normalizeDensity", "optimizeObjectOrder"] },
+    { "path": "src/lib/contourExportBuilder.js", "lines": 908, "functions": ["generateSatinColumnPath", "generateRunPath", "generateTripleRunPath", "generateContourStitches", "buildContourObjects", "walkPath"] },
+    { "path": "src/lib/ce01SafeFillGenerator.js", "lines": 726, "functions": ["generateCE01SafeFillCommands", "_placeNeedles", "_postProcess", "_validate"] },
+    { "path": "src/lib/dstEncoder.js", "lines": 369, "functions": ["encodeDSTDelta", "encodeDSTMove", "buildDSTHeader", "buildDSTFile", "validateRoundtrip"] },
+    { "path": "src/lib/dsbEncoder.js", "lines": 524, "functions": ["encodeDSBRecord", "encodeDSBMove", "buildDSBHeader", "buildDSBFile", "validateDSBRoundtrip"] },
+    { "path": "src/lib/unifiedCommandMetrics.js", "lines": null, "functions": ["command metric aggregation over the flattened command list"] }
+  ],
+  "contracts": [
+    {
+      "layer": "stitch_object",
+      "producer": "buildStitchObjects / buildContourObjects",
+      "shape": "{ id, color, name, stitch_type, priority, points: Array<[x, y]>, layerType, ... }",
+      "units": "mm, absolute design coordinates",
+      "notes": "objects carry geometry as point arrays; no per-stitch command exists yet at this layer"
+    },
+    {
+      "layer": "object_stitch_points",
+      "producer": "processObjectStitches(obj, machine)",
+      "shape": "Array<[x, y]> in mm",
+      "units": "mm, absolute",
+      "orderedStages": ["removeRedundantNodes", "simplifyGeometry (RDP)", "decimateCurvePoints", "normalizeDensity", "generateTieIn", "generateEdgeRunUnderlay", "generateGridUnderlay", "main stitches", "generateTieOff"],
+      "notes": "tie-in, underlay and tie-off are injected here; the lab model deliberately produces none of them"
+    },
+    {
+      "layer": "productive_command",
+      "producer": "flattenToCommands (consumed by buildFinalCommands)",
+      "shape": "{ type, x, y, color, regionId, stitchType?, source?, layerType? }",
+      "types": ["stitch", "jump", "trim", "colorChange", "end"],
+      "units": "mm, ABSOLUTE needle position per command (not deltas)",
+      "xyMeaning": "absolute needle position after applying the export offset",
+      "requiredFields": ["type", "x", "y"],
+      "commonlyPresentFields": ["color", "regionId"],
+      "optionalFields": ["stitchType", "source", "layerType"],
+      "objectBoundaryRepresentation": "no explicit begin/end object command; object boundaries are implied by regionId changes plus trim / colorChange commands emitted between objects",
+      "endOfDesign": "a single trailing { type: 'end' } command",
+      "laterTransformations": ["long-stitch subdivision inside flattenToCommands", "travel/route optimization", "command sanitizers", "encoder delta conversion"],
+      "consumers": ["validatePipeline", "autoFix", "unifiedCommandMetrics", "simulators", "encodeCanonicalCommandsToFile", "encodeToFile"]
+    },
+    {
+      "layer": "machine_command",
+      "producer": "dstEncoder / dsbEncoder",
+      "shape": "3-byte records built from per-record deltas",
+      "units": "0.1 mm units; DST delta range ±121 (±12.1 mm), DSB signed byte range ±127 (±12.7 mm)",
+      "flags": { "dst": ["stitch", "jump", "colorChange", "end"], "dsb": { "0x80": "stitch", "0x81": "jump", "0x88": "colorChange", "0xF8": "end" } },
+      "notes": "relative representation; long moves are split at the encoder level"
+    }
+  ],
+  "contractDifferences": [
+    "productive commands are per-POINT (absolute needle position), the lab model is per-SEGMENT (fromMm → toMm with delta and length)",
+    "productive commands use `type`, `x`, `y`; the lab model uses `op`, `fromMm`, `toMm`",
+    "productive commands require object/colour context (color, regionId); the lab model is intentionally context-free and local to one column",
+    "productive flow injects tie-in / underlay / tie-off and control ops (jump, trim, colorChange, end) that the lab model forbids",
+    "encoders work in 0.1 mm relative units; the lab model keeps full-precision absolute mm and never quantizes",
+    "productive flow subdivides long stitches; the lab model only reports splitRequired"
+  ],
+  "risks": [
+    "an adapter must add color, regionId and object sequencing, none of which the lab model can invent",
+    "an adapter must decide how the first point becomes an entry move (jump vs stitch) — a sequencing decision that belongs to the caller, not to a single column",
+    "quantization to 0.1 mm units at encoder level will change measured lengths; the lab model's exactness must not be read as machine exactness",
+    "underlay and pull compensation are absent by design, so a lab model is not a производственный stitch plan"
+  ],
+  "unverifiableFields": [
+    "presence of an explicit object-begin command: none found in the inspected code (boundaries are implied), so it cannot be mapped",
+    "canonical TypeScript/JSON schema for productive commands: no schema file found; the contract is implicit in flattenToCommands and its consumers"
+  ],
+  "futureCompatibility": {
+    "classification": "compatible_with_adapter",
+    "rationale": "every lab command maps 1:1 to a productive { type: 'stitch', x, y } command by emitting toMm as the absolute position (with startAnchorMm emitted first by the caller), but color, regionId, entry/exit moves, tie stitches and underlay must be supplied by an adapter that P1.F1 does not implement",
+    "notImplementedHere": ["adapter", "integration", "underlay", "compensation", "autoSplit", "sequencing", "export"]
+  }
+}

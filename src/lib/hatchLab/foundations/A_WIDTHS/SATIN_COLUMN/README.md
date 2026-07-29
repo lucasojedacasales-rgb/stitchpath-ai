@@ -53,6 +53,15 @@ this area) and centroid-near (< 0.15), never inspecting the region's own boundar
 geometry. The independent topology audit measures one exterior ring and zero interior rings for all
 five, so the scalar is preserved as metadata and no longer blocks the geometry.
 
+### P1.F1 — laboratory command model
+
+`commandModel/` turns the closed geometry into a local sequence of stitch moves
+(`P1.F1-A_WIDTHS-STRAIGHT-SATIN-LAB-COMMAND-MODEL-V1`): one `stitch` command per consecutive point
+pair, alternating `cross_column` / `advance_diagonal`, absolute mm at full precision, with
+`startAnchorMm` equal to the first point and no jump / trim / tie / colour / end op. It is **not** the
+productive command shape and not a machine command — the read-only contract audit classifies a future
+mapping as `compatible_with_adapter`. See `commandModel/README.md`.
+
 ### P1.F0.2 — three separate verdicts
 
 - `geometryEligibility` — polygon, axis, straightness, stations, rails, containment, width, split.
