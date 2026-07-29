@@ -1,0 +1,52 @@
+{
+  "provenanceId": "P1.F0-SATIN_COLUMN-SOURCE-PROVENANCE-V1",
+  "candidateOnly": true,
+  "integrated": false,
+  "regionData": {
+    "baselineId": "BASE-ENGINE-A-WIDTHS-V1",
+    "primarySourceTried": "src/lib/hatchLab/baselines/A_WIDTHS/BASE-ENGINE-A-WIDTHS-V1/pipelineSnapshot.json",
+    "primarySourceOutcome": "sanitised (4267 bytes): does not retain full path_points, per storagePolicy",
+    "usedSource": "external verified capture BASE-ENGINE-A-WIDTHS-V1.capture.json",
+    "captureUrl": "https://media.base44.com/files/public/6a3a74a332b0ea528996ab54/70f27dbef_BASE-ENGINE-A-WIDTHS-V1capture1.json",
+    "captureBytes": 3140114,
+    "captureSha256": "7BB259D7AAE1FE2102AAA4372D76912E3580B81765A6A2B314045B2692E55649",
+    "verification": "bytes and SHA-256 recomputed at extraction time and matched the archive closure before any region was read",
+    "regionsExtracted": 5,
+    "engineReExecuted": false,
+    "fullCaptureCopiedIntoFoundation": false
+  },
+  "existingAlgorithmInspection": {
+    "readOnly": true,
+    "file": "src/lib/contourExportBuilder.js",
+    "function": "generateSatinColumnPath(points, widthMm, densityMm, closed)",
+    "input": "a CENTERLINE path (array of [x,y] points in millimetres) plus a total column width",
+    "centerlineUnit": "millimetres (points are already in design mm space at that stage)",
+    "widthUnit": "millimetres (total width; halved internally and padded with TENSION_COMP_MM/2, a module-level pull-compensation constant in mm)",
+    "densityUnit": "millimetres — step used by walkPath() to resample the centerline at constant arc-length spacing",
+    "outputStructure": "flat array of [x,y] stitch points in mm; no objects, no commands, no metadata",
+    "edgeAlternation": "per resampled sample i, offsets the point along the local normal by ±halfWidth depending on i % 2 (sample-parity alternation around a centerline)",
+    "endpointTreatment": "tangent at each sample uses prev/next neighbours with modulo wrap even for open paths (first/last tangents borrow the opposite end); closed paths append the first stitch to close the loop; fewer than 4 walked samples returns []",
+    "limitations": [
+      "requires a centerline + constant width: it cannot consume a filled region's boundary polygon",
+      "the two edges are implied (centerline ± width/2), not measured from the real opposing boundaries",
+      "width is constant along the whole column; real regions have varying width",
+      "modulo-wrap tangents distort the first/last stitches of open paths",
+      "pull compensation is baked in via TENSION_COMP_MM, mixing technique physics into the geometry"
+    ],
+    "sideEffects": "none observed: pure function, does not mutate its inputs and emits no commands",
+    "whyNotDirectlyReusable": "the five A_WIDTHS regions are filled boundary polygons without any centerline or declared width; feeding a polygon outline as 'points' would zigzag around the OUTLINE, not across the column. Deriving a centerline is a separate problem the baseline showed the engine does not solve for regions. The foundation therefore implements the geometric principle independently: principal axis from area moments, perpendicular sections intersected with the real boundary, and a zigzag between the two measured rails.",
+    "alsoInspectedReadOnly": [
+      "src/lib/contourExportBuilder.js:generateContourStitches (dispatches satin only for contour-role objects)",
+      "src/lib/industrialStitchProcessor.js:processObjectStitches (regions route to fill scanline paths)",
+      "src/lib/exportPipeline.js:buildFinalCommands (command assembly; never invoked by this foundation)"
+    ],
+    "productiveImportsFromFoundation": []
+  },
+  "coordinateContract": {
+    "regionSpace": "normalized_0_1 (explicit declaration from the baseline coordinateDeclaration, not inferred from value ranges)",
+    "designWidthMm": 100,
+    "designHeightMm": 80,
+    "conversion": "xMm = xNormalized * 100 ; yMm = yNormalized * 80",
+    "pixelsUsed": false
+  }
+}

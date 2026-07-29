@@ -14,10 +14,11 @@ import { runAWidthsEvaluatorTests } from './aWidthsEvaluator.test.js';
 import { runAWidthsBaselineHarnessTests } from './aWidthsBaselineHarness.test.js';
 import { runAWidthsStoredBaselineTests } from './aWidthsStoredBaseline.test.js';
 import { runAWidthsArchiveClosureTests } from './aWidthsArchiveClosure.test.js';
+import { runAWidthsSatinFoundationTests } from './aWidthsSatinFoundation.test.js';
 
 export function runHatchLabTests() {
   const suites = [];
-  for (const fn of [runSeedValidationTests, runMetricExtractionTests, runMetricComparisonTests, runMutationSafetyTests, runAWidthsSeedIntegrityTests, runSeedStructuralConformanceTests, runAWidthsEvaluatorTests, runAWidthsBaselineHarnessTests, runAWidthsStoredBaselineTests, runAWidthsArchiveClosureTests]) {
+  for (const fn of [runSeedValidationTests, runMetricExtractionTests, runMetricComparisonTests, runMutationSafetyTests, runAWidthsSeedIntegrityTests, runSeedStructuralConformanceTests, runAWidthsEvaluatorTests, runAWidthsBaselineHarnessTests, runAWidthsStoredBaselineTests, runAWidthsArchiveClosureTests, runAWidthsSatinFoundationTests]) {
     try {
       suites.push(fn());
     } catch (e) {
