@@ -13,6 +13,8 @@
  */
 
 import { generateClippedFillStitches, validateFillPoints } from './clippedFillGenerator.js';
+import { isStraightSatinColumnEnabled } from './satin/satinColumnFlag.js';
+import { buildStraightSatinColumnStitchPoints } from './satin/straightSatinColumnAdapter.js';
 
 // ─── Physical constants (mm) — tuned for home machines (Caydo CE01) ──────────
 const TIE_SIZE = 0.5;           // locking stitch length
@@ -397,6 +399,15 @@ export function processObjectStitches(obj, machine) {
       // Fallback: polygon boundary if scanline fails (tiny region)
       result.push(...normalized);
     }
+  } else if (obj.stitch_type === 'satin' && isStraightSatinColumnEnabled()) {
+    // P1.F2: real satin column (paired boundary zigzag) when the region is a
+    // proven eligible straight bar; otherwise the previous behaviour is kept.
+    const column = buildStraightSatinColumnStitchPoints(obj, {
+      minStitchLengthMm: ms?.minStitchLength,
+      maxStitchLengthMm: ms?.maxStitchLength,
+    });
+    if (column.applied) result.push(...column.points);
+    else result.push(...normalized);
   } else {
     // Satin / running: constant density path along polygon
     result.push(...normalized);
