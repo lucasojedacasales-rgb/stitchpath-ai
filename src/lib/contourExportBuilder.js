@@ -30,6 +30,7 @@ import { classifyContourSegment, isExportable, ensureMouthDetailExported, remove
 import { rebuildLowerOuterContoursFromDarkStroke, getLastLowerContourReport, LOWER_CONTOUR_WIDTH } from './lowerContourRebuilder.js';
 import { buildUniversalDarkContoursFromContext, getLastUniversalReport as _getLastUniversalReport } from './universalDarkContourDetector.js';
 import { validateContourSegmentsAgainstDarkMask } from './contourSegmentValidator.js';
+import { resampleForSatinCoverage, buildSatinZigzagWithCorners, overlapSatinClosure } from './satinCoverage.js';
 
 // ─── Satin / run parameters (from preset) ──────────────────────────────────
 const SATIN_WIDTH_MM   = cleanCartoonOutlineCE01.outerSatinWidthMm;
@@ -119,38 +120,24 @@ function clipToUpperHalf(points, yMax = 0) {
 
 function generateSatinColumnPath(points, widthMm, densityMm, closed) {
   const halfW = widthMm / 2 + TENSION_COMP_MM / 2;
-  const walked = smoothWalkedPath(walkPath(points, densityMm, closed), closed);
+  // The zigzag alternates sides, so each edge only gets a penetration every TWO
+  // centerline samples: to leave the configured density between penetrations on
+  // the SAME edge the centerline must be walked at half that pitch.
+  // Curvature-adaptive resampling then keeps the pitch on the OUTER edge of
+  // every turn at/below the density, so curves and column junctions stay
+  // fully covered instead of fanning out.
+  const walked = smoothWalkedPath(
+    resampleForSatinCoverage(points, densityMm / 2, halfW, closed), closed);
   if (walked.length < 4) return [];
 
-  const stitches = [];
-  const n = walked.length;
+  // Zigzag with corner fans — no wedge is left open on tight turns/junctions.
+  const stitches = buildSatinZigzagWithCorners(walked, halfW, densityMm, closed);
+  if (stitches.length < 2) return [];
 
-  for (let i = 0; i < n; i++) {
-    const p = walked[i];
-    const prev = walked[(i - 1 + n) % n];
-    const next = walked[(i + 1) % n];
-    let tx = next[0] - prev[0];
-    let ty = next[1] - prev[1];
-    const tLen = Math.hypot(tx, ty);
-    if (tLen < 1e-9) continue;
-    tx /= tLen;
-    ty /= tLen;
-
-    // Normal = perpendicular to tangent
-    const nx = -ty * halfW;
-    const ny = tx * halfW;
-
-    // Alternate left/right to create zigzag
-    if (i % 2 === 0) {
-      stitches.push([p[0] + nx, p[1] + ny]);
-    } else {
-      stitches.push([p[0] - nx, p[1] - ny]);
-    }
-  }
-
-  // Close the satin loop
+  // Close the satin loop with a real overlap (a single coincident point leaves
+  // an uncovered notch at the start/end junction of the column).
   if (closed && stitches.length > 0) {
-    stitches.push(stitches[0]);
+    return overlapSatinClosure(stitches, 4);
   }
 
   return stitches;
