@@ -44,7 +44,14 @@ const TENSION_COMP_MM  = 0.3;   // 0.2–0.4mm pull compensation
 function walkPath(points, stepMm, closed) {
   const pts = closed ? [...points, points[0]] : [...points];
   if (pts.length < 2) return [];
-  const result = [];
+  // Uniform arc-length resampling: emit a point every stepMm along the path,
+  // REGARDLESS of how densely the source polygon is sampled. The old version
+  // kept every source vertex (never downsampled), so highly-detailed vector
+  // paths (~0.1mm segments) produced a zigzag pitch of ~0.1mm instead of the
+  // configured density — thousands of overlapping satin stitches ("fuzz").
+  const step = Math.max(0.1, Number(stepMm) || 0.4);
+  const result = [[pts[0][0], pts[0][1]]];
+  let carry = 0; // arc distance already consumed since the last emitted point
   for (let i = 0; i < pts.length - 1; i++) {
     const [ax, ay] = pts[i];
     const [bx, by] = pts[i + 1];
@@ -52,15 +59,35 @@ function walkPath(points, stepMm, closed) {
     if (segLen < 1e-9) continue;
     const dx = (bx - ax) / segLen;
     const dy = (by - ay) / segLen;
-    const numSteps = Math.max(1, Math.ceil(segLen / stepMm));
-    const actualStep = segLen / numSteps;
-    for (let s = 0; s < numSteps; s++) {
-      const d = s * actualStep;
+    let d = step - carry;
+    while (d <= segLen + 1e-9) {
       result.push([ax + dx * d, ay + dy * d]);
+      d += step;
     }
+    carry = segLen - (d - step);
   }
-  result.push(pts[pts.length - 1]);
+  const last = pts[pts.length - 1];
+  const tail = result[result.length - 1];
+  if (Math.hypot(last[0] - tail[0], last[1] - tail[1]) > step * 0.25) {
+    result.push([last[0], last[1]]);
+  }
   return result;
+}
+
+// Light moving-average smoothing of a resampled path — removes vectorization
+// jitter so the satin normal direction doesn't flip erratically (spiky "hairs").
+function smoothWalkedPath(points, closed) {
+  const n = points.length;
+  if (n < 5) return points;
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    if (!closed && (i === 0 || i === n - 1)) { out[i] = points[i]; continue; }
+    const a = points[(i - 1 + n) % n];
+    const b = points[i];
+    const c = points[(i + 1) % n];
+    out[i] = [(a[0] + 2 * b[0] + c[0]) / 4, (a[1] + 2 * b[1] + c[1]) / 4];
+  }
+  return out;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -92,7 +119,7 @@ function clipToUpperHalf(points, yMax = 0) {
 
 function generateSatinColumnPath(points, widthMm, densityMm, closed) {
   const halfW = widthMm / 2 + TENSION_COMP_MM / 2;
-  const walked = walkPath(points, densityMm, closed);
+  const walked = smoothWalkedPath(walkPath(points, densityMm, closed), closed);
   if (walked.length < 4) return [];
 
   const stitches = [];
@@ -133,13 +160,16 @@ function generateSatinColumnPath(points, widthMm, densityMm, closed) {
 //  TRIPLE RUN — 3 passes for bold thin lines (mouth, eyes, details)
 // ═══════════════════════════════════════════════════════════════════════════
 
+const RUN_STITCH_LEN_MM = 1.8;
+
 function generateTripleRunPath(points, closed) {
-  if (closed && points.length >= 3) {
-    const loop = [...points, points[0]];
+  const sampled = walkPath(points, RUN_STITCH_LEN_MM, false);
+  if (closed && sampled.length >= 3) {
+    const loop = [...sampled, sampled[0]];
     return [...loop, ...loop, ...loop];
   }
   // Open path: forward → backward → forward
-  return [...points, ...[...points].reverse(), ...points];
+  return [...sampled, ...[...sampled].reverse(), ...sampled];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -147,10 +177,11 @@ function generateTripleRunPath(points, closed) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function generateRunPath(points, closed) {
-  if (closed && points.length >= 3) {
-    return [...points, points[0]];
+  const sampled = walkPath(points, RUN_STITCH_LEN_MM, false);
+  if (closed && sampled.length >= 3) {
+    return [...sampled, sampled[0]];
   }
-  return [...points];
+  return sampled;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
