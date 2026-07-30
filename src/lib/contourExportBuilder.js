@@ -30,7 +30,6 @@ import { classifyContourSegment, isExportable, ensureMouthDetailExported, remove
 import { rebuildLowerOuterContoursFromDarkStroke, getLastLowerContourReport, LOWER_CONTOUR_WIDTH } from './lowerContourRebuilder.js';
 import { buildUniversalDarkContoursFromContext, getLastUniversalReport as _getLastUniversalReport } from './universalDarkContourDetector.js';
 import { validateContourSegmentsAgainstDarkMask } from './contourSegmentValidator.js';
-import { resampleForSatinCoverage, buildSatinZigzagWithCorners, overlapSatinClosure } from './satinCoverage.js';
 
 // ─── Satin / run parameters (from preset) ──────────────────────────────────
 const SATIN_WIDTH_MM   = cleanCartoonOutlineCE01.outerSatinWidthMm;
@@ -45,14 +44,7 @@ const TENSION_COMP_MM  = 0.3;   // 0.2–0.4mm pull compensation
 function walkPath(points, stepMm, closed) {
   const pts = closed ? [...points, points[0]] : [...points];
   if (pts.length < 2) return [];
-  // Uniform arc-length resampling: emit a point every stepMm along the path,
-  // REGARDLESS of how densely the source polygon is sampled. The old version
-  // kept every source vertex (never downsampled), so highly-detailed vector
-  // paths (~0.1mm segments) produced a zigzag pitch of ~0.1mm instead of the
-  // configured density — thousands of overlapping satin stitches ("fuzz").
-  const step = Math.max(0.1, Number(stepMm) || 0.4);
-  const result = [[pts[0][0], pts[0][1]]];
-  let carry = 0; // arc distance already consumed since the last emitted point
+  const result = [];
   for (let i = 0; i < pts.length - 1; i++) {
     const [ax, ay] = pts[i];
     const [bx, by] = pts[i + 1];
@@ -60,35 +52,15 @@ function walkPath(points, stepMm, closed) {
     if (segLen < 1e-9) continue;
     const dx = (bx - ax) / segLen;
     const dy = (by - ay) / segLen;
-    let d = step - carry;
-    while (d <= segLen + 1e-9) {
+    const numSteps = Math.max(1, Math.ceil(segLen / stepMm));
+    const actualStep = segLen / numSteps;
+    for (let s = 0; s < numSteps; s++) {
+      const d = s * actualStep;
       result.push([ax + dx * d, ay + dy * d]);
-      d += step;
     }
-    carry = segLen - (d - step);
   }
-  const last = pts[pts.length - 1];
-  const tail = result[result.length - 1];
-  if (Math.hypot(last[0] - tail[0], last[1] - tail[1]) > step * 0.25) {
-    result.push([last[0], last[1]]);
-  }
+  result.push(pts[pts.length - 1]);
   return result;
-}
-
-// Light moving-average smoothing of a resampled path — removes vectorization
-// jitter so the satin normal direction doesn't flip erratically (spiky "hairs").
-function smoothWalkedPath(points, closed) {
-  const n = points.length;
-  if (n < 5) return points;
-  const out = new Array(n);
-  for (let i = 0; i < n; i++) {
-    if (!closed && (i === 0 || i === n - 1)) { out[i] = points[i]; continue; }
-    const a = points[(i - 1 + n) % n];
-    const b = points[i];
-    const c = points[(i + 1) % n];
-    out[i] = [(a[0] + 2 * b[0] + c[0]) / 4, (a[1] + 2 * b[1] + c[1]) / 4];
-  }
-  return out;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -120,24 +92,38 @@ function clipToUpperHalf(points, yMax = 0) {
 
 function generateSatinColumnPath(points, widthMm, densityMm, closed) {
   const halfW = widthMm / 2 + TENSION_COMP_MM / 2;
-  // The zigzag alternates sides, so each edge only gets a penetration every TWO
-  // centerline samples: to leave the configured density between penetrations on
-  // the SAME edge the centerline must be walked at half that pitch.
-  // Curvature-adaptive resampling then keeps the pitch on the OUTER edge of
-  // every turn at/below the density, so curves and column junctions stay
-  // fully covered instead of fanning out.
-  const walked = smoothWalkedPath(
-    resampleForSatinCoverage(points, densityMm / 2, halfW, closed), closed);
+  const walked = walkPath(points, densityMm, closed);
   if (walked.length < 4) return [];
 
-  // Zigzag with corner fans — no wedge is left open on tight turns/junctions.
-  const stitches = buildSatinZigzagWithCorners(walked, halfW, densityMm, closed);
-  if (stitches.length < 2) return [];
+  const stitches = [];
+  const n = walked.length;
 
-  // Close the satin loop with a real overlap (a single coincident point leaves
-  // an uncovered notch at the start/end junction of the column).
+  for (let i = 0; i < n; i++) {
+    const p = walked[i];
+    const prev = walked[(i - 1 + n) % n];
+    const next = walked[(i + 1) % n];
+    let tx = next[0] - prev[0];
+    let ty = next[1] - prev[1];
+    const tLen = Math.hypot(tx, ty);
+    if (tLen < 1e-9) continue;
+    tx /= tLen;
+    ty /= tLen;
+
+    // Normal = perpendicular to tangent
+    const nx = -ty * halfW;
+    const ny = tx * halfW;
+
+    // Alternate left/right to create zigzag
+    if (i % 2 === 0) {
+      stitches.push([p[0] + nx, p[1] + ny]);
+    } else {
+      stitches.push([p[0] - nx, p[1] - ny]);
+    }
+  }
+
+  // Close the satin loop
   if (closed && stitches.length > 0) {
-    return overlapSatinClosure(stitches, 4);
+    stitches.push(stitches[0]);
   }
 
   return stitches;
@@ -147,16 +133,13 @@ function generateSatinColumnPath(points, widthMm, densityMm, closed) {
 //  TRIPLE RUN — 3 passes for bold thin lines (mouth, eyes, details)
 // ═══════════════════════════════════════════════════════════════════════════
 
-const RUN_STITCH_LEN_MM = 1.8;
-
 function generateTripleRunPath(points, closed) {
-  const sampled = walkPath(points, RUN_STITCH_LEN_MM, false);
-  if (closed && sampled.length >= 3) {
-    const loop = [...sampled, sampled[0]];
+  if (closed && points.length >= 3) {
+    const loop = [...points, points[0]];
     return [...loop, ...loop, ...loop];
   }
   // Open path: forward → backward → forward
-  return [...sampled, ...[...sampled].reverse(), ...sampled];
+  return [...points, ...[...points].reverse(), ...points];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -164,11 +147,10 @@ function generateTripleRunPath(points, closed) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function generateRunPath(points, closed) {
-  const sampled = walkPath(points, RUN_STITCH_LEN_MM, false);
-  if (closed && sampled.length >= 3) {
-    return [...sampled, sampled[0]];
+  if (closed && points.length >= 3) {
+    return [...points, points[0]];
   }
-  return sampled;
+  return [...points];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
