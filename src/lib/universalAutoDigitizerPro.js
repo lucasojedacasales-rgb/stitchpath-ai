@@ -98,6 +98,17 @@ function colorStats(hex) {
   };
 }
 
+function polygonPerimeter(points = []) {
+  if (!Array.isArray(points) || points.length < 2) return 0;
+  let per = 0;
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    const q = points[(i + 1) % points.length];
+    if (Array.isArray(p) && Array.isArray(q)) per += Math.hypot(q[0] - p[0], q[1] - p[1]);
+  }
+  return per;
+}
+
 function isOutlineLike(obj = {}) {
   const text = `${obj.name || ''} ${obj.layerType || ''} ${obj.stitch_type || ''} ${obj.id || ''}`.toLowerCase();
   return obj.isContour === true || text.includes('outline') || text.includes('contour') || text.includes('border') || text.includes('running');
@@ -127,12 +138,19 @@ function classifyObject(obj, config = {}) {
   const maxDim = Math.max(b.width, b.height);
   const minDim = Math.max(0.01, Math.min(b.width, b.height));
   const aspectRatio = maxDim / minDim;
-  const strokeThicknessEstimate = minDim;
+  const perimeter = polygonPerimeter(obj.points || []);
+  // Real mean stroke width (2·area/perimeter) — a solid blob keeps a high value,
+  // a thin outline stroke a low one. Bounding-box minDim overestimates badly.
+  const strokeThicknessEstimate = perimeter > 0 ? Math.min(minDim, (2 * area) / perimeter) : minDim;
+  // A shape is only outline-material if its ink is genuinely thin.
+  const thinStroke = strokeThicknessEstimate <= 2.0;
+  // Regions that entered as solid fills must never lose coverage unless thin.
+  const originallyFill = (obj.stitch_type || 'fill') === 'fill' && obj.isContour !== true;
   const color = colorStats(obj.color || '#000000');
   const outlineLike = isOutlineLike(obj);
   const borderLike = isBorderLike(obj);
   const areaRatio = area / designArea;
-  const longNarrow = aspectRatio > 3.2 && minDim <= 5.5;
+  const longNarrow = aspectRatio > 3.2 && thinStroke;
   const tiny = areaRatio < 0.00008 || (area < 0.45 && maxDim < 2.2);
   const small = areaRatio < 0.004 || maxDim < 9;
   const medium = areaRatio < 0.035 || maxDim < 26;
@@ -204,6 +222,13 @@ function classifyObject(obj, config = {}) {
   if (color.isBlackLike) reasons.push('black-like color');
   if (longNarrow) reasons.push('long narrow shape');
 
+  // COVERAGE GUARD: a region that entered as a solid fill keeps its fill —
+  // converting it to running/satin leaves the interior without stitches.
+  if (originallyFill && !thinStroke && (stitchType === 'running_stitch' || stitchType === 'satin')) {
+    stitchType = 'fill';
+    reasons.push('coverage guard: solid fill preserved (ink too wide for outline stitch)');
+  }
+
   return {
     regionId: obj.id || obj.rawRegion?.id || 'unknown',
     color: obj.color || '#000000',
@@ -233,7 +258,10 @@ function applyClassificationToObject(obj, classification, config = {}) {
   next.priority = classification.layerOrder;
   next.layerType = classification.class;
   next.stitch_type = classification.stitchType === 'suppressed' ? next.stitch_type : classification.stitchType;
-  next.isContour = ['satin_outline', 'running_outline', 'dark_detail', 'small_detail', 'highlight_detail', 'border_contour'].includes(classification.class) || next.isContour === true;
+  // isContour follows the FINAL stitch type: fills must go through the fill
+  // generator or their interior is never covered.
+  next.isContour = classification.stitchType === 'satin' || classification.stitchType === 'running_stitch' || next.isContour === true;
+  if (classification.stitchType === 'fill' && obj.isContour !== true) next.isContour = false;
   next.rawRegion = {
     ...(next.rawRegion || {}),
     universalClass: classification.class,
